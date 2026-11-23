@@ -78,6 +78,9 @@ export interface ProgramFile {
   facade?: number;
   // Whether the file has an early error, for which Node throws a SyntaxError where it loads it.
   isRejected?: boolean;
+  // The names of the files of its directory, where an import() of a computed string may name one
+  // of its candidates (EscoreSteps), and else none.
+  names?: readonly string[];
 }
 
 // A declaration at the top level of the program's first file, with the definitions of the program's
@@ -3244,6 +3247,7 @@ export const specialize = (
     file.targets.size === 0
       ? "<<>>"
       : [...file.targets].map((target) => `(${getUnits(target[0])} :> ${target[1]})`).join(" @@ ");
+  const getNames = (file: ProgramFile) => `{${(file.names ?? []).map(getUnits).join(", ")}}`;
 
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
   // as ESCore's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
@@ -3419,7 +3423,7 @@ export const specialize = (
     definitions.push({
       name: `ModuleNode${number}`,
       arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", facade |-> ${file.facade ?? 0}, body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", facade |-> ${file.facade ?? 0}, body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}, names |-> ${getNames(file)}]`,
     });
     return declarations;
   };
@@ -3431,7 +3435,7 @@ export const specialize = (
   const commonJsCode = (file: ProgramFile, number: number) => {
     const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
     const getNode = (code: string) =>
-      `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`;
+      `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, names |-> ${getNames(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`;
     // A module with an early error has no code, which Node fails to compile where it runs it.
     if (file.isRejected === true) {
       definitions.push({ name: `ModuleNode${number}`, arity: 0, text: getNode("None") });
@@ -3467,7 +3471,7 @@ export const specialize = (
     definitions.push({
       name: "ModuleNode1",
       arity: 0,
-      text: `ModuleNode1 == [file |-> 1, kind |-> "script", targets |-> ${getTargets(entry)}]`,
+      text: `ModuleNode1 == [file |-> 1, kind |-> "script", targets |-> ${getTargets(entry)}, names |-> ${getNames(entry)}]`,
     });
   }
   // A JSON file's node: its text without a byte order mark, which Node strips, where it's valid.

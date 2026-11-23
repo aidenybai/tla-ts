@@ -1589,8 +1589,13 @@ const HOST_PATCHES = [
     [] m = "hostLoad" ->
          LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
              specifier == Arg(args, 2).value
-         IN IF specifier \\notin DOMAIN referrer.targets THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names") ELSE
-         IF referrer.targets[specifier] = 0 THEN
+             name == SubSeq(specifier, 3, Len(specifier))
+         IN IF specifier \\notin DOMAIN referrer.targets /\\
+               ~(/\\ referrer.names # {} /\\ Len(specifier) > 2 /\\ specifier[1] = 46 /\\ specifier[2] = 47
+                 /\\ name \\notin referrer.names \\cup {<<46>>, <<46, 46>>}
+                 /\\ \\A i \\in DOMAIN name : name[i] \\in 33..126 \\ {35, 37, 47, 63, 92})
+            THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names")
+         ELSE IF specifier \\notin DOMAIN referrer.targets \\/ referrer.targets[specifier] = 0 THEN
            LET target == OrdinaryObjectCreate(s, Null)
                error == StoppingProxy(target.s, Val(target), N("error of an import that it finds no module for"), <<>>)
            IN ThrowValue(error.s, Val(error))

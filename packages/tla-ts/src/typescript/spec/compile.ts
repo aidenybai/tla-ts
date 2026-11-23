@@ -54,6 +54,11 @@ export interface EscoreSteps {
   // Whether the host loads every file of code as an ES module, as test262's does, rather than as
   // Node does.
   isModuleHost?: boolean;
+  // The files that an import() of a computed string may load, which the program compiles though
+  // no literal names them, as test262's fixtures beside a test: an import() of "./" and one's name
+  // from a file in its directory loads it, and of a name that no file of the directory has
+  // rejects.
+  candidates?: readonly string[];
 }
 
 interface CodeDefinition {
@@ -470,7 +475,7 @@ const loadFiles = (
   source: string,
   fileName: string,
   isModule: boolean,
-  host: Pick<EscoreSteps, "isModuleHost">,
+  host: Pick<EscoreSteps, "isModuleHost" | "candidates">,
   // The names of the parsed files that Node's wrapper holds the code of.
   wrapped: Set<string>,
 ): ProgramFile[] => {
@@ -623,58 +628,82 @@ const loadFiles = (
     const sourceFile = file.sourceFile;
     if (path === entry) rejectEarlyErrors(sourceFile, nodeParse);
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile, nodeParse);
+    // The candidates of the file's directory, each requested as an import() of "./" and its name
+    // would request it, which Node's resolution finds as it finds the file of a literal's.
+    const directory = path.slice(0, path.lastIndexOf("/"));
+    const candidates = isRejected
+      ? []
+      : (host.candidates ?? []).flatMap((candidate) => {
+          if (candidate.slice(0, candidate.lastIndexOf("/")) !== directory) return [];
+          const call = ts.createSourceFile(
+            path,
+            `import(${JSON.stringify(`./${candidate.slice(directory.length + 1)}`)})`,
+            ts.ScriptTarget.ESNext,
+            true,
+          ).statements[0];
+          const literal =
+            ts.isExpressionStatement(call) && isImportCall(call.expression)
+              ? call.expression.arguments[0]
+              : undefined;
+          return literal !== undefined && ts.isStringLiteral(literal)
+            ? [[literal.text, literal] as const]
+            : [];
+        });
+    const requested = new Map([...written, ...candidates]);
     const targets = new Map(
-      [...(isRejected ? [] : getSpecifiers(sourceFile, kind))].flatMap(([specifier, parsed]) => {
-        const literal = written.get(specifier);
-        const builtin =
-          literal !== undefined && kind === "module" && !ts.isCallExpression(literal.parent)
-            ? getAsyncHooksSpecifier(literal)
-            : undefined;
-        if (builtin !== undefined) {
-          if (!numbers.has(builtin)) numbers.set(builtin, numbers.size + 1);
-          return [[specifier, numbers.get(builtin) ?? 0] as const];
-        }
-        const found = literal === undefined ? undefined : resolve(literal);
-        // A CommonJS module's require of a file that isn't there stops as an import of one does,
-        // where the module's code always requires it as it loads, rather than in a function, a
-        // class, a branch, a loop, or a try, which may not run it, at the require in the code that
-        // tla-ts parses, which Node's wrapper holds.
-        if (
-          found === undefined &&
-          literal !== undefined &&
-          kind === "commonjs" &&
-          ts.isCallExpression(literal.parent) &&
-          /^\.\.?\//.test(literal.text) &&
-          ts.findAncestor(literal, isConditional) === undefined
-        ) {
-          throw new TlaTypeScriptError(`tla-ts can't load the module ${literal.text}`, parsed);
-        }
-        // An import() of a string that Node's resolution rejects, which the file requests no
-        // other way, has the target 0, at which the host rejects the call as Node does.
-        if (
-          found === undefined &&
-          literal !== undefined &&
-          isImportCall(literal.parent) &&
-          isOnlyImportCalled(sourceFile, specifier) &&
-          resolveModule(literal.text, literal.getSourceFile().fileName, false).isMissing
-        ) {
-          return [[specifier, 0] as const];
-        }
-        if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
-        const target = getRealPath(found);
-        if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
-        const facade = `${target}.facade.mjs`;
-        if (
-          kind === "commonjs" &&
-          !target.endsWith(".json") &&
-          !facades.has(facade) &&
-          getKind(target, readFileSync(target, "utf8")) === "module"
-        ) {
-          facades.set(facade, target);
-          numbers.set(facade, numbers.size + 1);
-        }
-        return [[specifier, numbers.get(target) ?? 0] as const];
-      }),
+      [...(isRejected ? [] : getSpecifiers(sourceFile, kind)), ...candidates].flatMap(
+        ([specifier, parsed]) => {
+          const literal = requested.get(specifier);
+          const builtin =
+            literal !== undefined && kind === "module" && !ts.isCallExpression(literal.parent)
+              ? getAsyncHooksSpecifier(literal)
+              : undefined;
+          if (builtin !== undefined) {
+            if (!numbers.has(builtin)) numbers.set(builtin, numbers.size + 1);
+            return [[specifier, numbers.get(builtin) ?? 0] as const];
+          }
+          const found = literal === undefined ? undefined : resolve(literal);
+          // A CommonJS module's require of a file that isn't there stops as an import of one does,
+          // where the module's code always requires it as it loads, rather than in a function, a
+          // class, a branch, a loop, or a try, which may not run it, at the require in the code that
+          // tla-ts parses, which Node's wrapper holds.
+          if (
+            found === undefined &&
+            literal !== undefined &&
+            kind === "commonjs" &&
+            ts.isCallExpression(literal.parent) &&
+            /^\.\.?\//.test(literal.text) &&
+            ts.findAncestor(literal, isConditional) === undefined
+          ) {
+            throw new TlaTypeScriptError(`tla-ts can't load the module ${literal.text}`, parsed);
+          }
+          // An import() of a string that Node's resolution rejects, which the file requests no
+          // other way, has the target 0, at which the host rejects the call as Node does.
+          if (
+            found === undefined &&
+            literal !== undefined &&
+            isImportCall(literal.parent) &&
+            isOnlyImportCalled(sourceFile, specifier) &&
+            resolveModule(literal.text, literal.getSourceFile().fileName, false).isMissing
+          ) {
+            return [[specifier, 0] as const];
+          }
+          if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
+          const target = getRealPath(found);
+          if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
+          const facade = `${target}.facade.mjs`;
+          if (
+            kind === "commonjs" &&
+            !target.endsWith(".json") &&
+            !facades.has(facade) &&
+            getKind(target, readFileSync(target, "utf8")) === "module"
+          ) {
+            facades.set(facade, target);
+            numbers.set(facade, numbers.size + 1);
+          }
+          return [[specifier, numbers.get(target) ?? 0] as const];
+        },
+      ),
     );
     files.push({
       sourceFile,
@@ -683,6 +712,8 @@ const loadFiles = (
       targets,
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
       isRejected,
+      names:
+        candidates.length === 0 ? [] : process.getBuiltinModule("node:fs").readdirSync(directory),
     });
   };
   // The files in waves, each of the files that the waves before it request: each one prepared,
