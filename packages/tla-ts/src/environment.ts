@@ -1751,6 +1751,7 @@ export const createEnvironment = (
       const symbol: ModuleSymbol = {
         key,
         arity: 0,
+        params: [],
         kind: "Theorem",
         range: theorem.location.range,
         goal: theorem.goal,

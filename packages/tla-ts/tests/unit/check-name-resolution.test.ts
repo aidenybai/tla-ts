@@ -1966,6 +1966,118 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const INSTANCED_THEOREMS = [
+    "EXTENDS Naturals",
+    "F(a) == {a}",
+    "F2(a, b) == {a, b}",
+    "---- MODULE Inner ----",
+    "CONSTANT d, Op2(_)",
+    "THEOREM T3 == Op2(d) = Op2(d)",
+    "====",
+    "---- MODULE Pure ----",
+    "CONSTANT c, Op(_)",
+    "I(H(_)) == INSTANCE Inner WITH d <- c, Op2 <- H",
+    "THEOREM T == Op(c) = Op(c)",
+    "THEOREM TAP == ASSUME c = c PROVE Op(c) = Op(c)",
+    "ASSUME A == Op(c) = Op(c)",
+    "====",
+    "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G",
+  ].join("\n");
+
+  it("passes operators to the parameters of an instance whose theorems a spec selects like SANY", async () => {
+    const result = await checkNames(
+      [
+        INSTANCED_THEOREMS,
+        "D1 == P(F)!T",
+        "D2 == P(F)!A",
+        "D3 == P(LAMBDA a : {a})!T",
+        "D4 == P(F)!I(F)!T3",
+        "D5 == P(F)!TAP",
+        "D6 == LET L(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN L(F)!T",
+        "H(Z(_)) == 1",
+        "D7 == H(P!T)",
+        "THEOREM X == TRUE BY P(F)!T",
+        "USE P(F)!T",
+      ].join("\n"),
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "D == P(1)!T",
+      "line 17, col 8 to line 17, col 8",
+      "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+    ],
+    [
+      "D == P(1)!A",
+      "line 17, col 8 to line 17, col 8",
+      "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+    ],
+    [
+      "D == P(F2)!T",
+      "line 17, col 8 to line 17, col 9",
+      "Expected arity 1 but found operator of arity 2.",
+    ],
+    [
+      "D == P(LAMBDA a, b : {a})!T",
+      "line 17, col 6 to line 17, col 6",
+      "Lambda expression with arity 2 used as argument 1 of operator `P', \nbut an operator of arity 1 is required.",
+    ],
+    [
+      "D == P(\\cup)!T",
+      "line 17, col 6 to line 17, col 6",
+      "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 16, col 1 to line 16, col 45 of module M', \nbut an operator of arity 1 was expected.",
+    ],
+    [
+      "D == P(F)!I(1)!T3",
+      "line 17, col 13 to line 17, col 13",
+      "An expression appears as argument number 2 (counting from 1) to operator 'P!I', in a position an operator is required.",
+    ],
+    [
+      "D == P(F)!I(LAMBDA a, b : {a})!T3",
+      "line 17, col 11 to line 17, col 11",
+      "Lambda expression with arity 2 used as argument 2 of operator `P!I', \nbut an operator of arity 1 is required.",
+    ],
+    [
+      "D == P(F)!I(\\cup)!T3",
+      "line 17, col 11 to line 17, col 11",
+      "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 2 (counting from 1) to operator `line 16, col 1 to line 16, col 45 of module M', \nbut an operator of arity 1 was expected.",
+    ],
+    [
+      "D == LET L(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN L(1)!T",
+      "line 17, col 61 to line 17, col 61",
+      "An expression appears as argument number 1 (counting from 1) to operator 'L', in a position an operator is required.",
+    ],
+    [
+      "D == LET L(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G IN L(\\cup)!T",
+      "line 17, col 59 to line 17, col 59",
+      "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 17, col 10 to line 17, col 54 of module M', \nbut an operator of arity 1 was expected.",
+    ],
+    [
+      "THEOREM X == TRUE BY P(1)!T",
+      "line 17, col 24 to line 17, col 24",
+      "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+    ],
+    [
+      "THEOREM X == TRUE BY P(F2)!T",
+      "line 17, col 24 to line 17, col 25",
+      "Expected arity 1 but found operator of arity 2.",
+    ],
+    [
+      "USE P(1)!T",
+      "line 17, col 7 to line 17, col 7",
+      "An expression appears as argument number 1 (counting from 1) to operator 'P', in a position an operator is required.",
+    ],
+  ])(
+    "checks %j against the parameters of the instance it selects a theorem from like SANY",
+    async (uses, location, message) => {
+      await expect(checkNames(`${INSTANCED_THEOREMS}\n${uses}`)).rejects.toThrow(
+        createSanyError([{ location: `${location} of module M`, message }]),
+      );
+    },
+  );
+
   it.each([
     [
       "---- MODULE P ----\nCONSTANT ba, ab\nVARIABLE v\n====\nK == INSTANCE P",

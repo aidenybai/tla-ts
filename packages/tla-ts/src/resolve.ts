@@ -1348,8 +1348,10 @@ const getInstances = (
   );
 };
 
-const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
-  getInstances(name.split("!"), scope, unit)[0];
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const names = name.split("!");
+  return getInstances(names, scope, unit, names.length)[0];
+};
 
 const isInstanceArityReported = (
   expression: Expression,
@@ -1526,7 +1528,8 @@ const matchArgument = (
     return false;
   }
   const name = arg.kind === "Identifier" ? arg.name : arg.operator;
-  const argParams = findBinding(name, scope, unit)?.params ?? [];
+  const binding = findBinding(name, scope, unit);
+  const argParams = binding?.kind === "Theorem" ? [] : (binding?.params ?? []);
   const argArity = getSymbolArity(arg, name, scope, unit, true);
   if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
     report(
@@ -1557,6 +1560,28 @@ const reportApplyArity = (
     message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
   });
 
+const matchTheoremArguments = (
+  expression: Expression & { kind: "Apply" },
+  operator: string,
+  params: number[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const instances = getInstances(operator.split("!"), scope, unit);
+  return expression.args.map((arg, index) => {
+    const position = instances.findIndex((instance) => instance && index < instance.arity);
+    return matchArgument(
+      arg,
+      params[index],
+      index,
+      instances[position]?.name ?? operator,
+      expression.selectorRanges?.[position],
+      scope,
+      unit,
+    );
+  });
+};
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
@@ -1575,7 +1600,10 @@ const resolveApply = (
     return;
   }
   const params =
-    callee && (callee.kind === "Definition" ? callee.params : expression.args.map(() => 0));
+    callee &&
+    (callee.kind === "Definition" || callee.kind === "Theorem"
+      ? callee.params
+      : expression.args.map(() => 0));
   if (params === undefined) {
     expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
     return;
@@ -1583,18 +1611,21 @@ const resolveApply = (
   const operatorRange =
     expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
   const isSelection = operator === SELECTION_NAME;
-  const matches = expression.args.slice(0, params.length).map((arg, index) => {
-    const source = isSelection ? selectionArguments.get(arg) : undefined;
-    return matchArgument(
-      arg,
-      params[index],
-      source?.index ?? index,
-      source?.operator ?? operator,
-      source?.range ?? operatorRange,
-      scope,
-      isSelection ? { ...unit, isGenerated: false } : unit,
-    );
-  });
+  const matches =
+    callee?.kind === "Theorem"
+      ? matchTheoremArguments(expression, operator, params, scope, unit)
+      : expression.args.slice(0, params.length).map((arg, index) => {
+          const source = isSelection ? selectionArguments.get(arg) : undefined;
+          return matchArgument(
+            arg,
+            params[index],
+            source?.index ?? index,
+            source?.operator ?? operator,
+            source?.range ?? operatorRange,
+            scope,
+            isSelection ? { ...unit, isGenerated: false } : unit,
+          );
+        });
   if (isAssumeProveTheorem(operator, scope, unit) && expression.location.range) {
     unit.errors.push({
       location: formatRange(expression.location.range),
@@ -1613,6 +1644,7 @@ const resolveApply = (
   ) {
     return;
   }
+  if (callee?.kind === "Theorem") return;
   matches.forEach((isMatched, index) => {
     if (!isMatched && expression.location.range) {
       unit.errors.push({
@@ -2142,6 +2174,9 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
   if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.arity !== fact.args.length) {
     reportApplyArity(fact, name, theorem.arity, scope, unit);
     return BUILTIN_LOCATION;
+  }
+  if (fact.kind === "Apply" && theorem?.kind === "Theorem" && theorem.params) {
+    matchTheoremArguments(fact, name, theorem.params, scope, unit);
   }
   const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
   if (fact.kind === "Identifier" && instance?.kind === "Instance" && instance.arity !== 0) {
