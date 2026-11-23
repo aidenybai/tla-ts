@@ -44,7 +44,7 @@ export const transformRules = (context: DatalogContext, plugins: RuleTransformer
   let isModified = false;
   let rules = RuleSet.copy(context.ruleSet);
   for (const plugin of ordered) {
-    context.manager.limit.checkpoint();
+    if (context.isCanceled()) break;
     const result = plugin.apply(rules);
     if (result === undefined) continue;
     isModified = true;
@@ -115,6 +115,8 @@ export const applyDefaultTransformation = (context: DatalogContext) =>
     else plugins.push(new MkRuleInliner(context, 34930));
     plugins.push(
       new MkBitBlast(context, 35000),
+      // Z3 quirk: context::karr is always false, so the karr plugin only counts its step.
+      new MkGuard(36010, false, "karr"),
       new MkGuard(36030, params.getBool("xform.scale", false), "scale"),
       new MkGuard(35999, params.getBool("xform.array_blast", false), "array_blast"),
       new MkElimTermIte(context, 35010),

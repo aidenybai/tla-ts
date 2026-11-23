@@ -81,6 +81,7 @@ export class Hnf {
     this.memoizedDisjunctions.clear();
     const result: number[] = [];
     for (let fml = this.todo.pop(); fml !== undefined; fml = this.todo.pop()) {
+      // Deviation from Z3: Z3 stops quietly here and loses the rule's other clauses, which can make the next query unsat.
       this.manager.limit.checkpoint();
       const horn = this.mkHorn(fml);
       if (horn !== -1) result.push(horn);

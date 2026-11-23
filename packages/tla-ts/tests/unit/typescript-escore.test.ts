@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -3975,4 +3976,145 @@ if (view !== "${expected}") throw new Error(view);
     await shallow.terminate();
     expect(thrown).toEqual({ name: undefined, message: undefined });
   }, 300_000);
+});
+
+// test262's includes that tla-ts compiles from a TypeScript port, run on ESCore and in Node, where
+// the port must behave as the include does. A port that reads its error's stack runs in a module,
+// whose location in a stack Node gives as test262's runner does, and one that passes its global
+// this runs in a script.
+describe("ports test262's harness includes", () => {
+  const readPort = (name: string) =>
+    readFileSync(join(import.meta.dirname, "../conformance", name), "utf8");
+  const getNodeError = (source: string) => {
+    try {
+      runInNewContext(stripTypeScriptTypes(source));
+      return undefined;
+    } catch (error) {
+      return String(error);
+    }
+  };
+
+  // The part of test262's assert that the shells call.
+  const ASSERT = `
+    const assert = {
+      sameValue(actual: unknown, expected: unknown, message?: string) {
+        if (!Object.is(actual, expected)) throw new Error(\`\${message ?? ""} \${String(actual)} !== \${String(expected)}\`);
+      },
+    };
+  `;
+
+  describe("SpiderMonkey's Set shell", () => {
+    const port = ASSERT + readPort("test262-sm-set-shell.ts");
+    const uses = `
+      assertSetContainsExactOrderedItems(new Set([3, 1, 2]), [3, 1, 2]);
+      const like = new SetLike([1, 2]);
+      const keys = like.keys();
+      const first = keys.next();
+      if (like.size !== 2 || !like.has(2) || like.has(3) || first.value !== 1) throw new Error("SetLike");
+      const log: unknown[] = [];
+      const logged = LoggingProxy({ a: 1 }, log);
+      if (logged.proxy.a !== 1 || log.join() !== "[[get]],a") throw new Error(log.join());
+      let isRejected = false;
+      try {
+        keys.return();
+      } catch (error) {
+        isRejected = String(error).includes("|return|");
+      }
+      if (!isRejected) throw new Error("return");
+    `;
+
+    it("checks a Set's items in order and logs a proxy's reads", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    });
+
+    it("rejects a Set whose items come in another order", async () => {
+      const wrong = "assertSetContainsExactOrderedItems(new Set([1, 2]), [2, 1]);";
+      expect(getNodeError(port + wrong)).toContain("Element at index 0:");
+      expect((await checkScript(port + wrong)).message).toContain(THREW);
+    });
+  });
+
+  describe("SpiderMonkey's TypedArray shell", () => {
+    const port = ASSERT + readPort("test262-sm-typed-array-shell.ts");
+    const uses = `
+      const shared = sharedTypedArrayConstructors[1];
+      const array = new shared([1, 2, 3]);
+      if (!(array.buffer instanceof SharedArrayBuffer) || array[2] !== 3) throw new Error("shared");
+      if (shared.name !== "Uint8Array" || shared.BYTES_PER_ELEMENT !== 1) throw new Error("name");
+      if (anyTypedArrayConstructors.length !== 2 * typedArrayConstructors.length) throw new Error("any");
+      if (!isSharedConstructor(shared) || isSharedConstructor(Uint8Array)) throw new Error("isShared");
+      if (!isUnsignedConstructor(shared) || isFloatConstructor(shared)) throw new Error("kind");
+      if (!isFloatConstructor(Float64Array) || isUnsignedConstructor(Int8Array)) throw new Error("float");
+    `;
+
+    it("makes a shared constructor of each typed array's and tells their kinds", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    });
+
+    it("tells that a signed array's constructor isn't unsigned", async () => {
+      const wrong = 'if (isUnsignedConstructor(Int8Array)) throw new Error("unsigned");';
+      expect(getNodeError(port + wrong)).toBeUndefined();
+      expect((await checkScript(port + wrong)).message).toBeUndefined();
+      const asserted = 'if (!isUnsignedConstructor(Int8Array)) throw new Error("signed");';
+      expect(getNodeError(port + asserted)).toContain("signed");
+      expect((await checkScript(port + asserted)).message).toContain(THREW);
+    });
+  });
+
+  describe("testIntl.js", () => {
+    const port =
+      "class Test262Error extends Error {}\n" +
+      "function assert(value: unknown, message?: string) { if (value !== true) throw new Test262Error(message); }\n" +
+      readPort("test262-test-intl.ts");
+    const uses = `
+      const names: string[] = [];
+      testWithIntlConstructors((Constructor: { name: string }) => names.push(Constructor.name));
+      if (names.slice(0, 3).join() !== "Collator,NumberFormat,DateTimeFormat") throw new Error(names.join());
+      if (!isCanonicalizedStructurallyValidLanguageTag("de-DE")) throw new Error("de-DE");
+      if (isCanonicalizedStructurallyValidLanguageTag("DE-de")) throw new Error("DE-de");
+      if (getLocaleBaseName("en-US-u-va-posix") !== "en-US") throw new Error("baseName");
+      if (getInvalidLanguageTags().indexOf("x-") === -1) throw new Error("invalid");
+    `;
+
+    it("runs a test on each service constructor and tells canonical language tags", async () => {
+      expect(getNodeError(port + uses)).toBeUndefined();
+      expect((await checkScript(port + uses)).message).toBeUndefined();
+    }, 120_000);
+
+    it("rejects a tag that isn't canonical", async () => {
+      const wrong =
+        'if (!isCanonicalizedStructurallyValidLanguageTag("de-de")) throw new Error("de-de");';
+      expect(getNodeError(port + wrong)).toContain("de-de");
+      expect((await checkScript(port + wrong)).message).toContain(THREW);
+    }, 120_000);
+  });
+
+  describe("SpiderMonkey's Math shell", () => {
+    const port = readPort("test262-sm-math-shell.ts");
+    const near = `
+      assertNear(Math.cbrt(27), 3);
+      assertNear(-0, 0);
+      assertNear(ONE_PLUS_EPSILON, 1);
+      let isRejected = false;
+      try {
+        assertNear(1.5, 1);
+      } catch (error) {
+        isRejected = String(error).includes("expected a number near 1");
+      }
+      if (!isRejected) throw new Error("assertNear accepted 1.5 near 1");
+    `;
+
+    it("accepts a number near the expected one and rejects one far from it", async () => {
+      expect(getNodeError(port + near)).toBeUndefined();
+      expect((await checkModule(port + near)).message).toBeUndefined();
+    });
+
+    it("rejects a number two representable values away", async () => {
+      const far = "assertNear(1 + 2 * Number.EPSILON, 1);";
+      expect(getNodeError(port + far)).toContain("expected a number near 1");
+      expect((await checkModule(port + far)).message).toContain(THREW);
+    });
+  });
 });

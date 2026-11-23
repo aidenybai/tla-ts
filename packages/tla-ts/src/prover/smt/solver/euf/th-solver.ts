@@ -118,6 +118,13 @@ export abstract class ThSolver {
   hasUnhandled() {
     return false;
   }
+  shouldResearch(_core: readonly number[]) {
+    return false;
+  }
+  addAssumptions(_assumptions: Set<number>) {}
+  trackingAssumptions() {
+    return false;
+  }
 
   protected visit(_expr: number) {
     return false;

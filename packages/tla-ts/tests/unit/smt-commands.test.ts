@@ -1918,6 +1918,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("has no model after the incremental sat solver gives up", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(get-consequences ((bvule y x)) (x))",
+        "(get-model)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      "",
+      '(error "line 5 column 10: model is not available")',
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun bvule ((_ BitVec 3) (_ BitVec 3)) Bool)',
+      ')")',
+    ]);
+  });
+
   it("checks with the incremental sat solver after get-consequences under QF_BV", () => {
     expect(
       run([

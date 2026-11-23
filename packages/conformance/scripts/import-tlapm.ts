@@ -279,13 +279,16 @@ const candidates: PendingTest[] = [
 ];
 
 // Their output depends on the machine rather than the input: on when OCaml's GC frees a lambda
-// from Zenon's weak expression table, or on whether cvc4 is installed.
+// from Zenon's weak expression table, on whether Zenon's heap passes 1 GB before tlapm's 10 s
+// timeout, or on whether cvc4 is installed.
 const MACHINE_DEPENDENT = [
   "zenon/test/test13.znn",
   "zenon/test/test14.znn",
   "zenon/test/test21.znn",
   "zenon/test/test73.znn",
+  "test/bugs/everythingisafcn_test.tla",
   "test/fast/basic/cvc3_false_test.tla",
+  "test/regression_tests/function_except_tuple_soundness_gh201_test.tla",
 ];
 const pendingTests = candidates.filter((pending) => {
   const ref = pending.metadata.ref ?? "";
