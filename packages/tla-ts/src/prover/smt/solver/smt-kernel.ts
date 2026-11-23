@@ -1,4 +1,5 @@
 import { type AstManager } from "./ast";
+import { getDoubleParameter } from "./gparams";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
 import { getCaseSplitStrategy } from "./case-split-queue";
@@ -19,6 +20,9 @@ export const getGlobalSmtParams = (
     relevancyLevel,
     parameters.get("smt.auto_config") !== "false" && parameters.get("auto_config") !== "false",
   ),
+  phaseSelection: Number(parameters.get("smt.phase_selection") ?? "3"),
+  restartStrategy: Number(parameters.get("smt.restart_strategy") ?? "1"),
+  restartFactor: getDoubleParameter(parameters, "smt.restart_factor"),
   qiMaxInstances: Number(parameters.get("smt.qi.max_instances") ?? "4294967295"),
   qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
   isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",
@@ -26,6 +30,7 @@ export const getGlobalSmtParams = (
   mbqiForceTemplate: Number(parameters.get("smt.mbqi.force_template") ?? "10"),
   mbqiId: parameters.get("smt.mbqi.id") ?? "",
   isModelValidating: parameters.get("model_validate") === "true",
+  isArrayExtensional: parameters.get("smt.array.extensional") !== "false",
 });
 
 export class SmtKernel {
@@ -49,6 +54,9 @@ export class SmtKernel {
       isEmatching: params.isEmatching,
       relevancyLevel: params.relevancyLevel ?? 2,
       caseSplitStrategy: params.caseSplitStrategy,
+      phaseSelection: params.phaseSelection,
+      restartStrategy: params.restartStrategy,
+      restartFactor: params.restartFactor,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,
@@ -62,6 +70,7 @@ export class SmtKernel {
       mbqiForceTemplate: params.mbqiForceTemplate,
       mbqiId: params.mbqiId,
       isModelValidating: params.isModelValidating,
+      isArrayExtensional: params.isArrayExtensional,
       isProofsEnabled: params.isProofsEnabled,
     });
     this.setup = params.setup;

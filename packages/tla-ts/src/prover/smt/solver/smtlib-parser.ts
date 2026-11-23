@@ -3630,6 +3630,10 @@ export const createSmtlibReader = (
     pop,
     reset,
     restrictSorts,
+    isNumeralAsReal: () => restricted.isNumeralAsReal,
+    setNumeralAsReal: (isNumeralAsReal: boolean) => {
+      restricted.isNumeralAsReal = isNumeralAsReal;
+    },
     registerList,
     isUsed,
     isClashing,

@@ -237,7 +237,7 @@ export class TheoryArray extends Theory {
   newDiseqEh(inputFirst: number, inputSecond: number) {
     const first = this.unionFind.find(inputFirst);
     const second = this.unionFind.find(inputSecond);
-    if (this.isArrayNode(this.getEnode(first)))
+    if (this.isArrayNode(this.getEnode(first)) && this.context.params.isArrayExtensional !== false)
       this.assertExtensionality(this.getEnode(first), this.getEnode(second));
   }
 
