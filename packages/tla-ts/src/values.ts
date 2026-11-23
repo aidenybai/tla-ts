@@ -1363,7 +1363,9 @@ const isFailingLikeTlc = (left: Value, right: Value) =>
           (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))))));
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
+  typeof left !== "object" && typeof left === typeof right
+    ? left === right
+    : computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
 export const isReceiverEqual = (left: Value, right: Value) => {
   const sets = setTrace.sets;
