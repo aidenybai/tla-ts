@@ -422,6 +422,14 @@ const DEFINITIONS = [
                    <<Val(str), IntV(file), IF N("type") \\in DOMAIN Val(attributes) THEN Str(Val(attributes)[N("type")]) ELSE Undefined>>)
       resolved == IF IsAbrupt(host) THEN host ELSE Call(host.s, Val(cap).resolve, Undefined, <<Val(host)>>)
   IN IF IsAbrupt(resolved) THEN resolved ELSE Ok(resolved.s, Val(cap).promise)`,
+  // EvaluateImportCall of an import.source() call, as HostImportCall runs it until the host loads
+  // the module: a throw of the specifier's string rejects the call's promise, and Node has the
+  // source of none of the modules it loads.
+  `HostImportSourceCall(s, specifier) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      str == ToStr(cap.s, specifier)
+  IN IF IsAbrupt(str) THEN RejectWith(str, Val(cap))
+     ELSE Assert(FALSE, "tla-ts can't import a module's source, which Node rejects")`,
   // The attributes of import()'s options, as V8 reads them, where each is type, which Node's loader
   // supports and rejects others of later.
   `NodeImportAttributes(s, options) ==

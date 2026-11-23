@@ -433,6 +433,44 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  // EvaluateImportCall of the source phase imports proposal rejects its promise where the
+  // specifier's string throws, before the host loads the module.
+  describe("rejects an import.source() whose specifier throws, as Node does", () => {
+    const getFiles = (expected: string) => ({
+      "package.json": '{ "type": "module" }',
+      "main.js": `const log = [];
+        const getSpecifier = (error) => ({ toString() { throw error; } });
+        import.source(getSpecifier(new RangeError("first"))).catch((error) => log.push(error.constructor.name + ":" + error.message));
+        Promise.resolve().then(() => log.push("job"));
+        import.source(getSpecifier("second")).catch((error) => log.push(error));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(getFiles("RangeError:first,job,second"), "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(getFiles("job,RangeError:first,second"), "main.js");
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+
+    it("stops where the host would load the module's source", async () => {
+      const result = await checkEntry(
+        {
+          "package.json": '{ "type": "module" }',
+          "main.js": 'import.source("./main.js").catch(() => {});',
+        },
+        "main.js",
+      );
+      expect([result.node, result.message]).toEqual([
+        0,
+        expect.stringContaining("tla-ts can't import a module's source"),
+      ]);
+    });
+  });
+
   describe("fails as Node does where a module throws or imports a name no module exports", () => {
     it("rejects a module that throws", async () => {
       expect(

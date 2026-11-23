@@ -1318,6 +1318,19 @@ export const specialize = (
         `LET r == ${specifier("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET o == ${options("r.s", "ctx")} IN IF IsAbrupt(o) THEN o ELSE HostImportCall(o.s, ${fileNumbers.get(node.getSourceFile())}, Val(r), Val(o))`,
       );
     }
+    // EvaluateImportCall of an import.source() call, of the source phase imports proposal, whose
+    // one argument is the specifier.
+    if (
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      node.expression.name.text === "source"
+    ) {
+      const specifier = value(node.arguments[0], scope);
+      return defineCode(
+        "ImportSourceCall",
+        `LET r == ${specifier("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE HostImportSourceCall(r.s, Val(r))`,
+      );
+    }
     const callee = ts.isParenthesizedExpression(node.expression)
       ? node.expression.expression
       : node.expression;
