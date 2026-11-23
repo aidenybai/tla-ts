@@ -1304,7 +1304,8 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // A file of thousands of function declarations, as react-dom's client build has, instantiates
-  // them in a loop, in their order, rather than in a chain of states that overflows the stack.
+  // them in a loop, in their order, rather than in a chain of states that overflows the stack. A
+  // check of it takes 8 to 11 s on an idle machine, and up to 46 s on a loaded one.
   describe.each(["cjs", "mjs"])(
     "runs a .%s file of thousands of function declarations as Node does",
     (extension) => {
@@ -1316,7 +1317,7 @@ describe("the CLI with TypeScript files", () => {
         writeFileSync(join(directory, `many.${extension}`), getScript(4498));
         expect(runNode(directory, `many.${extension}`).status).toBe(0);
         expect(getExit(runCli(directory, [`many.${extension}`]))).toEqual([0, ""]);
-      });
+      }, 120_000);
 
       it("rejects another result", () => {
         const directory = copyFixtures("passing");
@@ -1324,7 +1325,7 @@ describe("the CLI with TypeScript files", () => {
         const result = runCli(directory, [`many.${extension}`]);
         expect(getExit(result)).toEqual(getExit(runNode(directory, `many.${extension}`)));
         expect(result.status).toBe(1);
-      });
+      }, 120_000);
     },
   );
 });
