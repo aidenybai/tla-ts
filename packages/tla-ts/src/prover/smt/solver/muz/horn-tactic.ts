@@ -165,7 +165,7 @@ class HornTactic {
         throw new SmtTacticError(`unsupported parameter ${entry[0]}`);
     if (context.params.getSymbol("engine", "auto-config") === "datalog")
       throw new SmtTacticError("unsupported parameter engine=datalog");
-    // Deviation from Z3: a run after a canceled query segfaults in Z3, and here starts from the reset context.
+    // Deviation from Z3: after an rlimit cancels the query inside the engine, Z3 segfaults on the next run.
     context.reset();
     context.ensureOpened();
     const queries: number[] = [];
@@ -195,7 +195,6 @@ class HornTactic {
     if (reachable === L_FALSE) {
       goal.reset();
       const found = context.getModel();
-      // model2model_converter: the interpretations go to the goal's model in table order.
       if (found !== undefined) {
         found.incRef();
         goal.addModelConversion(

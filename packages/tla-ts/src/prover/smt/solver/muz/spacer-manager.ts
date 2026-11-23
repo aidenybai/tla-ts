@@ -24,8 +24,6 @@ class ShiftRewriter extends RewriterTpl {
   }
 }
 
-// The n (index 0) and o (index i + 1) variants of the predicate signatures and spacer's own
-// constants.
 export class SpacerManager extends NamedDecls {
   private entries = new Map<number, MuxEntry>();
   private muxes = new Map<number, { entry: MuxEntry; index: number }>();

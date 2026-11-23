@@ -146,6 +146,7 @@ class Linear {
       if (previous === undefined) previous = substituted;
       else {
         unifier.unifyRules(previous, 0, substituted);
+        // Z3 builds these substitutions only for its proof, but they create terms and cost rlimit.
         unifier.getRuleSubst(previous, true);
         applySubst(manager, sub, unifier.getRuleSubst(substituted, false));
         previous = unifier.apply(previous, 0, substituted).rule;
@@ -165,12 +166,12 @@ class Linear {
       });
   }
 
-  // solver::check_sat counts a step to see whether the limit stopped a search that gave up.
   private checkLevel(level: number) {
     const assumption = this.mkLevelPredicate(this.bmc.queryPred, level);
     const solver = this.solver;
     if (solver.kind === "fd") return solver.solver.check([assumption]);
     const result = solver.kernel.check([assumption]);
+    // solver::check_sat counts a step to see whether the limit stopped a search that gave up.
     if (result === L_UNDEF) this.bmc.context.manager.limit.inc();
     return result;
   }

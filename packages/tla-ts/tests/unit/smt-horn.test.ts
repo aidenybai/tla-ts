@@ -250,7 +250,6 @@ describe("horn tactic", () => {
     ).toEqual(["sat"]);
   });
 
-  // bmc has no model of its own, so the declared predicates take some value.
   it("answers sat with bmc when no rule reaches the query", () => {
     expect(
       run([
@@ -264,7 +263,6 @@ describe("horn tactic", () => {
     ).toEqual(["sat", ["(", "  (define-fun P ((x!0 Int)) Bool", "    false)", ")"].join("\n")]);
   });
 
-  // Z3 warns that nonlinear bmc is highly inefficient and unrolls the rules as a tree.
   it("rejects a nonlinear system with bmc", () => {
     expect(() =>
       run([
