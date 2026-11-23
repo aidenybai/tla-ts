@@ -350,7 +350,6 @@ export class Context extends Internalizer {
     this.params.relevancyLevel = params.relevancyLevel ?? 2;
     config.relevancyLevel = DEFAULT_CONFIG.relevancyLevel;
     this.updateRelevancyLevel();
-    this.params.isEmatching = params.isEmatching;
     config.isEmatching = params.isEmatching ?? true;
     this.params.phaseSelection = params.phaseSelection;
     config.phaseSelection = params.phaseSelection ?? DEFAULT_CONFIG.phaseSelection;
