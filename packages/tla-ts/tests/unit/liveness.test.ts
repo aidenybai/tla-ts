@@ -565,6 +565,23 @@ describe("a fair action that Next splits into matches TLC", () => {
     ]);
   });
 
+  it("evaluates ENABLED on a fair action whose subscript fails, where TLC reports the subscript's error", async () => {
+    const result = await checkFair(
+      'VARIABLE x\nA == x < 2 /\\ x\' = x + 1\nProp == <>(x = 2)\nSpec == x = 0 /\\ [][A]_x /\\ WF_(x + "a")(A)',
+    );
+    expect([
+      result.failure?.exitCode,
+      result.failure?.callStack?.flatMap((expression, index, stack) => {
+        const range = expression.location.range;
+        return range && expression !== stack[index - 1]
+          ? [`${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`]
+          : [];
+      }),
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual([255, ["6.42-6.42", "4.6-4.24", "4.6-4.10", "4.15-4.24", "6.33-6.39"], 2, 2]);
+  });
+
   // A and B step from y = a to states that the symmetry or the view merges, so the step of B
   // reaches A's state without being A's step.
   it.each([
