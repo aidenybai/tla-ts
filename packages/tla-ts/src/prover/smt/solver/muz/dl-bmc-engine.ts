@@ -59,7 +59,7 @@ export class Bmc implements Engine {
     if (this.rules.getPredicateRules(this.queryPred).length === 0) return L_FALSE;
     if (!this.isLinear()) throw new SmtUnsupportedError("the nonlinear bmc engine");
     const manager = context.manager;
-    const parameters = context.params.parameters;
+    const parameters = context.parameters;
     if (this.rules.isFiniteDomain())
       return new Linear(this, {
         kind: "fd",
@@ -160,7 +160,7 @@ class Linear {
     if (solver.kind === "smt")
       solver.kernel.updateParams({
         ...solver.params,
-        ...getGlobalSmtParams(this.bmc.context.params.parameters, 0),
+        ...getGlobalSmtParams(this.bmc.context.parameters, 0),
         isMbqi: false,
       });
   }

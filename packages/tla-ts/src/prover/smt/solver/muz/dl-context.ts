@@ -40,7 +40,7 @@ const ENGINE_NAMES = new Map([
 
 // As in Z3, these are copied when the context is made, so a later fp option doesn't apply.
 export class FpParams {
-  readonly parameters: ReadonlyMap<string, string>;
+  private parameters: ReadonlyMap<string, string>;
 
   constructor(parameters: ReadonlyMap<string, string>) {
     this.parameters = new Map(parameters);
@@ -88,18 +88,30 @@ export class DatalogContext {
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
   isBounded = false;
+  readonly params: FpParams;
 
   constructor(
     readonly manager: AstManager,
-    readonly params: FpParams,
+    readonly parameters: ReadonlyMap<string, string>,
     readonly rewriterOptions: RewriterOptions,
     private engineFactory: EngineFactory,
   ) {
+    this.params = new FpParams(parameters);
     this.ruleManager = new RuleManager(manager, this);
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
     this.rewriter = new Rewriter(manager, rewriterOptions);
+  }
+
+  reset() {
+    this.ruleSet.reset();
+    this.ruleFmlsHead = 0;
+    for (const fml of this.ruleFmls) this.manager.decRef(fml);
+    this.ruleFmls = [];
+    this.ruleNames = [];
+    this.preds.clear();
+    this.engine = undefined;
   }
 
   // th_rewriter: the result comes with a reference.

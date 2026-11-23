@@ -18,7 +18,7 @@ import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
 import { Bmc } from "./dl-bmc-engine";
-import { DatalogContext, ENGINE_BMC, ENGINE_DATALOG, FpParams } from "./dl-context";
+import { DatalogContext, ENGINE_BMC, ENGINE_DATALOG } from "./dl-context";
 import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
@@ -27,7 +27,7 @@ export const createDatalogContext = (
   parameters: ReadonlyMap<string, string>,
   rewriterOptions: RewriterOptions,
 ) =>
-  new DatalogContext(manager, new FpParams(parameters), rewriterOptions, (context, engine) => {
+  new DatalogContext(manager, parameters, rewriterOptions, (context, engine) => {
     if (engine === ENGINE_DATALOG)
       return {
         // rel_context::query checks the rules with the query's before the saturation the port lacks.
@@ -165,6 +165,8 @@ class HornTactic {
         throw new SmtTacticError(`unsupported parameter ${entry[0]}`);
     if (context.params.getSymbol("engine", "auto-config") === "datalog")
       throw new SmtTacticError("unsupported parameter engine=datalog");
+    // Deviation from Z3: a run after a canceled query segfaults in Z3, and here starts from the reset context.
+    context.reset();
     context.ensureOpened();
     const queries: number[] = [];
     for (const form of goal.forms.items) {
@@ -210,11 +212,16 @@ class HornTactic {
   }
 }
 
-export const runHorn =
-  (
-    manager: AstManager,
-    parameters: ReadonlyMap<string, string>,
-    rewriterOptions: RewriterOptions,
-  ) =>
-  (goal: Goal) =>
-    new HornTactic(manager, parameters, rewriterOptions).apply(goal);
+// Z3 quirk: the fp options are read when the tactic is made, and clean() renews it only after a run returns.
+export const runHorn = (
+  manager: AstManager,
+  parameters: ReadonlyMap<string, string>,
+  rewriterOptions: RewriterOptions,
+) => {
+  let tactic = new HornTactic(manager, parameters, rewriterOptions);
+  return (goal: Goal) => {
+    const goals = tactic.apply(goal);
+    tactic = new HornTactic(manager, parameters, rewriterOptions);
+    return goals;
+  };
+};

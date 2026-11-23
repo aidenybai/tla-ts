@@ -310,6 +310,65 @@ describe("horn tactic", () => {
     ).toEqual(["sat", "(:rlimit 34)"]);
   });
 
+  const counterSystem = [
+    "(declare-fun P (Int) Bool)",
+    "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+    "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+    "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+  ];
+
+  it("reads the fp options when the Horn solver is made and again after each run", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat", "unknown"]);
+  });
+
+  it("keeps the Horn engine of the fp options from when the solver was made", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        counterSystem[0],
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem.slice(1),
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
+  it("reads the fp options when check-sat-using makes the horn tactic", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        "(check-sat-using horn)",
+      ]),
+    ).toEqual(["unknown"]);
+  });
+
+  it("answers a Horn query run again after a canceled one, where Z3 segfaults", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        ...counterSystem,
+        "(set-option :rlimit 100)",
+        "(check-sat)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", "unsat"]);
+  });
+
   it("answers a nonlinear system", () => {
     expect(
       run([
