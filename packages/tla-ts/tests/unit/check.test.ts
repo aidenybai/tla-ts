@@ -10992,6 +10992,40 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a product compared with itself",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 110 to line 5, col 112 of module M: 2:22",
+      ],
+    ],
+    [
+      "the filter compared with itself",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\E t \\in F \\cup {9} : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 89 to line 5, col 91 of module M: 2:22",
+      ],
+    ],
+    [
+      "the filter compared with itself, on the right of the union",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\E t \\in {9} \\cup F : t = t",
+      [
+        "line 5, col 28 to line 5, col 59 of module M: 2:17",
+        "|||line 5, col 82 to line 5, col 84 of module M: 2:22",
+      ],
+    ],
+  ])(
+    "charges the draws of a union with a filter converted by %s before sorting it fails",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(
+        expect.arrayContaining(rows),
+      );
+    },
+  );
+
+  it.each([
+    [
       "a filter",
       "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN PrintT(F = F) /\\ PrintT(<<1, 1>> \\in F)",
       ["<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],

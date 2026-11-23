@@ -2687,10 +2687,13 @@ const getChargedProduct = (charges: ChargeTable, value: Value) => {
   return product;
 };
 
+const isConvertedFilter = (value: Value) =>
+  typeof value === "object" && value.kind === "FilteredSet" && value.isCached === true;
+
 const isChargedUnion = (charges: ChargeTable, value: SetOperationValue): boolean =>
   value.operator === "\\cup" &&
   value.enumerated === undefined &&
-  isPredicated(value) &&
+  (isPredicated(value) || isConvertedFilter(value.left) || isConvertedFilter(value.right)) &&
   getValueNode(charges, value) !== undefined &&
   isTlcEnumerable(value.left) &&
   isTlcEnumerable(value.right) &&
@@ -2743,7 +2746,13 @@ const openChargedPart = (charges: ChargeTable, value: Value): ChargedStream => {
   const sets = setTrace.sets;
   if (typeof value === "object" && value.kind === "FilteredSet") {
     const filterNode = getChargedFilterNode(charges, value);
-    if (filterNode === undefined) return { kind: "Plain", part: openPart(value) };
+    if (filterNode === undefined) {
+      // A converted SetPredValue's elements() draws from the SetEnumValue it keeps, which charges the filter.
+      const keptNode = value.isCached ? getValueNode(charges, value) : undefined;
+      return keptNode === undefined
+        ? { kind: "Plain", part: openPart(value) }
+        : { kind: "ChargedLeaf", node: keptNode, part: openPart(value) };
+    }
     sets?.push(value);
     if (!isTlcEnumerable(value.base)) toFiniteSet(value);
     const stream: ChargedFilterStream = {
