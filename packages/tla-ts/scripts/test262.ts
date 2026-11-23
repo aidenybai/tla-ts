@@ -575,7 +575,11 @@ vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
   importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
 });`;
 
-const getModulePath = (path: string) => join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path));
+// The directory of the files of the test that runs, which holds no other test's, so that what a
+// test's Node finds is the same whatever ran before it.
+const TEST_DIRECTORY = join(MODULE_DIRECTORY, "test");
+
+const getModulePath = (path: string) => join(TEST_DIRECTORY, relative(TEST262_DIRECTORY, path));
 
 // The fixtures that a test imports, by path, each a JavaScript or JSON file that a static import
 // of a relative path or an import() of one names, with or without attributes, which Node and
@@ -823,6 +827,7 @@ const runTest = async (path: string): Promise<TestRun> => {
   }
   // A fixture is a module, so its code is strict, and it is the JavaScript that Node loads, which
   // TypeScript reads too.
+  if (isLinked) rmSync(TEST_DIRECTORY, { recursive: true, force: true });
   fixtures.forEach((text, fixture) => {
     const modulePath = getModulePath(fixture);
     mkdirSync(dirname(modulePath), { recursive: true });
