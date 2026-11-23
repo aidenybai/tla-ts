@@ -302,8 +302,8 @@ export class RuleManager {
       return true;
     });
     this.checkValidHead(this.head);
-    let rule = this.assignRule(undefined, this.mk(this.head, body.items, isNegated, name));
-    if (this.context.isFixingUnboundVars()) rule = this.fixUnboundVars(rule, true);
+    const created = this.assignRule(undefined, this.mk(this.head, body.items, isNegated, name));
+    const rule = this.context.isFixingUnboundVars() ? this.fixUnboundVars(created, true) : created;
     rules.addRule(rule);
     this.decRef(rule);
   }

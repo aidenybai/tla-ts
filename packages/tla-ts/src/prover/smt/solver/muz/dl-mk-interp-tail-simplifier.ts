@@ -245,7 +245,15 @@ class RuleSubstitution {
   }
 }
 
-type TransformedRule = { isKept: true; rule: Rule } | { isKept: false; rule: Rule | undefined };
+interface KeptRule {
+  kind: "kept";
+  rule: Rule;
+}
+
+interface DroppedRule {
+  kind: "dropped";
+  rule: Rule | undefined;
+}
 
 export class MkInterpTailSimplifier implements RuleTransformerPlugin {
   private ruleSubst: RuleSubstitution;
@@ -353,12 +361,12 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
   }
 
   // The rule comes with a reference.
-  transformRule(original: Rule): TransformedRule {
+  transformRule(original: Rule): KeptRule | DroppedRule {
     const context = this.context;
     const manager = context.manager;
     const ruleManager = context.ruleManager;
     let rule = ruleManager.assignRule(undefined, original);
-    if (ruleManager.hasQuantifiers(rule)) return { isKept: true, rule };
+    if (ruleManager.hasQuantifiers(rule)) return { kind: "kept", rule };
     let result: Rule | undefined;
     for (;;) {
       const uninterpretedSize = rule.uninterpretedSize;
@@ -366,7 +374,7 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
       if (uninterpretedSize === size) {
         result = ruleManager.assignRule(result, rule);
         ruleManager.decRef(rule);
-        return { isKept: true, rule: result };
+        return { kind: "kept", rule: result };
       }
       const head = assign(manager, -1, rule.head);
       const tail = this.tail;
@@ -394,7 +402,7 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
         release(manager, interpreted);
         release(manager, head);
         ruleManager.decRef(rule);
-        return { isKept: false, rule: result };
+        return { kind: "dropped", rule: result };
       }
       if (isModified) {
         const conjuncts = this.conjuncts;
@@ -412,14 +420,16 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
         ruleManager.setAccountingParent(result, rule);
       } else result = ruleManager.assignRule(result, rule);
       const propagated = this.propagateVariableEquivalences(result);
-      if (propagated !== undefined) rule = ruleManager.assignRule(rule, propagated);
-      if (propagated !== undefined) ruleManager.decRef(propagated);
+      if (propagated !== undefined) {
+        rule = ruleManager.assignRule(rule, propagated);
+        ruleManager.decRef(propagated);
+      }
       release(manager, simplified);
       release(manager, interpreted);
       release(manager, head);
       if (propagated === undefined) {
         ruleManager.decRef(rule);
-        return { isKept: true, rule: result };
+        return { kind: "kept", rule: result };
       }
     }
   }
@@ -429,7 +439,7 @@ export class MkInterpTailSimplifier implements RuleTransformerPlugin {
     let isModified = false;
     for (const rule of source.rules) {
       const transformed = this.transformRule(rule);
-      if (transformed.isKept) {
+      if (transformed.kind === "kept") {
         if (transformed.rule !== rule) isModified = true;
         target.addRule(transformed.rule);
       } else isModified = true;

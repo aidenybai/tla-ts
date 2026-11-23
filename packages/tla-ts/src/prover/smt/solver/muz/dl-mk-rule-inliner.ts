@@ -66,13 +66,14 @@ export class RuleUnifier {
       ),
     );
     ruleManager.setAccountingParent(combined, target);
-    let resolvent = ruleManager.fixUnboundVars(combined, true);
-    const simplified = this.simplifier.transformRule(resolvent);
-    if (simplified.isKept) resolvent = ruleManager.assignRule(resolvent, simplified.rule);
+    const fixed = ruleManager.fixUnboundVars(combined, true);
+    const simplified = this.simplifier.transformRule(fixed);
+    const isSatisfiable = simplified.kind === "kept";
+    const resolvent = isSatisfiable ? ruleManager.assignRule(fixed, simplified.rule) : fixed;
     if (simplified.rule !== undefined) ruleManager.decRef(simplified.rule);
     tail.reset();
     release(manager, head);
-    return { rule: resolvent, isSatisfiable: simplified.isKept };
+    return { rule: resolvent, isSatisfiable };
   }
 
   // The substitution comes with a reference to each term.
