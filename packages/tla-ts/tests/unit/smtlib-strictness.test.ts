@@ -1741,4 +1741,40 @@ describe("the builtin sorts, as Z3 5.3.2's plugins make them", () => {
       "sat",
     ]);
   });
+
+  it("finds the names of a sort definition when it is defined, not when it is used", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(define-sort T (X) (Array X Int))",
+        "(declare-sort X 0)",
+        "(define-sort U () (Array Int bool))",
+        "(set-logic QF_AUFLIA)",
+        "(declare-const t (T Bool))",
+        "(declare-const u U)",
+        "(assert (and (= (select t true) 1) (select u 0)))",
+        "(check-sat)",
+        "(get-value ((select t false)))",
+      ]),
+    ).toEqual(["sat", "(((select t false) 1))"]);
+  });
+
+  it("reports a datatype field or sort definition where Z3 parses or commits it", () => {
+    expect(
+      run([
+        "(define-sort S () (Seq Int Int))",
+        "(declare-datatype D ((d (f S))))",
+        "(declare-datatypes ((P 1)) ((par (X Y) ((p (g Y))))))",
+        "(declare-datatypes ((Q 1)) ((par (X Y) ((q (h (Array X Y)))))))",
+        "(define-sort T ())",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 28: Invalid sequence sort, expecting one parameter")',
+      '(error "line 3 column 52: type parameter was not declared")',
+      '(error "line 4 column 62: type parameter was not declared")',
+      `(error "line 5 column 17: invalid sort, unexpected ')'")`,
+      "sat",
+    ]);
+  });
 });
