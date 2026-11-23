@@ -1,6 +1,6 @@
 import { check, formatValue, parseModule, TlaError, type CheckResult, type Value } from "tla-ts";
 import type { EscoreHost } from "../../../tla-ts/src/typescript/spec/prepare";
-import type { CompileResponse, EscoreRequest } from "./escore-worker";
+import type { CompileResponse, EscoreRequest, EscoreResponse } from "./escore-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -137,17 +137,23 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   };
 };
 
+// The message that the page shows of an error: a stop's, as tla-ts gives it, or another error's,
+// which a bug throws, by its name, so that the page reports it rather than wait for an answer.
+const getErrorMessage = (error: unknown) =>
+  error instanceof TlaError
+    ? error.message
+    : `tla-ts failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
+
 const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
-  const loaded = await escore;
   try {
+    const loaded = await escore;
     return {
       source,
       fileName,
       compilation: loaded.getCompilation(source, fileName, loaded.runtime, loaded.library),
     };
   } catch (error) {
-    if (!(error instanceof TlaError)) throw error;
-    return { source, fileName, error: error.message };
+    return { source, fileName, error: getErrorMessage(error) };
   }
 };
 
@@ -162,7 +168,11 @@ self.onmessage = async (event: MessageEvent<EscoreRequest>) => {
   try {
     self.postMessage(await getCheckResult(request));
   } catch (error) {
-    if (!(error instanceof TlaError)) throw error;
-    self.postMessage(getErrorResult(error.message));
+    self.postMessage(getErrorResult(getErrorMessage(error)));
   }
 };
+
+// A promise that rejects with no handler answers nothing, so it fails what the page waits for.
+self.addEventListener("unhandledrejection", (event) => {
+  self.postMessage({ failed: getErrorMessage(event.reason) } satisfies EscoreResponse);
+});
