@@ -386,6 +386,10 @@ describe("horn tactic", () => {
     expect(run(getUnrolledCounter(3))).toEqual(["unknown", "(:rlimit 1397)"]);
   });
 
+  it("leaves the array step out of the qe_lite that fixes a resolvent's unbound variables", () => {
+    expect(run(getUnrolledCounter(4))).toEqual(["unsat", "(:rlimit 2355)"]);
+  });
+
   it("answers a query command with bmc", () => {
     expect(
       run([
