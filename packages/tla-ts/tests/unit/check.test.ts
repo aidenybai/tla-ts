@@ -10430,6 +10430,31 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a SUBSET",
+      "LET S == SUBSET ({1, 2} \\X {3}) IN S \\in {S}",
+      ["line 5, col 9 to line 5, col 62 of module M: 1"],
+    ],
+    [
+      "a product of a union",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN LET P == S \\X {1} IN P \\in {P}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:15",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 72 to line 5, col 79 of module M: 1",
+        "line 5, col 84 to line 5, col 92 of module M: 1",
+      ],
+    ],
+  ])("compares %s with the members of a set literal by equality", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [

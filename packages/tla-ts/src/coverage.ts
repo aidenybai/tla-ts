@@ -35,6 +35,7 @@ import {
   isElementOfWith,
   isEmptySet,
   isCostedSet,
+  isElementOfSetLikeTlc,
   isReducibleSet,
   isSequenceDomain,
   markStreamedSet,
@@ -1615,6 +1616,8 @@ const COMPOSITE_SET_KINDS = new Set<string>([
 const createChargedMembership = (coverage: Coverage) => {
   const isMember = (element: Value, set: Value): boolean => {
     if (typeof set !== "object") return isElementOf(element, set);
+    // SetEnumValue#member asks an unsorted set's members whether they equal a lazy set, which tests its emptiness and parts instead of converting it.
+    if (set.kind === "Set" && isCostedSet(element)) return isElementOfSetLikeTlc(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
       // SetOfFcnsValue#member converts the element with toFcnRcd, which charges a tuple or record its length.
       if (

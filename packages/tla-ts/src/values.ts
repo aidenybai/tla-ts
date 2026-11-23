@@ -3725,6 +3725,15 @@ export const isElementOf = (element: Value, set: Value): boolean => {
   return isElement;
 };
 
+export const isElementOfSetLikeTlc = (element: Value, set: SetValue): boolean => {
+  const sets = setTrace.sets;
+  sets?.push(set);
+  cacheSet(element);
+  const isElement = isInSortedSetLikeTlc(element, set);
+  sets?.pop();
+  return isElement;
+};
+
 export const isElementOfWith = (
   element: Value,
   set: Value,
