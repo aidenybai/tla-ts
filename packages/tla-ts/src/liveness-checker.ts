@@ -341,6 +341,8 @@ export const getLiveExpressions = (solutions: Solution[]) =>
   );
 
 const isSharingResults = (formula: LiveExpression, environment: Environment) => {
+  // Each OrderOfSolution evaluates its own checks, and each evaluation charges the cost models that values keep.
+  if (environment.coverage) return false;
   const formulaAtoms = new Set<LiveAtom>();
   collectAtoms(formula, formulaAtoms);
   const checked = [...formulaAtoms].flatMap(getAtomExpressions);

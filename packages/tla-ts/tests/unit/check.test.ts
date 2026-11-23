@@ -10358,6 +10358,36 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges the sets a state keeps each time a liveness check enumerates them", async () => {
+    expect(
+      await getCoverageLines(
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {}\nA == x < 2 /\\ x' = x + 1 /\\ y' \\in SUBSET ({1, 2} \\X {3}) /\\ y \\subseteq y'\nB == x = 2 /\\ UNCHANGED <<x, y>>\nNext == A \\/ B\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(A)\nProp == <>(x = 2)\n====",
+        "SPECIFICATION Spec\nPROPERTY Prop",
+      ),
+    ).toEqual([
+      [
+        "line 4, col 18 to line 4, col 23 of module M: 1",
+        "|line 4, col 22 to line 4, col 23 of module M: 1:13",
+      ],
+      [
+        "line 5, col 6 to line 5, col 10 of module M: 5",
+        "|line 5, col 6 to line 5, col 6 of module M: 9",
+        "line 5, col 15 to line 5, col 24 of module M: 5",
+        "line 5, col 29 to line 5, col 57 of module M: 13",
+        "|line 5, col 36 to line 5, col 57 of module M: 5:107",
+        "||line 5, col 44 to line 5, col 56 of module M: 5:30",
+        "|||line 5, col 44 to line 5, col 49 of module M: 5:15",
+        "|||line 5, col 54 to line 5, col 56 of module M: 5:25",
+        "line 5, col 62 to line 5, col 75 of module M: 20",
+      ],
+      [
+        "line 6, col 6 to line 6, col 10 of module M: 13",
+        "|line 6, col 6 to line 6, col 6 of module M: 9",
+        "line 6, col 15 to line 6, col 32 of module M: 4",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "a union with itself",
