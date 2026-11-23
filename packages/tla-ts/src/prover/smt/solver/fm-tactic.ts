@@ -784,6 +784,8 @@ class FmModelConverter {
 
   convert(model: ProtoModel) {
     const manager = this.manager;
+    const isCompleting = model.getModelCompletion();
+    model.setModelCompletion(true);
     const mkIte = (isMax: boolean, first: number, second: number) => {
       const condition = manager.mkApp(OP_GE, [first, second], SORT_BOOL);
       return manager.mkApp(
@@ -792,35 +794,39 @@ class FmModelConverter {
         manager.sorts[first],
       );
     };
-    const outer = manager.beginTemporaries();
-    for (let index = this.entries.length - 1; index >= 0; index--) {
-      const entry = this.entries[index];
-      const decl = entry.decl;
-      let lower: Rational | undefined;
-      let upper: Rational | undefined;
-      let lowerExpr = -1;
-      let upperExpr = -1;
-      for (const clause of entry.clauses.items) {
-        if (!manager.limit.inc()) throw new SmtCanceledError();
-        const processed = this.process(model, decl, clause);
-        if (processed === undefined) continue;
-        const bound = processed.bound;
-        if (processed.kind === LOWER) {
-          if (bound.expr !== -1)
-            lowerExpr = lowerExpr === -1 ? bound.expr : mkIte(true, lowerExpr, bound.expr);
-          else if (lower === undefined || bound.value.compare(lower) > 0) lower = bound.value;
-        } else if (bound.expr !== -1)
-          upperExpr = upperExpr === -1 ? bound.expr : mkIte(false, upperExpr, bound.expr);
-        else if (upper === undefined || bound.value.compare(upper) < 0) upper = bound.value;
+    try {
+      const outer = manager.beginTemporaries();
+      for (let index = this.entries.length - 1; index >= 0; index--) {
+        const entry = this.entries[index];
+        const decl = entry.decl;
+        let lower: Rational | undefined;
+        let upper: Rational | undefined;
+        let lowerExpr = -1;
+        let upperExpr = -1;
+        for (const clause of entry.clauses.items) {
+          if (!manager.limit.inc()) throw new SmtCanceledError();
+          const processed = this.process(model, decl, clause);
+          if (processed === undefined) continue;
+          const bound = processed.bound;
+          if (processed.kind === LOWER) {
+            if (bound.expr !== -1)
+              lowerExpr = lowerExpr === -1 ? bound.expr : mkIte(true, lowerExpr, bound.expr);
+            else if (lower === undefined || bound.value.compare(lower) > 0) lower = bound.value;
+          } else if (bound.expr !== -1)
+            upperExpr = upperExpr === -1 ? bound.expr : mkIte(false, upperExpr, bound.expr);
+          else if (upper === undefined || bound.value.compare(upper) < 0) upper = bound.value;
+        }
+        const value =
+          manager.funcDecls[decl].range === SORT_INT
+            ? this.getIntValue(lower, upper, lowerExpr, upperExpr, mkIte)
+            : this.getRealValue(lower, upper, lowerExpr, upperExpr, mkIte);
+        model.registerConst(decl, value);
       }
-      const value =
-        manager.funcDecls[decl].range === SORT_INT
-          ? this.getIntValue(lower, upper, lowerExpr, upperExpr, mkIte)
-          : this.getRealValue(lower, upper, lowerExpr, upperExpr, mkIte);
-      model.registerConst(decl, value);
+      manager.endTemporaries(outer);
+      return model;
+    } finally {
+      model.setModelCompletion(isCompleting);
     }
-    manager.endTemporaries(outer);
-    return model;
   }
 
   private getIntValue(
