@@ -1182,6 +1182,8 @@ const getKnownSize = (set: Value): number | undefined => {
       return getCardinality(set);
     case "Subset":
       return getKnownSize(set.base) === undefined ? undefined : getCardinality(set);
+    case "FilteredSet":
+      return set.isCached ? getCardinality(set) : undefined;
     case "FunctionSet":
       return getKnownSize(set.domain) === undefined || getKnownSize(set.range) === undefined
         ? undefined

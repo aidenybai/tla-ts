@@ -10910,6 +10910,88 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "the emptiness of a product",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ F \\X {2} # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 85 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 85 of module M: 1",
+        "||line 5, col 73 to line 5, col 80 of module M: 1:6",
+        "|||line 5, col 73 to line 5, col 73 of module M: 1",
+        "|||line 5, col 78 to line 5, col 80 of module M: 1:5",
+        "||line 5, col 84 to line 5, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "the emptiness of a record set",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ [a : F] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 84 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 84 of module M: 1",
+        "||line 5, col 73 to line 5, col 79 of module M: 1:4",
+        "|||line 5, col 74 to line 5, col 78 of module M: 1",
+        "||line 5, col 83 to line 5, col 84 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a product",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ \\E s \\in SUBSET (F \\X {2}) : s = s",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:9",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 106 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 106 of module M: 1",
+        "||line 5, col 102 to line 5, col 106 of module M: 1",
+        "||line 5, col 82 to line 5, col 98 of module M: 1",
+        "|||line 5, col 90 to line 5, col 97 of module M: 1:6",
+        "||||line 5, col 90 to line 5, col 90 of module M: 1",
+        "||||line 5, col 95 to line 5, col 97 of module M: 1:5",
+      ],
+    ],
+    [
+      "a union",
+      "LET F == {u \\in (0..1) \\X {1} : u[1] < 5} IN F = F /\\ \\E t \\in F \\cup {<<5, 1>>} : t = t",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 106 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 106 of module M: 1",
+        "||line 5, col 102 to line 5, col 106 of module M: 1",
+        "||line 5, col 82 to line 5, col 98 of module M: 1",
+        "|||line 5, col 82 to line 5, col 82 of module M: 1",
+        "|||line 5, col 89 to line 5, col 98 of module M: 1:13",
+        "||||line 5, col 90 to line 5, col 97 of module M: 1",
+      ],
+    ],
+  ])("charges a converted filter in %s as the set it keeps", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
       "a filter",
       "LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN PrintT(F = F) /\\ PrintT(<<1, 1>> \\in F)",
       ["<<0, 1>>", "<<1, 1>>", "TRUE", "TRUE"],
