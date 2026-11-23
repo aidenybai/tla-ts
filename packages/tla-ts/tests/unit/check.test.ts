@@ -9453,6 +9453,76 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a print",
+      "PrintT([(0..1) \\X {1} -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 48 of module M: 1",
+        "|line 5, col 26 to line 5, col 47 of module M: 1:3",
+        "||line 5, col 27 to line 5, col 39 of module M: 1:6",
+        "|||line 5, col 28 to line 5, col 31 of module M: 1",
+        "|||line 5, col 37 to line 5, col 39 of module M: 1:5",
+        "||line 5, col 44 to line 5, col 46 of module M: 1:5",
+      ],
+    ],
+    [
+      "two prints",
+      "LET d == (0..1) \\X {1} IN PrintT([d -> {3}]) /\\ PrintT([d -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 40 of module M: 1:12",
+        "|line 5, col 29 to line 5, col 32 of module M: 1",
+        "|line 5, col 38 to line 5, col 40 of module M: 1:10",
+        "line 5, col 45 to line 5, col 84 of module M: 1",
+        "|line 5, col 45 to line 5, col 62 of module M: 1",
+        "||line 5, col 52 to line 5, col 61 of module M: 1:3",
+        "|||line 5, col 53 to line 5, col 53 of module M: 1",
+        "|||line 5, col 58 to line 5, col 60 of module M: 1:5",
+        "|line 5, col 67 to line 5, col 84 of module M: 1",
+        "||line 5, col 74 to line 5, col 83 of module M: 1:3",
+        "|||line 5, col 75 to line 5, col 75 of module M: 1",
+        "|||line 5, col 80 to line 5, col 82 of module M: 1:5",
+      ],
+    ],
+    [
+      "a print after an equality",
+      "LET d == (0..1) \\X {1} IN (d = {}) \\/ PrintT([d -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 40 of module M: 1:6",
+        "|line 5, col 29 to line 5, col 32 of module M: 1",
+        "|line 5, col 38 to line 5, col 40 of module M: 1:5",
+        "line 5, col 45 to line 5, col 74 of module M: 1",
+        "|line 5, col 46 to line 5, col 51 of module M: 1",
+        "|line 5, col 57 to line 5, col 74 of module M: 1",
+        "||line 5, col 64 to line 5, col 73 of module M: 1:3",
+        "|||line 5, col 65 to line 5, col 65 of module M: 1",
+        "|||line 5, col 70 to line 5, col 72 of module M: 1:5",
+      ],
+    ],
+    [
+      "an enumeration",
+      "\\E f \\in [(0..1) \\X {1} -> {3, 4}] : PrintT(f)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 64 of module M: 1",
+        "|line 5, col 56 to line 5, col 64 of module M: 1",
+        "|line 5, col 28 to line 5, col 52 of module M: 1:14",
+        "||line 5, col 29 to line 5, col 41 of module M: 1:6",
+        "|||line 5, col 30 to line 5, col 33 of module M: 1",
+        "|||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "||line 5, col 46 to line 5, col 51 of module M: 1:10",
+      ],
+    ],
+  ])(
+    "charges the Cartesian product that is the domain of a set of functions in %s, as SetOfFcnsValue's enumerator converts the domain with toSetEnum",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "S \\cup T",
       "PrintT(((0..1) \\X {1}) \\cup {<<5, 5>>})",
       [

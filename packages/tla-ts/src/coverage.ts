@@ -25,6 +25,7 @@ import {
   createSetOperation,
   drainChargedSet,
   getCardinality,
+  getChargedSet,
   getDomainInterval,
   getDrawnSet,
   getStreamedElements,
@@ -1116,7 +1117,12 @@ const createProductSetEnumerator = (coverage: Coverage, set: Value, size: number
         ? set.factors
         : Array.from({ length: getCardinality(set.domain) }, () => set.range);
   const sizes = getComponentSizes(sets, size);
-  return sizes && createProductEnumerator(coverage, node, sets, sizes);
+  if (sizes === undefined) return undefined;
+  // SetOfFcnsValue's enumerator converts a domain that isn't an interval with toSetEnum.
+  const domain =
+    set.kind === "FunctionSet" && !sizes.includes(0) ? getChargedSet(set.domain) : undefined;
+  if (domain) chargeSetEnumeration(coverage, domain);
+  return createProductEnumerator(coverage, node, sets, sizes);
 };
 
 // A pass that converts the filter draws its base to the end, and the SetEnumValue a converted set keeps charges that last call too.

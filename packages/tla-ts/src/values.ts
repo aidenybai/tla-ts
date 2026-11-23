@@ -2062,7 +2062,7 @@ type CostedSetValue =
   | SetOperationValue
   | UnionValue;
 
-const getChargedSet = (value: Value): CostedSetValue | undefined => {
+export const getChargedSet = (value: Value): CostedSetValue | undefined => {
   if (typeof value !== "object") return undefined;
   switch (value.kind) {
     case "Subset":
