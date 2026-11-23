@@ -64,6 +64,17 @@ const getLimitedCounterQuery = (engine: string, limit: number, nextLimit = 0) =>
   "(query Q)",
 ];
 
+const getUnrolledCounter = (depth: number) => [
+  "(set-option :fp.engine bmc)",
+  `(set-option :fp.bmc.linear_unrolling_depth ${depth})`,
+  "(declare-fun P (Int) Bool)",
+  "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+  "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+  "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+  "(check-sat-using horn)",
+  "(get-info :rlimit)",
+];
+
 const COUNTER_PROFILE = [
   "canceled",
   "",
@@ -365,6 +376,10 @@ describe("horn tactic", () => {
         "(get-info :reason-unknown)",
       ]),
     ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("keeps relevancy and mbqi on in the solver bmc unrolls into", () => {
+    expect(run(getUnrolledCounter(2))).toEqual(["unknown", "(:rlimit 720)"]);
   });
 
   it("answers a query command with bmc", () => {

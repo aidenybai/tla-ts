@@ -156,14 +156,10 @@ class Linear {
     }
   }
 
+  // Z3 quirk: setup names smt.relevancy and smt.mbqi with their module, so the solver keeps both.
   private setup() {
     const solver = this.solver;
-    if (solver.kind === "smt")
-      solver.kernel.updateParams({
-        ...solver.params,
-        ...getGlobalSmtParams(this.bmc.context.parameters, 0),
-        isMbqi: false,
-      });
+    if (solver.kind === "smt") solver.kernel.updateParams(solver.params);
   }
 
   private checkLevel(level: number) {
