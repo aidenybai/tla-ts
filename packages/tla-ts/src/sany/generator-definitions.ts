@@ -347,7 +347,12 @@ const processSubstitutions = (
   });
   const checkArity = (target: OpDeclNode, substitute: ExprOrOpArgNode) => {
     const arity = substitute.kind === "OpArg" ? getSymbolArity(substitute.op) : 0;
-    if (arity !== target.arity) {
+    // Deviation from SANY: Generator#generateSubst checks only the arity of an operator it substitutes and skips OpDefNode#matchingOpArgOperand's check for an operator parameter, so TLC binds that parameter to a value.
+    const hasOperatorParam =
+      substitute.kind === "OpArg" &&
+      substitute.op.kind === "OpDef" &&
+      (substitute.op.params ?? []).some((param) => param.arity > 0);
+    if (arity !== target.arity || hasOperatorParam) {
       generation.addError(
         substitute.location,
         `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,

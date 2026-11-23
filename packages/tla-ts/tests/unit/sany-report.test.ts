@@ -1389,6 +1389,35 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["I == INSTANCE Other WITH Op2 <- E27", "line 5, col 33 to line 5, col 35"],
+    ["I == INSTANCE Other WITH Op2 <- E26!1", "line 5, col 33 to line 5, col 37"],
+    ["I == LET L == INSTANCE Other WITH Op2 <- E27 IN L!Use", "line 5, col 42 to line 5, col 44"],
+    ["I == LET L == INSTANCE Other WITH Op2 <- E26!1 IN L!Use", "line 5, col 42 to line 5, col 46"],
+    ["Op2(G(_), y) == G(y)\nI == INSTANCE Other", "line 6, col 1 to line 6, col 19"],
+    [
+      "I == LET Op2(G(_), y) == G(y)\n         L == INSTANCE Other\n     IN L!Use",
+      "line 6, col 10 to line 6, col 28",
+    ],
+  ])(
+    "rejects %j, which substitutes an operator with an operator parameter for an operator constant, as SANY rejects one of the wrong arity",
+    (definition, location) => {
+      const report = getReport({
+        M: `---- MODULE M ----\nH(K(_)) == K(1)\nE26(G(_)) == H(G)\nE27(G(_), y) == G(y)\n${definition}\nVARIABLE x\n====\n`,
+        Other: "---- MODULE Other ----\nCONSTANT Op2(_, _)\nUse == Op2(1, 2)\n====\n",
+      });
+      expect(report.text).toContain(
+        joinLines([
+          "*** Errors: 1",
+          "",
+          `${location} of module M`,
+          "",
+          "An operator must be substituted for symbol 'Op2', and it must have arity 2.",
+        ]),
+      );
+    },
+  );
+
   it("reports an operator substitution that is undefined or parenthesized as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nG(a) == a\nI == INSTANCE R WITH Op <- +\nJ == INSTANCE R WITH Op <- (G)\n====\n",
