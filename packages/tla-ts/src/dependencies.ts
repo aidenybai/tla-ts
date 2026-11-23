@@ -646,6 +646,14 @@ export const isExpressionImpure = (
   effect: keyof typeof EFFECT_FLAGS,
 ) => (getExpressionsRow(expressions, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
 
+export const hasEffectfulDefinition = (environment: Environment) => {
+  const facts = environment.facts;
+  for (let id = 0; id < facts.ids.size; id++) {
+    if ((facts.rows[id * facts.words] & EFFECT_MASK) !== 0) return true;
+  }
+  return false;
+};
+
 export const isBodyVarying = (
   expressions: Expression[],
   body: Expression,

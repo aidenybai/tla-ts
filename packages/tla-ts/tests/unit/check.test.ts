@@ -11056,6 +11056,127 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "S \\cup T enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u) /\\ FALSE} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a set enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "UNION S enumerated twice",
+      "LET T == UNION {{u \\in (0..1) \\X {1} : PrintT(u)}, {<<9, 9>>}} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\ T enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\ {<<0, 1>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T that \\E enumerates twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\E o \\in T : o = <<9, 9>>) /\\ (\\E o \\in T : o = <<9, 9>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T enumerated and then sized",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ Cardinality(T) = 3",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T enumerated and then printed",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ PrintT(T)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "{<<0, 1>>, <<1, 1>>, <<9, 9>>}"],
+    ],
+    [
+      "S \\cup T enumerated and then chosen from",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (CHOOSE o \\in T : TRUE) = <<0, 1>>",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+  ])(
+    "runs the predicate of a filter in %s on each pass, as TLC does",
+    async (_name, body, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it("runs the predicate of a filter that reaches another filter's base through x' on each pass, as TLC does", async () => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = {u \\in (0..1) \\X {1} : PrintT(u)} /\\ LET T == {w \\in x' : TRUE} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(Array.from({ length: 6 }, () => ["<<0, 1>>", "<<1, 1>>"]).flat());
+  });
+
+  it.each([
+    [
+      "S \\cup T",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} \\cup {9} IN (\\A o \\in T : o # 0) /\\ (\\A o \\in T : o # 0)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 83 of module M: 1",
+        "|line 5, col 28 to line 5, col 74 of module M: 1:6",
+        "||line 5, col 69 to line 5, col 73 of module M: 6",
+        "||line 5, col 35 to line 5, col 65 of module M: 1",
+        "|||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "||||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "|||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "|line 5, col 81 to line 5, col 83 of module M: 1:14",
+        "line 5, col 88 to line 5, col 131 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cup T with a predicate that reads its element",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : u[1] = 7} \\cup {9} IN (\\A o \\in T : o # 0) /\\ (\\A o \\in T : o # 0)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 86 of module M: 1",
+        "|line 5, col 28 to line 5, col 77 of module M: 1:6",
+        "||line 5, col 69 to line 5, col 76 of module M: 6",
+        "||line 5, col 35 to line 5, col 65 of module M: 1",
+        "|||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "||||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "|||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "|line 5, col 84 to line 5, col 86 of module M: 1:14",
+        "line 5, col 91 to line 5, col 134 of module M: 1",
+      ],
+    ],
+    [
+      "a set",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : u[1] = 0} IN (\\A o \\in T : o # <<9, 9>>) /\\ (\\A o \\in T : o # <<9, 9>>)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 77 of module M: 1:12",
+        "|line 5, col 69 to line 5, col 76 of module M: 6",
+        "|line 5, col 35 to line 5, col 65 of module M: 1",
+        "||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "|||line 5, col 37 to line 5, col 40 of module M: 1",
+        "|||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "|||line 5, col 57 to line 5, col 64 of module M: 1",
+        "line 5, col 82 to line 5, col 139 of module M: 1",
+      ],
+    ],
+  ])("charges each of two passes over a filter in %s, as TLC does", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("counts an operator argument that a filter's membership test forces", async () => {
     expect(
       await getNextCoverageLines(

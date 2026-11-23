@@ -1568,7 +1568,7 @@ export const getChargedBound = (
   isNormalized: boolean,
   getElements: () => Value[] | IntervalValue,
 ): ChargedBound => {
-  const drained = isNormalized ? drainChargedSet(coverage, value) : undefined;
+  const drained = isNormalized ? drainChargedSet(coverage, value, false) : undefined;
   return drained === undefined
     ? { kind: "Listed", value, elements: getElements() }
     : { kind: "Drained", value, elements: drained };
