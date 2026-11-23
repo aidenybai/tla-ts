@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtTacticError } from "../../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtTacticError } from "../../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -56,6 +56,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   private numScopes = 0;
   private expr2varReplay: Map<number, number> | null = null;
   euf: EufSolver | null = null;
+  isInitialized = false;
 
   // A theory factory puts goal2sat in sat.euf mode, where atoms go to the euf solver.
   constructor(
@@ -66,24 +67,23 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     private mkThSolver: ThSolverFactory | null = null,
   ) {}
 
-  ensureEuf() {
+  initEuf(mkThSolver: ThSolverFactory) {
+    this.isInitialized = true;
+    this.mkThSolver = mkThSolver;
+  }
+
+  ensureEuf(mkThSolver: ThSolverFactory) {
     if (this.euf !== null) return this.euf;
     const solver = this.solver;
-    if (solver.ext !== null) throw new SmtTacticError("cannot convert to euf");
-    const euf = new EufSolver(
-      this.manager,
-      this,
-      solver,
-      this.mkThSolver as ThSolverFactory,
-      this.isArithIgnoringInt,
-    );
-    solver.ext = euf;
+    if (solver.ext !== null) throw new SmtDefaultError("cannot convert to euf");
+    const euf = new EufSolver(this.manager, this, solver, mkThSolver, this.isArithIgnoringInt);
+    solver.setExtension(euf);
     this.euf = euf;
     return euf;
   }
 
-  private convertEuf(expr: number, isRoot: boolean, isSign: boolean) {
-    const lit = this.ensureEuf().internalize(expr, isSign, isRoot);
+  private convertEuf(expr: number, isRoot: boolean, isSign: boolean, mkThSolver: ThSolverFactory) {
+    const lit = this.ensureEuf(mkThSolver).internalize(expr, isSign, isRoot);
     if (lit === NULL_LITERAL) return;
     if (isRoot) this.mkClause([lit]);
     else this.results.push(lit);
@@ -226,7 +226,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
       this.mkClause([falseLit ^ 1]);
       lit = isSign ? falseLit ^ 1 : falseLit;
     } else if (this.mkThSolver !== null) {
-      this.convertEuf(expr, isRoot, isSign);
+      this.convertEuf(expr, isRoot, isSign, this.mkThSolver);
       return;
     } else {
       if (!manager.isUninterpretedConst(expr)) {
@@ -285,7 +285,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
         return true;
       case OP_DISTINCT:
         if (this.mkThSolver === null) return this.throwOpNotHandled(expr);
-        this.convertEuf(expr, isRoot, isSign);
+        this.convertEuf(expr, isRoot, isSign, this.mkThSolver);
         return true;
       default:
         this.convertAtom(expr, isRoot, isSign);
@@ -544,6 +544,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   }
 
   assumptions(assumptions: readonly number[], dep2asm: Map<number, number>) {
+    this.isInitialized = true;
     try {
       for (const assumption of assumptions) this.insertDep(assumption, dep2asm);
     } finally {
@@ -552,7 +553,8 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   }
 
   run(forms: readonly number[]) {
-    if (this.mkThSolver !== null) this.ensureEuf();
+    this.isInitialized = true;
+    if (this.mkThSolver !== null) this.ensureEuf(this.mkThSolver);
     try {
       for (const form of forms) this.process(form, true);
     } finally {
@@ -562,7 +564,8 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
 
   runGoal(goal: Goal, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
-    if (this.mkThSolver !== null) this.ensureEuf();
+    this.isInitialized = true;
+    if (this.mkThSolver !== null) this.ensureEuf(this.mkThSolver);
     const held = new RefVector(manager);
     held.resize(2);
     const clause = new RefVector(manager);

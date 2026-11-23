@@ -93,15 +93,13 @@ export class IncSatSolver {
     isIncremental = true,
   ) {
     this.solver = new Solver(params, manager.limit, isIncremental);
-    const isEuf = params.get("euf") === true;
     this.goal2sat = new Goal2Sat(
       manager,
       this.solver,
       params.get("ite_extra") !== false,
       parameters.get("smt.arith.ignore_int") === "true",
-      isEuf ? mkThSolver(parameters) : null,
     );
-    if (isEuf) this.goal2sat.ensureEuf();
+    if (params.get("euf") === true) this.ensureEuf();
     this.fmls = new RefVector(manager);
     this.names = new RefVector(manager);
     this.core = new RefVector(manager);
@@ -115,9 +113,14 @@ export class IncSatSolver {
   updateParams(params: SatParams) {
     this.cardinalityParams = getCardinalityParams(params);
     this.solver.updateParams(params);
-    // Deviation from Z3: its fd solver crashes when sat.euf is set after the sat solver starts.
-    if (params.get("euf") === true && this.goal2sat.euf === null)
-      throw new SmtUnsupportedError("the option :sat.euf after the sat solver starts");
+    if (params.get("euf") === true && this.goal2sat.euf === null) this.ensureEuf();
+  }
+
+  // A goal2sat made before sat.euf stays out of euf mode and leaves the euf solver unfed.
+  private ensureEuf() {
+    const factory = mkThSolver(this.parameters);
+    if (!this.goal2sat.isInitialized) this.goal2sat.initEuf(factory);
+    this.goal2sat.ensureEuf(factory);
   }
 
   private isClause(expr: number): boolean {

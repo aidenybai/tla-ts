@@ -105,7 +105,8 @@ describe("a theory explanation of sat.euf", () => {
   it("explains each equality from the node with the smaller id, as th_explain stores it", () => {
     const manager = new AstManager(new ResourceLimit(Infinity));
     const sat = new Solver(new Map(), manager.limit);
-    const euf = new Goal2Sat(manager, sat, false, false, mkThSolver(new Map())).ensureEuf();
+    const factory = mkThSolver(new Map());
+    const euf = new Goal2Sat(manager, sat, false, false, factory).ensureEuf(factory);
     const sort = manager.mkUninterpretedSort("U", []);
     const nodes = [0, 1, 2, 3].map(() => euf.egraph.mk(manager.mkFreshConst(null, sort), 0, []));
     const firstLit = 2 * sat.mkVar(true);

@@ -2375,13 +2375,211 @@ describe("the sat solver, as Z3 5.3.2 updates its parameters at each set-option"
     );
   });
 
-  // Deviation from Z3: its fd solver crashes on sat.euf set after the sat solver starts.
-  it.each([[QF_FD], [SAT_TACTIC]])(
-    "leaves sat.euf, set after the sat solver of %j starts, unported",
-    (prefix) => {
-      expect(() => getChecked(prefix, ["(set-option :sat.euf true)", "(check-sat)"])).toThrow(
-        new SmtUnsupportedError("the option :sat.euf after the sat solver starts"),
+  const BOOLS = ["(declare-const x0 Bool)", "(declare-const x1 Bool)", "(declare-const x2 Bool)"];
+
+  it("switches the finite-domain solver to sat.euf set before it internalizes", () => {
+    expect(
+      run([
+        ...QF_FD,
+        ...BOOLS,
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) x2))",
+        "(set-option :sat.euf true)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 48)",
+      ].join("\n"),
+    );
+  });
+
+  it("switches the incremental sat solver to sat.euf set before it internalizes", () => {
+    expect(
+      run([
+        ...SAT_TACTIC,
+        ...BOOLS,
+        "(push 1)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(set-option :sat.euf true)",
+        "(assert (= a b))",
+        "(assert (not (= (f a) (f b))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["unsat", "(:rlimit 22)"].join("\n"));
+  });
+
+  it("reports that a sat solver with a cardinality extension can't take sat.euf", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(set-option :sat.cardinality.solver true)",
+        ...Array.from({ length: 10 }, (_value, index) => `(declare-const x${index} Bool)`),
+        "(assert ((_ at-most 2) x0 x1 x2 x3 x4 x5 x6 x7 x8))",
+        "(assert (or x0 x9))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        '(echo "set")',
+        "(assert (or x1 x9))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        '(error "line 16 column 21: cannot convert to euf")',
+        "set",
+        "sat",
+        "(:rlimit 316)",
+      ].join("\n"),
+    );
+  });
+
+  const HALF_EUF = [
+    ...QF_FD,
+    ...BOOLS,
+    "(declare-const i Int)",
+    "(assert (or x0 x1))",
+    "(assert (or (not x0) x2))",
+    "(check-sat)",
+    "(set-option :sat.euf true)",
+    '(echo "set")',
+    "(get-model)",
+  ];
+
+  it("keeps the model of a sat solver that sat.euf reaches after it searches", () => {
+    expect(run(HALF_EUF)).toBe(
+      [
+        "sat",
+        "set",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        "  (define-fun x2 () Bool",
+        "    false)",
+        "  (define-fun i () Int",
+        "    0)",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  // Deviation from Z3: set_extension replays the search scopes without m_vars_lim, so it crashes at the next pop.
+  it.each([["(check-sat)"], ["(push 1)"]])(
+    "leaves %s unported in a sat solver that sat.euf reaches after it searches",
+    (command) => {
+      expect(() => run([...HALF_EUF, command])).toThrow(
+        new SmtUnsupportedError("the option :sat.euf after the sat solver searches"),
       );
+    },
+  );
+
+  it("searches with the euf solver beside a goal2sat made without sat.euf", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(assert (or x0 x1))",
+        "(push 1)",
+        "(set-option :sat.euf true)",
+        "(assert (not x0))",
+        "(check-sat)",
+        "(get-model)",
+        "(pop 1)",
+        "(assert (not x1))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    false)",
+        "  (define-fun x1 () Bool",
+        "    true)",
+        ")",
+        "sat",
+        "(",
+        "  (define-fun x0 () Bool",
+        "    true)",
+        "  (define-fun x1 () Bool",
+        "    false)",
+        ")",
+        "(:rlimit 62)",
+      ].join("\n"),
+    );
+  });
+
+  it("answers after a goal2sat made without sat.euf gives up before the search", () => {
+    expect(
+      run([
+        ...QF_FD,
+        "(declare-const x0 Bool)",
+        "(declare-const x1 Bool)",
+        "(declare-const i Int)",
+        "(push 1)",
+        "(assert (or x0 (<= 0 i)))",
+        "(check-sat)",
+        "(set-option :sat.euf true)",
+        "(pop 1)",
+        "(assert (or x0 x1))",
+        "(assert (or (not x0) (not x1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(["unknown", "sat", "(:rlimit 102)"].join("\n"));
+  });
+
+  it.each([
+    [QF_FD, "(assert (or x0 x1))", "(assert (not x0))", ["sat", "sat", "(:rlimit 44)"]],
+    [
+      SAT_TACTIC,
+      "(assert (and (= a b) (not (= (f a) (f b)))))",
+      "(assert (or x0 (= a b)))",
+      ["unsat", "sat", "(:rlimit 38)"],
+    ],
+  ])(
+    "replays the open scopes into the euf solver of %j, as set_extension does",
+    (prefix, inner, outer, expected) => {
+      expect(
+        run([
+          ...prefix,
+          "(declare-sort U 0)",
+          "(declare-fun f (U) U)",
+          "(declare-const a U)",
+          "(declare-const b U)",
+          "(declare-const x0 Bool)",
+          "(declare-const x1 Bool)",
+          "(push 1)",
+          "(set-option :sat.euf true)",
+          inner,
+          "(check-sat)",
+          "(pop 1)",
+          outer,
+          "(check-sat)",
+          "(get-info :rlimit)",
+        ]),
+      ).toBe(expected.join("\n"));
     },
   );
 });
