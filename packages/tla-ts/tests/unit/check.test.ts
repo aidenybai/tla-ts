@@ -10986,9 +10986,211 @@ ASSUME TLCFP(a) = -887695703
         "||||line 5, col 90 to line 5, col 97 of module M: 1",
       ],
     ],
+    [
+      "S \\ T",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\A t \\in F \\ {<<9, 9>>} : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 110 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 110 of module M: 1",
+        "||line 5, col 99 to line 5, col 110 of module M: 2",
+        "||line 5, col 82 to line 5, col 95 of module M: 1",
+      ],
+    ],
+    [
+      "the size of S \\ T",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ Cardinality(F \\ {<<9, 9>>}) = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 103 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cap S",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\A t \\in F \\cap F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 104 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 104 of module M: 1",
+        "||line 5, col 93 to line 5, col 104 of module M: 2",
+        "||line 5, col 82 to line 5, col 89 of module M: 1",
+      ],
+    ],
+    [
+      "T \\ S",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = F /\\ \\A t \\in (0..1) \\X {1} \\ F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:4",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 113 of module M: 1",
+        "|line 5, col 64 to line 5, col 68 of module M: 1",
+        "|line 5, col 73 to line 5, col 113 of module M: 1",
+        "||line 5, col 82 to line 5, col 98 of module M: 1",
+        "|||line 5, col 82 to line 5, col 94 of module M: 1:4",
+        "||||line 5, col 83 to line 5, col 86 of module M: 1",
+        "||||line 5, col 92 to line 5, col 94 of module M: 1:5",
+        "|||line 5, col 98 to line 5, col 98 of module M: 1",
+      ],
+    ],
   ])("charges a converted filter in %s as the set it keeps", async (_name, body, rows) => {
     expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
   });
+
+  it.each([
+    [
+      "Cardinality",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN Cardinality(F) = 2 /\\ \\A t \\in F \\ {<<9, 9>>} : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 123 of module M: 1",
+        "|line 5, col 64 to line 5, col 81 of module M: 1",
+        "|line 5, col 86 to line 5, col 123 of module M: 1",
+        "||line 5, col 112 to line 5, col 123 of module M: 2",
+        "||line 5, col 95 to line 5, col 108 of module M: 1",
+      ],
+    ],
+    [
+      "equality with a set literal",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN F = {<<0, 1>>, <<1, 1>>} /\\ \\A t \\in F \\ {<<9, 9>>} : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 129 of module M: 1",
+        "|line 5, col 64 to line 5, col 87 of module M: 1",
+        "|line 5, col 92 to line 5, col 129 of module M: 1",
+        "||line 5, col 118 to line 5, col 129 of module M: 2",
+        "||line 5, col 101 to line 5, col 114 of module M: 1",
+      ],
+    ],
+    [
+      "a set literal's equality with it",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN {<<0, 1>>, <<1, 1>>} = F /\\ \\A t \\in F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:11",
+        "|line 5, col 51 to line 5, col 58 of module M: 4",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:10",
+        "line 5, col 64 to line 5, col 116 of module M: 1",
+        "|line 5, col 64 to line 5, col 87 of module M: 1",
+        "|line 5, col 92 to line 5, col 116 of module M: 1",
+        "||line 5, col 105 to line 5, col 116 of module M: 2",
+        "||line 5, col 101 to line 5, col 101 of module M: 1",
+      ],
+    ],
+    [
+      "Cardinality, for T \\ S",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN Cardinality(F) = 2 /\\ \\A t \\in (0..1) \\X {1} \\ F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:4",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 126 of module M: 1",
+        "|line 5, col 64 to line 5, col 81 of module M: 1",
+        "|line 5, col 86 to line 5, col 126 of module M: 1",
+        "||line 5, col 95 to line 5, col 111 of module M: 1",
+        "|||line 5, col 95 to line 5, col 107 of module M: 1:4",
+        "||||line 5, col 96 to line 5, col 99 of module M: 1",
+        "||||line 5, col 105 to line 5, col 107 of module M: 1:5",
+        "|||line 5, col 111 to line 5, col 111 of module M: 1",
+      ],
+    ],
+    [
+      "a set literal's sort",
+      "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN {{<<0, 1>>}, F} # {} /\\ \\A t \\in F \\ {<<9, 9>>} : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:7",
+        "|line 5, col 51 to line 5, col 58 of module M: 2",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:4",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:5",
+        "line 5, col 64 to line 5, col 125 of module M: 1",
+        "|line 5, col 64 to line 5, col 83 of module M: 1",
+        "|line 5, col 88 to line 5, col 125 of module M: 1",
+        "||line 5, col 114 to line 5, col 125 of module M: 2",
+        "||line 5, col 97 to line 5, col 110 of module M: 1",
+      ],
+    ],
+  ])("charges a filter that %s converts as the set it keeps", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    ["Cardinality", "Cardinality(F) = 2 /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
+    [
+      "the size of its product",
+      "Cardinality(F \\X {1}) = 2 /\\ <<0, 1>> \\in F",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "equality with a set literal",
+      "F = {<<0, 1>>, <<1, 1>>} /\\ <<0, 1>> \\in F",
+      ["<<0, 1>>", "<<1, 1>>"],
+    ],
+    ["inequality with the empty set", "F # {} /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
+    [
+      "a set literal's equality with it",
+      "{<<0, 1>>, <<1, 1>>} = F /\\ Cardinality(F) = 2",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "equality with another filter",
+      'LET G == {u \\in (0..1) \\X {1} : PrintT(<<"g", u>>)} IN F = G /\\ <<0, 1>> \\in F /\\ <<0, 1>> \\in G',
+      ["<<0, 1>>", "<<1, 1>>", '<<"g", <<0, 1>>>>', '<<"g", <<1, 1>>>>', '<<"g", <<0, 1>>>>'],
+    ],
+    ["a set literal's sort", "{{<<0, 1>>}, F} # {} /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
+    [
+      "membership in a set literal that holds it",
+      "{<<0, 1>>, <<1, 1>>} \\in {{}, F} /\\ <<0, 1>> \\in F",
+      ["<<0, 1>>", "<<1, 1>>"],
+    ],
+  ])(
+    "runs a filter's predicate again after %s only where TLC does",
+    async (_name, body, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
 
   it.each([
     [
@@ -11055,6 +11257,127 @@ ASSUME TLCFP(a) = -887695703
       }
     },
   );
+
+  it.each([
+    [
+      "S \\cup T enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u) /\\ FALSE} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a set enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "UNION S enumerated twice",
+      "LET T == UNION {{u \\in (0..1) \\X {1} : PrintT(u)}, {<<9, 9>>}} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\ T enumerated twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\ {<<0, 1>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T that \\E enumerates twice",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\E o \\in T : o = <<9, 9>>) /\\ (\\E o \\in T : o = <<9, 9>>)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T enumerated and then sized",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ Cardinality(T) = 3",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "S \\cup T enumerated and then printed",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ PrintT(T)",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "{<<0, 1>>, <<1, 1>>, <<9, 9>>}"],
+    ],
+    [
+      "S \\cup T enumerated and then chosen from",
+      "LET T == {u \\in (0..1) \\X {1} : PrintT(u)} \\cup {<<9, 9>>} IN (\\A o \\in T : o # <<7, 7>>) /\\ (CHOOSE o \\in T : TRUE) = <<0, 1>>",
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+  ])(
+    "runs the predicate of a filter in %s on each pass, as TLC does",
+    async (_name, body, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it("runs the predicate of a filter that reaches another filter's base through x' on each pass, as TLC does", async () => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = {u \\in (0..1) \\X {1} : PrintT(u)} /\\ LET T == {w \\in x' : TRUE} IN (\\A o \\in T : o # <<7, 7>>) /\\ (\\A o \\in T : o # <<7, 7>>)\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(Array.from({ length: 6 }, () => ["<<0, 1>>", "<<1, 1>>"]).flat());
+  });
+
+  it.each([
+    [
+      "S \\cup T",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : FALSE} \\cup {9} IN (\\A o \\in T : o # 0) /\\ (\\A o \\in T : o # 0)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 83 of module M: 1",
+        "|line 5, col 28 to line 5, col 74 of module M: 1:6",
+        "||line 5, col 69 to line 5, col 73 of module M: 6",
+        "||line 5, col 35 to line 5, col 65 of module M: 1",
+        "|||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "||||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "|||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "|line 5, col 81 to line 5, col 83 of module M: 1:14",
+        "line 5, col 88 to line 5, col 131 of module M: 1",
+      ],
+    ],
+    [
+      "S \\cup T with a predicate that reads its element",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : u[1] = 7} \\cup {9} IN (\\A o \\in T : o # 0) /\\ (\\A o \\in T : o # 0)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 86 of module M: 1",
+        "|line 5, col 28 to line 5, col 77 of module M: 1:6",
+        "||line 5, col 69 to line 5, col 76 of module M: 6",
+        "||line 5, col 35 to line 5, col 65 of module M: 1",
+        "|||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "||||line 5, col 37 to line 5, col 40 of module M: 1",
+        "||||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "|||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "||||line 5, col 57 to line 5, col 64 of module M: 1",
+        "|line 5, col 84 to line 5, col 86 of module M: 1:14",
+        "line 5, col 91 to line 5, col 134 of module M: 1",
+      ],
+    ],
+    [
+      "a set",
+      "LET T == {u \\in ((0..1) \\X {1}) \\cup {<<5, 5>>} : u[1] = 0} IN (\\A o \\in T : o # <<9, 9>>) /\\ (\\A o \\in T : o # <<9, 9>>)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 77 of module M: 1:12",
+        "|line 5, col 69 to line 5, col 76 of module M: 6",
+        "|line 5, col 35 to line 5, col 65 of module M: 1",
+        "||line 5, col 36 to line 5, col 48 of module M: 1:8",
+        "|||line 5, col 37 to line 5, col 40 of module M: 1",
+        "|||line 5, col 46 to line 5, col 48 of module M: 1:10",
+        "||line 5, col 56 to line 5, col 65 of module M: 1:16",
+        "|||line 5, col 57 to line 5, col 64 of module M: 1",
+        "line 5, col 82 to line 5, col 139 of module M: 1",
+      ],
+    ],
+  ])("charges each of two passes over a filter in %s, as TLC does", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
 
   it("counts an operator argument that a filter's membership test forces", async () => {
     expect(

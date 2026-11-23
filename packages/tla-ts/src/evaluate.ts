@@ -55,6 +55,7 @@ import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
+  hasEffectfulDefinition,
   isBodyVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
@@ -111,6 +112,7 @@ import {
   getFunctionClass,
   getNormalizedSetElements,
   getSequenceElements,
+  hasObservedPass,
   isElementOf,
   isReceiverEqual,
   isFunctionValue,
@@ -929,7 +931,7 @@ const getCostModel = (
             (set) =>
               typeof set === "object" &&
               (set.kind === "FilteredSet" || set.kind === "SetOperation") &&
-              drainChargedSet(coverage, set) !== undefined,
+              drainChargedSet(coverage, set, true) !== undefined,
           );
           return () => chargeFunctionConstruction(coverage, node, sets, isDrained);
         },
@@ -2725,6 +2727,7 @@ export const getLazyFilter = (
       expression.predicate,
       environment,
     ) || coverage !== undefined;
+  const hasEffects = hasEffectfulDefinition(environment);
   const createFiltered = (
     base: Value,
     context: Context,
@@ -2756,8 +2759,8 @@ export const getLazyFilter = (
         node,
       );
     if (!coverage || node < 0) {
-      return isTestObserved
-        ? { kind: "FilteredSet", base, test, isTestObserved, source, rebind }
+      return isTestObserved || (hasEffects && hasObservedPass(base))
+        ? { kind: "FilteredSet", base, test, isPassObserved: true, source, rebind }
         : { kind: "FilteredSet", base, test, source, rebind };
     }
     return {
@@ -2765,7 +2768,7 @@ export const getLazyFilter = (
       base,
       test: (element, isMember) =>
         runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
-      isTestObserved: true,
+      isPassObserved: true,
       startPass: (isMaterialized) => {
         const draws = createFilterBaseEnumerator(coverage, base, isMaterialized);
         return {

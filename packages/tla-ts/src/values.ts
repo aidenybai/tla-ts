@@ -121,7 +121,7 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
-  isTestObserved?: true;
+  isPassObserved?: true;
   startPass?: (isMaterialized: boolean) => FilterPass;
   source?: FilteredSetSource;
 }
@@ -720,9 +720,14 @@ export const compareValues = (left: Value, right: Value): number => {
     if (isLeftSet) {
       const leftCharged = leftKind === "Set" ? undefined : getChargedSet(left);
       const rightCharged = rightKind === "Set" ? undefined : getChargedSet(right);
+      const leftSet = leftCharged
+        ? toChargedSet(leftCharged, true, toFiniteSet)
+        : toFiniteSet(left);
+      // SetPredValue#compareTo and equals keep the set they convert with convertAndCache.
+      if (leftKind === "FilteredSet") left.isCached = true;
       return compareSets(
-        leftCharged ? toChargedSet(leftCharged, true, toFiniteSet) : toFiniteSet(left),
-        rightCharged ? toChargedSet(rightCharged, false, toComparedSet) : toComparedSet(right),
+        leftSet,
+        rightCharged ? toChargedSet(rightCharged, false, toArgumentSet) : toArgumentSet(right),
       );
     }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -2053,7 +2058,7 @@ const convertSet = (
   lazy: ConvertibleSetValue | undefined,
   isFramedAsOpened: boolean,
 ) => {
-  if (isSortingLiteral && lazy !== undefined && isPredicated(lazy) && hasObservedFilter(lazy)) {
+  if (isSortingLiteral && lazy !== undefined && hasObservedPass(lazy)) {
     throw new TlaEvaluationError("The set literal holds a filter");
   }
   const sets = setTrace.sets;
@@ -2093,7 +2098,7 @@ const toOpenedSet = (value: SetOperationValue | UnionValue) =>
 const toArgumentSet = (value: Value) => {
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy === undefined || lazy.enumerated) return toFiniteSet(value);
-  const isRepeated = isPredicated(lazy) && hasObservedFilter(lazy);
+  const isRepeated = hasObservedPass(lazy);
   const set =
     lazy.kind === "SetOperation" || lazy.kind === "Union" ? toOpenedSet(lazy) : toFiniteSet(lazy);
   if (isRepeated) lazy.enumerated = undefined;
@@ -2123,7 +2128,7 @@ export const getChargedSet = (value: Value): CostedSetValue | undefined => {
   }
 };
 
-export const isCostedSet = (value: Value) => {
+export const isCostedSet = (charges: ChargeTable, value: Value) => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Subset":
@@ -2136,12 +2141,20 @@ export const isCostedSet = (value: Value) => {
         value.cost !== undefined &&
         (value.cost.node !== undefined || value.cost.charges !== undefined)
       );
+    case "FilteredSet":
+      return value.isCached === true && getValueNode(charges, value) !== undefined;
     default:
       return false;
   }
 };
 
 const toCachedSet = (value: Value) => {
+  if (typeof value === "object" && value.kind === "FilteredSet") {
+    const set = toFiniteSet(value);
+    // SetPredValue#size, equals and compareTo convert with convertAndCache, which keeps the set it converts.
+    value.isCached = true;
+    return set;
+  }
   cacheSet(value);
   return toFiniteSet(value);
 };
@@ -2165,11 +2178,6 @@ const toChargedSet = (
   if (isCached && cost) cost.charges = undefined;
   return set;
 };
-
-const toComparedSet = (value: Value) =>
-  typeof value === "object" && (value.kind === "SetOperation" || value.kind === "Union")
-    ? toOpenedSet(value)
-    : toFiniteSet(value);
 
 interface ListStream {
   kind: "List";
@@ -2279,7 +2287,7 @@ const hasObservedFilter = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "FilteredSet":
-      return value.isTestObserved === true || hasObservedFilter(value.base);
+      return value.isPassObserved === true || hasObservedFilter(value.base);
     case "SetOperation":
       return hasObservedFilter(value.left) || hasObservedFilter(value.right);
     case "Union":
@@ -2305,6 +2313,8 @@ const hasObservedSet = (sets: Value[]) => {
   }
   return false;
 };
+
+export const hasObservedPass = (value: Value) => isPredicated(value) && hasObservedFilter(value);
 
 export const createFunctionSet = (
   domain: Value,
@@ -2994,7 +3004,7 @@ const drainChargedStream = (charges: ChargeTable, stream: ChargedStream, isBound
   return elements;
 };
 
-const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
+const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue, isKept: boolean) => {
   const node = getChargedFilterNode(charges, value);
   if (node === undefined || value.enumerated || !isTlcEnumerable(value.base) || isSortingLiteral) {
     return undefined;
@@ -3009,7 +3019,7 @@ const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue) => {
   sets?.pop();
   charges.secondary[node] += elements.length;
   const set = createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements);
-  value.enumerated = set;
+  if (isKept) value.enumerated = set;
   return set.elements;
 };
 
@@ -3055,10 +3065,10 @@ export const isChargedMember = (
   return isSubset !== isDecided;
 };
 
-// TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size.
-export const drainChargedSet = (charges: ChargeTable, value: Value) => {
+// TLC's toSetEnum drains the enumerator of [S -> T], [a : S], S \X T, S \cup T, S \cap T, S \ T or { x \in S : p(x) }, which charges its draws, then charges the set its size. It keeps nothing, but convertAndCache keeps what it drains.
+export const drainChargedSet = (charges: ChargeTable, value: Value, isKept: boolean) => {
   if (typeof value !== "object") return undefined;
-  if (value.kind === "FilteredSet") return drainChargedFilter(charges, value);
+  if (value.kind === "FilteredSet") return drainChargedFilter(charges, value, isKept);
   const node = getValueNode(charges, value);
   const drained =
     value.kind === "SetOperation"
@@ -3079,7 +3089,7 @@ export const drainChargedSet = (charges: ChargeTable, value: Value) => {
       : drained.kind === "RecordSet"
         ? createSet(sorted)
         : createSortedSet(sorted);
-  drained.enumerated = set;
+  if (isKept) drained.enumerated = set;
   return set.elements;
 };
 
@@ -3226,6 +3236,22 @@ const listUnionLikeTlc = (union: SetOperationValue, opened: OpenedStream | undef
   return elements;
 };
 
+// TLC's toSetEnum keeps nothing, so a filter whose pass observes something runs it again on the next pass.
+const toBoundSet = (value: Value) => {
+  if (
+    typeof value !== "object" ||
+    value.kind !== "FilteredSet" ||
+    value.isPassObserved !== true ||
+    value.isCached === true ||
+    value.enumerated
+  ) {
+    return toFiniteSet(value);
+  }
+  const set = toFiniteSet(value);
+  value.enumerated = undefined;
+  return set;
+};
+
 export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
   if (
     typeof value !== "object" ||
@@ -3237,8 +3263,9 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
           value.kind !== "ProductSet"))) ||
     value.enumerated
   ) {
-    return isBounded ? toFiniteSet(value).elements : getUnboundedElements(value);
+    return isBounded ? toBoundSet(value).elements : getUnboundedElements(value);
   }
+  const isRepeated = (value.kind === "Union" || value.hasFilter) && hasObservedPass(value);
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   const elements = enumerateSet(
     value,
@@ -3247,7 +3274,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     setTrace.sets ? openOperandStream(value, false) : undefined,
   );
   const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
-  value.enumerated = set;
+  if (!isRepeated) value.enumerated = set;
   return set.elements;
 };
 
@@ -3505,8 +3532,7 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       return size;
     }
     default:
-      cacheSet(value);
-      return toFiniteSet(value).elements.length;
+      return toCachedSet(value).elements.length;
   }
 };
 
