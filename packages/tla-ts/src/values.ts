@@ -4894,42 +4894,44 @@ const MAXIMUM_EXPANDED_PRODUCT = 1999;
 const getProductSize = (sets: Value[]) =>
   sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
 
-const toPrintedSet = (value: LazySetValue) => {
+const toPrintedSet = (value: LazySetValue, isStrict: boolean) => {
+  // Print, PrintT and ToString convert with toSetEnum, which keeps nothing. An error message keeps its set, as tla-ts formats it again when it retries a comparison as TLC does.
+  const convert = isStrict ? toArgumentSet : toFiniteSet;
   const charged = getChargedSet(value);
-  return charged ? toChargedSet(charged, false, toFiniteSet) : toFiniteSet(value);
+  return charged ? toChargedSet(charged, false, convert) : convert(value);
 };
 
-const expandLazySet = (value: LazySetValue) => {
+const expandLazySet = (value: LazySetValue, isStrict: boolean) => {
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
-    return toPrintedSet(value);
+    return toPrintedSet(value, isStrict);
   }
   value.cost?.charges?.chargePrintedSize(value);
   if (value.kind === "Subset") {
     if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
-    return toPrintedSet(value);
+    return toPrintedSet(value, isStrict);
   }
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
-    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
   }
   const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
-  if (isStrict || value.kind === "Union") return expandLazySet(value);
+  if (isStrict || value.kind === "Union") return expandLazySet(value, isStrict);
   if (
     value.kind === "Subset" &&
     isFunctionValue(value.base) &&
     (value.base.kind === "Function" || isEnumerable(value.base.domain))
   ) {
-    return expandLazySet(value);
+    return expandLazySet(value, false);
   }
   if (!isEnumerable(value)) return undefined;
   const mark = markTrace();
   try {
-    return expandLazySet(value);
+    return expandLazySet(value, false);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
     dropFingerprint(mark);

@@ -11280,6 +11280,26 @@ ASSUME TLCFP(a) = -887695703
       "{<<0, 1>>, <<1, 1>>} \\in {{}, F} /\\ <<0, 1>> \\in F",
       ["<<0, 1>>", "<<1, 1>>"],
     ],
+    [
+      "PrintT",
+      "PrintT(F) /\\ Cardinality(F) = 2",
+      ["<<0, 1>>", "<<1, 1>>", "{<<0, 1>>, <<1, 1>>}", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "ToString",
+      'ToString(F) # "" /\\ Cardinality(F) = 2',
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "PrintT of a tuple that holds it",
+      "PrintT(<<F>>) /\\ F = {<<0, 1>>, <<1, 1>>}",
+      ["<<0, 1>>", "<<1, 1>>", "<<{<<0, 1>>, <<1, 1>>}>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "PrintT of its product, which sizes it",
+      "PrintT(F \\X {1}) /\\ Cardinality(F) = 2",
+      ["<<0, 1>>", "<<1, 1>>", "{<<<<0, 1>>, 1>>, <<<<1, 1>>, 1>>}"],
+    ],
   ])(
     "runs a filter's predicate again after %s only where TLC does",
     async (_name, body, printed) => {
@@ -11292,6 +11312,45 @@ ASSUME TLCFP(a) = -887695703
       expect(prints).toEqual(printed);
     },
   );
+
+  it.each([
+    [
+      "PrintT",
+      "PrintT(F) /\\ \\A t \\in F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:11",
+        "|line 5, col 51 to line 5, col 58 of module M: 4",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:10",
+        "line 5, col 64 to line 5, col 101 of module M: 1",
+        "|line 5, col 64 to line 5, col 72 of module M: 1",
+        "|line 5, col 77 to line 5, col 101 of module M: 1",
+        "||line 5, col 90 to line 5, col 101 of module M: 2",
+        "||line 5, col 86 to line 5, col 86 of module M: 1",
+      ],
+    ],
+    [
+      "ToString",
+      'ToString(F) # "" /\\ Cardinality(F) = 2',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 4",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:10",
+        "line 5, col 64 to line 5, col 101 of module M: 1",
+      ],
+    ],
+  ])("charges a filter's next pass after %s prints it", async (_name, body, rows) => {
+    expect(
+      await getNextCoverageLines(
+        `x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN ${body}`,
+      ),
+    ).toEqual(rows);
+  });
 
   it.each([
     [
