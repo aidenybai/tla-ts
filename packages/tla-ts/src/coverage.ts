@@ -39,9 +39,11 @@ import {
   isReducibleSet,
   isSequenceDomain,
   markStreamedSet,
+  type CostedSetValue,
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
+  type SetValue,
   type SubsetValue,
   type UnionValue,
   type Value,
@@ -82,8 +84,7 @@ export interface Coverage {
   hiddenFrames: CoverageFrame[];
   nextState: NextStateMode;
   isMember: typeof isElementOf;
-  chargeSetEnumeration: (set: Value) => void;
-  chargeSubsetConversion: (set: SubsetValue) => void;
+  convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
@@ -191,19 +192,13 @@ export const createCoverage = (variableCount: number): Coverage => {
     hiddenFrames: [],
     nextState: "given",
     isMember: isElementOf,
-    chargeSetEnumeration: () => {},
-    chargeSubsetConversion: () => {},
+    convertCharged: (set, convert) => convert(set),
     chargeSubsetElements: () => {},
     chargePrintedSize: () => {},
     chargeIsEmpty: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
-  coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
-  coverage.chargeSubsetConversion = (set) => {
-    // SubsetValue#toSetEnum sizes SUBSET S before its elements() sizes S again.
-    chargeSize(coverage, set);
-    chargeSubsetElements(coverage, set);
-  };
+  coverage.convertCharged = (set, convert) => convertCharged(coverage, set, convert);
   coverage.chargeSubsetElements = (set) => chargeSubsetElements(coverage, set);
   coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
   coverage.chargeIsEmpty = (set) => chargeIsEmpty(coverage, set);
@@ -1417,6 +1412,38 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
   for (let position = 0; position <= size; position++) enumerator.next();
   const node = getValueNode(coverage, set);
   if (node !== undefined) coverage.secondary[node] += size;
+};
+
+const convertCharged = (
+  coverage: Coverage,
+  set: CostedSetValue,
+  convert: (value: Value) => SetValue,
+) => {
+  if (set.kind === "Subset") {
+    // SubsetValue#toSetEnum sizes SUBSET S before its elements() sizes S again.
+    chargeSize(coverage, set);
+    chargeSubsetElements(coverage, set);
+    const converted = convert(set);
+    const node = set.cost?.node;
+    if (node !== undefined) coverage.secondary[node] += converted.elements.length;
+    return converted;
+  }
+  if (getKnownSize(set) !== undefined) {
+    chargeSetEnumeration(coverage, set);
+    return convert(set);
+  }
+  const converted = convert(set);
+  // SetOfTuplesValue, SetOfRcdsValue and SetOfFcnsValue draw a filter they hold, whose size is known only once it converts.
+  const size = converted.elements.length;
+  const node = getValueNode(coverage, set);
+  const draws =
+    set.kind === "FunctionSet" && getKnownSize(set.domain) === undefined
+      ? undefined
+      : createProductSetEnumerator(coverage, set, size);
+  if (draws === undefined || node === undefined) return converted;
+  for (let position = 0; position <= size; position++) draws.next();
+  coverage.secondary[node] += size;
+  return converted;
 };
 
 const chargeIsEmpty = (coverage: Coverage, set: Value): boolean | undefined => {

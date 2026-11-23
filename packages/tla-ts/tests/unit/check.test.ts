@@ -11151,6 +11151,107 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it.each([
+    [
+      "a product",
+      "{u \\in (0..1) \\X {1} : u[2] = 1} \\X {1}",
+      [
+        "line 4, col 9 to line 4, col 51 of module M: 1",
+        "|line 4, col 13 to line 4, col 51 of module M: 1:6",
+        "||line 4, col 13 to line 4, col 44 of module M: 1:3",
+        "|||line 4, col 36 to line 4, col 43 of module M: 3",
+        "|||line 4, col 20 to line 4, col 32 of module M: 1:6",
+        "||||line 4, col 21 to line 4, col 24 of module M: 1",
+        "||||line 4, col 30 to line 4, col 32 of module M: 1:8",
+        "||line 4, col 49 to line 4, col 51 of module M: 1:5",
+      ],
+    ],
+    [
+      "a product's second factor",
+      "{1} \\X {u \\in (0..1) \\X {1} : u[2] = 1}",
+      [
+        "line 4, col 9 to line 4, col 51 of module M: 1",
+        "|line 4, col 13 to line 4, col 51 of module M: 1:6",
+        "||line 4, col 13 to line 4, col 15 of module M: 1:2",
+        "||line 4, col 20 to line 4, col 51 of module M: 1:4",
+        "|||line 4, col 43 to line 4, col 50 of module M: 4",
+        "|||line 4, col 27 to line 4, col 39 of module M: 1:8",
+        "||||line 4, col 28 to line 4, col 31 of module M: 1",
+        "||||line 4, col 37 to line 4, col 39 of module M: 1:11",
+      ],
+    ],
+    [
+      "a record set",
+      "[a : {u \\in (0..1) \\X {1} : u[2] = 1}]",
+      [
+        "line 4, col 9 to line 4, col 50 of module M: 1",
+        "|line 4, col 13 to line 4, col 50 of module M: 1:4",
+        "||line 4, col 18 to line 4, col 49 of module M: 1:3",
+        "|||line 4, col 41 to line 4, col 48 of module M: 3",
+        "|||line 4, col 25 to line 4, col 37 of module M: 1:6",
+        "||||line 4, col 26 to line 4, col 29 of module M: 1",
+        "||||line 4, col 35 to line 4, col 37 of module M: 1:8",
+      ],
+    ],
+    [
+      "a function set's range",
+      "[{1} -> {u \\in (0..1) \\X {1} : u[2] = 1}]",
+      [
+        "line 4, col 9 to line 4, col 53 of module M: 1",
+        "|line 4, col 13 to line 4, col 53 of module M: 1:4",
+        "||line 4, col 14 to line 4, col 16 of module M: 1",
+        "||line 4, col 21 to line 4, col 52 of module M: 1:3",
+        "|||line 4, col 44 to line 4, col 51 of module M: 3",
+        "|||line 4, col 28 to line 4, col 40 of module M: 1:6",
+        "||||line 4, col 29 to line 4, col 32 of module M: 1",
+        "||||line 4, col 38 to line 4, col 40 of module M: 1:8",
+      ],
+    ],
+  ])(
+    "charges the draws of %s with a filter in it that the initial state holds",
+    async (_name, set, rows) => {
+      const relations = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = ${set}\nNext == x' = x\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(relations?.[0]).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "the next state holds",
+      "x' = {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1}",
+      [
+        "line 5, col 9 to line 5, col 52 of module M: 2",
+        "|line 5, col 14 to line 5, col 52 of module M: 2:12",
+        "||line 5, col 14 to line 5, col 45 of module M: 2:6",
+        "|||line 5, col 37 to line 5, col 44 of module M: 6",
+        "|||line 5, col 21 to line 5, col 33 of module M: 2:12",
+        "||||line 5, col 22 to line 5, col 25 of module M: 2",
+        "||||line 5, col 31 to line 5, col 33 of module M: 2:16",
+        "||line 5, col 50 to line 5, col 52 of module M: 2:10",
+      ],
+    ],
+    [
+      "a comparison converts",
+      "x' = 0 /\\ LET P == {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1} IN P # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 66 of module M: 1:6",
+        "|line 5, col 28 to line 5, col 59 of module M: 1:3",
+        "||line 5, col 51 to line 5, col 58 of module M: 3",
+        "||line 5, col 35 to line 5, col 47 of module M: 1:6",
+        "|||line 5, col 36 to line 5, col 39 of module M: 1",
+        "|||line 5, col 45 to line 5, col 47 of module M: 1:8",
+        "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+        "line 5, col 71 to line 5, col 76 of module M: 1",
+      ],
+    ],
+  ])("charges the draws of a product with a filter in it that %s", async (_name, next, rows) => {
+    expect(await getNextCoverageLines(next)).toEqual(rows);
+  });
+
+  it.each([
     ["Cardinality", "Cardinality(F) = 2 /\\ <<0, 1>> \\in F", ["<<0, 1>>", "<<1, 1>>"]],
     [
       "the size of its product",
@@ -11179,6 +11280,50 @@ ASSUME TLCFP(a) = -887695703
       "{<<0, 1>>, <<1, 1>>} \\in {{}, F} /\\ <<0, 1>> \\in F",
       ["<<0, 1>>", "<<1, 1>>"],
     ],
+    [
+      "PrintT",
+      "PrintT(F) /\\ Cardinality(F) = 2",
+      ["<<0, 1>>", "<<1, 1>>", "{<<0, 1>>, <<1, 1>>}", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "ToString",
+      'ToString(F) # "" /\\ Cardinality(F) = 2',
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "PrintT of a tuple that holds it",
+      "PrintT(<<F>>) /\\ F = {<<0, 1>>, <<1, 1>>}",
+      ["<<0, 1>>", "<<1, 1>>", "<<{<<0, 1>>, <<1, 1>>}>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a bound over a function set with it as the domain",
+      "LET P == [F -> {1}] IN (\\A o \\in P : TRUE) /\\ (\\A o \\in P : TRUE)",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a function set with it as the domain compared with the empty set",
+      "[F -> {1}] # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a bound over a record set of function sets with it as the domain",
+      "(\\A o \\in [a : [F -> {1}]] : TRUE) /\\ (\\A o \\in [a : [F -> {1}]] : TRUE)",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+      ],
+    ],
+    [
+      "PrintT of its product, which sizes it",
+      "PrintT(F \\X {1}) /\\ Cardinality(F) = 2",
+      ["<<0, 1>>", "<<1, 1>>", "{<<<<0, 1>>, 1>>, <<<<1, 1>>, 1>>}"],
+    ],
   ])(
     "runs a filter's predicate again after %s only where TLC does",
     async (_name, body, printed) => {
@@ -11191,6 +11336,178 @@ ASSUME TLCFP(a) = -887695703
       expect(prints).toEqual(printed);
     },
   );
+
+  it.each([
+    [
+      "PrintT",
+      "PrintT(F) /\\ \\A t \\in F : t # <<7, 7>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:11",
+        "|line 5, col 51 to line 5, col 58 of module M: 4",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:10",
+        "line 5, col 64 to line 5, col 101 of module M: 1",
+        "|line 5, col 64 to line 5, col 72 of module M: 1",
+        "|line 5, col 77 to line 5, col 101 of module M: 1",
+        "||line 5, col 90 to line 5, col 101 of module M: 2",
+        "||line 5, col 86 to line 5, col 86 of module M: 1",
+      ],
+    ],
+    [
+      "ToString",
+      'ToString(F) # "" /\\ Cardinality(F) = 2',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 59 of module M: 1:8",
+        "|line 5, col 51 to line 5, col 58 of module M: 4",
+        "|line 5, col 35 to line 5, col 47 of module M: 1:8",
+        "||line 5, col 36 to line 5, col 39 of module M: 1",
+        "||line 5, col 45 to line 5, col 47 of module M: 1:10",
+        "line 5, col 64 to line 5, col 101 of module M: 1",
+      ],
+    ],
+  ])("charges a filter's next pass after %s prints it", async (_name, body, rows) => {
+    expect(
+      await getNextCoverageLines(
+        `x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN ${body}`,
+      ),
+    ).toEqual(rows);
+  });
+
+  it("keeps no set of a function set compared with itself in a spec with a union", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {}\nNext == x' = 0 /\\ LET G == [{u \\in (0..1) \\X {1} : u[1] > 5} -> {u \\in (0..1) \\X {1} : u[1] < 5}] IN G = G /\\ \\A e \\in G : e = e\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 97 of module M: 1:4",
+      "|line 5, col 29 to line 5, col 60 of module M: 1:8",
+      "||line 5, col 52 to line 5, col 59 of module M: 8",
+      "||line 5, col 36 to line 5, col 48 of module M: 1:16",
+      "|||line 5, col 37 to line 5, col 40 of module M: 1",
+      "|||line 5, col 46 to line 5, col 48 of module M: 1:20",
+      "|line 5, col 65 to line 5, col 96 of module M: 1",
+      "line 5, col 102 to line 5, col 128 of module M: 1",
+    ]);
+  });
+
+  it.each([
+    ["a function set with it as the domain", "[F -> {1}] # {}"],
+    ["its product", "LET P == F \\X {1} IN P # {}"],
+    ["a record set of it", "LET P == [a : F] IN P # {}"],
+  ])(
+    "runs a filter's predicate again after %s is compared with the empty set in a spec with a union",
+    async (_name, comparison) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {} /\\ LET F == {u \\in (0..1) \\X {1} : PrintT(u)} IN ${comparison} /\\ \\A t \\in F : TRUE\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"]);
+    },
+  );
+
+  it("charges the draws of a product compared with the empty set in a spec with a union", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0 /\\ (SUBSET {1}) \\cup (SUBSET {2}) # {}\nNext == x' = 0 /\\ LET P == {u \\in (0..1) \\X {1} : u[2] = 1} \\X {1} IN P # {} /\\ \\A o \\in P : TRUE\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.at(-1)).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 66 of module M: 1:9",
+      "|line 5, col 28 to line 5, col 59 of module M: 1:3",
+      "||line 5, col 51 to line 5, col 58 of module M: 3",
+      "||line 5, col 35 to line 5, col 47 of module M: 1:6",
+      "|||line 5, col 36 to line 5, col 39 of module M: 1",
+      "|||line 5, col 45 to line 5, col 47 of module M: 1:8",
+      "|line 5, col 64 to line 5, col 66 of module M: 1:5",
+      "line 5, col 71 to line 5, col 97 of module M: 1",
+      "|line 5, col 71 to line 5, col 76 of module M: 1",
+      "|line 5, col 81 to line 5, col 97 of module M: 1",
+      "||line 5, col 94 to line 5, col 97 of module M: 2",
+      "||line 5, col 90 to line 5, col 90 of module M: 1",
+    ]);
+  });
+
+  it("charges a filter in a function set's domain on each pass over the function set", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == [F -> {1}] IN (\\A o \\in P : TRUE) /\\ (\\A o \\in P : TRUE)",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 28 to line 5, col 59 of module M: 1:10",
+      "|line 5, col 51 to line 5, col 58 of module M: 6",
+      "|line 5, col 35 to line 5, col 47 of module M: 1:12",
+      "||line 5, col 36 to line 5, col 39 of module M: 1",
+      "||line 5, col 45 to line 5, col 47 of module M: 1:16",
+      "line 5, col 73 to line 5, col 82 of module M: 1:10",
+      "|line 5, col 74 to line 5, col 74 of module M: 1",
+      "|line 5, col 79 to line 5, col 81 of module M: 1:10",
+      "line 5, col 87 to line 5, col 128 of module M: 1",
+    ]);
+  });
+
+  it.each([
+    ["a filter over it", "\\A o \\in {v \\in y : TRUE} : TRUE"],
+    ["membership in it", "<<0, 1>> \\in y"],
+  ])(
+    "runs no predicate of a filter that a state holds again in %s, as TLC's fingerprint keeps the set",
+    async (_name, body) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = {u \\in (0..1) \\X {1} : PrintT(<<"p", u>>)}\nNext == x' = (x + 1) % 2 /\\ y' = y /\\ PrintT(<<"n", x>>) /\\ ${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([
+        '<<"p", <<0, 1>>>>',
+        '<<"p", <<1, 1>>>>',
+        '<<"n", 0>>',
+        '<<"n", 1>>',
+      ]);
+    },
+  );
+
+  it.each([
+    ["<<T, T \\X {1}>>", "y[1]", "", ['<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>']],
+    [
+      "T",
+      "y",
+      "\nVIEW V",
+      ['<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>', '<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>'],
+    ],
+  ])(
+    "keeps a filter that the state %s holds once its fingerprint converts it, and only then, as TLC does",
+    async (value, read, view, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = (LET T == {u \\in (0..1) \\X {1} : PrintT(<<"p", u>>)} IN ${value})\nNext == x' = (x + 1) % 2 /\\ y' = y /\\ (\\A o \\in ${read} : TRUE)\nV == x\n====`,
+        config: `INIT Init\nNEXT Next${view}`,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
+  it("charges a filter that the initial state holds once, as TLC's fingerprint keeps the set", async () => {
+    const relations = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = {u \\in (0..1) \\X {1} : u[2] = 1}\nNext == x' = x /\\ (\\A o \\in {v \\in x : TRUE} : TRUE)\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(relations?.[0]).toEqual([
+      "line 4, col 9 to line 4, col 44 of module M: 1",
+      "|line 4, col 13 to line 4, col 44 of module M: 1:7",
+      "||line 4, col 36 to line 4, col 43 of module M: 2",
+      "||line 4, col 20 to line 4, col 32 of module M: 1:4",
+      "|||line 4, col 21 to line 4, col 24 of module M: 1",
+      "|||line 4, col 30 to line 4, col 32 of module M: 1:5",
+    ]);
+  });
 
   it.each([
     [

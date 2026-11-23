@@ -23,7 +23,6 @@ export interface ModelValue {
 interface LazySet {
   enumerated?: SetValue;
   isCached?: boolean;
-  walkFlags?: number;
 }
 
 export interface SetValue {
@@ -161,7 +160,6 @@ export interface LazyFunctionValue {
   isApplicationObserved: boolean;
   source?: LazyFunctionSource;
   enumerated?: FunctionValue;
-  walkFlags?: number;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -581,8 +579,7 @@ const compareAny = (other: Value): never => {
   );
 };
 
-const FINGERPRINTED_FLAG = 1;
-const SELF_COMPARED_FLAG = 2;
+const SELF_COMPARED_FLAG = 1;
 
 const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
@@ -665,8 +662,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       : toFiniteSet(value),
     isEquality,
   );
-  // SetPredValue#equals and compareTo keep the set they convert with convertAndCache.
-  if (value.kind === "FilteredSet") value.isCached = true;
+  cacheSet(value);
   return false;
 };
 
@@ -723,8 +719,7 @@ export const compareValues = (left: Value, right: Value): number => {
       const leftSet = leftCharged
         ? toChargedSet(leftCharged, true, toFiniteSet)
         : toFiniteSet(left);
-      // SetPredValue#compareTo and equals keep the set they convert with convertAndCache.
-      if (leftKind === "FilteredSet") left.isCached = true;
+      cacheSet(left);
       return compareSets(
         leftSet,
         rightCharged ? toChargedSet(rightCharged, false, toArgumentSet) : toArgumentSet(right),
@@ -833,7 +828,7 @@ const isCachedSet = (value: ObjectValue) => isLazySet(value) && value.isCached =
 
 let hasStreamedSet = false;
 
-export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue>(
+export const markStreamedSet = <Streamed extends UnionValue | SetOperationValue | FilteredSetValue>(
   value: Streamed,
 ) => {
   hasStreamedSet = true;
@@ -849,38 +844,18 @@ const STREAMING_KINDS = new Set<ObjectValue["kind"]>([
   "FunctionSet",
 ]);
 
-const cacheSet = (value: Value) => {
-  if (
-    hasStreamedSet &&
-    typeof value === "object" &&
-    isLazySet(value) &&
-    STREAMING_KINDS.has(value.kind)
-  ) {
-    value.isCached = true;
-  }
-};
+const isCacheableSet = (value: Value): value is ConvertibleSetValue =>
+  hasStreamedSet &&
+  typeof value === "object" &&
+  isLazySet(value) &&
+  STREAMING_KINDS.has(value.kind);
 
-export const markFingerprinted = (value: Value): void => {
-  if (!hasStreamedSet || typeof value !== "object") return;
-  if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
-    return;
-  }
-  const walkFlags = value.walkFlags ?? 0;
-  if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
-  value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
-  if (value.kind === "Function") {
-    value.domain.forEach(markFingerprinted);
-    value.range.forEach(markFingerprinted);
-  } else if (value.kind === "Set" || value.kind === "MixedSet") {
-    value.elements.forEach(markFingerprinted);
-  } else if (isSetValue(value) && isEnumerable(value)) {
-    cacheSet(value);
-    toFiniteSet(value).elements.forEach(markFingerprinted);
-  }
+// TLC's convertAndCache keeps the set a lazy set converts to once it has converted it, so a caller marks a set only after converting it.
+const cacheSet = (value: Value) => {
+  if (isCacheableSet(value)) value.isCached = true;
 };
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
-  cacheSet(left);
   if (left === right) {
     compareWithItself(left, true);
     return true;
@@ -952,6 +927,7 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (isInfiniteComparison) {
     if (!isOverriddenSet(left)) {
       const elements = toFiniteSet(left);
+      cacheSet(left);
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
     return compareValues(left, right) === 0;
@@ -1427,9 +1403,10 @@ const isAscendingIntegers = (elements: Value[]) => {
 };
 
 export const createSet = (elements: Value[]): SetValue => {
-  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   if (elements.length < 2 || isStrictlySorted(elements)) return createSortedSet(elements);
   const sorted = [...elements].sort(compareValues);
+  // ValueVec#sort makes each element after the first the receiver of a compareTo, which keeps a lazy set it converts.
+  for (let index = 1; index < elements.length; index++) cacheSet(elements[index]);
   const unique = [sorted[0]];
   for (let index = 1; index < sorted.length; index++) {
     if (compareValues(unique[unique.length - 1], sorted[index]) !== 0) unique.push(sorted[index]);
@@ -2105,7 +2082,7 @@ const toArgumentSet = (value: Value) => {
   return set;
 };
 
-type CostedSetValue =
+export type CostedSetValue =
   | SubsetValue
   | FunctionSetValue
   | RecordSetValue
@@ -2167,14 +2144,8 @@ const toChargedSet = (
   // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a set stays unsorted.
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
   const cost = value.cost;
-  const node = cost?.node;
   const charges = cost?.charges;
-  if (value.kind === "Subset") charges?.chargeSubsetConversion(value);
-  else charges?.chargeSetEnumeration(value);
-  const set = convert(value);
-  if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
-    charges.secondary[node] += set.elements.length;
-  }
+  const set = charges ? charges.convertCharged(value, convert) : convert(value);
   if (isCached && cost) cost.charges = undefined;
   return set;
 };
@@ -2273,7 +2244,7 @@ const isPredicatedProduct = (value: FunctionSetValue | RecordSetValue | ProductS
   value.isCached !== true &&
   !value.enumerated &&
   (value.kind === "FunctionSet"
-    ? isPredicated(value.range)
+    ? isPredicated(value.domain) || isPredicated(value.range)
     : hasPredicatedSet(value.kind === "RecordSet" ? value.sets : value.factors));
 
 const hasPredicatedSet = (sets: Value[]) => {
@@ -2297,7 +2268,7 @@ const hasObservedFilter = (value: Value): boolean => {
         hasObservedSet(value.base.elements)
       );
     case "FunctionSet":
-      return hasObservedFilter(value.range);
+      return hasObservedFilter(value.domain) || hasObservedFilter(value.range);
     case "RecordSet":
       return hasObservedSet(value.sets);
     case "ProductSet":
@@ -2324,7 +2295,7 @@ export const createFunctionSet = (
   kind: "FunctionSet",
   domain,
   range,
-  hasFilter: isPredicated(range),
+  hasFilter: isPredicated(domain) || isPredicated(range),
   cost,
 });
 
@@ -2377,6 +2348,17 @@ const EMPTY_STREAM: ListStream = { kind: "List", elements: [], position: 0 };
 
 const getPlainTest = (value: FilteredSetValue) => (element: Value) => value.test(element, false);
 
+// SetOfFcnsValue's enumerator converts its domain with toSetEnum, which keeps nothing.
+const getEnumeratedDomain = (domain: Value) => {
+  const repeatedDomain =
+    typeof domain === "object" && isLazySet(domain) && !domain.enumerated && hasObservedPass(domain)
+      ? domain
+      : undefined;
+  const elements = getFunctionDomain(domain);
+  if (repeatedDomain) repeatedDomain.enumerated = undefined;
+  return elements;
+};
+
 // TLC's elements() checks that the set has an element and reads the first element of each component, which nextElement continues.
 const openProductStream = (
   value: FunctionSetValue | RecordSetValue | ProductSetValue,
@@ -2395,7 +2377,7 @@ const openProductStream = (
     if (isOverriddenSet(value.domain)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
     }
-    stream.domain = getFunctionDomain(value.domain);
+    stream.domain = getEnumeratedDomain(value.domain);
     if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
     }
@@ -2607,8 +2589,7 @@ export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
   isMember: typeof isElementOf;
-  chargeSetEnumeration: (set: Value) => void;
-  chargeSubsetConversion: (set: SubsetValue) => void;
+  convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
@@ -2875,7 +2856,7 @@ const openChargedProduct = (
     if (isOverriddenSet(value.domain)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("domain D", value.domain));
     }
-    stream.domain = getFunctionDomain(value.domain);
+    stream.domain = getEnumeratedDomain(value.domain);
     if ((stream.domain.length > 0 || isVersion174) && isOverriddenSet(value.range)) {
       throw new TlaEvaluationError(describeUnenumerableFunctionSet("range R", value.range));
     }
@@ -3806,7 +3787,6 @@ export const isElementOf = (element: Value, set: Value): boolean => {
 export const isElementOfSetLikeTlc = (element: Value, set: SetValue): boolean => {
   const sets = setTrace.sets;
   sets?.push(set);
-  cacheSet(element);
   const isElement = isInSortedSetLikeTlc(element, set);
   sets?.pop();
   return isElement;
@@ -3966,9 +3946,8 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
     case "Set":
-      cacheSet(element);
       // TLC's ValueVec#search makes the element the receiver of a sorted set's comparisons, and each member the receiver of an unsorted one's.
-      return isTypedModelValueCreated || isObservedLambda(element)
+      return isTypedModelValueCreated || isObservedLambda(element) || isCacheableSet(element)
         ? isInSortedSetLikeTlc(element, set)
         : computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
@@ -4802,7 +4781,9 @@ export const getValueHash = (value: Value): number => {
   }
   if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
   const charged = getChargedSet(value);
-  return getValueHash(charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value));
+  const set = charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value);
+  cacheSet(value);
+  return getValueHash(set);
 };
 
 const finalizeFingerprint = (hash: number) => {
@@ -4901,42 +4882,44 @@ const MAXIMUM_EXPANDED_PRODUCT = 1999;
 const getProductSize = (sets: Value[]) =>
   sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
 
-const toPrintedSet = (value: LazySetValue) => {
+const toPrintedSet = (value: LazySetValue, isStrict: boolean) => {
+  // Print, PrintT and ToString convert with toSetEnum, which keeps nothing. An error message keeps its set, as tla-ts formats it again when it retries a comparison as TLC does.
+  const convert = isStrict ? toArgumentSet : toFiniteSet;
   const charged = getChargedSet(value);
-  return charged ? toChargedSet(charged, false, toFiniteSet) : toFiniteSet(value);
+  return charged ? toChargedSet(charged, false, convert) : convert(value);
 };
 
-const expandLazySet = (value: LazySetValue) => {
+const expandLazySet = (value: LazySetValue, isStrict: boolean) => {
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
-    return toPrintedSet(value);
+    return toPrintedSet(value, isStrict);
   }
   value.cost?.charges?.chargePrintedSize(value);
   if (value.kind === "Subset") {
     if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
-    return toPrintedSet(value);
+    return toPrintedSet(value, isStrict);
   }
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
-    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
   }
   const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
-  if (isStrict || value.kind === "Union") return expandLazySet(value);
+  if (isStrict || value.kind === "Union") return expandLazySet(value, isStrict);
   if (
     value.kind === "Subset" &&
     isFunctionValue(value.base) &&
     (value.base.kind === "Function" || isEnumerable(value.base.domain))
   ) {
-    return expandLazySet(value);
+    return expandLazySet(value, false);
   }
   if (!isEnumerable(value)) return undefined;
   const mark = markTrace();
   try {
-    return expandLazySet(value);
+    return expandLazySet(value, false);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
     dropFingerprint(mark);
