@@ -223,6 +223,17 @@ const VALUE_FINGERPRINTED = 2;
 const VALUE_SELF_COMPARED = 4;
 // A set or function that markNormalized walked, every set within which TLC has normalized.
 const VALUE_DEEPLY_NORMALIZED = 8;
+// A record of ESCore's heap that CanonicalStateOf made, which it keeps as it is where its
+// numbering leaves the record and what it refers to where they are (see escore-canonical.ts).
+const VALUE_CANONICAL = 16;
+
+export const markCanonical = (value: FunctionValue) => {
+  value.flags |= VALUE_CANONICAL;
+  return value;
+};
+
+export const isCanonical = (value: Value) =>
+  typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;

@@ -28,8 +28,10 @@ const worker = new Worker(
     import(workerData.source + "/values.ts"),
     import(workerData.source + "/typescript/spec/model.ts"),
     import(workerData.source + "/typescript/spec/prepare.ts"),
-  ]).then(([parallel, values, model, prepare]) => ({
+    import(workerData.source + "/escore-canonical.ts"),
+  ]).then(([parallel, values, model, prepare, canonical]) => ({
     check: parallel.check,
+    setCanonicalDifferential: canonical.setCanonicalDifferential,
     formatValue: values.formatValue,
     compileModelToEscore: model.compileModelToEscore,
     runtime: prepare.prepareRuntime(workerData.directory),
@@ -43,6 +45,9 @@ const worker = new Worker(
       // spec.mutation replaces text in ESCanonicalPlain where the model compares canonical forms,
       // and in the model's code otherwise.
       const isCompared = spec.mode === "compared";
+      // A compared model also checks that each canonical form that keeps records as they are is
+      // the one that renames every record anew.
+      loaded.setCanonicalDifferential(isCompared);
       const isOperators = spec.mode === "operators";
       const mutate = (text, isMutated) =>
         isMutated ? text.replace(spec.mutation?.[0] ?? "", spec.mutation?.[1] ?? "") : text;
@@ -166,11 +171,11 @@ const ready = new Promise((resolve) => {
 beforeAll(() => ready, 60_000);
 
 // Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
-// raw, canonical where the native canonical form and ESCanonical's TLA+ compare equal, lowered
-// where each lowered state materializes to the canonical state it lowers and each lowered
-// converter gives what lowering its converter's objects gives, lowered where each native call
-// gives what ESCore's gives, or with the assumptions operators, which read ESNative's operators
-// and their TLA+ as PlainX.
+// raw, canonical where the native canonical form, its incremental form, and ESCanonical's TLA+
+// compare equal, lowered where each lowered state materializes to the canonical state it lowers
+// and each lowered converter gives what lowering its converter's objects gives, lowered where each
+// native call gives what ESCore's gives, or with the assumptions operators, which read ESNative's
+// operators and their TLA+ as PlainX.
 const checkModel = (
   source: string,
   fileName = "spec.ts",

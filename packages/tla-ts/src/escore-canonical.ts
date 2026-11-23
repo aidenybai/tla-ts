@@ -2,6 +2,7 @@ import { defineOperator, getValue } from "./builtins";
 import { TlaEvaluationError, TlaModuleError } from "./errors";
 import { EXIT_STATUS } from "./exit-codes";
 import { prettyPrint } from "./pretty-print";
+import { writeStateFingerprint } from "./fingerprints";
 import {
   applyFunction,
   createFunction,
@@ -11,6 +12,9 @@ import {
   createTuple,
   formatValue,
   getSequenceElements,
+  getValueHash,
+  isCanonical,
+  markCanonical,
   setFunctionClass,
   toFiniteFunction,
   toFiniteSet,
@@ -91,18 +95,33 @@ const heapGet = (heap: Value, index: number) => {
   return getList(pages[Math.floor((index - 1) / PAGE_SIZE)])[(index - 1) % PAGE_SIZE];
 };
 
-const createHeap = (records: Value[]) =>
-  createRecord([
+// A heap of records, whose each page is the page of the heap before that a canonicalization made,
+// where that page holds the same records, or else a page of its own, which this one makes.
+const createHeap = (records: Value[], before: Value, isIncremental: boolean) => {
+  const pages = getList(get(before, "pages"));
+  return createRecord([
     ["size", records.length],
     [
       "pages",
       createTuple(
-        Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, page) =>
-          createTuple(records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)),
-        ),
+        Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, page) => {
+          const kept = records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+          const previous = pages[page];
+          const previousRecords = previous === undefined ? [] : getList(previous);
+          return isIncremental &&
+            isCanonical(previous) &&
+            previousRecords.length === kept.length &&
+            previousRecords.every((record, index) => record === kept[index])
+            ? previous
+            : markCanonical(createTuple(kept));
+        }),
       ),
     ],
   ]);
+};
+
+// The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
+const WEAK_CLASSES = new Set(["weakMap", "weakSet", "weakRef"]);
 
 const objectRef = (value: Value, realm: Realm, refs: number[]) => {
   if (getString(value, "type") === "object") {
@@ -376,7 +395,12 @@ const moduleRefs = (module: Value, realm: Realm, refs: number[]) => {
 
 const NULL = createRecord([["type", "null"]]);
 
-const canonicalStateOf = (state: Value, initial: Value): Value => {
+// CanonicalStateOf of a state. Where isIncremental, a record that a canonicalization made stays as
+// it is, rather than renamed anew, where the walk numbers it and each node it refers to as their
+// numbers already are, which renaming gives back equal; and so does a page of such records. The
+// state is then the same value, whose records and pages that a step left alone are the same
+// objects as before it, whose hashes they hold.
+const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean): Value => {
   const isEmptyList = (field: string) => getList(get(state, field)).length === 0;
   if (
     !isEmptyList("jobs") ||
@@ -410,11 +434,19 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
       if (!valuesEqual(heapGet(objs, id), heapGet(initialObjs, id))) changed.push(id);
     }
   });
+  // The nodes that each walked record refers to, by its node: an object by its id, and an
+  // environment by its number negated.
+  const references = new Map<number, number[]>();
+  const collect = (node: number, refs: number[], add: () => void) => {
+    const start = refs.length;
+    add();
+    references.set(node, refs.slice(start));
+  };
   const queue: number[] = [];
   for (let environment = 1; environment <= realm.environments; environment++) {
-    environmentRefs(heapGet(envs, environment), realm, queue);
+    collect(-environment, queue, () => environmentRefs(heapGet(envs, environment), realm, queue));
   }
-  changed.forEach((id) => objectRefs(heapGet(objs, id), realm, queue));
+  changed.forEach((id) => collect(id, queue, () => objectRefs(heapGet(objs, id), realm, queue)));
   const templates = toFiniteFunction(get(state, "templates"));
   templates.domain
     .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
@@ -441,11 +473,11 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
       if (node > 0) {
         objectCount++;
         numbers.set(node, realm.objects + objectCount);
-        objectRefs(heapGet(objs, node), realm, walked);
+        collect(node, walked, () => objectRefs(heapGet(objs, node), realm, walked));
       } else {
         environmentCount++;
         numbers.set(node, realm.environments + environmentCount);
-        environmentRefs(heapGet(envs, -node), realm, walked);
+        collect(node, walked, () => environmentRefs(heapGet(envs, -node), realm, walked));
       }
       order.push(node);
     }
@@ -647,25 +679,42 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
             : { outer: renameEnvironment, this: renameMaybe },
     );
   };
+  // Whether the walk numbers a node as it was: the realm's, which it doesn't number, and each
+  // other node at the number it had.
+  const isUnmoved = (node: number) =>
+    node > 0
+      ? node <= realm.objects || numbers.get(node) === node
+      : -node <= realm.environments || numbers.get(node) === -node;
+  // A record renamed, or as it is where renaming would give it back.
+  const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) =>
+    isIncremental &&
+    isCanonical(record) &&
+    isUnmoved(node) &&
+    (node < 0 || !WEAK_CLASSES.has(getString(record, "class"))) &&
+    references.get(node)?.every(isUnmoved) === true
+      ? record
+      : markCanonical(renameRecord(record));
   const changedSet = new Set(changed);
   const objects = [
     ...Array.from({ length: realm.objects }, (_, index) => {
       const record = heapGet(objs, index + 1);
-      return changedSet.has(index + 1) ? renameObject(record) : record;
+      return changedSet.has(index + 1) ? rename(index + 1, record, renameObject) : record;
     }),
-    ...order.filter((node) => node > 0).map((node) => renameObject(heapGet(objs, node))),
+    ...order
+      .filter((node) => node > 0)
+      .map((node) => rename(node, heapGet(objs, node), renameObject)),
   ];
   const environments = [
     ...Array.from({ length: realm.environments }, (_, index) =>
-      renameEnvironmentRecord(heapGet(envs, index + 1)),
+      rename(-(index + 1), heapGet(envs, index + 1), renameEnvironmentRecord),
     ),
     ...order
       .filter((node) => node < 0)
-      .map((node) => renameEnvironmentRecord(heapGet(envs, -node))),
+      .map((node) => rename(node, heapGet(envs, -node), renameEnvironmentRecord)),
   ];
   return except(state, {
-    objs: () => createHeap(objects),
-    envs: () => createHeap(environments),
+    objs: () => createHeap(objects, objs, isIncremental),
+    envs: () => createHeap(environments, envs, isIncremental),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
@@ -705,8 +754,36 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
   });
 };
 
+// Whether each CanonicalStateOf also renames every record anew and stops where the two differ in
+// value, hash, or fingerprint, which a test sets to check the incremental form against the full one.
+let isDifferential = false;
+
+export const setCanonicalDifferential = (isEnabled: boolean) => {
+  isDifferential = isEnabled;
+};
+
+const getFingerprint = (value: Value) => {
+  const fingerprint = new Int32Array(2);
+  writeStateFingerprint([value], fingerprint);
+  return fingerprint.join();
+};
+
 export const ESCORE_CANONICAL_OPERATORS = [
-  defineOperator("CanonicalStateOf", 2, (args) =>
-    canonicalStateOf(getValue(args, 0, "CanonicalStateOf"), getValue(args, 1, "CanonicalStateOf")),
-  ),
+  defineOperator("CanonicalStateOf", 2, (args) => {
+    const state = getValue(args, 0, "CanonicalStateOf");
+    const initial = getValue(args, 1, "CanonicalStateOf");
+    const canonical = canonicalStateOf(state, initial, true);
+    if (!isDifferential) return canonical;
+    const full = canonicalStateOf(state, initial, false);
+    if (
+      !valuesEqual(canonical, full) ||
+      getValueHash(canonical) !== getValueHash(full) ||
+      getFingerprint(canonical) !== getFingerprint(full)
+    ) {
+      throw new TlaEvaluationError(
+        "CanonicalStateOf's incremental form differs from its full form",
+      );
+    }
+    return canonical;
+  }),
 ];
