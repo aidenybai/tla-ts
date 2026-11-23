@@ -346,6 +346,14 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("accepts an operator argument selected behind an instance or a definition's parameters, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nJ == INSTANCE Pure WITH c <- 7, Op <- F\nAp(K(_)) == K(5)\nAp2(K(_, _)) == K({1}, {2})\nApS(K(_)) == K(<<1, 2>>)\nApN(K(_, _)) == K(1, 2)\nH(K(_)) == K(7)\nD(y) == H(F)\nA == <<Ap(J!E9!1), Ap(J!E11!1), Ap(J!E18!1), Ap2(J!E22!1), ApS(J!E23!1), ApN(J!E24!1), ApN(J!E25!1), LET L == INSTANCE Pure WITH c <- 7, Op <- F IN Ap(L!E9!1), ApN(D!1)>>\nInit == x = 0\nNext == x' = x\n====\n",
+      Pure: "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE11 == H(Op)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE24 == H2(\\cap)\nE25(y) == H(E2)\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it("accepts an operator argument that a recursive operator never applies, as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nH1(K(_)) == LET RECURSIVE R(_) R(n) == 0 IN R(K(1))\nH2(K(_)) == LET RECURSIVE A(_), R(_)\n               A(n) == IF n = 0 THEN K(1) ELSE A(n - 1)\n               R(n) == 0\n           IN R(2)\nH3(K(_)) == LET RECURSIVE R(_)\n               R(n) == 0\n               G(n) == R(n)\n           IN G(K(1))\nF1(a) == H1(LAMBDA b : a')\nF2(a) == H2(LAMBDA b : a')\nF3(a) == H3(LAMBDA b : a')\n---- MODULE Recursed ----\nCONSTANT Op(_)\nRECURSIVE R(_)\nR(n) == 0\nD == R(Op(1))\n====\n---- MODULE Other ----\nCONSTANT Op(_)\n====\nP(a) == INSTANCE Recursed WITH Op <- LAMBDA b : a'\nINSTANCE Other WITH Op <- F1\nINSTANCE Other WITH Op <- F2\nINSTANCE Other WITH Op <- F3\nINSTANCE Other WITH Op <- P!D\n====\n",

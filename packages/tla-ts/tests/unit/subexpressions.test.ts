@@ -521,6 +521,46 @@ describe("selections into the definitions of an instance with operator parameter
   );
 });
 
+describe("operator arguments selected behind an instance or a definition's parameters", () => {
+  const PURE =
+    "---- MODULE Pure ----\nEXTENDS Naturals, Sequences\nCONSTANT c, Op(_)\nE2(z) == Op(z)\nH(K(_)) == K(c)\nH2(K(_, _)) == K(c, c)\nH3(K(_)) == K(<<c>>)\nE9 == H(E2)\nE18 == H(LAMBDA t : E2(t) + c)\nE22 == H2(\\cup)\nE23 == H3(Len)\nE25(y) == H(E2)\n====";
+
+  const checkSelections = (definitions: string, onPrint?: (text: string) => void) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nJ == INSTANCE Pure WITH c <- 7, Op <- F\nAp(K(_)) == K(5)\nAp2(K(_, _)) == K({1}, {2})\nApS(K(_)) == K(<<1, 2>>)\nApN(K(_, _)) == K(1, 2)\nH(K(_)) == K(7)\nD(y) == H(F)\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => (name === "Pure" ? PURE : undefined),
+      onPrint,
+    });
+
+  it("passes them on after the parameters, which SANY rejects, with the values TLC gives their local twins", async () => {
+    const prints: string[] = [];
+    const result = await checkSelections(
+      "ASSUME PrintT(<<Ap(J!E9!1), Ap(J!E18!1), Ap2(J!E22!1), ApS(J!E23!1), ApN(J!E25!1), LET L == INSTANCE Pure WITH c <- 7, Op <- F IN Ap(L!E9!1), ApN(D!1)>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<6, 13, {1, 2}, 2, 3, 6, 3>>"]]);
+  });
+
+  it.each([
+    ["J!E25!1", "16"],
+    ["D!1", "12"],
+  ])("reports the arity of %s with its parameters as SANY does", async (selection, end) => {
+    await expect(checkSelections(`D2 == Ap(${selection})`)).rejects.toThrow(
+      createSanyError([
+        {
+          location: `line 12, col 10 to line 12, col ${end} of module M`,
+          message: "Expected arity 1 but found operator of arity 2.",
+        },
+        {
+          location: `line 12, col 7 to line 12, col ${Number(end) + 1} of module M`,
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ]),
+    );
+  });
+});
+
 describe("selections into standard operators match SANY and TLC", () => {
   const checkStandard = (assumption: string, onPrint?: (text: string) => void) =>
     check({
