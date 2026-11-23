@@ -2546,6 +2546,7 @@ export interface ChargeTable {
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
   chargeSubsetConversion: (set: SubsetValue) => void;
+  chargePrintedSize: (set: Value) => void;
 }
 
 interface PlainStream {
@@ -4788,11 +4789,12 @@ const toPrintedSet = (value: LazySetValue) => {
 };
 
 const expandLazySet = (value: LazySetValue) => {
-  if (value.kind === "Subset") {
-    if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
+  if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
     return toPrintedSet(value);
   }
-  if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
+  value.cost?.charges?.chargePrintedSize(value);
+  if (value.kind === "Subset") {
+    if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
     return toPrintedSet(value);
   }
   if (value.kind === "FunctionSet") {

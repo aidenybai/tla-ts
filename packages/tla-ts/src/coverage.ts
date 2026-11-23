@@ -83,6 +83,7 @@ export interface Coverage {
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
   chargeSubsetConversion: (set: SubsetValue) => void;
+  chargePrintedSize: (set: Value) => void;
 }
 
 export interface CoverageFrame {
@@ -189,6 +190,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     isMember: isElementOf,
     chargeSetEnumeration: () => {},
     chargeSubsetConversion: () => {},
+    chargePrintedSize: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
   coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
@@ -197,6 +199,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     chargeSize(coverage, set);
     chargeSubsetElements(coverage, set);
   };
+  coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
   return coverage;
 };
 
@@ -1471,6 +1474,29 @@ const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
   chargeSize(coverage, set.base);
   const base = getChargedSet(set.base);
   if (base !== undefined) chargeSetEnumeration(coverage, base);
+};
+
+// SetOfTuplesValue#toString, SetOfRcdsValue#toString, SetOfFcnsValue#toString and SubsetValue#toString size their parts, not themselves, before they expand.
+const chargePrintedSize = (coverage: Coverage, set: Value) => {
+  if (typeof set !== "object") return;
+  switch (set.kind) {
+    case "RecordSet":
+    case "ProductSet": {
+      const components = set.kind === "RecordSet" ? set.sets : set.factors;
+      for (let index = 0; index < components.length; index++) {
+        chargeSize(coverage, components[index]);
+        if (getCardinality(components[index]) === 0) return;
+      }
+      return;
+    }
+    case "FunctionSet":
+      if (chargeIsEmpty(coverage, set.domain) !== false) return;
+      chargeSize(coverage, set.domain);
+      chargeSize(coverage, set.range);
+      return;
+    case "Subset":
+      chargeSize(coverage, set.base);
+  }
 };
 
 export const createChargedEnumerator = (

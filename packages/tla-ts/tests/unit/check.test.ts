@@ -9957,6 +9957,115 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a product of a union",
+      "LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN PrintT(S \\X S)",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:20",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 92 of module M: 1",
+        "|line 5, col 86 to line 5, col 91 of module M: 1:12",
+        "||line 5, col 86 to line 5, col 86 of module M: 1",
+        "||line 5, col 91 to line 5, col 91 of module M: 1",
+      ],
+    ],
+    [
+      "a product of S \\cup T twice",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN PrintT(S \\X {1}) /\\ PrintT(S \\X {1})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:21",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 98 of module M: 1",
+        "|line 5, col 63 to line 5, col 78 of module M: 1",
+        "||line 5, col 70 to line 5, col 77 of module M: 1:9",
+        "|||line 5, col 70 to line 5, col 70 of module M: 1",
+        "|||line 5, col 75 to line 5, col 77 of module M: 1:7",
+        "|line 5, col 83 to line 5, col 98 of module M: 1",
+        "||line 5, col 90 to line 5, col 97 of module M: 1:9",
+        "|||line 5, col 90 to line 5, col 90 of module M: 1",
+        "|||line 5, col 95 to line 5, col 97 of module M: 1:7",
+      ],
+    ],
+    [
+      "a set of records over S \\cup T",
+      "PrintT([a : ((0..1) \\X {1}) \\cup {<<5, 5>>}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 63 of module M: 1",
+        "|line 5, col 26 to line 5, col 62 of module M: 1:6",
+        "||line 5, col 31 to line 5, col 61 of module M: 1",
+        "|||line 5, col 32 to line 5, col 44 of module M: 1:4",
+        "||||line 5, col 33 to line 5, col 36 of module M: 1",
+        "||||line 5, col 42 to line 5, col 44 of module M: 1:5",
+        "|||line 5, col 52 to line 5, col 61 of module M: 1:16",
+        "||||line 5, col 53 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "a set of functions from S \\cup T",
+      "PrintT([((0..1) \\X {1}) \\cup {<<5, 5>>} -> {3}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 66 of module M: 1",
+        "|line 5, col 26 to line 5, col 65 of module M: 1:4",
+        "||line 5, col 27 to line 5, col 57 of module M: 1",
+        "|||line 5, col 28 to line 5, col 40 of module M: 1:4",
+        "||||line 5, col 29 to line 5, col 32 of module M: 1",
+        "||||line 5, col 38 to line 5, col 40 of module M: 1:6",
+        "|||line 5, col 48 to line 5, col 57 of module M: 1:14",
+        "||||line 5, col 49 to line 5, col 56 of module M: 1",
+        "||line 5, col 62 to line 5, col 64 of module M: 1:8",
+      ],
+    ],
+    [
+      "a set of functions into S \\cup T",
+      "PrintT([{1, 2} -> ((0..1) \\X {1}) \\cup {<<5, 5>>}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 69 of module M: 1",
+        "|line 5, col 26 to line 5, col 68 of module M: 1:27",
+        "||line 5, col 27 to line 5, col 32 of module M: 1",
+        "||line 5, col 37 to line 5, col 67 of module M: 1",
+        "|||line 5, col 38 to line 5, col 50 of module M: 1:4",
+        "||||line 5, col 39 to line 5, col 42 of module M: 1",
+        "||||line 5, col 48 to line 5, col 50 of module M: 1:5",
+        "|||line 5, col 58 to line 5, col 67 of module M: 1:29",
+        "||||line 5, col 59 to line 5, col 66 of module M: 1",
+      ],
+    ],
+    [
+      "the subsets of a set of records over S \\cup T",
+      "LET S == ((0..1) \\X {1}) \\cup {<<5, 5>>} IN PrintT(SUBSET [a : S])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 58 of module M: 1",
+        "|line 5, col 29 to line 5, col 41 of module M: 1:4",
+        "||line 5, col 30 to line 5, col 33 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:6",
+        "|line 5, col 49 to line 5, col 58 of module M: 1:20",
+        "||line 5, col 50 to line 5, col 57 of module M: 1",
+        "line 5, col 63 to line 5, col 84 of module M: 1",
+        "|line 5, col 70 to line 5, col 83 of module M: 1:8",
+        "||line 5, col 77 to line 5, col 83 of module M: 1:6",
+        "|||line 5, col 78 to line 5, col 82 of module M: 1",
+      ],
+    ],
+  ])("charges the sets that TLC sizes before it prints %s", async (_name, body, rows) => {
+    expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+  });
+
   it("enumerates the subsets a state keeps without charging their base again", async () => {
     expect(
       await getCoverageLines(
