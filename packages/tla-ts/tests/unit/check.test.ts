@@ -13177,6 +13177,82 @@ ASSUME TLCFP(a) = -887695703
       ]);
     },
   );
+
+  it.each([
+    [
+      "Pad == 0",
+      "LET L == INSTANCE T WITH c <- 1, v <- x IN L!Inc",
+      "L!Inc line 6, col 13 to line 6, col 47 of module M",
+      ["L!Inc line 6, col 13 to line 6, col 13 of module M"],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE T WITH c <- w, v <- x IN L(1)!Inc",
+      "L!Inc(1) line 6, col 13 to line 6, col 50 of module M",
+      ["L!Inc line 6, col 13 to line 6, col 16 of module M"],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE T WITH c <- w, v <- x IN L(1)!Same(2)",
+      "L!Same(1,2) line 6, col 13 to line 6, col 50 of module M",
+      ["L!Same line 6, col 13 to line 6, col 16 of module M"],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE T WITH c <- 1, v <- x IN L!Both",
+      "L!Both line 6, col 13 to line 6, col 47 of module M",
+      ["L!Both line 6, col 13 to line 6, col 13 of module M"],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE T4 IN L!Bump(x)",
+      "L!Bump line 6, col 33 to line 6, col 41 of module M",
+      ["L!Bump line 6, col 13 to line 6, col 13 of module M (6 33 6 41)"],
+    ],
+    [
+      "L(w) == INSTANCE T4",
+      "L(1)!Put(x, x + 1)",
+      "L!Put line 6, col 9 to line 6, col 26 of module M",
+      ["L!Put line 4, col 1 to line 4, col 4 of module M (6 9 6 26)"],
+    ],
+    [
+      "L == INSTANCE T4\nK == INSTANCE T4",
+      "L!Bump(x) \\/ K!Put(x, 2)",
+      "L!Bump line 7, col 9 to line 7, col 17 of module M",
+      [
+        "L!Bump line 4, col 1 to line 4, col 1 of module M (7 9 7 17)",
+        "K!Put line 5, col 1 to line 5, col 1 of module M (7 22 7 32)",
+      ],
+    ],
+  ])(
+    "names an action through %j and %s as TLC does, at the instance's SubstInNode where it substitutes and by the instance's left side",
+    async (definition, next, label, coverageLabels) => {
+      const source = `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definition}\nInit == x = 0\nNext == ${next}\nBound == x < 3\nInv == x < 1\n====`;
+      const loadModule = (name: string) =>
+        name === "T"
+          ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nSame(p) == v' = v + p\nInc == v' = v + c\nBoth == Inc \\/ Same(1)\n===="
+          : name === "T4"
+            ? "---- MODULE T4 ----\nEXTENDS Naturals\nPut(u, n) == u' = n\nBump(u) == u' = u + 1\n===="
+            : undefined;
+      const violated = await check({
+        source,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule,
+      });
+      const covered = await check({
+        source,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound",
+        coverage: 1,
+        loadModule,
+      });
+      expect([
+        violated.violation?.trace.map((step) => step.label),
+        covered.coverage?.relations
+          .filter((relation) => relation.kind === "next")
+          .map((relation) => relation.label),
+      ]).toEqual([[undefined, label], coverageLabels]);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

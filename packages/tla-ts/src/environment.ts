@@ -917,7 +917,11 @@ export const createEnvironment = (
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
-        const definition = create(key);
+        const created = create(key);
+        const definition =
+          instance.name !== undefined && declarations.length === 0 && created.kind === "Operator"
+            ? { ...created, head: instance.head ?? instance.location.range }
+            : created;
         definitions.set(key, definition);
         if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const copy = createInstanceCopy(source, instance.module, substitutes);
@@ -1311,6 +1315,7 @@ export const createEnvironment = (
           return {
             ...operator,
             name,
+            head: instance.head,
             body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
             theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };

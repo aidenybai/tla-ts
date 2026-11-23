@@ -3243,6 +3243,25 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("starts the trace of an action through a LET instance with parameters at the instance, as TLC's action is its SubstInNode", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == LET L(w) == INSTANCE C WITH k <- 1 \\div w, v <- x IN L(0)!Inc\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "C"
+          ? "---- MODULE C ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLE v\nInc == v' = v + k\n===="
+          : undefined,
+    });
+    expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual([
+      "Line 5, column 13 to line 5, column 57 in M",
+      "Line 5, column 8 to line 5, column 17 in C",
+      "Line 5, column 13 to line 5, column 17 in C",
+      "Line 5, column 17 to line 5, column 17 in C",
+      "Line 5, column 42 to line 5, column 49 in M",
+    ]);
+  });
+
   it("records no frame for a selected operator argument in the action it assigns, as TLC has none", async () => {
     const result = await check({
       source:

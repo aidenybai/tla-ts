@@ -301,14 +301,16 @@ export const getCoverageLabel = (
   actionHead?: SourceRange,
   actionBody?: SourceRange,
 ) => {
-  const definition =
-    name === undefined || actionHead
-      ? undefined
-      : environment.definitions.get(getRootKey(name, environment));
+  const key = name === undefined || actionHead ? undefined : getRootKey(name, environment);
+  const definition = key === undefined ? undefined : environment.definitions.get(key);
   const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);
   const actual = getPredicateRange(expression) ?? range;
-  const label = actionHead ? name : definition?.name;
+  const label = actionHead
+    ? name
+    : key === undefined
+      ? undefined
+      : (environment.instanceNames.get(key) ?? definition?.name);
   if (label === undefined || !head) {
     const predicate = getActionPredicate(expression);
     // ActionWrapper prints an undeclared Action by Action#toString, which gives a NumeralNode as its image.
