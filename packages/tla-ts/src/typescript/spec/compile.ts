@@ -856,6 +856,7 @@ export const compileToEscore = (
             files.map((file) => file.sourceFile.text).join("\n"),
             program.words,
             intl.strings,
+            intl.literals,
             runtime.realm,
           ),
         },
