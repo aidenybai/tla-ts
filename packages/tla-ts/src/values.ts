@@ -720,9 +720,14 @@ export const compareValues = (left: Value, right: Value): number => {
     if (isLeftSet) {
       const leftCharged = leftKind === "Set" ? undefined : getChargedSet(left);
       const rightCharged = rightKind === "Set" ? undefined : getChargedSet(right);
+      const leftSet = leftCharged
+        ? toChargedSet(leftCharged, true, toFiniteSet)
+        : toFiniteSet(left);
+      // SetPredValue#compareTo and equals keep the set they convert with convertAndCache.
+      if (leftKind === "FilteredSet") left.isCached = true;
       return compareSets(
-        leftCharged ? toChargedSet(leftCharged, true, toFiniteSet) : toFiniteSet(left),
-        rightCharged ? toChargedSet(rightCharged, false, toComparedSet) : toComparedSet(right),
+        leftSet,
+        rightCharged ? toChargedSet(rightCharged, false, toArgumentSet) : toArgumentSet(right),
       );
     }
     return compareFunctions(toFiniteFunction(left), toFiniteFunction(right));
@@ -2168,11 +2173,6 @@ const toChargedSet = (
   return set;
 };
 
-const toComparedSet = (value: Value) =>
-  typeof value === "object" && (value.kind === "SetOperation" || value.kind === "Union")
-    ? toOpenedSet(value)
-    : toFiniteSet(value);
-
 interface ListStream {
   kind: "List";
   elements: Value[];
@@ -3523,6 +3523,12 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       sets?.push(value);
       const size = getCombinedCardinality(value, version);
       sets?.pop();
+      return size;
+    }
+    case "FilteredSet": {
+      const size = toFiniteSet(value).elements.length;
+      // SetPredValue#size converts with convertAndCache, which keeps the set it converts.
+      value.isCached = true;
       return size;
     }
     default:
