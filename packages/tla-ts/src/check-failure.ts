@@ -16,7 +16,7 @@ import {
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
 import { getCodedMessage, getFailureMessage, isEvalException } from "./tlc/messages";
-import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
+import { getFingerprintError, getHeldValues, type Value } from "./values";
 
 export const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
   ...getFailureMessage(
@@ -116,7 +116,6 @@ const findFailedSources = (value: Value, sources: CallStack["sources"]): Express
 };
 
 export const fingerprintReplayed = (
-  state: Value[],
   fingerprintState: Value[],
   callStack: CallStack | undefined,
   coverage: Coverage | undefined,
@@ -134,5 +133,4 @@ export const fingerprintReplayed = (
     }
     throw error;
   }
-  state.forEach(markFingerprinted);
 };

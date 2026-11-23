@@ -125,7 +125,6 @@ import {
   createModelValue,
   getFingerprintError,
   isSameValue,
-  markFingerprinted,
   type Value,
 } from "./values";
 
@@ -619,7 +618,7 @@ const searchStates = (
   const createReplayedStates = () => {
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
     return (state: Value[], callStack: CallStack | undefined) => {
-      fingerprintReplayed(state, getFingerprintState(state), callStack, coverage);
+      fingerprintReplayed(getFingerprintState(state), callStack, coverage);
       const fingerprintState = getFingerprintState(state);
       const hash = getStateHash(fingerprintState);
       const isSeen =
@@ -1132,7 +1131,6 @@ const searchStates = (
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
-      state.forEach(markFingerprinted);
     }
     const isSeen = isInModel && findStateIndex(seenStates, hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
@@ -1183,7 +1181,6 @@ const searchStates = (
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
-      successor.state.forEach(markFingerprinted);
     }
     const existing = isInModel ? findStateIndex(seenStates, hash, fingerprintState) : -1;
     return {

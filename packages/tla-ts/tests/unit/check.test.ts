@@ -11473,6 +11473,27 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["<<T, T \\X {1}>>", "y[1]", "", ['<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>']],
+    [
+      "T",
+      "y",
+      "\nVIEW V",
+      ['<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>', '<<"p", <<0, 1>>>>', '<<"p", <<1, 1>>>>'],
+    ],
+  ])(
+    "keeps a filter that the state %s holds once its fingerprint converts it, and only then, as TLC does",
+    async (value, read, view, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = (LET T == {u \\in (0..1) \\X {1} : PrintT(<<"p", u>>)} IN ${value})\nNext == x' = (x + 1) % 2 /\\ y' = y /\\ (\\A o \\in ${read} : TRUE)\nV == x\n====`,
+        config: `INIT Init\nNEXT Next${view}`,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
   it("charges a filter that the initial state holds once, as TLC's fingerprint keeps the set", async () => {
     const relations = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = {u \\in (0..1) \\X {1} : u[2] = 1}\nNext == x' = x /\\ (\\A o \\in {v \\in x : TRUE} : TRUE)\nInv == TRUE\n====",

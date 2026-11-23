@@ -23,7 +23,6 @@ export interface ModelValue {
 interface LazySet {
   enumerated?: SetValue;
   isCached?: boolean;
-  walkFlags?: number;
 }
 
 export interface SetValue {
@@ -161,7 +160,6 @@ export interface LazyFunctionValue {
   isApplicationObserved: boolean;
   source?: LazyFunctionSource;
   enumerated?: FunctionValue;
-  walkFlags?: number;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -581,8 +579,7 @@ const compareAny = (other: Value): never => {
   );
 };
 
-const FINGERPRINTED_FLAG = 1;
-const SELF_COMPARED_FLAG = 2;
+const SELF_COMPARED_FLAG = 1;
 
 const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
@@ -856,25 +853,6 @@ const isCacheableSet = (value: Value): value is ConvertibleSetValue =>
 // TLC's convertAndCache keeps the set a lazy set converts to once it has converted it, so a caller marks a set only after converting it.
 const cacheSet = (value: Value) => {
   if (isCacheableSet(value)) value.isCached = true;
-};
-
-export const markFingerprinted = (value: Value): void => {
-  if (!hasStreamedSet || typeof value !== "object") return;
-  if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
-    return;
-  }
-  const walkFlags = value.walkFlags ?? 0;
-  if ((walkFlags & FINGERPRINTED_FLAG) !== 0) return;
-  value.walkFlags = walkFlags | FINGERPRINTED_FLAG;
-  if (value.kind === "Function") {
-    value.domain.forEach(markFingerprinted);
-    value.range.forEach(markFingerprinted);
-  } else if (value.kind === "Set" || value.kind === "MixedSet") {
-    value.elements.forEach(markFingerprinted);
-  } else if (isSetValue(value) && isEnumerable(value)) {
-    cacheSet(value);
-    toFiniteSet(value).elements.forEach(markFingerprinted);
-  }
 };
 
 export const valuesEqual = (left: Value, right: Value): boolean => {
@@ -4803,7 +4781,9 @@ export const getValueHash = (value: Value): number => {
   }
   if (!isEnumerable(value)) return UNFINGERPRINTABLE_HASH;
   const charged = getChargedSet(value);
-  return getValueHash(charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value));
+  const set = charged ? toChargedSet(charged, true, toFiniteSet) : toFiniteSet(value);
+  cacheSet(value);
+  return getValueHash(set);
 };
 
 const finalizeFingerprint = (hash: number) => {
