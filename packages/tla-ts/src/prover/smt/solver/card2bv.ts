@@ -1,4 +1,4 @@
-import { SmtUnsupportedError } from "../../../errors";
+import { SmtDefaultError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -13,12 +13,28 @@ import {
   OP_MUL,
   OP_SUB,
   OP_UMINUS,
+  OP_AND,
+  OP_AT_LEAST_K,
+  OP_AT_MOST_K,
+  OP_OR,
+  OP_PB_EQ,
+  OP_PB_GE,
+  OP_PB_LE,
+  FAMILY_PB,
+  SORT_BOOL,
 } from "./ast";
-import type { Goal } from "./goal";
-import { Rational } from "./rational";
+import { mkNot } from "./ast-util";
+import { assignOwned, release } from "./expr-ref";
+import type { Definition, Goal } from "./goal";
+import { getPbCoeff, getPbK, hasUnitCoefficients, isUnsigned } from "./pb-rewriter";
+import { getGcd, Rational } from "./rational";
+import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
 import { RewriterTpl } from "./rewriter-tpl";
+import type { SatParams } from "./sat/config";
+import { type CardinalityEncoding, type PsortContext, PsortNw } from "./sorting-network";
+import type { TacticParam, TacticParams } from "./tactic";
 
 interface Bound {
   value: Rational;
@@ -67,7 +83,6 @@ const isPb = (manager: AstManager, first: number, second: number) => {
   );
 };
 
-// The port has no pseudo-Boolean constraints, so a comparison the encoder would rewrite is unsupported.
 export const checkPbFree = (manager: AstManager, form: number) => {
   const visited = new Set<number>();
   const todo = [form];
@@ -92,36 +107,288 @@ export const checkPbFree = (manager: AstManager, form: number) => {
   }
 };
 
-// The port has no encoding to rewrite to, but the walk still counts its steps of the limit.
-export class CardPbRewriter extends RewriterTpl {
+export interface CardinalityOptions {
+  isKeepingCardinality: boolean;
+  pbSolver: string;
+  encoding: CardinalityEncoding;
+  minArity: number;
+}
+
+const getCardinalityEncoding = (value: TacticParam | undefined): CardinalityEncoding => {
+  switch (value) {
+    case "bimander":
+    case "ordered":
+    case "unate":
+    case "circuit":
+      return value;
+    default:
+      return "grouped";
+  }
+};
+
+export const getCardinalityOptions = (
+  params: TacticParams,
+  satParams: SatParams,
+): CardinalityOptions => ({
+  isKeepingCardinality:
+    params.get("keep_cardinality_constraints") === true ||
+    satParams.get("cardinality.solver") === true,
+  pbSolver: String(params.get("pb.solver") ?? satParams.get("pb.solver") ?? "solver"),
+  encoding: getCardinalityEncoding(
+    params.get("cardinality.encoding") ?? satParams.get("cardinality.encoding"),
+  ),
+  minArity: Number(satParams.get("pb.min_arity") ?? 9),
+});
+
+const PB_ENCODINGS = new Set(["totalizer", "sorting", "binary_merge"]);
+
+const reduceGcd = (isEq: boolean, coeffs: Rational[], k: Rational) => {
+  let gcd = 0n;
+  for (let index = 0; index < coeffs.length; index++) {
+    if (!coeffs[index].isInt()) return k;
+    gcd = getGcd(gcd, coeffs[index].num);
+    if (gcd === 1n) return k;
+  }
+  if (gcd === 0n) return k;
+  if (!isEq) return k.div(Rational.of(gcd)).floor();
+  if (!k.isInt()) return k;
+  const kGcd = getGcd(k.num, gcd);
+  return kGcd === 1n || kGcd === 0n ? k : k.div(Rational.of(kGcd));
+};
+
+export class CardPbRewriter extends RewriterTpl implements PsortContext {
+  private readonly sort: PsortNw;
+  private readonly trail: RefVector;
+  private readonly args: RefVector;
+  private readonly lemmas: RefVector;
+  readonly freshDecls: number[] = [];
+
+  constructor(
+    manager: AstManager,
+    private readonly options: CardinalityOptions,
+  ) {
+    super(manager);
+    this.sort = new PsortNw(this, options.encoding);
+    this.trail = new RefVector(manager);
+    this.args = new RefVector(manager);
+    this.lemmas = new RefVector(manager);
+  }
+
   isRewritingPatterns() {
     return false;
+  }
+
+  reduceApp(decl: number, args: number[], _sort: number) {
+    const result = this.mkApp(true, decl, args);
+    if (result !== -1) this.manager.incRef(result);
+    return result;
+  }
+
+  rewritePb(isFull: boolean, expr: number) {
+    const manager = this.manager;
+    const root =
+      manager.kinds[expr] === KIND_APP
+        ? this.mkApp(isFull, manager.decls[expr], manager.getArgs(expr))
+        : -1;
+    if (root === -1) return this.rewrite(expr);
+    manager.incRef(root);
+    const result = this.rewrite(root);
+    manager.decRef(root);
+    return result;
+  }
+
+  private mkApp(isFull: boolean, decl: number, args: number[]) {
+    return this.manager.funcDecls[decl].family === FAMILY_PB ? this.mkPb(isFull, decl, args) : -1;
+  }
+
+  private mkPb(isFull: boolean, decl: number, args: number[]) {
+    const manager = this.manager;
+    const op = manager.funcDecls[decl].op;
+    const k = getPbK(manager, decl);
+    if (this.isOr(op, k)) return manager.mkApp(OP_OR, args, SORT_BOOL);
+    const isKUnsigned = isUnsigned(k);
+    const isKept = this.options.isKeepingCardinality && args.length >= this.options.minArity;
+    const bound = Number(k.num);
+    if (op === OP_AT_MOST_K && isKUnsigned) return isKept ? -1 : this.sort.le(isFull, bound, args);
+    if (op === OP_AT_LEAST_K && isKUnsigned) return isKept ? -1 : this.sort.ge(isFull, bound, args);
+    if (op === OP_PB_EQ && isKUnsigned && hasUnitCoefficients(manager, decl))
+      return isKept ? -1 : this.sort.eq(isFull, bound, args);
+    if (op === OP_PB_LE && isKUnsigned && hasUnitCoefficients(manager, decl))
+      return isKept ? -1 : this.sort.le(isFull, bound, args);
+    if (op === OP_PB_GE && isKUnsigned && hasUnitCoefficients(manager, decl))
+      return isKept ? -1 : this.sort.ge(isFull, bound, args);
+    if (
+      (op === OP_PB_EQ || op === OP_PB_LE || op === OP_PB_GE) &&
+      isKUnsigned &&
+      this.hasSmallCoefficients(decl, args.length) &&
+      this.options.pbSolver === "solver"
+    )
+      return -1;
+    return this.mkBv(decl, args);
+  }
+
+  private mkBv(decl: number, args: number[]) {
+    const manager = this.manager;
+    const op = manager.funcDecls[decl].op;
+    const k = getPbK(manager, decl);
+    const coeffs: Rational[] = [];
+    this.args.reset();
+    for (let index = 0; index < args.length; index++) {
+      coeffs.push(getPbCoeff(manager, decl, index));
+      this.args.push(args[index]);
+    }
+    if (op === OP_PB_GE || op === OP_AT_LEAST_K)
+      return this.mkLeGe(false, coeffs, this.dualize(decl, k));
+    return this.mkLeGe(op === OP_PB_EQ, coeffs, k);
+  }
+
+  private dualize(decl: number, k: Rational) {
+    const manager = this.manager;
+    let dual = k.neg();
+    for (let index = 0; index < this.args.size; index++) {
+      dual = dual.add(getPbCoeff(manager, decl, index));
+      this.args.set(index, mkNot(manager, this.args.items[index]));
+    }
+    return dual;
+  }
+
+  private mkLeGe(isEq: boolean, coeffs: Rational[], k: Rational) {
+    const manager = this.manager;
+    const reduced = reduceGcd(isEq, coeffs, k);
+    if (reduced.isZero()) return manager.mkNot(manager.mkOr(this.args.items));
+    if (reduced.isNegative()) return manager.falseExpr;
+    const pbSolver = this.options.pbSolver;
+    if (pbSolver === "segmented")
+      throw new SmtDefaultError(
+        "segmented encoding is disabled, use a different value for pb.solver",
+      );
+    throw new SmtUnsupportedError(
+      `the ${PB_ENCODINGS.has(pbSolver) ? pbSolver : "bit-vector"} encoding of a pseudo-Boolean constraint`,
+    );
+  }
+
+  private isOr(op: number, k: Rational) {
+    return (op === OP_AT_LEAST_K || op === OP_PB_GE) && k.equals(Rational.one);
+  }
+
+  private hasSmallCoefficients(decl: number, arity: number) {
+    let sum = 0n;
+    for (let index = 0; index < arity; index++) {
+      const coeff = getPbCoeff(this.manager, decl, index);
+      if (!isUnsigned(coeff)) return false;
+      sum += coeff.num;
+      if (sum >= 2n ** 32n) return false;
+    }
+    return true;
+  }
+
+  mkFalse() {
+    return this.manager.falseExpr;
+  }
+
+  mkTrue() {
+    return this.manager.trueExpr;
+  }
+
+  mkMax(lits: number[]) {
+    return this.pushTrail(this.manager.mkApp(OP_OR, lits, SORT_BOOL));
+  }
+
+  mkMin(lits: number[]) {
+    return this.pushTrail(this.manager.mkApp(OP_AND, lits, SORT_BOOL));
+  }
+
+  mkNot(lit: number) {
+    if (this.manager.isNot(lit)) return this.manager.getArg(lit, 0);
+    return this.pushTrail(this.manager.mkNot(lit));
+  }
+
+  fresh(name: string) {
+    const manager = this.manager;
+    const fresh = manager.mkFreshConst(name, SORT_BOOL);
+    manager.incDeclRef(manager.decls[fresh]);
+    this.freshDecls.push(manager.decls[fresh]);
+    return this.pushTrail(fresh);
+  }
+
+  mkClause(lits: number[]) {
+    this.lemmas.push(this.manager.mkOr(lits));
+  }
+
+  flushSideConstraints(sideConstraints: RefVector) {
+    for (const lemma of this.lemmas.items) sideConstraints.push(lemma);
+    this.lemmas.reset();
+  }
+
+  private pushTrail(lit: number) {
+    this.trail.push(lit);
+    return lit;
+  }
+
+  override release() {
+    this.args.reset();
+    this.trail.reset();
+    super.release();
+    for (const decl of this.freshDecls) this.manager.decDeclRef(decl);
+    this.lemmas.reset();
   }
 }
 
 export const createCard2Bv =
-  (manager: AstManager, options: RewriterOptions) => (state: DependentExprState) => {
-    const rewriter = new Rewriter(manager, options);
-    const pbRewriter = new CardPbRewriter(manager);
-    let simplified = -1;
-    return {
-      reduce: () => {
-        state.rewriteEach((form) => {
-          const next = rewriter.rewrite(form);
-          if (simplified !== -1) manager.decRef(simplified);
-          simplified = next;
-          const rewritten = pbRewriter.rewrite(simplified);
+  (
+    manager: AstManager,
+    options: RewriterOptions,
+    cardinality: CardinalityOptions,
+    hide: (decl: number) => void,
+  ) =>
+  (state: DependentExprState) => ({
+    reduce: () => {
+      const goal = state.goal;
+      const rewriter = new Rewriter(manager, options);
+      const pbRewriter = new CardPbRewriter(manager, cardinality);
+      let simplified = -1;
+      let rewritten = -1;
+      const sideConstraints = new RefVector(manager);
+      try {
+        state.forEachIndex((index) => {
+          const form = state.get(index);
+          simplified = assignOwned(manager, simplified, rewriter.rewrite(form));
+          rewritten = assignOwned(manager, rewritten, pbRewriter.rewritePb(false, simplified));
           checkPbFree(manager, rewritten);
-          return rewritten;
+          if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
         });
-        if (simplified !== -1) manager.decRef(simplified);
-      },
-      release: () => {
-        rewriter.release();
+        pbRewriter.flushSideConstraints(sideConstraints);
+        for (const form of sideConstraints.items) goal.assert(form);
+        for (const decl of pbRewriter.freshDecls) hide(decl);
+      } finally {
+        sideConstraints.reset();
+        release(manager, rewritten);
+        release(manager, simplified);
         pbRewriter.release();
-      },
-    };
-  };
+        rewriter.release();
+      }
+    },
+    release: () => {},
+  });
 
-export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) =>
-  runSimplifier(goal, false, createCard2Bv(manager, options));
+export const card2bv = (
+  manager: AstManager,
+  goal: Goal,
+  options: RewriterOptions,
+  cardinality: CardinalityOptions,
+) => {
+  const hidden: Definition[] = [];
+  try {
+    runSimplifier(
+      goal,
+      false,
+      createCard2Bv(manager, options, cardinality, (decl) => {
+        manager.incDeclRef(decl);
+        hidden.push({ decl, def: -1 });
+      }),
+      hidden,
+    );
+  } finally {
+    for (const definition of hidden) manager.decDeclRef(definition.decl);
+  }
+};

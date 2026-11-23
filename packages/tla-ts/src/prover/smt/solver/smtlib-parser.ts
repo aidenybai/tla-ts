@@ -1730,7 +1730,8 @@ export const createSmtlibReader = (
     if (args.some((arg) => manager.sorts[arg] !== SORT_BOOL))
       throw new SmtParseError("invalid non-Boolean sort applied to Pseudo-Boolean relation", at);
     const isCardinality = op === OP_AT_MOST_K || op === OP_AT_LEAST_K;
-    if (isCardinality && parameters.length !== 1)
+    // Deviation from Z3: its parser makes an index from 2^31 to 2^32 a negative int, which fails here and flips the sign of a pble, pbge or pbeq parameter.
+    if (isCardinality && (parameters.length !== 1 || !isUnsigned(parameters[0].num.toString())))
       throw new SmtParseError("function expects one non-negative integer parameter", at);
     if (!isCardinality && parameters.length !== 1 + args.length)
       throw new SmtParseError("function expects arity+1 rational parameters", at);

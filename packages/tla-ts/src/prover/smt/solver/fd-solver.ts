@@ -18,7 +18,7 @@ import { mkThSolver } from "./euf/th-solvers";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
-import { createCard2Bv } from "./card2bv";
+import { createCard2Bv, getCardinalityOptions } from "./card2bv";
 import { DependentExprState } from "./dependent-expr-state";
 import { Enum2BvRewriter } from "./dt2bv-tactic";
 import { assignOwned, release } from "./expr-ref";
@@ -36,7 +36,7 @@ import type { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { applyDefinitions, getRewriterOptions } from "./tactic";
+import { applyDefinitions, getRewriterOptions, getSatParams } from "./tactic";
 import { UINT_MAX } from "./sat/clause";
 import type { SatParams } from "./sat/config";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -483,7 +483,7 @@ export class FdSolver {
   constructor(
     private readonly manager: AstManager,
     params: SatParams,
-    parameters: ReadonlyMap<string, string>,
+    private readonly parameters: ReadonlyMap<string, string>,
     isIncremental = true,
   ) {
     this.solver = new IncSatSolver(
@@ -683,7 +683,12 @@ export class FdSolver {
     const simplifiers = [
       () => this.int2bv.reduce(state, this.trail),
       () => {
-        const simplifier = createCard2Bv(manager, getRewriterOptions(manager, new Map()))(state);
+        const simplifier = createCard2Bv(
+          manager,
+          getRewriterOptions(manager, new Map()),
+          getCardinalityOptions(new Map(), getSatParams(this.parameters)),
+          (decl) => this.trail.hide(decl),
+        )(state);
         try {
           simplifier.reduce();
         } finally {

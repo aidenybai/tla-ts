@@ -3,6 +3,7 @@ import {
   type AstManager,
   FAMILY_ARITH,
   FAMILY_BASIC,
+  FAMILY_PB,
   KIND_APP,
   OP_ADD,
   OP_BADD,
@@ -23,7 +24,7 @@ import {
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
-import { CardPbRewriter, checkPbFree } from "./card2bv";
+import { CardPbRewriter, type CardinalityOptions, checkPbFree } from "./card2bv";
 import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { ObjMap } from "./hashtable";
 import { getGcd, Rational } from "./rational";
@@ -56,6 +57,7 @@ export const findNonPb = (manager: AstManager, forms: number[], bounds: BoundMan
           manager.getNumArgs(expr) === 2 &&
           manager.isNumeral(manager.getArg(expr, 0)))
       );
+    if (family === FAMILY_PB) return false;
     if (manager.isUninterpretedConst(expr)) {
       if (manager.sorts[expr] === SORT_BOOL) return false;
       if (manager.sorts[expr] === SORT_INT && bounds.isZeroOne(expr)) return false;
@@ -128,6 +130,7 @@ class Pb2Bv {
     private manager: AstManager,
     params: ReadonlyMap<string, boolean | number | string>,
     options: RewriterOptions,
+    cardinality: CardinalityOptions,
   ) {
     this.bounds = new BoundManager(manager);
     this.boolRewriter = new Rewriter(manager, options);
@@ -141,7 +144,7 @@ class Pb2Bv {
     };
     this.allClausesLimit = getUint("pb2bv_all_clauses_limit", 8);
     this.cardinalityLimit = getUint("pb2bv_cardinality_limit", 4294967295);
-    this.pbRewriter = new CardPbRewriter(manager);
+    this.pbRewriter = new CardPbRewriter(manager, cardinality);
   }
 
   private hold(expr: number) {
@@ -490,7 +493,7 @@ class Pb2Bv {
       if (this.isConstraintCore(atom)) results.push(this.convert(atom, isPositive, true));
       else {
         const simplified = rewriter.rewrite(form);
-        const rewritten = this.pbRewriter.rewrite(simplified);
+        const rewritten = this.pbRewriter.rewritePb(true, simplified);
         manager.decRef(simplified);
         checkPbFree(manager, rewritten);
         results.pushOwned(rewritten);
@@ -502,11 +505,16 @@ class Pb2Bv {
     }
     for (let index = 0; index < results.items.length; index++)
       goal.update(index, results.items[index], dependencies[index]);
+    const sideConstraints = new RefVector(manager);
+    this.pbRewriter.flushSideConstraints(sideConstraints);
+    for (const form of sideConstraints.items) goal.assert(form);
+    sideConstraints.reset();
     results.reset();
     goal.depth++;
     if (!goal.isModelsEnabled) return;
     const hidden: Definition[] = [];
     for (const [, bit] of this.const2bit) hidden.push({ decl: manager.decls[bit], def: -1 });
+    for (const decl of this.pbRewriter.freshDecls) hidden.push({ decl, def: -1 });
     for (const fresh of this.temporaryInts.items)
       hidden.push({ decl: manager.decls[fresh], def: -1 });
     goal.addDefinitions(hidden);
@@ -562,11 +570,12 @@ export const runPb2Bv =
     manager: AstManager,
     params: ReadonlyMap<string, boolean | number | string>,
     options: RewriterOptions,
+    cardinality: CardinalityOptions,
   ) =>
   (goal: Goal) => {
     if (goal.isProofsEnabled) throw new SmtTacticError("pb2bv does not support proof production");
     if (!goal.isInconsistent) {
-      const converter = new Pb2Bv(manager, params, options);
+      const converter = new Pb2Bv(manager, params, options, cardinality);
       try {
         converter.run(goal);
       } finally {
