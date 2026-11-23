@@ -1,23 +1,84 @@
 import { type AstManager, KIND_APP, KIND_VAR } from "../ast";
+import { assign } from "../expr-ref";
 import { VarShifter } from "../rewriter-tpl";
 
-interface Binding {
+export interface Binding {
   expr: number;
   offset: number;
 }
 
-// A variable index or an expression at one of the two offsets.
-const getKey = (index: number, offset: number) => 2 * index + offset;
+const NUM_OFFSETS = 3;
+
+const getKey = (index: number, offset: number) => NUM_OFFSETS * index + offset;
 
 // Bindings of variables at offsets to expressions at offsets. Applying it renames each unbound
 // variable at offset i by deltas[i].
 export class Substitution {
   private bindings = new Map<number, Binding>();
+  private vars: number[] = [];
+  private refs: number[] = [];
+  private scopes: number[] = [];
+  private applyCache = new Map<number, number>();
+  private newExprs: number[] = [];
+  private isInserted = false;
 
   constructor(private manager: AstManager) {}
 
   reset() {
     this.bindings.clear();
+    this.vars = [];
+    const manager = this.manager;
+    for (const expr of this.refs) manager.decRef(expr);
+    this.refs = [];
+    this.scopes = [];
+    this.resetCache();
+  }
+
+  pushScope() {
+    this.scopes.push(this.vars.length);
+  }
+
+  popScope() {
+    const level = this.scopes.length - 1;
+    const oldSize = this.scopes[level];
+    for (let index = oldSize; index < this.vars.length; index++)
+      this.bindings.delete(this.vars[index]);
+    this.vars.length = oldSize;
+    const manager = this.manager;
+    for (let index = oldSize; index < this.refs.length; index++) manager.decRef(this.refs[index]);
+    this.refs.length = oldSize;
+    this.scopes.length = level;
+    this.resetCache();
+  }
+
+  insertBinding(index: number, offset: number, binding: Binding) {
+    this.insert(getKey(index, offset), binding);
+  }
+
+  find(index: number, offset: number) {
+    return this.bindings.get(getKey(index, offset));
+  }
+
+  resetCache() {
+    this.applyCache.clear();
+    const manager = this.manager;
+    for (const expr of this.newExprs) manager.decRef(expr);
+    this.newExprs = [];
+    this.isInserted = false;
+  }
+
+  private insert(key: number, binding: Binding) {
+    this.bindings.set(key, binding);
+    this.vars.push(key);
+    this.manager.incRef(binding.expr);
+    this.refs.push(binding.expr);
+    this.isInserted = true;
+  }
+
+  private keepNew(expr: number) {
+    this.manager.incRef(expr);
+    this.newExprs.push(expr);
+    return expr;
   }
 
   // unifier::operator(): a union-find over the (expression, offset) pairs, seeded with the
@@ -30,8 +91,8 @@ export class Substitution {
     for (const [key, root] of [...this.bindings].reverse()) {
       if (manager.kinds[root.expr] !== KIND_VAR) continue;
       const child = {
-        expr: manager.mkVar(Math.floor(key / 2), manager.sorts[root.expr]),
-        offset: key % 2,
+        expr: manager.mkVar(Math.floor(key / NUM_OFFSETS), manager.sorts[root.expr]),
+        offset: key % NUM_OFFSETS,
       };
       const childSize = sizes.get(getNodeKey(child)) ?? 1;
       const rootSize = sizes.get(getNodeKey(root)) ?? 1;
@@ -59,7 +120,7 @@ export class Substitution {
       parents.set(getNodeKey(child), root);
       sizes.set(getNodeKey(root), childSize + rootSize);
       if (manager.kinds[child.expr] === KIND_VAR)
-        this.bindings.set(getKey(manager.values[child.expr], child.offset), root);
+        this.insert(getKey(manager.values[child.expr], child.offset), root);
     };
     const todo: [Binding, Binding][] = [
       [
@@ -95,7 +156,7 @@ export class Substitution {
     return this.isAcyclic();
   }
 
-  private isAcyclic() {
+  isAcyclic() {
     const manager = this.manager;
     const visiting = new Set<number>();
     const done = new Set<number>();
@@ -125,7 +186,8 @@ export class Substitution {
 
   apply(expr: number, offset: number, deltas: readonly number[] = [0]) {
     const manager = this.manager;
-    const cache = new Map<number, number>();
+    if (this.isInserted) this.resetCache();
+    const cache = this.applyCache;
     const todo = [{ expr, offset }];
     while (todo.length > 0) {
       const node = todo[todo.length - 1];
@@ -150,7 +212,9 @@ export class Substitution {
           bound ??
             (delta === 0
               ? node.expr
-              : manager.mkVar(manager.values[node.expr] + delta, manager.sorts[node.expr])),
+              : this.keepNew(
+                  manager.mkVar(manager.values[node.expr] + delta, manager.sorts[node.expr]),
+                )),
         );
       } else if (kind === KIND_APP) {
         let isVisited = true;
@@ -168,12 +232,12 @@ export class Substitution {
           key,
           args.every((arg, index) => arg === manager.getArg(node.expr, index))
             ? node.expr
-            : manager.mkApp(manager.decls[node.expr], args, manager.sorts[node.expr]),
+            : this.keepNew(manager.mkApp(manager.decls[node.expr], args, manager.sorts[node.expr])),
         );
-      } else cache.set(key, this.applyQuantifier(node.expr, node.offset, deltas));
+      } else cache.set(key, this.keepNew(this.applyQuantifier(node.expr, node.offset, deltas)));
       todo.pop();
     }
-    return cache.get(getKey(expr, offset)) ?? expr;
+    return this.keepNew(cache.get(getKey(expr, offset)) ?? expr);
   }
 
   // The bindings move under the bound variables, by offset and then by variable.
@@ -183,21 +247,26 @@ export class Substitution {
     const numVars = quantifier.sorts.length;
     const nested = new Substitution(manager);
     const shifter = new VarShifter(manager);
-    const shifted = [...this.bindings]
-      .sort((first, second) => (first[0] % 2) - (second[0] % 2) || first[0] - second[0])
-      .map((entry) => {
-        const moved = shifter.shift(entry[1].expr, 0, numVars, 0);
-        nested.bindings.set(entry[0] + 2 * numVars, { expr: moved, offset: entry[1].offset });
-        return moved;
-      });
-    const patterns = quantifier.patterns.map((pattern) => nested.apply(pattern, offset, deltas));
+    for (const [key, binding] of [...this.bindings].sort(
+      (first, second) =>
+        (first[0] % NUM_OFFSETS) - (second[0] % NUM_OFFSETS) || first[0] - second[0],
+    )) {
+      const moved = shifter.shift(binding.expr, 0, numVars, 0);
+      nested.insert(key + NUM_OFFSETS * numVars, { expr: moved, offset: binding.offset });
+      manager.decRef(moved);
+    }
+    const patterns = quantifier.patterns.map((pattern) =>
+      assign(manager, -1, nested.apply(pattern, offset, deltas)),
+    );
     const noPatterns = quantifier.noPatterns.map((pattern) =>
-      nested.apply(pattern, offset, deltas),
+      assign(manager, -1, nested.apply(pattern, offset, deltas)),
     );
     const body = nested.apply(quantifier.body, offset, deltas);
     const result = manager.mkQuantifier({ ...quantifier, patterns, noPatterns, body });
-    for (const moved of shifted) manager.decRef(moved);
+    for (const pattern of noPatterns) manager.decRef(pattern);
+    for (const pattern of patterns) manager.decRef(pattern);
     shifter.release();
+    nested.reset();
     return result;
   }
 }

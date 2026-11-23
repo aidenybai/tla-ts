@@ -1,5 +1,6 @@
 import { getSymbolName, KIND_VAR, OP_EQ, OP_ITE, SORT_BOOL } from "../ast";
 import { flattenAndVector } from "../ast-util";
+import { assign, release } from "../expr-ref";
 import { ObjMap } from "../hashtable";
 import { FuncInterp, ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
@@ -255,16 +256,22 @@ export class MkSlice implements RuleTransformerPlugin {
       return;
     }
     this.initVars(rule);
-    const head = this.updatePredicate(rule.head);
-    const tail = rule.tail
-      .slice(0, rule.uninterpretedSize)
-      .map((atom) => this.updatePredicate(atom));
+    const tail = new RefVector(manager);
+    const head = assign(manager, -1, this.updatePredicate(rule.head));
+    for (let index = 0; index < rule.uninterpretedSize; index++)
+      tail.push(this.updatePredicate(rule.tail[index]));
     const conjs = this.getTailConjs(rule);
-    tail.push(...conjs.items);
+    for (const conj of conjs.items) tail.push(conj);
     const ruleManager = this.context.ruleManager;
-    const updated = ruleManager.fixUnboundVars(ruleManager.mk(head, tail, [], rule.name), false);
+    const updated = ruleManager.fixUnboundVars(
+      ruleManager.assignRule(undefined, ruleManager.mk(head, tail.items, [], rule.name)),
+      false,
+    );
     conjs.reset();
+    release(manager, head);
+    tail.reset();
     target.addRule(updated);
+    ruleManager.decRef(updated);
   }
 
   apply(source: RuleSet) {

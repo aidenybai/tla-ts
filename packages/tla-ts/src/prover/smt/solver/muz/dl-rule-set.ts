@@ -167,6 +167,8 @@ export class RuleSet {
   }
 
   reset() {
+    const ruleManager = this.context.ruleManager;
+    for (const rule of this.rules) ruleManager.decRef(rule);
     this.rules = [];
     this.head2rules.clear();
     this.deps.reset();
@@ -194,6 +196,7 @@ export class RuleSet {
   }
 
   addRule(rule: Rule) {
+    this.context.ruleManager.incRef(rule);
     this.rules.push(rule);
     const decl = rule.getDecl(this.manager);
     const existing = this.head2rules.get(decl);

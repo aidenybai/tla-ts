@@ -76,7 +76,7 @@ export class Hnf {
 
   apply(expr: number) {
     this.freshPredicates = [];
-    if (this.isHorn(expr)) return [expr];
+    if (this.isHorn(expr)) return [this.pin(expr)];
     this.todo = [expr];
     this.memoizedDisjunctions.clear();
     const result: number[] = [];

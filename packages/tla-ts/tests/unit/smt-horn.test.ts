@@ -64,6 +64,34 @@ const getLimitedCounterQuery = (engine: string, limit: number, nextLimit = 0) =>
   "(query Q)",
 ];
 
+const getUnrolledCounter = (depth: number) => [
+  "(set-option :fp.engine bmc)",
+  `(set-option :fp.bmc.linear_unrolling_depth ${depth})`,
+  "(declare-fun P (Int) Bool)",
+  "(assert (forall ((x Int)) (=> (= x 0) (P x))))",
+  "(assert (forall ((x Int)) (=> (and (P x) (< x 3)) (P (+ x 1)))))",
+  "(assert (forall ((x Int)) (=> (P x) (< x 2))))",
+  "(check-sat-using horn)",
+  "(get-info :rlimit)",
+];
+
+const MUTUAL_COUNTER_QUERY = [
+  "(declare-rel P (Int))",
+  "(declare-rel Q (Int))",
+  "(declare-rel S (Int))",
+  "(declare-rel bad ())",
+  "(declare-var x Int)",
+  "(declare-var y Int)",
+  "(declare-var z Int)",
+  "(rule (=> (= x 0) (P x)))",
+  "(rule (=> (and (Q y) (= x (+ y 1))) (P x)))",
+  "(rule (=> (and (P z) (= y (+ z 1))) (Q y)))",
+  "(rule (=> (and (Q y) (= x (+ y 2))) (S x)))",
+  "(rule (=> (and (S x) (> x 4)) bad))",
+  "(query bad)",
+  "(get-info :rlimit)",
+];
+
 const COUNTER_PROFILE = [
   "canceled",
   "",
@@ -365,6 +393,36 @@ describe("horn tactic", () => {
         "(get-info :reason-unknown)",
       ]),
     ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("keeps relevancy and mbqi on in the solver bmc unrolls into", () => {
+    expect(run(getUnrolledCounter(2))).toEqual(["unknown", "(:rlimit 720)"]);
+  });
+
+  it("frees bmc's level terms and Horn rules when Z3 does", () => {
+    expect(run(getUnrolledCounter(3))).toEqual(["unknown", "(:rlimit 1397)"]);
+  });
+
+  it("leaves the array step out of the qe_lite that fixes a resolvent's unbound variables", () => {
+    expect(run(getUnrolledCounter(4))).toEqual(["unsat", "(:rlimit 2355)"]);
+  });
+
+  it("keeps the rule manager's qe_lite and its terms from one rule to the next", () => {
+    expect(run(["(set-option :fp.engine bmc)", ...MUTUAL_COUNTER_QUERY])).toEqual([
+      "sat",
+      "(:rlimit 1363)",
+    ]);
+  });
+
+  it("keeps a replaced rule's literals in the linear inliner's indexes", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(set-option :fp.xform.inline_eager false)",
+        "(set-option :fp.bmc.linear_unrolling_depth 6)",
+        ...MUTUAL_COUNTER_QUERY,
+      ]),
+    ).toEqual(["sat", "(:rlimit 2832)"]);
   });
 
   it("answers a query command with bmc", () => {
