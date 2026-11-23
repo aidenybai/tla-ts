@@ -110,7 +110,7 @@ export class EufSolver implements SatExtension {
     readonly si: EufInternalizer,
     readonly s: Solver,
     readonly mkThSolver: ThSolverFactory,
-    private readonly isArithIgnoringInt: boolean,
+    readonly isArithIgnoringInt: boolean,
   ) {
     this.egraph = new Egraph(manager);
     this.egraph.onPropagateLiteral = (node, ante) => this.propagateLiteral(node, ante);
@@ -784,9 +784,10 @@ export class EufSolver implements SatExtension {
       if (this.s.isInconsistent) return CR_CONTINUE;
     }
     if (this.s.isInconsistent || isContinued) return CR_CONTINUE;
-    if (this.qsolver !== null) applySolver(this.qsolver);
+    if (this.qsolver !== null && !this.isArithIgnoringInt) applySolver(this.qsolver);
     if (numNodes < this.egraph.numNodes || isContinued) return CR_CONTINUE;
     if (isGivenUp) return CR_GIVEUP;
+    if (this.qsolver !== null && this.isArithIgnoringInt) return CR_GIVEUP;
     for (const solver of this.solvers) solver.finalize();
     return CR_DONE;
   }

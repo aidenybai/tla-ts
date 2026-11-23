@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { SmtCanceledError } from "../../src/errors";
+import { SmtCanceledError, SmtUnsupportedError } from "../../src/errors";
 import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
@@ -542,6 +542,146 @@ describe("sat solver", () => {
         "(declare-fun = (U U) Bool)",
         "(declare-fun = (U U) Bool)",
         ')")',
+      ].join("\n"),
+    );
+  });
+
+  it("runs the euf solver in the finite-domain solver under sat.euf", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :sat.euf true)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(assert (or p (bvult a b)))",
+        "(assert (=> p (= a (bvadd b #x1))))",
+        "(assert (not (= a #x0)))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun p () Bool",
+        "    true)",
+        "  (define-fun b () (_ BitVec 4)",
+        "    #x0)",
+        "  (define-fun a () (_ BitVec 4)",
+        "    #x1)",
+        ")",
+        "(:rlimit 334)",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("smt.relevancy, as Z3 5.3.2 turns on euf's relevancy filter above 2", () => {
+  const PROBLEM = [
+    "(declare-fun f (Int) Int)",
+    "(declare-const a Int)",
+    "(declare-const b Int)",
+    "(assert (or (= (f a) b) (> a b)))",
+    "(assert (> (f a) 3))",
+    "(assert (=> (> b 2) (= (f b) a)))",
+  ];
+
+  it("throws at sat.euf under an smt.relevancy above 2", () => {
+    expect(() =>
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.relevancy 3)",
+        ...PROBLEM,
+        "(check-sat)",
+      ]),
+    ).toThrow(new SmtUnsupportedError("an smt.relevancy above 2 under sat.euf"));
+  });
+
+  it("throws at a sat tactic with euf under an smt.relevancy above 2", () => {
+    expect(() =>
+      run([
+        "(set-option :smt.relevancy 3)",
+        ...PROBLEM,
+        "(check-sat-using (using-params sat :euf true))",
+      ]),
+    ).toThrow(new SmtUnsupportedError("an smt.relevancy above 2 under sat.euf"));
+  });
+
+  it("runs sat.euf under an smt.relevancy of 0", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.relevancy 0)",
+        ...PROBLEM,
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  (define-fun b () Int",
+        "    (- 8366))",
+        "  (define-fun a () Int",
+        "    0)",
+        "  (define-fun f ((x!1 Int)) Int",
+        "    (ite (= x!1 0) 4",
+        "    (ite (= x!1 (- 8366)) 0",
+        "      #unspecified)))",
+        ")",
+        "(:rlimit 185)",
+      ].join("\n"),
+    );
+  });
+
+  it("runs the smt kernel under an smt.relevancy of 3", () => {
+    expect(
+      run([
+        "(set-option :smt.relevancy 3)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-const a U)",
+        "(declare-const b U)",
+        "(declare-const c U)",
+        "(declare-const p Bool)",
+        "(assert (or p (= (f a) b)))",
+        "(assert (or (not p) (= (f b) c)))",
+        "(assert (not (= (f a) (f b))))",
+        "(assert (or (= a b) (= b c) (= (f c) a)))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(",
+        "  ;; universe for U:",
+        "  ;;   U!val!1 U!val!0 U!val!2 ",
+        "  ;; -----------",
+        "  ;; definitions for universe elements:",
+        "  (declare-fun U!val!1 () U)",
+        "  (declare-fun U!val!0 () U)",
+        "  (declare-fun U!val!2 () U)",
+        "  ;; cardinality constraint:",
+        "  (forall ((x U)) (or (= x U!val!1) (= x U!val!0) (= x U!val!2)))",
+        "  ;; -----------",
+        "  (define-fun b () U",
+        "    U!val!1)",
+        "  (define-fun c () U",
+        "    U!val!1)",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun a () U",
+        "    U!val!0)",
+        "  (define-fun f ((x!0 U)) U",
+        "    (ite (= x!0 U!val!1) U!val!2",
+        "      U!val!1))",
+        ")",
+        "(:rlimit 554)",
       ].join("\n"),
     );
   });

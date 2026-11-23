@@ -1379,6 +1379,37 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("gives up on integers that the sat.euf arithmetic can't settle under smt.arith.ignore_int", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.arith.ignore_int true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (* 2 x) (+ (* 2 y) 1)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "incomplete theory arith")', "(:rlimit 189)"]);
+  });
+
+  it("gives up on quantifiers without instantiating them in sat.euf under smt.arith.ignore_int", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.arith.ignore_int true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+        "(assert (> (f a) 3))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")', "(:rlimit 196)"]);
+  });
+
   it("completes an array-ext interpretation so its witnesses drop from the model", () => {
     expect(
       run([
