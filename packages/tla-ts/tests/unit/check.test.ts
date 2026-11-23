@@ -11338,6 +11338,55 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["an equality", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> = 1"],
+    ["a record", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN [a |-> F, b |-> F] = 1"],
+    ["an inequality", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> # 1"],
+    ["a membership", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> \\in {1}"],
+    ["a constant definition", "K == LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> = 1"],
+    [
+      "a comparison inside another",
+      "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<{s \\in {1} : <<F, F>> = s}>> = <<{}>>",
+    ],
+  ])("formats an error's message once in %s, as TLC does", async (_name, line) => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n${line}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{}", "{1}", "{}", "{1}"]);
+  });
+
+  it("formats an error's message as it throws in a check after a comparison failed", async () => {
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<{s \\in {1} : <<F, F>> = s}>> = <<{}>>\n====",
+      config: "",
+      onPrint: () => {},
+    });
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nASSUME AssertError("Attempted to enumerate S \\\\cup T when S:\\n{0}\\nand T:\\nNat\\nare not both enumerable", Nat \\cup {0} = Nat)\n====',
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("formats the message of a split of Next that fails, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == \\E o \\in LET F == {s \\in SUBSET {1} : PrintT(s)} IN {<<F, F>>, 1} : x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([prints, result.failure?.traceOutput]).toEqual([
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      ["{}", "{1}", "{}", "{1}"],
+    ]);
+  });
+
+  it.each([
     [
       "PrintT",
       "PrintT(F) /\\ \\A t \\in F : t # <<7, 7>>",

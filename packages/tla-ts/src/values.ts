@@ -410,17 +410,20 @@ const checkModelValueTypes = (left: Value, right: Value, isEquality: boolean) =>
   const action = isEquality ? "check equality of" : "compare";
   if (isModelValue(left) && isModelValue(right)) {
     if (leftType === undefined || rightType === undefined || leftType === rightType) return;
-    throw new TlaEvaluationError(
-      `Attempted to ${action} the differently-typed model values ${prettyPrint(formatValue(left))} and ${prettyPrint(formatValue(right))}`,
+    throw createAttemptError(
+      () =>
+        `Attempted to ${action} the differently-typed model values ${prettyPrint(formatValue(left))} and ${prettyPrint(formatValue(right))}`,
     );
   }
   if (leftType !== undefined) {
-    throw new TlaEvaluationError(
-      `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${prettyPrint(formatValue(left))} and non-model value\n${prettyPrint(formatValue(right))}`,
+    throw createAttemptError(
+      () =>
+        `Attempted to ${action}${isEquality ? "" : " the"} typed model value ${prettyPrint(formatValue(left))} and non-model value\n${prettyPrint(formatValue(right))}`,
     );
   }
-  throw new TlaEvaluationError(
-    `Attempted to ${action} the typed model value ${prettyPrint(formatValue(right))} and the non-model value\n${prettyPrint(formatValue(left))}`,
+  throw createAttemptError(
+    () =>
+      `Attempted to ${action} the typed model value ${prettyPrint(formatValue(right))} and the non-model value\n${prettyPrint(formatValue(left))}`,
   );
 };
 
@@ -542,8 +545,14 @@ const isOverriddenComparison = (left: Value, right: Value) =>
     right.kind === "SequenceSet"
   );
 
+// TLC formats a message as it throws, which can run a spec's Print, so only a first attempt that computeLikeTlcOnFailure may retry in TLC's order defers it.
+let isFirstAttempt = false;
+
+const createAttemptError = (describe: () => string) =>
+  new TlaEvaluationError(isFirstAttempt ? describe : describe());
+
 const createComparisonError = (left: Value, right: Value) =>
-  new TlaEvaluationError(
+  createAttemptError(() =>
     isOverriddenSet(left)
       ? `Attempted to compare overridden value ${prettyPrint(formatValue(left))} with non-overridden value:\n${prettyPrint(formatValue(right))}`
       : `Attempted to compare ${describeKind(left)} ${formatValue(left)} with ${describeKind(right)} ${formatValue(right)}`,
@@ -555,8 +564,9 @@ const compareOverriddenSets = (
   verb: "compare" | "check equality of",
 ) => {
   if (!isOverriddenSet(left)) {
-    throw new TlaEvaluationError(
-      `Attempted to ${verb} the set ${prettyPrint(formatValue(toFiniteSet(left)))} with the value:\n${prettyPrint(formatValue(right))}`,
+    throw createAttemptError(
+      () =>
+        `Attempted to ${verb} the set ${prettyPrint(formatValue(toFiniteSet(left)))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   if (!isOverriddenSet(right)) throw createComparisonError(left, right);
@@ -1072,8 +1082,9 @@ const compareTlcFunctions = (
   const other = toTlcFunction(right);
   if (!other) {
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
-    throw new TlaEvaluationError(
-      `Attempted to ${getComparisonVerb(isEquality)} the function ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
+    throw createAttemptError(
+      () =>
+        `Attempted to ${getComparisonVerb(isEquality)} the function ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   if (functionValue.range.length !== other.range.length)
@@ -1093,8 +1104,9 @@ const compareTlcFunctions = (
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
     if (typeof key !== "number") {
-      throw new TlaEvaluationError(
-        `Attempted to compare ${isEquality ? "an " : ""}integer with non-integer${isEquality || functionValue.low !== undefined ? ":" : ""}\n${prettyPrint(formatValue(key))}.`,
+      throw createAttemptError(
+        () =>
+          `Attempted to compare ${isEquality ? "an " : ""}integer with non-integer${isEquality || functionValue.low !== undefined ? ":" : ""}\n${prettyPrint(formatValue(key))}.`,
       );
     }
     const difference =
@@ -1133,8 +1145,9 @@ const compareFunctionLikeTlc = (
     const record = toTlcRecord(right);
     if (!record) {
       if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
-      throw new TlaEvaluationError(
-        `Attempted to ${getComparisonVerb(isEquality)} record:\n${prettyPrint(formatValue(left))}\nwith non-record\n${prettyPrint(formatValue(right))}`,
+      throw createAttemptError(
+        () =>
+          `Attempted to ${getComparisonVerb(isEquality)} record:\n${prettyPrint(formatValue(left))}\nwith non-record\n${prettyPrint(formatValue(right))}`,
       );
     }
     return (
@@ -1198,8 +1211,9 @@ const compareSetLikeTlc = (left: ObjectValue, right: Value, isEquality: boolean)
   }
   if (!isSetValue(right)) {
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
-    throw new TlaEvaluationError(
-      `Attempted to ${getComparisonVerb(isEquality)} the set ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
+    throw createAttemptError(
+      () =>
+        `Attempted to ${getComparisonVerb(isEquality)} the set ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   const sets = getSetElementsLikeTlc(left, right);
@@ -1216,7 +1230,7 @@ const compareOrEqualLikeTlc = (left: Value, right: Value, isEquality: boolean): 
       return left === right ? 0 : 1;
     }
     if (isModelValue(right)) return compareModelValueWith(right, left, isEquality);
-    throw new TlaEvaluationError(describeScalarMismatch(left, right, isEquality));
+    throw createAttemptError(() => describeScalarMismatch(left, right, isEquality));
   }
   if (left.kind === "ModelValue") {
     if (left.type !== undefined) checkModelValueTypes(left, right, isEquality);
@@ -3763,13 +3777,24 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
   const mark = markTrace();
+  const isOuterAttempt = isFirstAttempt;
+  isFirstAttempt = true;
   try {
-    return compute(left, right);
+    const result = compute(left, right);
+    isFirstAttempt = isOuterAttempt;
+    return result;
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
+    isFirstAttempt = isOuterAttempt;
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (isFailingLikeTlc?.(left, right)) throw formatUnlessAttempt(error);
     resetTrace(mark);
     return computeLikeTlc(left, right, error);
   }
+};
+
+const formatUnlessAttempt = (error: TlaEvaluationError) => {
+  if (!isFirstAttempt) error.formatMessage();
+  return error;
 };
 
 export const isFingerprintedSince = (depth: number) =>
@@ -4242,7 +4267,7 @@ const failKeyLikeTlc = (
   } else {
     findSortedIndex(keys, argument, compareLikeTlc);
   }
-  throw error;
+  throw formatUnlessAttempt(error);
 };
 
 const findKeyIndexLikeTlc = (
@@ -4884,44 +4909,42 @@ const MAXIMUM_EXPANDED_PRODUCT = 1999;
 const getProductSize = (sets: Value[]) =>
   sets.reduce<number>((size, set) => (size === 0 ? 0 : size * getCardinality(set)), 1);
 
-const toPrintedSet = (value: LazySetValue, isStrict: boolean) => {
-  // Print, PrintT and ToString convert with toSetEnum, which keeps nothing. An error message keeps its set, as tla-ts formats it again when it retries a comparison as TLC does.
-  const convert = isStrict ? toArgumentSet : toFiniteSet;
+const toPrintedSet = (value: LazySetValue) => {
   const charged = getChargedSet(value);
-  return charged ? toChargedSet(charged, false, convert) : convert(value);
+  return charged ? toChargedSet(charged, false, toArgumentSet) : toArgumentSet(value);
 };
 
-const expandLazySet = (value: LazySetValue, isStrict: boolean) => {
+const expandLazySet = (value: LazySetValue) => {
   if (value.kind === "SetOperation" || value.kind === "FilteredSet" || value.kind === "Union") {
-    return toPrintedSet(value, isStrict);
+    return toPrintedSet(value);
   }
   value.cost?.charges?.chargePrintedSize(value);
   if (value.kind === "Subset") {
     if (getCardinality(value.base) > MAXIMUM_EXPANDED_SUBSET_BASE) return undefined;
-    return toPrintedSet(value, isStrict);
+    return toPrintedSet(value);
   }
   if (value.kind === "FunctionSet") {
     const domainSize = isEmptySet(value.domain) ? 0 : getCardinality(value.domain);
     const size = domainSize === 0 ? 1 : getCardinality(value.range) ** domainSize;
-    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
+    return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
   }
   const size = getProductSize(value.kind === "RecordSet" ? value.sets : value.factors);
-  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value, isStrict) : undefined;
+  return size <= MAXIMUM_EXPANDED_PRODUCT ? toPrintedSet(value) : undefined;
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
-  if (isStrict || value.kind === "Union") return expandLazySet(value, isStrict);
+  if (isStrict || value.kind === "Union") return expandLazySet(value);
   if (
     value.kind === "Subset" &&
     isFunctionValue(value.base) &&
     (value.base.kind === "Function" || isEnumerable(value.base.domain))
   ) {
-    return expandLazySet(value, false);
+    return expandLazySet(value);
   }
   if (!isEnumerable(value)) return undefined;
   const mark = markTrace();
   try {
-    return expandLazySet(value, false);
+    return expandLazySet(value);
   } catch (error) {
     if (!(error instanceof TlaEvaluationError)) throw error;
     dropFingerprint(mark);

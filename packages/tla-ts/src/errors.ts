@@ -125,9 +125,22 @@ export class TlaConfigError extends TlaError {
 }
 
 export class TlaEvaluationError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
+  constructor(message: string | (() => string), cause?: unknown) {
+    super(typeof message === "string" ? message : "", cause);
     this.name = "TlaEvaluationError";
+    if (typeof message === "string") return;
+    Object.defineProperty(this, "message", {
+      configurable: true,
+      get: () => {
+        const text = message();
+        Object.defineProperty(this, "message", { value: text, writable: true, configurable: true });
+        return text;
+      },
+    });
+  }
+
+  formatMessage() {
+    void this.message;
   }
 }
 
