@@ -117,7 +117,6 @@ export interface PrintEnvironment {
   isUsed: (name: string) => boolean;
   // Another declaration of the same name takes the same arguments, so the name needs its sort.
   isClashing: (decl: number) => boolean;
-  // pdecl_manager's first spelling of each sort, which cmd_context's printer writes in place of its name.
   sortInfos: ReadonlyMap<number, SortInfo>;
 }
 
