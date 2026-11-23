@@ -169,6 +169,13 @@ const getBoundSymbols = (node: OpApplNode) => [
 const getSubstitute = (symbol: SymbolNode, substs: Subst[]) =>
   substs.find((subst) => subst.op === symbol)?.expr;
 
+const addSubstitutedNonLeibnizParams = (node: LevelFields, body: LevelFields, subst: Subst) => {
+  addAll(node.nonLeibnizParams, getNonLeibnizParams(subst.expr, body.levelParams.has(subst.op)));
+  if (!node.nonLeibnizParams.has(subst.op)) return;
+  node.nonLeibnizParams.delete(subst.op);
+  addAll(node.nonLeibnizParams, subst.expr.allParams);
+};
+
 const getSubstitutedParams = (param: SymbolNode, substs: Subst[], isAll: boolean) => {
   const substitute = getSubstitute(param, substs);
   if (substitute === undefined) return new Set([param]);
@@ -848,8 +855,10 @@ const checkInstance = (node: InstanceNode, iteration: number, check: LevelCheck)
     }
     if (
       subst.expr.kind === "OpArg" &&
-      subst.expr.op.kind === "OpDef" &&
-      (subst.expr.op.defKind === "UserDefined" || subst.expr.op.defKind === "BuiltIn") &&
+      ((subst.expr.op.kind === "OpDef" &&
+        (subst.expr.op.defKind === "UserDefined" || subst.expr.op.defKind === "BuiltIn")) ||
+        // Deviation from SANY: InstanceNode checks only OpDefNode substitutes, so SANY accepts Op <- I!T for THEOREM T == ENABLED (w' = c).
+        subst.expr.op.kind === "ThmOrAssumpDef") &&
       !subst.expr.op.isLeibniz
     ) {
       addError(
@@ -1070,6 +1079,11 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
         body.allParams.forEach((param) =>
           addAll(node.allParams, getSubstitutedParams(param, node.substs, true)),
         );
+        // Deviation from SANY: APSubstInNode has no nonLeibnizParams, so SANY accepts F(a) == I(a)!T for THEOREM T == ENABLED (w' = c).
+        node.nonLeibnizParams = new Set(body.nonLeibnizParams);
+        node.substs.forEach((subst) => {
+          if (body.allParams.has(subst.op)) addSubstitutedNonLeibnizParams(node, body, subst);
+        });
       } else {
         node.allParams = new Set(body.allParams);
         node.nonLeibnizParams = new Set(body.nonLeibnizParams);
@@ -1077,14 +1091,7 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
           if (!node.allParams.has(subst.op)) return;
           node.allParams.delete(subst.op);
           addAll(node.allParams, subst.expr.allParams);
-          addAll(
-            node.nonLeibnizParams,
-            getNonLeibnizParams(subst.expr, body.levelParams.has(subst.op)),
-          );
-          if (node.nonLeibnizParams.has(subst.op)) {
-            node.nonLeibnizParams.delete(subst.op);
-            addAll(node.nonLeibnizParams, subst.expr.allParams);
-          }
+          addSubstitutedNonLeibnizParams(node, body, subst);
         });
       }
       const isConstant = isConstantModule(node.instantiatedModule, check);

@@ -224,6 +224,7 @@ export const createInstanceChecker = (
           level: operand.data.level,
           isCorrect: operand.data.isCorrect,
           operator,
+          // Deviation from SANY: InstanceNode checks only OpDefNode substitutes, so SANY accepts Op <- I!T for THEOREM T == ENABLED (w' = c).
           isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
       ];

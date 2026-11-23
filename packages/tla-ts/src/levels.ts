@@ -1665,6 +1665,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         isCorrect: source.isCorrect,
         params: [...source.params, ...names.filter((_name, index) => source.weights[index] === 1)],
         allParams: new Set([...source.allParams, ...nonLeibnizNames]),
+        // Deviation from SANY: APSubstInNode has no nonLeibnizParams, so SANY accepts F(a) == I(a)!T for THEOREM T == ENABLED (w' = c).
         nonLeibnizParams: new Set([...source.nonLeibnizParams, ...nonLeibnizNames]),
         constraints: [
           ...source.constraints,

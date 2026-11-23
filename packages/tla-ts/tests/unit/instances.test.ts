@@ -1173,6 +1173,8 @@ const INNER_MODULES: Record<string, string> = {
   Labeled: "CONSTANT c\nVARIABLE w\nD == lab :: ENABLED (w' = c)",
   Lifted: "CONSTANT Op(_)\nD == Op(1)",
   LiftedUnused: "CONSTANT Op(_)\nU(K(_)) == 1\nD == U(Op)",
+  Proved: "CONSTANT c\nVARIABLE w\nTHEOREM T == ENABLED (w' = c)",
+  Stepped: "CONSTANT c\nVARIABLE w\nTHEOREM T == w' = c",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -1338,6 +1340,7 @@ describe("substitution levels match SANY", () => {
     "H2(J(_)) == 1\nH(K(_)) == H2(K)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "G(y) == 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE LiftedUnused WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
+    "I(a) == INSTANCE Stepped WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F\nK == INSTANCE Pure WITH c <- 1, Op <- I!T",
     "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
     "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
     "I == INSTANCE Handed WITH Op <- LAMBDA a : a = 1, v <- x",
@@ -1417,6 +1420,15 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "G(y) == y + 1\nH(K(_)) == G(K(1))\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(a) == INSTANCE Lifted WITH Op <- LAMBDA b : a'\nI == INSTANCE Pure WITH c <- 1, Op <- P!D",
   ])("reports %s as SANY reports it with the operator argument inlined", async (body) => {
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
+  it.each([
+    "I(a) == INSTANCE Proved WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
+    "I(a) == INSTANCE Proved WITH c <- a, w <- x\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
+  ])("reports %s as SANY reports it with the THEOREM made a definition", async (body) => {
     await expect(checkSubstitution(body)).rejects.toThrow(
       getMessagePattern([getLeibnizError("Pure")]),
     );
