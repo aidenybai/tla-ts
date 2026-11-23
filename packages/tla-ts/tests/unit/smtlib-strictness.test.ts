@@ -2020,6 +2020,13 @@ describe("the sort names of cmd_context's printer, as Z3 5.3.2's pdecl_manager s
       "(vars\n  (0      (_ bv 4))\n  (1      bool))",
     ],
     [
+      "a sort of dbg-used-vars too wide for its line, under its column",
+      [
+        "(dbg-used-vars (forall ((x (Array (Array (Array Int Int) (Array Int Int)) (Array (Array Int Int) (Array (Array Int Int) (Array Int Int)))))) (= x x)))",
+      ],
+      "(vars\n  (0      (Array (Array (Array Int Int) (Array Int Int))\n                 (Array (Array Int Int) (Array (Array Int Int) (Array Int Int))))))",
+    ],
+    [
       "a value of get-value and eval",
       [
         "(declare-const a (Set Int))",

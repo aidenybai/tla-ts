@@ -36,6 +36,7 @@ import {
   DEFAULT_PRINT_OPTIONS,
   formatSort,
   getQuotedName,
+  mkIndent,
   mkSeq1,
   mkSeq5,
   mkText,
@@ -2430,7 +2431,7 @@ export const runSmtlibScript = (
         const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
         const lines = sorts.map(
           (sort, index) =>
-            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, state.reader.sortInfos, sort), settings.printOptions)})`,
+            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(mkIndent(10, formatSort(manager, state.reader.sortInfos, sort)), settings.printOptions)})`,
         );
         print(`(vars${lines.join("")})`);
       },
