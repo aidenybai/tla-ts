@@ -50,6 +50,40 @@ const UNINTERPRETED_RELATION = [
   "(declare-var x Int)",
 ];
 
+const getLimitedCounterQuery = (engine: string, limit: number, nextLimit = 0) => [
+  `(set-option :fp.engine ${engine})`,
+  "(declare-rel P (Int))",
+  "(declare-rel Q (Int))",
+  "(declare-var x Int)",
+  "(rule (=> (= x 0) (P x)))",
+  "(rule (=> (and (P x) (< x 3)) (P (+ x 1))))",
+  `(set-option :rlimit ${limit})`,
+  "(query P)",
+  `(set-option :rlimit ${nextLimit})`,
+  "(rule (=> (and (P x) (> x 1)) (Q x)))",
+  "(query Q)",
+];
+
+const COUNTER_PROFILE = [
+  "canceled",
+  "",
+  "---------------",
+  "Original rules",
+  "; rule count: 2",
+  "; predicate count: 1",
+  "<null>:",
+  "P(#0) :- ",
+  " (= (:var 0) 0).",
+  "<null>:",
+  "P(#1) :- ",
+  " P(#0),",
+  " (= (:var 1) (+ (:var 0) 1)),",
+  " (< (:var 0) 3).",
+  "",
+  "---------------",
+  "Transformed rules",
+];
+
 // The expected values are the output of z3 5.3.2.
 describe("datalog queries", () => {
   it("answers sat for a reachable relation", () => {
@@ -130,6 +164,104 @@ describe("datalog queries", () => {
         "(query bad)",
       ]),
     ).toEqual(["sat"]);
+  });
+
+  it("goes on with the script after a query runs out of resources", () => {
+    expect(run(getLimitedCounterQuery("bmc", 5))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
+  // Deviation from Z3: Z3 answers unsat, having lost the clauses of the disjunction.
+  it("keeps every clause of a rule whose Horn normal form runs out of resources", () => {
+    expect(
+      run([
+        "(set-option :fp.engine bmc)",
+        "(declare-rel P (Int))",
+        "(declare-rel R (Int))",
+        "(declare-rel S (Int))",
+        "(declare-var x Int)",
+        "(rule (P 1))",
+        "(rule (=> (or (P x) (R x)) (S x)))",
+        "(set-option :rlimit 2)",
+        "(query S)",
+        "(set-option :rlimit 0)",
+        "(query S)",
+      ]),
+    ).toEqual([...getFailedQuery("max. resource limit exceeded"), "sat"]);
+  });
+
+  it("answers the next query after a query that failed with its output predicate", () => {
+    expect(run(getLimitedCounterQuery("bmc", 22))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
+  it("prints the rules of a query canceled between two transformations", () => {
+    expect(run(getLimitedCounterQuery("bmc", 30))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 0",
+      "; predicate count: 0",
+      "sat",
+    ]);
+  });
+
+  it("prints the rules spacer was given for a canceled query", () => {
+    expect(run(getLimitedCounterQuery("spacer", 70))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 3",
+      "; predicate count: 2",
+      "; output: query!0",
+      "<null>:",
+      "P(0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (not (<= 3 (:var 0))),",
+      " (= (:var 1) (+ 1 (:var 0))).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
+      "sat",
+    ]);
+  });
+
+  it("binds the declared variables again after a query canceled in a transformation", () => {
+    expect(run(getLimitedCounterQuery("bmc", 40, 20))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...getFailedQuery("max. resource limit exceeded"),
+      "canceled",
+      "",
+      "---------------",
+      "Original rules",
+      "; rule count: 4",
+      "; predicate count: 3",
+      "; output: query!0",
+      "<null>:",
+      "Q(#0) :- ",
+      " P(#0),",
+      " (> (:var 0) 1).",
+      "<null>:",
+      "P(#0) :- ",
+      " (= (:var 0) 0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (= (:var 1) (+ (:var 0) 1)),",
+      " (< (:var 0) 3).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
+      "",
+      "---------------",
+      "Transformed rules",
+      "; rule count: 0",
+      "; predicate count: 0",
+    ]);
   });
 });
 
@@ -351,6 +483,23 @@ describe("horn tactic", () => {
         "(check-sat-using horn)",
       ]),
     ).toEqual(["unknown"]);
+  });
+
+  it.each([
+    ["elim_term_ite", "(:rlimit 201)"],
+    ["bit_blast", "(:rlimit 286)"],
+  ])("counts the cancel checks of the %s transformation", (name, rlimit) => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(set-option :fp.engine bmc)",
+        `(set-option :fp.xform.${name} true)`,
+        "(set-option :fp.bmc.linear_unrolling_depth 0)",
+        ...counterSystem,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", rlimit]);
   });
 
   it("answers a Horn query run again after a canceled one, where Z3 segfaults", () => {

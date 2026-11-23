@@ -1668,13 +1668,22 @@ export const runSmtlibScript = (
         try {
           status = datalog.relQuery(relation);
         } catch (error) {
-          if (!(error instanceof SmtTacticError)) throw error;
-          print(`(error "query failed: ${error.message}")`);
+          if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+          const message =
+            error instanceof SmtCanceledError
+              ? state.manager.limit.getCancelMessage()
+              : error.message;
+          print(`(error "query failed: ${message}")`);
         } finally {
           state.manager.limit.pop();
         }
-        print(status === L_UNDEF && datalog.isBounded ? "bounded" : getVerdict(status));
-        datalog.isBounded = false;
+        if (status === L_UNDEF && datalog.status === "bounded") print("bounded");
+        else {
+          print(getVerdict(status));
+          if (status === L_UNDEF && datalog.status === "canceled")
+            write(`canceled\n${datalog.displayProfile()}`, false);
+        }
+        datalog.cleanup();
       },
     ],
     [
