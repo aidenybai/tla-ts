@@ -10472,6 +10472,26 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts an operator argument that a filter's membership test forces under a prime", async () => {
+    expect(
+      await getNextCoverageLines(
+        "x' = 0 /\\ (LET G(a) == {9} \\cup {o \\in Nat : o > 1 /\\ o = a} IN \\A oi \\in {1, 2, 3} : oi \\in G(oi) \\/ TRUE)'",
+      ),
+    ).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 19 to line 5, col 116 of module M: 1",
+      "|line 5, col 73 to line 5, col 114 of module M: 1",
+      "||line 5, col 95 to line 5, col 114 of module M: 3",
+      "|||line 5, col 95 to line 5, col 106 of module M: 3",
+      "||||line 5, col 95 to line 5, col 96 of module M: 3",
+      "||||line 5, col 102 to line 5, col 106 of module M: 3",
+      "|||||line 5, col 32 to line 5, col 68 of module M: 3",
+      "|||||line 5, col 104 to line 5, col 105 of module M: 2",
+      "|||line 5, col 111 to line 5, col 114 of module M: 1",
+      "||line 5, col 83 to line 5, col 91 of module M: 1:4",
+    ]);
+  });
+
   it.each([
     [
       "S \\cup T",

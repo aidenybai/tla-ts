@@ -1166,7 +1166,7 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
 
 // forceThunk keeps this code inline, since V8 runs it up to 2% slower on LetInv when it calls a helper.
 const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage) => {
-  const node = coverage.current === -1 ? undefined : coverage.values.get(thunk);
+  const node = coverage.values.get(thunk);
   return node === undefined
     ? evaluate(thunk.expression, withScope(context, thunk.scope))
     : runAtCoverageNode(coverage, node, () =>
