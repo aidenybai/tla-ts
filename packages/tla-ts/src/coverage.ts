@@ -41,6 +41,7 @@ import {
   type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
+  type SubsetValue,
   type UnionValue,
   type Value,
 } from "./values";
@@ -81,6 +82,7 @@ export interface Coverage {
   nextState: NextStateMode;
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
+  chargeSubsetConversion: (set: SubsetValue) => void;
 }
 
 export interface CoverageFrame {
@@ -186,9 +188,15 @@ export const createCoverage = (variableCount: number): Coverage => {
     nextState: "given",
     isMember: isElementOf,
     chargeSetEnumeration: () => {},
+    chargeSubsetConversion: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
   coverage.chargeSetEnumeration = (set) => chargeSetEnumeration(coverage, set);
+  coverage.chargeSubsetConversion = (set) => {
+    // SubsetValue#toSetEnum sizes SUBSET S before its elements() sizes S again.
+    chargeSize(coverage, set);
+    chargeSubsetElements(coverage, set);
+  };
   return coverage;
 };
 
@@ -1328,10 +1336,15 @@ const createEnumerator = (
   isNormalized: boolean,
 ): ChargedEnumerator => {
   const node = getValueNode(coverage, set);
-  if (
-    typeof set === "object" &&
-    (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
-  ) {
+  if (typeof set === "object" && set.kind === "Subset") {
+    // Once convertAndCache converts SUBSET S, its elements() enumerates the SetEnumValue it keeps.
+    if (set.cost !== undefined && set.cost.charges === undefined) {
+      return createListEnumerator(coverage, set.cost.node, size);
+    }
+    chargeSubsetElements(coverage, set);
+    return createListEnumerator(coverage, undefined, size);
+  }
+  if (typeof set === "object" && !isNormalized && set.kind === "FilteredSet") {
     return createListEnumerator(coverage, undefined, size);
   }
   const operation =
@@ -1451,6 +1464,13 @@ export const chargeSize = (coverage: Coverage, set: Value): void => {
     case "Subset":
       chargeSize(coverage, set.base);
   }
+};
+
+// SubsetValue#elementsNormalized sizes S, then converts it with toSetEnum.
+const chargeSubsetElements = (coverage: Coverage, set: SubsetValue) => {
+  chargeSize(coverage, set.base);
+  const base = getChargedSet(set.base);
+  if (base !== undefined) chargeSetEnumeration(coverage, base);
 };
 
 export const createChargedEnumerator = (

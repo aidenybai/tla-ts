@@ -2110,12 +2110,8 @@ const toChargedSet = (
   const cost = value.cost;
   const node = cost?.node;
   const charges = cost?.charges;
-  // SubsetValue#toSetEnum converts its base with toSetEnum, and sizing it first caches S \cup T, S \cap T, S \ T and UNION S.
-  const drawn = value.kind === "Subset" ? getChargedSet(value.base) : value;
-  drawn?.cost?.charges?.chargeSetEnumeration(drawn);
-  if (drawn?.cost && drawn !== value && (drawn.kind === "SetOperation" || drawn.kind === "Union")) {
-    drawn.cost.charges = undefined;
-  }
+  if (value.kind === "Subset") charges?.chargeSubsetConversion(value);
+  else charges?.chargeSetEnumeration(value);
   const set = convert(value);
   if (value.kind === "Subset" && charges !== undefined && node !== undefined) {
     charges.secondary[node] += set.elements.length;
@@ -2549,6 +2545,7 @@ export interface ChargeTable {
   secondary: number[];
   isMember: typeof isElementOf;
   chargeSetEnumeration: (set: Value) => void;
+  chargeSubsetConversion: (set: SubsetValue) => void;
 }
 
 interface PlainStream {

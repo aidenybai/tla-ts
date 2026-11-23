@@ -9868,6 +9868,92 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a union",
+      "x' = 0 /\\ LET S == UNION {[proc : {p}, idx : 1..1] : p \\in {1, 2}} IN \\E R \\in SUBSET S : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 74 of module M: 1",
+        "|line 5, col 34 to line 5, col 74 of module M: 1:8",
+        "||line 5, col 35 to line 5, col 58 of module M: 2:10",
+        "|||line 5, col 43 to line 5, col 45 of module M: 2:6",
+        "||||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 48 to line 5, col 57 of module M: 2",
+        "||line 5, col 68 to line 5, col 73 of module M: 1:3",
+        "line 5, col 79 to line 5, col 102 of module M: 1",
+      ],
+    ],
+    [
+      "a product",
+      "x' = 0 /\\ \\E R \\in SUBSET ({1, 2} \\X {3}) : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 56 of module M: 1",
+        "|line 5, col 53 to line 5, col 56 of module M: 1",
+        "|line 5, col 28 to line 5, col 49 of module M: 1",
+        "||line 5, col 36 to line 5, col 48 of module M: 1:6",
+        "|||line 5, col 36 to line 5, col 41 of module M: 1:3",
+        "|||line 5, col 46 to line 5, col 48 of module M: 1:5",
+      ],
+    ],
+    [
+      "a set of records",
+      "x' = 0 /\\ \\E R \\in SUBSET [a : {1, 2}] : TRUE",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 53 of module M: 1",
+        "|line 5, col 50 to line 5, col 53 of module M: 1",
+        "|line 5, col 28 to line 5, col 46 of module M: 1",
+        "||line 5, col 35 to line 5, col 46 of module M: 1:4",
+        "|||line 5, col 36 to line 5, col 45 of module M: 1:3",
+      ],
+    ],
+    [
+      "a product after PrintT converts the SUBSET",
+      "LET S == SUBSET ({1, 2} \\X {3}) IN x' = 0 /\\ PrintT(S) /\\ \\E R \\in S : TRUE",
+      [
+        "line 5, col 44 to line 5, col 49 of module M: 1",
+        "line 5, col 54 to line 5, col 62 of module M: 1",
+        "|line 5, col 61 to line 5, col 61 of module M: 1",
+        "||line 5, col 18 to line 5, col 39 of module M: 1:4",
+        "|||line 5, col 26 to line 5, col 38 of module M: 1:6",
+        "||||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "||||line 5, col 36 to line 5, col 38 of module M: 1:5",
+        "line 5, col 67 to line 5, col 83 of module M: 1",
+        "|line 5, col 80 to line 5, col 83 of module M: 1",
+        "|line 5, col 76 to line 5, col 76 of module M: 1",
+        "||line 5, col 18 to line 5, col 39 of module M: 1",
+        "|||line 5, col 26 to line 5, col 38 of module M: 1:6",
+        "||||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "||||line 5, col 36 to line 5, col 38 of module M: 1:5",
+      ],
+    ],
+  ])(
+    "charges the subsets of %s to the base that SUBSET sizes and converts",
+    async (_name, next, rows) => {
+      expect(await getNextCoverageLines(next)).toEqual(rows);
+    },
+  );
+
+  it("enumerates the subsets a state keeps without charging their base again", async () => {
+    expect(
+      await getCoverageLines(
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = SUBSET ({1, 2} \\X {3})\nNext == x' = x /\\ \\E R \\in x : TRUE\nInv == TRUE\n====",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual([
+      [
+        "line 4, col 9 to line 4, col 34 of module M: 1",
+        "|line 4, col 13 to line 4, col 34 of module M: 1:6",
+        "||line 4, col 21 to line 4, col 33 of module M: 1:6",
+        "|||line 4, col 21 to line 4, col 26 of module M: 1:3",
+        "|||line 4, col 31 to line 4, col 33 of module M: 1:5",
+      ],
+      ["line 5, col 9 to line 5, col 35 of module M: 1"],
+    ]);
+  });
+
+  it.each([
+    [
       "CHOOSE",
       "CHOOSE y \\in s : y[1] > 5",
       [
