@@ -63,6 +63,8 @@ export class FpParams {
 
 export type ModelConverter = (model: ProtoModel) => ProtoModel;
 
+type ExecutionResult = "ok" | "bounded" | "canceled";
+
 export interface Engine {
   query(query: number): number;
   getModel(): ProtoModel | undefined;
@@ -87,8 +89,9 @@ export class DatalogContext {
   readonly rewriter: Rewriter;
   // m_mc: the converters since the last query, or undefined before one.
   modelConverters: ModelConverter[] | undefined;
-  isBounded = false;
+  status: ExecutionResult = "ok";
   readonly params: FpParams;
+  private transformedRuleSet: RuleSet;
 
   constructor(
     readonly manager: AstManager,
@@ -101,7 +104,26 @@ export class DatalogContext {
     this.ruleProperties = new RuleProperties(this);
     this.bindVariables = new BindVariables(manager);
     this.ruleSet = new RuleSet(this);
+    this.transformedRuleSet = new RuleSet(this);
     this.rewriter = new Rewriter(manager, rewriterOptions);
+  }
+
+  isCanceled() {
+    if (this.manager.limit.inc()) return false;
+    this.status = "canceled";
+    return true;
+  }
+
+  cleanup() {
+    this.status = "ok";
+  }
+
+  recordTransformedRules() {
+    this.transformedRuleSet.replaceRules(this.ruleSet);
+  }
+
+  displayProfile() {
+    return `\n---------------\nOriginal rules\n${this.ruleSet.display()}\n---------------\nTransformed rules\n${this.transformedRuleSet.display()}`;
   }
 
   reset() {
@@ -317,7 +339,7 @@ export class DatalogContext {
 
   query(query: number) {
     this.modelConverters = [];
-    this.isBounded = false;
+    this.status = "ok";
     this.getEngine(query);
     this.flushAddRules();
     return this.ensureEngine(query).query(query);

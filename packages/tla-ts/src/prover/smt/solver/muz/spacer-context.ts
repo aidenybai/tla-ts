@@ -1137,7 +1137,7 @@ export class SpacerContext {
       this.pobQueue.incLevel();
       level = this.pobQueue.maxLevel;
     }
-    this.datalogContext.isBounded = true;
+    this.datalogContext.status = "bounded";
     return L_UNDEF;
   }
 

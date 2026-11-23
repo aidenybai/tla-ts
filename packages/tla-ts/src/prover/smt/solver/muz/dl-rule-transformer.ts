@@ -44,7 +44,7 @@ export const transformRules = (context: DatalogContext, plugins: RuleTransformer
   let isModified = false;
   let rules = RuleSet.copy(context.ruleSet);
   for (const plugin of ordered) {
-    context.manager.limit.checkpoint();
+    if (context.isCanceled()) break;
     const result = plugin.apply(rules);
     if (result === undefined) continue;
     isModified = true;

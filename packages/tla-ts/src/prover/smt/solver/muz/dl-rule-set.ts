@@ -1,5 +1,5 @@
 import { SmtTacticError } from "../../../../errors";
-import { type AstManager, KIND_APP, KIND_QUANTIFIER } from "../ast";
+import { type AstManager, getSymbolName, KIND_APP, KIND_QUANTIFIER } from "../ast";
 import { ObjHashtable } from "../hashtable";
 import type { DatalogContext } from "./dl-context";
 import type { Rule } from "./dl-rule";
@@ -279,5 +279,17 @@ export class RuleSet {
 
   getOutputPredicate() {
     return this.outputPredicates.values().next().value as number;
+  }
+
+  display() {
+    const manager = this.manager;
+    const outputs = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    for (const predicate of this.outputPredicates) outputs.add(predicate);
+    let text = `; rule count: ${this.rules.length}\n; predicate count: ${this.head2rules.size}\n`;
+    for (const predicate of outputs)
+      text += `; output: ${getSymbolName(manager.funcDecls[predicate].name)}\n`;
+    for (const predicate of this.getGroupedPredicates())
+      for (const rule of this.getPredicateRules(predicate)) text += rule.display(this.context);
+    return text;
   }
 }

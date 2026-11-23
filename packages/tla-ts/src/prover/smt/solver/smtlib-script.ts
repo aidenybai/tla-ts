@@ -1677,8 +1677,13 @@ export const runSmtlibScript = (
         } finally {
           state.manager.limit.pop();
         }
-        print(status === L_UNDEF && datalog.isBounded ? "bounded" : getVerdict(status));
-        datalog.isBounded = false;
+        if (status === L_UNDEF && datalog.status === "bounded") print("bounded");
+        else {
+          print(getVerdict(status));
+          if (status === L_UNDEF && datalog.status === "canceled")
+            write(`canceled\n${datalog.displayProfile()}`, false);
+        }
+        datalog.cleanup();
       },
     ],
     [

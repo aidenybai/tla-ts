@@ -64,6 +64,26 @@ const getLimitedCounterQuery = (engine: string, limit: number) => [
   "(query Q)",
 ];
 
+const COUNTER_PROFILE = [
+  "canceled",
+  "",
+  "---------------",
+  "Original rules",
+  "; rule count: 2",
+  "; predicate count: 1",
+  "<null>:",
+  "P(#0) :- ",
+  " (= (:var 0) 0).",
+  "<null>:",
+  "P(#1) :- ",
+  " P(#0),",
+  " (= (:var 1) (+ (:var 0) 1)),",
+  " (< (:var 0) 3).",
+  "",
+  "---------------",
+  "Transformed rules",
+];
+
 // The expected values are the output of z3 5.3.2.
 describe("datalog queries", () => {
   it("answers sat for a reachable relation", () => {
@@ -149,6 +169,37 @@ describe("datalog queries", () => {
   it("goes on with the script after a query runs out of resources", () => {
     expect(run(getLimitedCounterQuery("bmc", 5))).toEqual([
       ...getFailedQuery("max. resource limit exceeded"),
+      "sat",
+    ]);
+  });
+
+  it("prints the rules of a query canceled between two transformations", () => {
+    expect(run(getLimitedCounterQuery("bmc", 30))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 0",
+      "; predicate count: 0",
+      "sat",
+    ]);
+  });
+
+  it("prints the rules spacer was given for a canceled query", () => {
+    expect(run(getLimitedCounterQuery("spacer", 70))).toEqual([
+      ...getFailedQuery("max. resource limit exceeded"),
+      ...COUNTER_PROFILE,
+      "; rule count: 3",
+      "; predicate count: 2",
+      "; output: query!0",
+      "<null>:",
+      "P(0).",
+      "<null>:",
+      "P(#1) :- ",
+      " P(#0),",
+      " (not (<= 3 (:var 0))),",
+      " (= (:var 1) (+ 1 (:var 0))).",
+      "<null>:",
+      "query!0(#0) :- ",
+      " P(#0).",
       "sat",
     ]);
   });
