@@ -288,7 +288,7 @@ export class Mbqi {
     const manager = this.manager;
     const qb = this.getBody(quantifier);
     const data = manager.getQuantifier(quantifier);
-    const evaluated = this.eval(this.getModel(), data.body, true);
+    const evaluated = this.pinOwned(this.getModel().evalExpr(data.body, true));
     const substituted = this.substitute(evaluated, qb);
     const mbody = data.kind === QUANTIFIER_FORALL ? mkNot(manager, substituted) : substituted;
     manager.incRef(mbody);
@@ -342,6 +342,8 @@ export class Mbqi {
     const manager = this.manager;
     const qmodel = this.getModel();
     eqs.length = 0;
+    const isCompleting = model.getModelCompletion();
+    model.setModelCompletion(true);
     qmodel.resetEvalCache();
     for (const sk of qb.vars.items)
       qmodel.registerConst(manager.decls[sk], this.eval(model, sk, true));
@@ -359,6 +361,7 @@ export class Mbqi {
         if (!fmls.items.every((fml) => this.isTrue(fml))) {
           fmls.reset();
           context.release();
+          model.setModelCompletion(isCompleting);
           return null;
         }
         new ProjectPlugin(context).extractLiterals(fmls);
@@ -380,7 +383,9 @@ export class Mbqi {
     replace.release();
     fmls.reset();
     context.release();
-    return this.pin(manager.mkAnd(replaced));
+    const result = this.pin(manager.mkAnd(replaced));
+    model.setModelCompletion(isCompleting);
+    return result;
   }
 
   // add_domain_eqs: an argument of an uninterpreted function is one of the terms its ground
@@ -393,7 +398,7 @@ export class Mbqi {
       const bounds = this.pin(this.modelFixer.restrictArg(varArg[0], varArg[1]));
       if (manager.isTrue(bounds)) continue;
       const vbounds = this.substitute(bounds, qb);
-      this.assertExpr(this.substitute(this.eval(this.getModel(), bounds, true), qb));
+      this.assertExpr(this.substitute(this.pinOwned(this.getModel().evalExpr(bounds, true)), qb));
       qb.domainEqs.push(vbounds);
     }
     const vars = qb.vars.items;
@@ -443,8 +448,11 @@ export class Mbqi {
     const qmodel = this.getModel();
     qb.domainEqs.reset();
     qmodel.resetEvalCache();
+    const isCompleting = model.getModelCompletion();
+    model.setModelCompletion(true);
     for (const sk of qb.vars.items)
       qmodel.registerConst(manager.decls[sk], this.eval(model, sk, true));
+    model.setModelCompletion(isCompleting);
     this.ctx.modelUpdated(qmodel);
     for (const varArg of qb.varArgs) {
       const term = this.substitute(varArg[0], qb);
@@ -555,11 +563,15 @@ export class Mbqi {
     const nodes = this.ctx.egraph.nodes;
     const model = this.getModel();
     model.resetEvalCache();
-    return offsets.map((offset, index) => {
+    const isCompleting = model.getModelCompletion();
+    model.setModelCompletion(true);
+    const binding = offsets.map((offset, index) => {
       const expr = nodes[offset].owner;
       model.registerConst(manager.decls[vars[index]], this.eval(model, expr, true));
       return expr;
     });
+    model.setModelCompletion(isCompleting);
+    return binding;
   }
 
   // next_offset: the next binding, which also restarts every earlier variable and the variable
