@@ -759,3 +759,30 @@ it("reports an initial conjunct it evaluates whole at the instance that holds it
     "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing initial states, TLC expected a boolean expression,\nbut instead found 2.\nline 4, col 1 to line 4, col 30 of module M",
   ]);
 });
+
+it("checks the assumptions of a specification without variables and then finds no initial state, as TLC's Simulator does without an initial predicate", () => {
+  const printed: string[] = [];
+  const messages: string[] = [];
+  const status = simulate({
+    source: "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT N\nASSUME PrintT(N + 1)\n====",
+    config: "CONSTANT N = 3",
+    seed: 7n,
+    traceDepth: 3,
+    traceCount: 2n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onPrint: (text) => printed.push(text),
+    onSimulation: (output) => {
+      if (output.kind === "message") messages.push(`${output.code} ${output.message}`);
+    },
+  });
+  expect([status, printed, messages]).toEqual([
+    255,
+    ["4"],
+    [
+      "2269 Computed 0 initial states...",
+      "2118 There is no state satisfying the initial state predicate.",
+    ],
+  ]);
+});

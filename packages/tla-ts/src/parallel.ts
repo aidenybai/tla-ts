@@ -162,7 +162,6 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const description = getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
-    !search ||
     search.spec.init === undefined ||
     search.spec.next === undefined ||
     search.properties.liveness.length > 0 ||

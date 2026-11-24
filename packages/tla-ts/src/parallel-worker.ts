@@ -52,8 +52,8 @@ const runWorker = (start: StartMessage, parent: Port) => {
     [],
     specification.runtimeInvariants,
   );
-  const nextAction = search?.spec.next;
-  if (!search || nextAction === undefined)
+  const nextAction = search.spec.next;
+  if (nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const workerIndex = start.index;
   const canonicalize = createCanonicalizer();
