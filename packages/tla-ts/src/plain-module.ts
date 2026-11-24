@@ -23,7 +23,7 @@ import {
   UNBOUNDED_CHOOSE_LEVELS,
 } from "./levels";
 import { isDeserializer, isWideString } from "./dependencies";
-import { LOCAL_RESOLUTION, type Symbols } from "./resolve";
+import { CORE_SYMBOLS, LOCAL_RESOLUTION, type Symbols } from "./resolve";
 
 // What a plain module reads of the modules it extends: their symbols, and the levels of what a
 // name resolves to there, as SANY's level checks resolve it: a definition's prepared levels, or
@@ -45,15 +45,18 @@ interface Local {
 // The parameters whose levels the walk tracks are at most this many, each a bit of a number.
 const MAX_PARAMS = 30;
 
-// The kinds of symbol that a plain module's names resolve to.
-const PLAIN_KINDS = new Set(["Definition", "Builtin", "Constant", "Variable"]);
+// The kinds of symbol that a plain module's names resolve to: none of a variable, whose level isn't
+// constant.
+const PLAIN_KINDS = new Set(["Definition", "Builtin", "Constant"]);
 
 // The levels of the definitions of a module that SANY's name and level checks find in one pass
 // over its definitions in order, or undefined where the module isn't plain: where it declares or
-// assumes anything, instantiates a module, reads a definition before it comes, uses a construct
-// other than the constant ones the pass knows, or binds a name twice. Every constant expression has
-// level 0, so a plain module has no level error, and the pass finds only each definition's weights
-// and the maximum level of each parameter. A module the pass doesn't take is checked in full,
+// assumes anything, instantiates a module, reads a definition before it comes or a variable, uses
+// a construct other than the constant ones the pass knows, binds a name twice, or holds what SANY's
+// checks report: a record with a field twice, a definition of a built-in operator, or a LET's
+// RECURSIVE declaration. Every constant expression has level 0, so a plain module has no level
+// error, and the pass finds only each definition's weights and the maximum level of each
+// parameter. A module the pass doesn't take is checked in full,
 // which finds the errors the pass leaves to it.
 export const checkPlainModule = (
   module: Module,
@@ -241,6 +244,9 @@ export const checkPlainModule = (
           isInExcept,
         );
       case "Let": {
+        if (expression.recursive !== undefined || expression.instances !== undefined) {
+          return undefined;
+        }
         const depth = locals.length;
         const isBound = expression.definitions.every((inner) => {
           if (inner.kind !== "Operator" || inner.params.length > 0) return false;
@@ -299,6 +305,13 @@ export const checkPlainModule = (
               isInExcept,
             );
       case "Record":
+        if (
+          expression.fields.some((field, index) =>
+            expression.fields.slice(0, index).some((earlier) => earlier.name === field.name),
+          )
+        ) {
+          return undefined;
+        }
         return walkAll(
           expression.fields.map((field) => field.value),
           RCD_CONSTRUCTOR_LEVELS,
@@ -348,6 +361,7 @@ export const checkPlainModule = (
     if (
       definition.kind !== "Operator" ||
       definition.isLocal ||
+      CORE_SYMBOLS.has(definition.name) ||
       own.has(definition.name) ||
       context.imported.has(definition.name) ||
       definition.params.some((param) => param.arity !== 0)

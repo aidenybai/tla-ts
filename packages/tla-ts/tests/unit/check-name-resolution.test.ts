@@ -7301,3 +7301,91 @@ describe("name resolution matches SANY", () => {
     );
   });
 });
+
+describe("a module of constant definitions alone matches SANY", () => {
+  const checkDefinitions = (source: string) =>
+    check({ source: `---- MODULE M ----\n${source}\n====`, config: "" });
+
+  it.each([
+    [
+      "f == [a |-> 1, b |-> 2, a |-> 1]",
+      [["line 2, col 25 to line 2, col 25", "Non-unique fields in constructor."]],
+      [],
+    ],
+    [
+      "a ' == a",
+      [
+        ["line 2, col 1 to line 2, col 8", "Operator ' already defined or declared."],
+        [
+          "line 2, col 1 to line 2, col 8",
+          "Symbol ' is a built-in operator, and cannot be redefined.",
+        ],
+      ],
+      [],
+    ],
+    [
+      "G == LET H == 1\n         RECURSIVE H, K\n     IN H",
+      [
+        [
+          "line 3, col 20 to line 3, col 20",
+          "Symbol H declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 3, col 23 to line 3, col 23",
+          "Symbol K declared in RECURSIVE statement but not defined.",
+        ],
+      ],
+      [
+        [
+          "line 3, col 20 to line 3, col 20",
+          "Multiple declarations or definitions for symbol H.  \nThis duplicates the one at line 2, col 10 to line 2, col 15 of module M.",
+        ],
+      ],
+    ],
+  ])("rejects %j", async (source, errors, warnings) => {
+    await expect(checkDefinitions(source)).rejects.toMatchObject({
+      sany: {
+        errors: errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        warnings: warnings.map((warning) => ({
+          location: `${warning[0]} of module M`,
+          message: warning[1],
+        })),
+      },
+    });
+  });
+
+  const modules: Record<string, string> = {
+    Vars: "---- MODULE Vars ----\nVARIABLE x\n====",
+    Reads: "---- MODULE Reads ----\nEXTENDS Vars\nF == x\n====",
+  };
+  const checkReads = (source: string, config: string) =>
+    check({ source, config, loadModule: (name) => modules[name] });
+
+  it("levels a definition of a variable that it extends as SANY does", async () => {
+    await expect(
+      checkReads("---- MODULE R ----\nEXTENDS Reads\nASSUME F\n====", ""),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 3, col 1 to line 3, col 8 of module R",
+            message:
+              "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+          },
+        ],
+      },
+    });
+    const result = await checkReads(
+      "---- MODULE R ----\nEXTENDS Reads\nInit == F = 0\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it.each(["f == [a |-> 1, b |-> 2]", "a ^+ == a", "G == LET H == 1\n     IN H"])(
+    "accepts %j",
+    async (source) => {
+      expect((await checkDefinitions(source)).status).toBe("success");
+    },
+  );
+});
