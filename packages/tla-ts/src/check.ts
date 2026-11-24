@@ -422,7 +422,7 @@ const searchStates = (
   );
   const getCoverage = () =>
     coverage?.relations.some((relation) => relation.kind === "next")
-      ? getCoverageReport(coverage, environment, search?.getTlcOrder() ?? [])
+      ? getCoverageReport(coverage, environment, search.getTlcOrder())
       : undefined;
   // Deviation from TLC: under -continue, its recorder appends every trace it prints to one trace spec, which is no behavior of the spec, so tla-ts writes the last trace's.
   let continuedTrace: TraceStep[] = [];
@@ -470,14 +470,12 @@ const searchStates = (
       ? undefined
       : getFingerprintDistance(runtime.distinctStates, runtime.generatedStates, (visit) =>
           visit(
-            search
-              ? search.getStoredFingerprints(
-                  exploredStates.length === 0 ? states : states.concat(exploredStates),
-                  exploredStates.length === 0
-                    ? fingerprintStates
-                    : fingerprintStates.concat(exploredFingerprintStates),
-                )
-              : BigInt64Array.from(states, runtime.getFingerprint),
+            search.getStoredFingerprints(
+              exploredStates.length === 0 ? states : states.concat(exploredStates),
+              exploredStates.length === 0
+                ? fingerprintStates
+                : fingerprintStates.concat(exploredFingerprintStates),
+            ),
           ),
         ),
   });
@@ -492,20 +490,6 @@ const searchStates = (
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
-  if (!search) {
-    // Tool's constructor describes the specification before TLC creates the checker.
-    getDescription();
-    runtime.isStarted = true;
-    const assumptionViolation = findViolatedAssumption();
-    if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
-    computedInitialStates = { generated: 0, distinct: 0 };
-    options.onProgress?.({ kind: "initial-states-started" });
-    options.onProgress?.({
-      kind: "initial-states-computed",
-      initialStates: computedInitialStates,
-    });
-    return createSuccess();
-  }
   const hasUserPostconditions =
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||

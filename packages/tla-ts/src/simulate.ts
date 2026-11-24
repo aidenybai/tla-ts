@@ -9,7 +9,6 @@ import {
   TlaModuleError,
   TlaStackOverflowError,
   TlaTooManyStatesError,
-  TlaUnsupportedError,
   TlaSetBoundError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
@@ -359,9 +358,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     return undefined;
   };
   runtime.isStarted = true;
-  if (!search) {
-    throw new TlaUnsupportedError("tla-ts can't simulate a specification without variables");
-  }
   runtime.getBehavior = (state) => {
     const node = nodes.get(state);
     return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];

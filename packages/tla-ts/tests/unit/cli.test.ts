@@ -1660,6 +1660,56 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       ...args,
     ]);
 
+  it.each([
+    [
+      [],
+      0,
+      [
+        "2262",
+        "2187",
+        "2220",
+        "2219",
+        "2185",
+        '<<"assume", 4>>',
+        "2189",
+        "2190",
+        "2193",
+        "2200",
+        "2199",
+        "2194",
+        "2186",
+      ],
+    ],
+    [
+      ["-dfid", "3"],
+      0,
+      [
+        "2262",
+        "2271",
+        "2220",
+        "2219",
+        "2185",
+        '<<"assume", 4>>',
+        "2208",
+        "2193",
+        "2206",
+        "2204",
+        "2186",
+      ],
+    ],
+    [
+      ["-simulate", "num=2", "-depth", "3", "-seed", "7"],
+      255,
+      ["2262", "2188", "2220", "2219", "2185", '<<"assume", 4>>', "2269", "2118", "2186"],
+    ],
+  ])(
+    "checks the assumptions of a specification without variables and then finds no initial state with %j, as TLC's Tool#getInitStates does without an initial predicate",
+    (args, status, sequence) => {
+      const result = runTool("NoVariables", args);
+      expect([result.status, getToolSequence(result.stdout)]).toEqual([status, sequence]);
+    },
+  );
+
   it("prints again what the spec prints as it rebuilds a safety trace", () => {
     const result = runTool("Steps");
     expect(result.status).toBe(12);

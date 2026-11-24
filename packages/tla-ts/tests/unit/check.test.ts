@@ -899,6 +899,15 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it("rejects a VIEW of a constant in a specification without variables, as TLC does before it finds no initial state", async () => {
+    await expect(
+      check({
+        source: "---- MODULE M ----\nCONSTANT N\nView == N\n====",
+        config: "CONSTANT N = 3\nVIEW View",
+      }),
+    ).rejects.toThrow(new TlaConfigError("The view function View cannot be a constant."));
+  });
+
   it.each([
     [
       "with",

@@ -313,3 +313,34 @@ it("reports an initial conjunct it evaluates whole at the instance that holds it
       "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing initial states.\nThe exception was a java.lang.RuntimeException\n: In computing initial states, TLC expected a boolean expression,\nbut instead found 1.\nline 4, col 1 to line 4, col 27 of module M",
   });
 });
+
+it("checks the assumptions of a specification without variables and then completes with no initial state, as TLC's DFIDModelChecker does without an initial predicate", () => {
+  const outputs: DepthFirstOutput[] = [];
+  const printed: string[] = [];
+  const exitCode = checkDepthFirst({
+    source: "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT N\nASSUME PrintT(N + 1)\n====",
+    config: "CONSTANT N = 3",
+    maxDepth: 3,
+    onPrint: (text) => printed.push(text),
+    onOutput: (output) => outputs.push(output),
+  });
+  expect([
+    exitCode,
+    printed,
+    outputs.map((output) =>
+      output.kind === "message"
+        ? `${output.code} ${output.message}`
+        : output.kind === "success"
+          ? `success ${output.optimistic} ${output.actual}`
+          : output.kind,
+    ),
+  ]).toEqual([
+    0,
+    ["4"],
+    [
+      "2208 Finished computing initial states: 0 states generated, with 0 of them distinct.",
+      "success 0 0",
+      "2204 0 states generated, 0 distinct states found.",
+    ],
+  ]);
+});

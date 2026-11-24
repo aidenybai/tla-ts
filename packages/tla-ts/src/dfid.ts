@@ -8,7 +8,6 @@ import {
   TlaEvaluationError,
   TlaStackOverflowError,
   TlaTooManyStatesError,
-  TlaUnsupportedError,
 } from "./errors";
 import { createTracingEnvironment, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
@@ -131,9 +130,6 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const environment = prepared.environment;
   const runtime = environment.runtime;
   const search = prepared.search;
-  if (!search) {
-    throw new TlaUnsupportedError("tla-ts can't search a specification without variables");
-  }
   const description = prepared.getDescription();
   const message = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });

@@ -1171,7 +1171,7 @@ export const prepareSearch = (options: CheckOptions) => {
     specification.runtimeInvariants,
   );
   const getCoverage = () =>
-    coverage && getCoverageReport(coverage, environment, search?.getTlcOrder() ?? []);
+    coverage && getCoverageReport(coverage, environment, search.getTlcOrder());
   return {
     config,
     specification,
@@ -1281,7 +1281,7 @@ export const createSearch = (
   onProgress?: CheckOptions["onProgress"],
   moduleOperators: ResolvedModuleOperator[] = [],
   runtimeInvariants: RuntimeInvariant[] = [],
-): Search | undefined => {
+): Search => {
   const getModuleOperators = (kind: ResolvedModuleOperator["kind"]) =>
     moduleOperators
       .filter((operator) => operator.kind === kind)
@@ -1426,7 +1426,6 @@ export const createSearch = (
       : createIdentifier(getRootKey(config.rlReward, environment));
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
   const possible = getPossiblePredicates(config.possible, environment);
-  if (environment.variables.length === 0) return undefined;
   const symmetryGroup =
     config.symmetry === undefined
       ? undefined
