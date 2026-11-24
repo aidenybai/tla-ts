@@ -2129,25 +2129,43 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
   }
 };
 
-const hasLazyPart = (value: Value, depth: number): boolean => {
-  if (typeof value !== "object") return false;
-  if (depth === MAXIMUM_MARK_DEPTH) return true;
-  switch (value.kind) {
-    case "ModelValue":
-    case "Interval":
-      return false;
-    case "Set":
-      return hasLazyParts(value.elements, depth + 1);
-    case "Function":
-      return hasLazyParts(value.domain, depth + 1) || hasLazyParts(value.range, depth + 1);
-    default:
-      return true;
+export const hasLazyPart = (value: Value) => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return false;
+  const pending: Value[] = [value];
+  for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
+    if (typeof inner !== "object") continue;
+    switch (inner.kind) {
+      case "Set":
+        for (let index = 0; index < inner.elements.length; index++) {
+          pending.push(inner.elements[index]);
+        }
+        break;
+      case "Function":
+        for (let index = 0; index < inner.domain.length; index++) {
+          pending.push(inner.domain[index], inner.range[index]);
+        }
+        break;
+      case "ModelValue":
+      case "Interval":
+      case "InfiniteSet":
+        break;
+      default:
+        return true;
+    }
   }
+  return false;
 };
 
-const hasLazyParts = (values: Value[], depth: number) => {
+const hasLazyValue = (values: Value[]) => {
   for (let index = 0; index < values.length; index++) {
-    if (hasLazyPart(values[index], depth)) return true;
+    if (hasLazyPart(values[index])) return true;
+  }
+  return false;
+};
+
+const hasLazyComponent = (sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (hasLazyElements(sets[index])) return true;
   }
   return false;
 };
@@ -2156,7 +2174,7 @@ const hasLazyElements = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Set":
-      return hasLazyParts(value.elements, 0);
+      return hasLazyValue(value.elements);
     case "MixedSet":
       return true;
     case "FilteredSet":
@@ -2168,15 +2186,15 @@ const hasLazyElements = (value: Value): boolean => {
     case "FunctionSet":
       return hasLazyElements(value.domain) || hasLazyElements(value.range);
     case "RecordSet":
-      return value.sets.some(hasLazyElements);
+      return hasLazyComponent(value.sets);
     case "ProductSet":
-      return value.factors.some(hasLazyElements);
+      return hasLazyComponent(value.factors);
     default:
       return false;
   }
 };
 
-const isSortedLikeTlc = (value: Value) => isNormalizedLikeTlc(value) || !hasLazyElements(value);
+const isSortedLikeTlc = (value: Value) => !hasLazyElements(value) || isNormalizedLikeTlc(value);
 
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
