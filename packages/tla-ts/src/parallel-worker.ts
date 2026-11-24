@@ -1,3 +1,4 @@
+import { evaluateStartupDefinitions } from "./evaluate";
 import {
   createFingerprintTable,
   createSharedFingerprintsFromBuffers,
@@ -42,6 +43,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   );
   const specification = created.specification;
   const environment = specification.environment;
+  evaluateStartupDefinitions(specification.startupModules, environment);
   const search = createSearch(
     start.config,
     environment,

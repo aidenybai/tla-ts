@@ -270,6 +270,11 @@ describe("check with workers matches TLC", () => {
     source: `${randomHead}Init == x = 0 /\\ n = 0\nNext == n < 6 /\\ n' = n + 1 /\\ x' \\in RandomSubset(3, 0..5)\nC == n = 0 \\/ x \\in RandomSubset(4, 0..5)\n====`,
     config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
   };
+  const drawsInConstant = {
+    name: "a constant definition",
+    source: `${randomHead}S == RandomSubset(2, 1..6)\nInit == x = 0 /\\ n = 0\nNext == x < 12 /\\ x' \\in {x + k : k \\in S} /\\ n' = n\n====`,
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+  };
   it.each(
     [
       { ...drawsInNext, seed: 4n, counts: [59, 35, 9] },
@@ -278,6 +283,8 @@ describe("check with workers matches TLC", () => {
       { ...drawsInInit, seed: 7n, counts: [31, 25, 14] },
       { ...drawsInChecks, seed: 4n, counts: [67, 28, 7] },
       { ...drawsInChecks, seed: 7n, counts: [67, 27, 7] },
+      { ...drawsInConstant, seed: 4n, counts: [11, 8, 4] },
+      { ...drawsInConstant, seed: 7n, counts: [13, 8, 5] },
     ].flatMap((row) => [1, 2, 4].map((workers) => ({ ...row, workers }))),
   )(
     "draws random values in $name with seed $seed and $workers workers as TLC does",
