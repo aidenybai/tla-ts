@@ -677,10 +677,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (!livenessChecks) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
-    // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
-    for (let position = 0; position < trace.length; position++) {
-      trace[position].state.forEach(markNormalized);
-    }
     const found = livenessChecks.findTraceViolation(
       trace.map((node) => node.state),
       trace.map((node) => runtime.getFingerprint(node.state)),
@@ -793,8 +789,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     for (let position = 1; position < trace.length; position++) {
       const current = trace[position].state;
       const last = trace[position - 1].state;
-      current.forEach(markNormalized);
-      last.forEach(markNormalized);
       try {
         // Deviation from TLC: TLCStateMut#fingerPrint throws a NullPointerException on the incomplete state of a successor error.
         if (

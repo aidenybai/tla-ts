@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import type { CheckProgress } from "../../src";
 import { checkDepthFirst, type DepthFirstOutput } from "../../src/dfid";
+import { formatState } from "../../src/values";
 
 const searchDepthFirst = (body: string, coverage?: number) => {
   const outputs: DepthFirstOutput[] = [];
@@ -179,6 +180,38 @@ it("replays the step whose invariant fails to evaluate with the actions it count
       ],
     ],
     "3 states generated, 2 distinct states found.",
+  ]);
+});
+
+const formatDepthFirst = (config: string) => {
+  const messages: string[] = [];
+  const states: string[] = [];
+  checkDepthFirst({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES r, f, n\nTypeOK == r.a \\in Nat\nInit == r = [b |-> 0, a |-> 0] /\\ f = ("b" :> 0 @@ "a" :> 0) /\\ n = 0\nNext == n < 3 /\\ n\' = n + 1 /\\ r\' = [b |-> n, a |-> n] /\\ f\' = ("b" :> n @@ "a" :> n)\nInv == n < 2\nCons == n # 2\nPositive == n > 0\n====',
+    config,
+    maxDepth: 5,
+    onPrint: () => {},
+    onOutput: (output) => {
+      if (output.kind === "message") messages.push(output.message);
+      if (output.kind === "behavior")
+        states.push(...output.states.map((state) => formatState(state)));
+    },
+  });
+  return { messages, states };
+};
+
+it("sorts the records of an initial state it fingerprints, as TLC's TLCStateMut#fingerPrint does", () => {
+  expect(formatDepthFirst("INIT Init\nNEXT Next\nINVARIANT Positive").messages).toContain(
+    "Invariant Positive is violated by the initial state:\n/\\ f = [a |-> 0, b |-> 0]\n/\\ n = 0\n/\\ r = [a |-> 0, b |-> 0]\n",
+  );
+});
+
+it("sorts the records of the states it fingerprints and prints a successor outside the model as written, as TLC does", () => {
+  expect(formatDepthFirst("INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT Cons").states).toEqual([
+    "/\\ f = [a |-> 0, b |-> 0]\n/\\ n = 0\n/\\ r = [a |-> 0, b |-> 0]\n",
+    "/\\ f = [a |-> 0, b |-> 0]\n/\\ n = 1\n/\\ r = [a |-> 0, b |-> 0]\n",
+    "/\\ f = [b |-> 1, a |-> 1]\n/\\ n = 2\n/\\ r = [b |-> 1, a |-> 1]\n",
   ]);
 });
 
