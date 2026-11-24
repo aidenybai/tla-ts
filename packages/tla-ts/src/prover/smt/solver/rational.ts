@@ -1,10 +1,17 @@
 import { SmtInvariantError } from "../../../errors";
 
+const BARRETT_DIVISOR = 1n << 851840n;
+
+// V8 divides huge bigints of equal digit count by Burnikel-Ziegler, at times twenty times slower than Barrett on a dividend one digit longer.
+const getQuotient = (dividend: bigint, divisor: bigint) =>
+  divisor < BARRETT_DIVISOR ? dividend / divisor : ((dividend << 64n) / divisor) >> 64n;
+
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
   let right = second < 0n ? -second : second;
   while (right !== 0n) {
-    const remainder = left % right;
+    const remainder =
+      right < BARRETT_DIVISOR ? left % right : left - getQuotient(left, right) * right;
     left = right;
     right = remainder;
   }
@@ -29,7 +36,7 @@ const getDouble = (value: bigint) => {
 
 export const getLcm = (first: bigint, second: bigint) => {
   const product = first * second;
-  return (product < 0n ? -product : product) / getGcd(first, second);
+  return getQuotient(product < 0n ? -product : product, getGcd(first, second));
 };
 
 export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
@@ -125,7 +132,7 @@ export class Rational {
     if (den === 1n) return new Rational(num, 1n);
     const sign = den < 0n ? -1n : 1n;
     const divisor = getGcd(num, den);
-    return new Rational((sign * num) / divisor, (sign * den) / divisor);
+    return new Rational(getQuotient(sign * num, divisor), getQuotient(sign * den, divisor));
   }
 
   static fromDecimal(text: string) {
@@ -184,13 +191,15 @@ export class Rational {
       const second = other.num * this.den;
       return new Rational(isSub ? first - second : first + second, this.den * other.den);
     }
-    const thisScale = this.den / gcd;
-    const first = this.num * (other.den / gcd);
+    const thisScale = getQuotient(this.den, gcd);
+    const first = this.num * getQuotient(other.den, gcd);
     const second = other.num * thisScale;
     const num = isSub ? first - second : first + second;
     const divisor = getGcd(num, gcd);
     const den = thisScale * other.den;
-    return divisor === 1n ? new Rational(num, den) : new Rational(num / divisor, den / divisor);
+    return divisor === 1n
+      ? new Rational(num, den)
+      : new Rational(getQuotient(num, divisor), getQuotient(den, divisor));
   }
 
   mul(other: Rational) {
@@ -202,8 +211,8 @@ export class Rational {
     const denNumGcd = getGcd(this.den, other.num);
     const numDenGcd = getGcd(this.num, other.den);
     return new Rational(
-      (this.num / numDenGcd) * (other.num / denNumGcd),
-      (other.den / numDenGcd) * (this.den / denNumGcd),
+      getQuotient(this.num, numDenGcd) * getQuotient(other.num, denNumGcd),
+      getQuotient(other.den, numDenGcd) * getQuotient(this.den, denNumGcd),
     );
   }
 
