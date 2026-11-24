@@ -31,15 +31,9 @@ import { getGcd, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter, type RewriterOptions } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
+import { DEFAULT_PRINT_ENVIRONMENT, printExpr } from "./smt2-printer";
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];
-
-const PRINT_ENVIRONMENT = {
-  options: DEFAULT_PRINT_OPTIONS,
-  isUsed: () => false,
-  isClashing: () => false,
-};
 
 // only_01_visitor, which visits each subterm after its arguments: the first expression outside
 // pseudo-Boolean constraints over Booleans and 0-1 integers, or undefined.
@@ -550,7 +544,7 @@ class Pb2Bv {
 
   private throwNonPb(expr: number): never {
     throw new SmtTacticError(
-      `goal is in a fragment not supported by pb2bv. Offending expression: ${printExpr(this.manager, PRINT_ENVIRONMENT, expr)}`,
+      `goal is in a fragment not supported by pb2bv. Offending expression: ${printExpr(this.manager, DEFAULT_PRINT_ENVIRONMENT, expr)}`,
     );
   }
 

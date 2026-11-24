@@ -1594,6 +1594,7 @@ export class AstManager {
     if (this.isBvSort(sort)) return `(_ BitVec ${this.getBvSize(sort)})`;
     if (this.isFpSort(sort))
       return `(_ FloatingPoint ${this.getEbits(sort)} ${this.getSbits(sort)})`;
+    if (this.isUninterpretedSort(sort)) return this.sortNames[sort];
     const parameters = this.sortParameters[sort].map((parameter) => this.getSortName(parameter));
     if (parameters.length === 0) return this.sortNames[sort];
     return `(${this.sortNames[sort]} ${parameters.join(" ")})`;

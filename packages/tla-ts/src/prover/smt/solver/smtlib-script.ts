@@ -32,9 +32,11 @@ import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
 import {
+  DEFAULT_PRINT_ENVIRONMENT,
   DEFAULT_PRINT_OPTIONS,
   formatSort,
   getQuotedName,
+  mkIndent,
   mkSeq1,
   mkSeq5,
   mkText,
@@ -546,9 +548,17 @@ export const runSmtlibScript = (
     options: settings.printOptions,
     isUsed: state.reader.isUsed,
     isClashing: state.reader.isClashing,
+    sortInfos: state.reader.sortInfos,
+    shouldPrintDeclaredSortArguments: false,
   });
   const format = (expr: number) => printExpr(state.manager, getPrintEnvironment(), expr);
   const display = (expr: number) => print(format(expr));
+  const formatWithoutDeclarations = (expr: number) =>
+    printExpr(
+      state.manager,
+      { ...DEFAULT_PRINT_ENVIRONMENT, options: settings.printOptions },
+      expr,
+    );
   const report = (error: SmtParseError) =>
     print(`(error "line ${error.line} column ${error.column}: ${error.message}")`);
   const getNamedAssertions = () =>
@@ -1431,13 +1441,13 @@ export const runSmtlibScript = (
       throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
     const kernel = state.kernel;
     if (kernel === undefined || check.context !== kernel.context) {
-      print(`(${check.core.map(format).join(" ")})`);
+      print(`(${check.core.map(formatWithoutDeclarations).join(" ")})`);
       return;
     }
     state.manager.limit.restart(Date.now() + options.timeLimitMs);
     const core = new RefVector(state.manager);
     kernel.getUnsatCore(core);
-    print(`(${core.items.map(format).join(" ")})`);
+    print(`(${core.items.map(formatWithoutDeclarations).join(" ")})`);
     core.reset();
   };
   const setOptionParameter = (keyword: string, text: string, value: SmtToken) => {
@@ -1802,7 +1812,8 @@ export const runSmtlibScript = (
         const printConsequences = (result: number, consequences: RefVector) => {
           print(getVerdict(result));
           print("");
-          for (const consequence of consequences.items) display(consequence);
+          for (const consequence of consequences.items)
+            print(formatWithoutDeclarations(consequence));
           consequences.reset();
         };
         try {
@@ -2168,8 +2179,8 @@ export const runSmtlibScript = (
               mkSeq1(
                 [
                   mkText(getQuotedName(funcDecl.name)),
-                  mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, sort))),
-                  formatSort(manager, funcDecl.range),
+                  mkSeq5(funcDecl.domain.map((sort) => formatSort(manager, environment, sort))),
+                  formatSort(manager, environment, funcDecl.range),
                 ],
                 "declare-fun",
               ),
@@ -2336,7 +2347,7 @@ export const runSmtlibScript = (
         }
         const optimizer = state.optimizer;
         if (optimizer === undefined) throw new SmtUnsupportedError("the command get-objectives");
-        print(optimizer.getObjectives(format));
+        print(optimizer.getObjectives(formatWithoutDeclarations));
       },
     ],
     [
@@ -2419,7 +2430,7 @@ export const runSmtlibScript = (
         const sorts = getFreeVarSorts(manager, body, manager.freeVarBounds[body]);
         const lines = sorts.map(
           (sort, index) =>
-            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(formatSort(manager, sort), settings.printOptions)})`,
+            `\n  (${String(index).padEnd(6)} ${sort === undefined ? "<not-used>" : renderFormat(mkIndent(10, formatSort(manager, getPrintEnvironment(), sort)), settings.printOptions)})`,
         );
         print(`(vars${lines.join("")})`);
       },

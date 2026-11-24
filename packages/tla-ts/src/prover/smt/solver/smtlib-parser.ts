@@ -131,7 +131,7 @@ import {
   isSupportedLogic,
 } from "./smt-logics";
 import { setRecFunDefinition } from "./recfun-decl-plugin";
-import { DEFAULT_PRINT_OPTIONS, printExpr } from "./smt2-printer";
+import { DEFAULT_PRINT_ENVIRONMENT, printExpr, type SortInfo } from "./smt2-printer";
 import { InvVarShifter } from "./rewriter-tpl";
 import { replaceFreeVars, VarSubst } from "./var-subst";
 import { UpolynomialManager } from "./nlsat/upolynomial";
@@ -1033,6 +1033,13 @@ export const createSmtlibReader = (
     Array.from(getBuiltinSortNames(logic, false), (name) => [name, { kind: "builtin", name }]),
   );
   if (logic === undefined) sortDecls.set("List", { kind: "list" });
+  const sortInfos = new Map<number, SortInfo>();
+  const saveAppInfo = (sort: number, name: string, args: readonly number[]) => {
+    if (!sortInfos.has(sort)) sortInfos.set(sort, { kind: "app", name, args });
+  };
+  const saveIndexedInfo = (sort: number, name: string, indices: readonly number[]) => {
+    if (!sortInfos.has(sort)) sortInfos.set(sort, { kind: "indexed", name, indices });
+  };
   const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
   // A pop empties the macros of a name but keeps the name in the dictionary.
@@ -1173,6 +1180,7 @@ export const createSmtlibReader = (
     const key = parameters.join(",");
     const sort = decl.instances.get(key) ?? mkDatatypeSort(manager, decl.name, parameters);
     decl.instances.set(key, sort);
+    saveAppInfo(sort, decl.name, parameters);
     notifyDatatype(sort, at);
     return sort;
   };
@@ -1232,9 +1240,17 @@ export const createSmtlibReader = (
   };
 
   const instantiateSort = (decl: SortDecl, parameters: number[], at: SExpr): number => {
-    if (decl.kind === "builtin") return mkBuiltinSort(decl.name, parameters, false, at);
+    if (decl.kind === "builtin") {
+      const sort = mkBuiltinSort(decl.name, parameters, false, at);
+      saveAppInfo(sort, decl.name, parameters);
+      return sort;
+    }
     if (decl.kind === "list") return instantiateSort(registerList(), parameters, at);
-    if (decl.kind === "user") return manager.mkUninterpretedSort(decl.name, parameters);
+    if (decl.kind === "user") {
+      const sort = manager.mkUninterpretedSort(decl.name, parameters);
+      saveAppInfo(sort, decl.name, parameters);
+      return sort;
+    }
     if (decl.kind === "datatype") return instantiateDatatype(decl, parameters, at);
     return instantiatePsort(decl.body, parameters, at);
   };
@@ -1375,7 +1391,9 @@ export const createSmtlibReader = (
         return Number(index.text);
       });
       if (decl.kind !== "builtin") throw new SmtParseError("invalid sort application", sexpr.end);
-      return mkBuiltinSort(name.text, parameters, true, sexpr.end);
+      const sort = mkBuiltinSort(name.text, parameters, true, sexpr.end);
+      saveIndexedInfo(sort, name.text, parameters);
+      return sort;
     }
     if (sexpr.kind !== "symbol")
       throw new SmtParseError(
@@ -1562,11 +1580,10 @@ export const createSmtlibReader = (
       ((!isLeftAssociative && !isRightAssociative && !isChainable) ||
         (args.length < 2 && manager.funcDecls[decl].family === FAMILY_BASIC && !isAssociative))
     ) {
-      const environment = { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing };
       // Z3 prints an error without the newlines that end it.
       throw new SmtParseError(
         `Wrong number of arguments (${args.length}) passed to function ${formatDecl(decl, args.length, domainSort)} ${args
-          .map((arg) => `\narg: ${printExpr(manager, environment, arg)}\n`)
+          .map((arg) => `\narg: ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, arg)}\n`)
           .join("")}`.replace(/\n+$/, ""),
         at,
       );
@@ -1722,7 +1739,7 @@ export const createSmtlibReader = (
     const mismatched = getMismatchedArgument(signature, argSorts);
     if (mismatched !== -1)
       throw new SmtParseError(
-        `Argument ${printExpr(manager, { options: DEFAULT_PRINT_OPTIONS, isUsed, isClashing }, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
+        `Argument ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
         at,
       );
     const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
@@ -3697,6 +3714,7 @@ export const createSmtlibReader = (
     },
     isUsed,
     isClashing,
+    sortInfos,
     getDeclaredFuncs,
     getConstantMacros: () =>
       [...macroDictionary.values()].flatMap((name) => {
