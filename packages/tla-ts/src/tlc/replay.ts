@@ -68,6 +68,7 @@ import {
 } from "../values";
 import {
   getActionPredicate,
+  getSubstitutedName,
   getSubstitutedOccurrence,
   isSubstitutionDefinition,
   substitutedExpressions,
@@ -191,11 +192,11 @@ const getIdentifierName = (expression: Expression) =>
 // Spec#collectPrimedLocs ignores the substitutions of an instance it enters, so a declaration there names a state variable only by its own name.
 const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
   const substitution = substitutedExpressions.get(expression);
-  return substitution &&
-    substitution.replacement !== expression &&
-    frames.includes(substitution.frame)
-    ? substitutionFrames.get(expression)?.[0]
-    : undefined;
+  if (substitution && !frames.includes(substitution.frame)) return undefined;
+  const name = getSubstitutedName(expression);
+  return name === undefined
+    ? undefined
+    : { name, expression: getSubstitutedOccurrence(expression) ?? expression };
 };
 
 const bindLetDefinitions = (
@@ -217,7 +218,7 @@ const getVariable = (
   frames?: Expression[],
 ): number | undefined => {
   const occurrence = frames && getNamedOccurrence(expression, frames);
-  if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
+  if (occurrence) return environment.variableIndex.get(occurrence.name);
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
   if (expression.kind === "Let") {
     return getVariable(
@@ -1397,9 +1398,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
   const collectUnchanged = (expression: Expression, scope: Scope | undefined): void => {
     const occurrence = getNamedOccurrence(expression, frames);
     if (occurrence) {
-      if (occurrence.kind === "Identifier" && environment.variableIndex.has(occurrence.name)) {
-        ranges.push(occurrence);
-      }
+      if (environment.variableIndex.has(occurrence.name)) ranges.push(occurrence.expression);
       return;
     }
     if (

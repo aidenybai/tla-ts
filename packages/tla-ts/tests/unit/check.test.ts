@@ -61,6 +61,17 @@ const getInstanceCoverage = (instance: string, next: string, invariant: string) 
     loadModule: (name) => (name === "Inner" ? INSTANCED_MODULE : undefined),
   });
 
+const COUNTER_MODULE =
+  "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE v\nStart == v = 0\nStartIn == v \\in {0, 1}\nInc == v' = (v + 1) % 3\nIncIn == v' \\in {(v + 1) % 3}\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n====";
+
+const getLetInstanceCoverage = (variable: string, init: string, next: string) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES ${variable}, y\nPad == 0\nInit == ${init}\nNext == ${next}\nInv == ~(${variable} = 2 /\\ y = 2)\n====`,
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    coverage: 1,
+    loadModule: (name) => (name === "C" ? COUNTER_MODULE : undefined),
+  });
+
 const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
   result.coverage?.relations.map((relation) =>
     relation.expressions.map(
@@ -13156,6 +13167,36 @@ ASSUME TLCFP(a) = -887695703
       "line 11, col 29 to line 11, col 39 of module Inner: 2",
     ]);
   });
+
+  it.each([
+    [
+      "a root variable shares its name",
+      "v",
+      "v = 0 /\\ y = 0",
+      "LET L == INSTANCE C WITH v <- y IN (v > 5 /\\ L!Inc /\\ UNCHANGED v) \\/ (v' = (v + 1) % 3 /\\ y' = y)",
+      [
+        "line 6, col 45 to line 6, col 49 of module M: 3",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 6, col 63 to line 6, col 73 of module M: 0",
+      ],
+    ],
+    [
+      "no root variable shares its name",
+      "x",
+      "x = 0 /\\ y = 0",
+      "LET L == INSTANCE C WITH v <- x IN (y > 5 /\\ L!Inc /\\ UNCHANGED y) \\/ (x' = (x + 1) % 3 /\\ y' = y)",
+      [
+        "line 6, col 45 to line 6, col 58 of module M: 3",
+        "line 6, col 63 to line 6, col 73 of module M: 0",
+      ],
+    ],
+  ])(
+    "marks a primed declaration of a LET instance as a state variable by its own name when %s, as TLC's Spec#collectPrimedLocs ignores the substitutions",
+    async (_name, variable, init, next, lines) => {
+      const result = await getLetInstanceCoverage(variable, init, next);
+      expect(formatCoverage(result)?.[1]).toEqual(lines);
+    },
+  );
 
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(
