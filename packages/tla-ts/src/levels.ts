@@ -170,7 +170,7 @@ export interface InstanceLevelCheck {
 type ScopeEntry =
   | { kind: "Formal"; arity: number; level: number }
   | { kind: "Let"; definition: Definition; scope: Scope }
-  | { kind: "ExceptAt"; parts: LevelData[] };
+  | { kind: "ExceptAt"; operands: Operand[]; count: number };
 
 const EXCEPT_AT = "@";
 
@@ -1428,10 +1428,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const entry = scope.get(EXCEPT_AT);
         if (entry?.kind !== "ExceptAt") return data;
         let allParams: Set<string> | undefined;
-        entry.parts.forEach((part) => {
+        for (let index = 0; index < entry.count; index++) {
+          const part = entry.operands[index].data;
           mergeLevels(data, part);
           allParams = addParams(allParams, part.allParams);
-        });
+        }
         data.allParams = allParams ?? EMPTY_PARAMS;
         return data;
       }
@@ -1614,7 +1615,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           };
           const valueScope = new Map(scope).set(EXCEPT_AT, {
             kind: "ExceptAt",
-            parts: operands.map((operand) => operand.data),
+            operands,
+            count: operands.length,
           });
           operands.push({
             kind: "Value",

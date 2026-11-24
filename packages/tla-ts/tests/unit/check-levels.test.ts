@@ -48,6 +48,16 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it("levels an EXCEPT with 60,000 updates in linear time", async () => {
+    expect(
+      (
+        await checkDefinition(
+          `[x EXCEPT ${Array.from({ length: 60_000 }, () => "![1] = 1").join(", ")}]`,
+        )
+      ).status,
+    ).toBe("success");
+  });
+
   it("leaves the updates after @ out of its level and parameters, as SANY does", async () => {
     expect((await checkDefinition("[x EXCEPT ![1] = @', ![2] = x']")).status).toBe("success");
     expect(

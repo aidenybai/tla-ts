@@ -1234,7 +1234,8 @@ const checkLevel = (node: SemanticNode, iteration: number, check: LevelCheck): b
       checkLevel(first, iteration, check);
       node.level = first.level;
       const parts = [first];
-      for (const argument of args.slice(1)) {
+      for (let index = 1; index < args.length; index++) {
+        const argument = args[index];
         if (argument === undefined) continue;
         checkLevel(argument, iteration, check);
         if (argument === node.component) break;
