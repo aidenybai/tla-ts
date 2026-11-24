@@ -614,7 +614,6 @@ export class Mbqi {
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       isFindingMacros: false,
       ...getGlobalSmtParams(parameters),
-      randomSeed: Number(parameters.get("smt.random_seed") ?? "0"),
     });
   }
 

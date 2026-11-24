@@ -6370,6 +6370,52 @@ describe("smt.restart_strategy and smt.restart_factor, as Z3 5.3.2's inc_limits 
   });
 });
 
+describe("smt.random_seed, as Z3 5.3.2 reads it into every smt kernel", () => {
+  const declarations = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(declare-const z Int)",
+    "(declare-const w Int)",
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+  ];
+  const assertions = [
+    "(assert (or (<= 5 (+ z (+ x x))) (< (+ (+ 1 x) 3) (+ (ite (< w z) x w) (+ z 5)))))",
+    "(assert (or (or (< -2 (+ x 2)) (< (+ x x) 4)) p))",
+    "(assert (or (= (+ -1 w) (ite (= 1 x) y 1))))",
+    "(assert (or (< -2 (+ (+ 1 y) (+ z x))) (not q)))",
+  ];
+
+  it("seeds the script's incremental kernel", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        "(set-logic QF_UFLIA)",
+        ...declarations,
+        "(push)",
+        ...assertions,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 670)"]);
+  });
+
+  it("seeds the arithmetic solver of sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :produce-models true)",
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        ...assertions,
+        "(check-sat-using sat)",
+        "(get-info :rlimit)",
+        "(get-value (x z))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 295)", "((x 25171)", " (z (- 29993)))"]);
+  });
+});
+
 describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => {
   it("prints the model uncompressed until get-value compresses it", () => {
     expect(

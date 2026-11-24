@@ -109,10 +109,11 @@ export abstract class ArithInternalize extends ThSolver {
   protected value2var = new Map<string, number>();
   protected scopes: { boundsLim: number; assertedQhead: number; assertedLim: number }[] = [];
 
-  constructor(ctx: EufSolver, id: number, hammerPeriod: number) {
+  constructor(ctx: EufSolver, id: number, hammerPeriod: number, randomSeed: number) {
     super(ctx, "arith", id);
     this.solver = new LarSolver(() => !ctx.manager.limit.inc());
     this.solver.settings.updateParams(hammerPeriod, true);
+    this.solver.settings.setRandomSeed(randomSeed);
   }
 
   protected isIntVar(thVar: number) {
