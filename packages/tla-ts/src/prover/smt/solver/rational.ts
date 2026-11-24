@@ -1,10 +1,21 @@
 import { SmtInvariantError } from "../../../errors";
 
+const BARRETT_DIVISOR = 1n << 851840n;
+
+// V8 divides huge bigints of equal digit count by Burnikel-Ziegler, at times twenty times slower than Barrett on a dividend one digit longer.
+const getQuotient = (dividend: bigint, divisor: bigint) =>
+  divisor < BARRETT_DIVISOR
+    ? dividend / divisor
+    : dividend < 0n
+      ? -(((-dividend << 64n) / divisor) >> 64n)
+      : ((dividend << 64n) / divisor) >> 64n;
+
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
   let right = second < 0n ? -second : second;
   while (right !== 0n) {
-    const remainder = left % right;
+    const remainder =
+      right < BARRETT_DIVISOR ? left % right : left - getQuotient(left, right) * right;
     left = right;
     right = remainder;
   }
@@ -29,7 +40,7 @@ const getDouble = (value: bigint) => {
 
 export const getLcm = (first: bigint, second: bigint) => {
   const product = first * second;
-  return (product < 0n ? -product : product) / getGcd(first, second);
+  return getQuotient(product < 0n ? -product : product, getGcd(first, second));
 };
 
 export const getEuclideanDiv = (dividend: bigint, divisor: bigint) => {
@@ -125,7 +136,7 @@ export class Rational {
     if (den === 1n) return new Rational(num, 1n);
     const sign = den < 0n ? -1n : 1n;
     const divisor = getGcd(num, den);
-    return new Rational((sign * num) / divisor, (sign * den) / divisor);
+    return new Rational(getQuotient(sign * num, divisor), getQuotient(sign * den, divisor));
   }
 
   static fromDecimal(text: string) {
@@ -168,18 +179,45 @@ export class Rational {
     if (this.num === 0n) return other;
     if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num + other.num, 1n);
-    return Rational.of(this.num * other.den + other.num * this.den, this.den * other.den);
+    return this.linArithOp(other, false);
   }
 
   sub(other: Rational) {
     if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num - other.num, 1n);
-    return Rational.of(this.num * other.den - other.num * this.den, this.den * other.den);
+    return this.linArithOp(other, true);
+  }
+
+  private linArithOp(other: Rational, isSub: boolean) {
+    const gcd = getGcd(this.den, other.den);
+    if (gcd === 1n) {
+      const first = this.num * other.den;
+      const second = other.num * this.den;
+      return new Rational(isSub ? first - second : first + second, this.den * other.den);
+    }
+    const thisScale = getQuotient(this.den, gcd);
+    const first = this.num * getQuotient(other.den, gcd);
+    const second = other.num * thisScale;
+    const num = isSub ? first - second : first + second;
+    const divisor = getGcd(num, gcd);
+    const den = thisScale * other.den;
+    return divisor === 1n
+      ? new Rational(num, den)
+      : new Rational(getQuotient(num, divisor), getQuotient(den, divisor));
   }
 
   mul(other: Rational) {
     if (this.den === 1n && other.den === 1n) return new Rational(this.num * other.num, 1n);
-    return Rational.of(this.num * other.num, this.den * other.den);
+    return this.ratMul(other);
+  }
+
+  private ratMul(other: Rational) {
+    const denNumGcd = getGcd(this.den, other.num);
+    const numDenGcd = getGcd(this.num, other.den);
+    return new Rational(
+      getQuotient(this.num, numDenGcd) * getQuotient(other.num, denNumGcd),
+      getQuotient(other.den, numDenGcd) * getQuotient(this.den, denNumGcd),
+    );
   }
 
   div(other: Rational) {
@@ -242,5 +280,12 @@ export class Rational {
 
   toString() {
     return this.den === 1n ? `${this.num}` : `${this.num}/${this.den}`;
+  }
+
+  // V8 prints a bigint in hex in linear time, but in decimal in superlinear time.
+  getKey() {
+    return this.den === 1n
+      ? this.num.toString(16)
+      : `${this.num.toString(16)}/${this.den.toString(16)}`;
   }
 }

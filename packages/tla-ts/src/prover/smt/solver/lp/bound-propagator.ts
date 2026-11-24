@@ -216,7 +216,7 @@ export class BoundPropagator {
   }
 
   private getVal(column: number) {
-    return this.solver.getValue(column).x.toString();
+    return this.solver.getValue(column).x.getKey();
   }
 
   private isEqNew(first: number, second: number) {

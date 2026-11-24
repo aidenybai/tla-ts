@@ -225,7 +225,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
   private fixedVarEh(thVar: number, column: number, dep: Dependency, value: Rational) {
     if (this.propagateOffsetEq(column, dep, value)) return;
     const isInt = this.isIntVar(thVar);
-    let other = this.value2var.get(`${isInt}:${value}`);
+    let other = this.value2var.get(`${isInt}:${value.getKey()}`);
     if (other === undefined) {
       if (value.isZero()) other = this.solver.getExternal(isInt ? this.zeroVar : this.realZeroVar);
       else if (value.equals(Rational.one))

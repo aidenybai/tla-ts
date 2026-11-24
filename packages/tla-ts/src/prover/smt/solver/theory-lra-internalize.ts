@@ -197,7 +197,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   }
 
   private registerFixedVar(thVar: number, value: Rational) {
-    const key = `${this.isIntVar(thVar)}:${value}`;
+    const key = `${this.isIntVar(thVar)}:${value.getKey()}`;
     if (this.value2var.has(key)) return;
     this.value2var.set(key, thVar);
     this.context.pushTrail(() => this.value2var.delete(key));

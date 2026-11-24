@@ -59,7 +59,7 @@ export class BvSolver extends BvInternalize {
     const value = this.getFixedValue(v1) as bigint;
     const node = this.var2enodeOf(v1);
     const size = this.bits[v1].length;
-    const key = `${value}:${size}`;
+    const key = `${value.toString(16)}:${size}`;
     const v2 = this.fixedVarTable.get(key);
     const isCurrent =
       v2 !== undefined &&

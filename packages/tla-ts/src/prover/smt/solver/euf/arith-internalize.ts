@@ -653,7 +653,7 @@ export abstract class ArithInternalize extends ThSolver {
   }
 
   private registerFixedVar(thVar: number, value: Rational) {
-    const key = value.toString();
+    const key = value.getKey();
     if (this.value2var.has(key)) return;
     this.value2var.set(key, thVar);
     this.ctx.trail.push(() => this.value2var.delete(key));

@@ -58,4 +58,8 @@ export class Impq {
   toString() {
     return this.y.isZero() ? this.x.toString() : `(${this.x}, ${this.y})`;
   }
+
+  getKey() {
+    return `${this.x.getKey()},${this.y.getKey()}`;
+  }
 }

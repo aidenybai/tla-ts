@@ -521,7 +521,7 @@ export class TheoryBv extends Theory {
   private fixedVarEh(thVar: number) {
     const value = this.getFixedValue(thVar).value;
     const size = this.getBvSize(thVar);
-    const key = `${size}:${value}`;
+    const key = `${size}:${value.toString(16)}`;
     const other = this.fixedVars.get(key);
     if (other === undefined) {
       this.fixedVars.set(key, thVar);

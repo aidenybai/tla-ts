@@ -1368,7 +1368,7 @@ export class AstManager {
   }
 
   mkFpValueId(value: Mpf) {
-    const key = `${value.ebits}:${value.sbits}:${value.sign}:${value.exponent}:${value.significand}`;
+    const key = `${value.ebits}:${value.sbits}:${value.sign}:${value.exponent}:${value.significand.toString(16)}`;
     const existing = this.fpValueIds.get(key);
     if (existing !== undefined) return existing;
     this.fpValues.push({ ...value });

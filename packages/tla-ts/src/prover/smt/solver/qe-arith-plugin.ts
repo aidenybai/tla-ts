@@ -888,14 +888,14 @@ export class ArithPlugin implements QeSolverPlugin {
   private addCache(x: number, formula: number, value: bigint, result: number) {
     this.context.pin(x);
     this.context.pin(formula);
-    this.substCache.set(`${formula}:${x}:${value}`, {
+    this.substCache.set(`${formula}:${x}:${value.toString(16)}`, {
       result: this.context.pin(result),
       vars: [...this.util.varsAdded],
     });
   }
 
   private getCache(x: number, formula: number, value: bigint) {
-    const cached = this.substCache.get(`${formula}:${x}:${value}`);
+    const cached = this.substCache.get(`${formula}:${x}:${value.toString(16)}`);
     if (cached === undefined) return undefined;
     for (const variable of cached.vars) this.util.addVar(variable, false);
     return cached.result;

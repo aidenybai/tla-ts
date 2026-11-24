@@ -806,7 +806,7 @@ export class PddManager {
   private imkVal(value: Rational) {
     if (value.isZero()) return ZERO_PDD;
     if (value.equals(Rational.one)) return ONE_PDD;
-    const key = value.toString();
+    const key = value.getKey();
     return this.valueTable.get(key) ?? this.initValue(value, key);
   }
 
@@ -907,7 +907,7 @@ export class PddManager {
         const value = this.values[this.los[node]];
         if (this.freezeValue.equals(value)) continue;
         this.freeValues.push(this.los[node]);
-        this.valueTable.delete(value.toString());
+        this.valueTable.delete(value.getKey());
       }
       this.los[node] = 0;
       this.his[node] = 0;
