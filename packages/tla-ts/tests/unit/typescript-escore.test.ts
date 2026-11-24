@@ -1216,6 +1216,56 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // AddIndexProps makes the buckets of 100 index properties that a new array or arguments object
+  // reaches at once, so sizes around a bucket, a store into a later bucket and a push pin the
+  // properties, their order and their attributes.
+  describe("gives a new array and an arguments object their elements across buckets", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const describe = (array: ArrayLike<unknown>) => {
+        const last = Object.getOwnPropertyDescriptor(array, String(array.length - 1));
+        const flags = last === undefined ? "-" : [last.writable, last.enumerable, last.configurable].join("");
+        return [array.length, getHash(Object.getOwnPropertyNames(array).join()), getHash(JSON.stringify(Array.from(array))), flags].join(":");
+      };
+      for (const size of [0, 1, 99, 100, 101, 250]) {
+        const values = Array.from({ length: size }, (_, index) => (index * 37) % 101);
+        const split = values.join(",").split(",");
+        split[150] = "x";
+        split.push("y");
+        const getArguments = function (..._: number[]) {
+          return arguments;
+        };
+        const keys = Object.keys(Object.fromEntries(values.map((value, index) => [\`k\${value}-\${index}\`, value])));
+        text += [describe(split), describe(values.toReversed()), describe(values.toSpliced(50, 3, -1)), describe(getArguments(...values)), getHash(keys.join())].join("|") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "152:920023:832376:truetruetrue|0:594058:2914:-|1:154394:755832:truetruetrue|0:661962:2914:-|0;",
+      "152:920023:148775:truetruetrue|1:154394:89032:truetruetrue|2:170131:929460:truetruetrue|1:972304:89032:truetruetrue|235199;",
+      "152:907340:542115:truetruetrue|99:306507:813980:truetruetrue|97:183960:418936:truetruetrue|99:197699:573284:truetruetrue|741050;",
+      "152:157383:900218:truetruetrue|100:822622:729363:truetruetrue|98:972751:75028:truetruetrue|100:205765:242502:truetruetrue|686246;",
+      "152:155249:500665:truetruetrue|101:416298:428706:truetruetrue|99:306507:746289:truetruetrue|101:173438:949256:truetruetrue|195358;",
+      "251:96220:590072:truetruetrue|250:299485:766427:truetruetrue|248:827650:302748:truetruetrue|250:489248:420040:truetruetrue|947575;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("250:489248:420040", "250:489248:420041");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

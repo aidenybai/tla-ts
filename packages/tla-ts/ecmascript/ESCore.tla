@@ -6464,10 +6464,21 @@ CreateArrayFromList(s, values) ==
   Ok(SetO(a.s, Val(a),
           [AddIndexProps(o, values, 1) EXCEPT !.props[NamedBucket][SV("length")].value = IntV(Len(values))]),
      Val(a))
+\* o with values[i] onwards as its data properties from index i - 1, writable, enumerable and
+\* configurable, as PutProp would write them one at a time, but making each bucket they reach once
+\* rather than copying the list of buckets at each value.
 AddIndexProps(o, values, i) ==
-  IF i > Len(values) THEN o
-  ELSE AddIndexProps(PutProp(o, Str(NumToString(NumFromInt(i - 1))),
-                             DataDesc(values[i], TRUE, TRUE, TRUE)), values, i + 1)
+  LET first == i - 1
+      last == Len(values) - 1
+      reached == (first \div 100)..(last \div 100)
+      Bucket(b) ==
+        [k \in {Str(NumToString(NumFromInt(j))) : j \in IntegerMax(b * 100, first)..IntegerMin(b * 100 + 99, last)} |->
+           DataDesc(values[UnitsValue(k.value) + 1], TRUE, TRUE, TRUE)]
+  IN IF first > last THEN o
+     ELSE [o EXCEPT !.props = [b \in DOMAIN o.props \cup reached |->
+             IF b \notin reached THEN o.props[b]
+             ELSE IF b \in DOMAIN o.props THEN Bucket(b) @@ o.props[b]
+             ELSE Bucket(b)]]
 \* ArrayCreate (§10.4.2.2) with a length that fits a TLA+ integer.
 ArrayCreate(s, length, proto) ==
   LET o == PutProp(MakeObject(proto, "array", [none |-> TRUE]), SV("length"),
