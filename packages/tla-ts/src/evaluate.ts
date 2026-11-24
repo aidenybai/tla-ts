@@ -16,6 +16,7 @@ import {
   type RecordField,
   type SourceLocation,
   type SourceRange,
+  type TuplePattern,
 } from "./ast";
 import { getKindString } from "./builtins";
 import {
@@ -30,7 +31,6 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
-  chargeEquality,
   chargeFunctionConstruction,
   chargeSetOperation,
   chargeSize,
@@ -90,6 +90,7 @@ import {
   forEachElement,
   isBeyondSetBound,
   createRecord,
+  createConstructedFunction,
   createEnumeratedSet,
   createFunctionSet,
   createProductSet,
@@ -115,6 +116,7 @@ import {
   getFunctionClass,
   getNormalizedSetElements,
   getSequenceElements,
+  hasLazyKeys,
   hasObservedPass,
   isElementOf,
   isReceiverEqual,
@@ -124,8 +126,10 @@ import {
   isSetValue,
   isSettledValue,
   isTlcInteger,
+  sortLikeFcnRcdValue,
   toFiniteFunction,
   toFiniteSet,
+  toFunctionRecord,
   updateFunction,
   valuesEqual,
   type CostModel,
@@ -377,7 +381,10 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
       );
     }
     const functionClass = getFunctionClass(value);
-    if (functionClass === "tuple") throw createNonIntegerKeyError(field);
+    if (functionClass === "tuple") {
+      toFunctionRecord(value);
+      throw createNonIntegerKeyError(field);
+    }
     return applyFunction(
       value.kind === "LazyFunction" ? toFiniteFunction(value) : value,
       field,
@@ -473,14 +480,25 @@ const bindSelf = (scope: Scope | undefined, name: string, value: Value): Scope =
   parent: scope,
 });
 
-export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
+const describeArgumentMismatch = (pattern: TuplePattern) => {
+  const range = pattern.ranges?.[0];
+  return `Argument mismatch in operator application.${range ? formatRange(range) : ""}`;
+};
+
+const describeNonTupleFilterElement = (pattern: TuplePattern, element: Value) =>
+  `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`;
+
+// Deviation from TLC: ContextEnumerator#nextElement rejects a function on 1..n bound to a tuple pattern, and Tool's {<<a, b>> \in S : P} and FcnLambdaValue#toFcnRcd fail to cast it to TupleValue.
+export const bindPattern = (
+  scope: Scope | undefined,
+  pattern: BoundPattern,
+  value: Value,
+  describeMismatch: (pattern: TuplePattern, value: Value) => string = describeArgumentMismatch,
+) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    const range = pattern.ranges?.[0];
-    throw new TlaEvaluationError(
-      `Argument mismatch in operator application.${range ? formatRange(range) : ""}`,
-    );
+    throw new TlaEvaluationError(describeMismatch(pattern, value));
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
@@ -1934,11 +1952,7 @@ const traceFrames =
 const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
   switch (expression.kind) {
     case "SetEnumeration":
-    case "Tuple":
-    case "Record":
       return () => true;
-    case "FunctionConstruction":
-      return (value) => typeof value === "object" && value.kind === "Function";
     case "SetMap":
       return isReducibleSet;
     case "SetFilter":
@@ -1960,6 +1974,7 @@ const countEvaluator = (
   coverage: Coverage,
 ): Evaluator => {
   const isTagged = getTaggedValueTest(expression);
+  const isCostModelled = expression.kind === "Tuple" || expression.kind === "Record";
   return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
@@ -1968,7 +1983,9 @@ const countEvaluator = (
     coverage.current = node;
     try {
       const value = evaluator(context);
-      if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
+      if (isCostModelled && typeof value === "object" && value.kind === "Function") {
+        value.costModel = coverage.costModels[node];
+      } else if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
         coverage.values.set(value, node);
       }
       return value;
@@ -2370,23 +2387,6 @@ const compileApply = (
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (
     coverage &&
-    combine &&
-    (expression.operator === "=" || expression.operator === "#") &&
-    args.length === 2 &&
-    isValueArgument(args[0], environment) &&
-    isValueArgument(args[1], environment)
-  ) {
-    const left = getEvaluator(args[0], environment);
-    const right = getEvaluator(args[1], environment);
-    return (context) => {
-      const leftValue = left(context);
-      const rightValue = right(context);
-      if (typeof leftValue === "object") chargeEquality(coverage, leftValue, rightValue);
-      return combine(leftValue, rightValue);
-    };
-  }
-  if (
-    coverage &&
     global?.kind === "Builtin" &&
     (global.name === "\\in" || global.name === "\\notin") &&
     args.length === 2 &&
@@ -2649,7 +2649,7 @@ export const getFunctionBuilder = (
         return createLazy(domain, context);
       }
       const keys = getFunctionDomain(domain, false);
-      return createSortedFunction(keys, keys.map(evaluateAt));
+      return createConstructedFunction(domain, keys, keys.map(evaluateAt));
     }
     const pairs: [Value, Value][] = [];
     const sets = mapBoundSets(bounds, (set, index) =>
@@ -2670,7 +2670,12 @@ export const getFunctionBuilder = (
       pairs.push([key, body(withScope(context, scope))]);
       return false;
     });
-    return createFunction(pairs);
+    return hasLazyKeys(domain)
+      ? sortLikeFcnRcdValue(
+          pairs.map((pair) => pair[0]),
+          pairs.map((pair) => pair[1]),
+        )
+      : createFunction(pairs);
   };
   const template = getLazyFunctionTemplate(bounds, expression.body);
   const boundTupleLengths = getBoundTupleLengths(bounds);
@@ -2734,10 +2739,11 @@ const compileFunctionConstruction = (
       const domain = getBoundsDomain(bounds, context);
       const value = build(domain, context);
       const sets = getBoundSets(bounds, domain);
-      const isConverted =
-        (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
-      if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
-        chargeFunctionConstruction(coverage, coverage.current, sets);
+      const isCounted = coverage.current >= 0 && coverage.covered.has(expression);
+      if (isCounted && typeof value === "object" && value.kind === "Function") {
+        value.costModel = coverage.costModels[coverage.current];
+        if (sets.every(isReducibleSet))
+          chargeFunctionConstruction(coverage, coverage.current, sets);
       }
       return value;
     };
@@ -2822,15 +2828,12 @@ export const getLazyFilter = (
     node: number,
   ): RebindableFilteredSet => {
     const test = (element: Value, isMember: boolean) => {
-      if (
-        pattern.kind === "Tuple" &&
-        getSequenceElements(element)?.length !== pattern.names.length
-      ) {
-        throw new TlaEvaluationError(
-          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
-        );
-      }
-      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
+      const value = evaluator(
+        withScope(
+          context,
+          bindPattern(context.scope, pattern, element, describeNonTupleFilterElement),
+        ),
+      );
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
@@ -3005,6 +3008,8 @@ const compileSetComprehension = (
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   const coverage = environment.coverage;
+  const describeNonTupleChoice = () =>
+    `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`;
   const choose = (
     context: Context,
     elements: ReturnType<typeof getQuantifierElements>,
@@ -3014,17 +3019,9 @@ const compileSetComprehension = (
     const pattern = expression.pattern;
     someElement(elements, (element) => {
       enumerator?.next();
-      if (
-        pattern.kind === "Tuple" &&
-        getSequenceElements(element)?.length !== pattern.names.length
-      ) {
-        throw new TlaEvaluationError(
-          `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`,
-        );
-      }
-      const scope = bindPattern(context.scope, pattern, element);
+      const scope = bindPattern(context.scope, pattern, element, describeNonTupleChoice);
       if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
-      chosen = getBoundValue(pattern, scope);
+      chosen = element;
       return true;
     });
     if (chosen !== undefined) return chosen;

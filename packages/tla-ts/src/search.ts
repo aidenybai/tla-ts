@@ -125,6 +125,7 @@ import {
   freezeStringOrder,
   getModelValues,
   getWrittenPairs,
+  hasLazyPart,
   isFunctionValue,
   isUpdatedElementOf,
   markNormalized,
@@ -250,32 +251,6 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
     );
   }
   return definition;
-};
-
-const hasLazyPart = (value: Value) => {
-  const pending = [value];
-  for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
-    if (typeof inner !== "object") continue;
-    switch (inner.kind) {
-      case "Set":
-        for (let index = 0; index < inner.elements.length; index++) {
-          pending.push(inner.elements[index]);
-        }
-        break;
-      case "Function":
-        for (let index = 0; index < inner.domain.length; index++) {
-          pending.push(inner.domain[index], inner.range[index]);
-        }
-        break;
-      case "ModelValue":
-      case "Interval":
-      case "InfiniteSet":
-        break;
-      default:
-        return true;
-    }
-  }
-  return false;
 };
 
 const hasBodyValue = (definition: Definition, environment: Environment) =>

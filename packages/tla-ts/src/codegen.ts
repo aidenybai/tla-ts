@@ -46,9 +46,9 @@ import {
 import {
   addBoundedElement,
   applyFunction,
+  createConstructedFunction,
   createEnumeratedSet,
   createNormalizedSet,
-  createSortedFunction,
   createSortedRecord,
   createTuple,
   createWrittenRecord,
@@ -130,7 +130,7 @@ const createGeneratedHelpers = () => ({
   isBeyondBound: isBeyondSetBound,
   cardinality: getCardinality,
   functionDomain: getFunctionDomain,
-  sortedFunction: createSortedFunction,
+  constructedFunction: createConstructedFunction,
   unassigned: (name: string, expression: Expression): never => {
     throw createUnassignedError(name, expression);
   },
@@ -313,7 +313,7 @@ const generateFunctionConstruction = (
     const set = generateExpression(generator, expression.bounds[0].set, bodyFrame);
     bodyFrame.locals.set(name, element);
     const store = `const ${value} = ${generateExpression(generator, expression.body, bodyFrame)}; if (!${isBeyond}) ${values}.push(${value});`;
-    return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
+    return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : constructedFunction(${domain}, ${keys}, ${values});`;
   });
 
 const generateApply = (

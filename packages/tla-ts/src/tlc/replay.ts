@@ -4,7 +4,6 @@ import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } 
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import {
   chargeContexts,
-  chargeEquality,
   chargeRandomOrder,
   countArgumentTuple,
   countCoverage,
@@ -768,9 +767,6 @@ const visitAssignment = (
   const value = evaluateAt(replay, node, source, context);
   const assigned = partial[index];
   if (expression.operator === "=") {
-    if (replay.coverage && assigned !== undefined) {
-      chargeEquality(replay.coverage, assigned, value);
-    }
     return proceedWithValue(replay, items, partial, index, value, node);
   }
   const set: Value =
@@ -1205,13 +1201,6 @@ const visitUnchanged = (
         : replay.current?.[index];
       if (value === undefined) return false;
       const assigned = partial[index];
-      if (assigned !== undefined && replay.coverage) {
-        chargeEquality(
-          replay.coverage,
-          replay.isEnabled ? assigned : value,
-          replay.isEnabled ? value : assigned,
-        );
-      }
       if (
         assigned !== undefined &&
         !(replay.isEnabled ? isEqualLikeTlc(assigned, value) : isEqualLikeTlc(value, assigned))

@@ -27,7 +27,6 @@ import {
   drainChargedSet,
   getCardinality,
   getChargedSet,
-  getDomainInterval,
   getDrawnSet,
   getStreamedElements,
   getValueNode,
@@ -38,16 +37,15 @@ import {
   isCostedSet,
   isElementOfSetLikeTlc,
   isReducibleSet,
-  isSequenceDomain,
   markStreamedSet,
   type CostedSetValue,
-  type FunctionValue,
   type IntervalValue,
   type SetOperationValue,
   type SetValue,
   type SubsetValue,
   type UnionValue,
   type Value,
+  type ValueCostModel,
 } from "./values";
 
 export type CoverageKind = "init" | "next" | "invariant" | "constraint" | "implied";
@@ -77,6 +75,7 @@ export interface Coverage {
   roots: number[];
   primary: number[];
   secondary: number[];
+  costModels: ValueCostModel[];
   covered: WeakSet<Expression>;
   values: WeakMap<object, number>;
   registers: Uint8Array;
@@ -186,6 +185,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     roots: [],
     primary: [],
     secondary: [],
+    costModels: [],
     covered: new WeakSet(),
     values: new WeakMap(),
     registers: new Uint8Array(variableCount * REGISTERS),
@@ -254,6 +254,7 @@ const addNode = (
   coverage.roots.push(parent === -1 ? node : coverage.roots[parent]);
   coverage.primary.push(0);
   coverage.secondary.push(0);
+  coverage.costModels.push({ secondary: coverage.secondary, node });
   if (expression) coverage.covered.add(expression);
   if (parent === -1) return node;
   const last = coverage.lastChild[parent];
@@ -982,49 +983,6 @@ export const costCoverage = (coverage: Coverage, value: Value, cost: number) => 
   if (node !== undefined) coverage.secondary[node] += cost;
 };
 
-const chargeConversion = (coverage: Coverage, value: FunctionValue) =>
-  costCoverage(coverage, value, value.range.length);
-
-// FcnRcdValue#toTuple charges a function only when its domain isn't an interval.
-const chargeTupleConversion = (coverage: Coverage, value: Value) => {
-  if (typeof value !== "object") return false;
-  if (value.kind === "LazyFunction") return true;
-  if (value.kind !== "Function") return false;
-  if (value.functionClass !== undefined) {
-    return value.functionClass === "tuple" || value.range.length === 0;
-  }
-  const interval = getDomainInterval(value.domain);
-  if (interval !== undefined) return interval.low === 1 || interval.low > interval.high;
-  if (!isSequenceDomain(value.domain)) return false;
-  chargeConversion(coverage, value);
-  return true;
-};
-
-export const chargeEquality = (coverage: Coverage, left: Value, right: Value) => {
-  if (typeof left !== "object" || (left.kind !== "Function" && left.kind !== "LazyFunction")) {
-    return;
-  }
-  const isRightFunction = typeof right === "object" && right.kind === "Function";
-  if (left.kind === "LazyFunction" || left.functionClass === undefined) {
-    if (isRightFunction && right.functionClass !== undefined) chargeConversion(coverage, right);
-    return;
-  }
-  if (left.functionClass === "record") {
-    if (
-      isRightFunction &&
-      right.functionClass === undefined &&
-      getDomainInterval(right.domain) === undefined &&
-      right.domain.every((key) => typeof key === "string")
-    ) {
-      chargeConversion(coverage, right);
-    }
-    return;
-  }
-  if (chargeTupleConversion(coverage, right)) return;
-  chargeConversion(coverage, left);
-  if (isRightFunction && right.functionClass === "record") chargeConversion(coverage, right);
-};
-
 export const chargeSetOperation = (
   coverage: Coverage,
   operator: string,
@@ -1701,15 +1659,6 @@ const createChargedMembership = (coverage: Coverage) => {
     if (set.kind === "Set" && isCostedSet(coverage, element))
       return isElementOfSetLikeTlc(element, set);
     if (set.kind !== "Subset" && set.kind !== "Union") {
-      // SetOfFcnsValue#member converts the element with toFcnRcd, which charges a tuple or record its length.
-      if (
-        set.kind === "FunctionSet" &&
-        typeof element === "object" &&
-        element.kind === "Function" &&
-        element.functionClass !== undefined
-      ) {
-        costCoverage(coverage, element, element.range.length);
-      }
       return COMPOSITE_SET_KINDS.has(set.kind)
         ? isElementOfWith(element, set, isMember)
         : isElementOf(element, set);

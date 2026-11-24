@@ -132,9 +132,13 @@ export interface LetExpression {
   location: SourceLocation;
 }
 
-export type BoundPattern =
-  | { kind: "Name"; name: string; ranges?: SourceRange[] }
-  | { kind: "Tuple"; names: string[]; ranges?: SourceRange[] };
+export interface TuplePattern {
+  kind: "Tuple";
+  names: string[];
+  ranges?: SourceRange[];
+}
+
+export type BoundPattern = { kind: "Name"; name: string; ranges?: SourceRange[] } | TuplePattern;
 
 export interface Bound {
   pattern: BoundPattern;

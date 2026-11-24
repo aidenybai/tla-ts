@@ -51,6 +51,7 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
   walkFlags: number;
+  costModel?: ValueCostModel;
 }
 
 export interface IntervalValue {
@@ -146,9 +147,12 @@ export interface LazyFunctionSource {
   body: string;
 }
 
-export interface CostModel {
+export interface ValueCostModel {
   secondary: number[];
   node: number;
+}
+
+export interface CostModel extends ValueCostModel {
   startConversion: () => () => void;
 }
 
@@ -335,6 +339,12 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   if (isWrittenOrderUsed) {
     left.writtenKeys = undefined;
     right.writtenKeys = undefined;
+  }
+  if (
+    (left.costModel !== undefined || right.costModel !== undefined) &&
+    left.functionClass !== right.functionClass
+  ) {
+    return compareLikeTlc(left, right);
   }
   const leftDomain = left.domain;
   const rightDomain = right.domain;
@@ -1046,9 +1056,45 @@ interface TlcFunction {
 const getIntervalLow = (value: Value, domain: Value[]) =>
   domain.length === 0 || getFunctionClass(value) === "tuple" ? 1 : getDomainInterval(domain)?.low;
 
+export const toFunctionRecord = (value: FunctionValue | LazyFunctionValue) => {
+  if (
+    value.kind === "Function" &&
+    value.costModel !== undefined &&
+    value.functionClass !== undefined
+  ) {
+    stopFirstAttempt();
+    value.costModel.secondary[value.costModel.node] += value.range.length;
+  }
+  return toFiniteFunction(value);
+};
+
+// FcnRcdValue#toTuple and FcnRcdValue#toRcd charge a function and pass on its cost model only when its domain isn't an interval.
+const getConvertedCostModel = (value: FunctionValue) =>
+  value.costModel !== undefined &&
+  value.functionClass === undefined &&
+  getDomainInterval(value.domain) === undefined
+    ? value.costModel
+    : undefined;
+
+const chargeConversionFromFunction = (value: FunctionValue | LazyFunctionValue) => {
+  if (value.kind !== "Function") return;
+  const costModel = getConvertedCostModel(value);
+  if (costModel === undefined) return;
+  stopFirstAttempt();
+  costModel.secondary[costModel.node] += value.range.length;
+};
+
+export const getTupleCostModel = (value: Value | undefined) => {
+  if (typeof value !== "object") return undefined;
+  if (value.kind === "LazyFunction") {
+    return isCountedLazyFunction(value) && value.costModel.node >= 0 ? value.costModel : undefined;
+  }
+  return value.kind === "Function" ? getConvertedCostModel(value) : undefined;
+};
+
 const toTlcFunction = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const functionValue = toFiniteFunction(value);
+  const functionValue = toFunctionRecord(value);
   return {
     domain: functionValue.domain,
     range: functionValue.range,
@@ -1060,7 +1106,9 @@ const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   forgetOwnWrittenOrder(value);
   const functionValue = toFiniteFunction(value);
-  return isRecordDomain(functionValue.domain) ? functionValue : undefined;
+  if (!isRecordDomain(functionValue.domain)) return undefined;
+  chargeConversionFromFunction(value);
+  return functionValue;
 };
 
 const compareModelValueWith = (modelValue: ModelValue, other: Value, isEquality: boolean) => {
@@ -1161,7 +1209,9 @@ const compareFunctionLikeTlc = (
   const functionValue = toFiniteFunction(left);
   if (getFunctionClass(left) === "tuple") {
     const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right, isEquality);
+    if (!tuple) {
+      return compareTlcFunctions({ ...toFunctionRecord(left), low: 1 }, left, right, isEquality);
+    }
     return (
       functionValue.range.length - tuple.length ||
       compareElementsLikeTlc(functionValue.range, tuple, isEquality)
@@ -1283,6 +1333,46 @@ const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
   sets.pop();
   return result;
 };
+
+// FcnLambdaValue#toFcnRcd normalizes the function it builds, and FcnRcdValue#sort compares the first key with each other key, then insertion-sorts the rest.
+export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
+  for (let index = 1; index < domain.length; index++) {
+    const first = domain[0];
+    const key = domain[index];
+    if (callTracedMethod(first, () => compareLikeTlc(first, key)) > 0) {
+      domain[0] = key;
+      domain[index] = first;
+      const firstValue = range[0];
+      range[0] = range[index];
+      range[index] = firstValue;
+    }
+  }
+  for (let index = 2; index < domain.length; index++) {
+    const key = domain[index];
+    const value = range[index];
+    let position = index;
+    while (
+      position > 0 &&
+      callTracedMethod(key, () => compareLikeTlc(key, domain[position - 1])) < 0
+    ) {
+      domain[position] = domain[position - 1];
+      range[position] = range[position - 1];
+      position--;
+    }
+    domain[position] = key;
+    range[position] = value;
+  }
+  return createSortedFunction(domain, range);
+};
+
+const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
+
+export const hasLazyKeys = (domain: Value) =>
+  isMixedSet(domain) ||
+  (typeof domain === "object" && domain.kind === "ProductSet" && domain.factors.some(isMixedSet));
+
+export const createConstructedFunction = (domain: Value, keys: Value[], range: Value[]) =>
+  isMixedSet(domain) ? sortLikeFcnRcdValue([...keys], range) : createSortedFunction(keys, range);
 
 const searchLikeTlc = (element: Value, sorted: Value[]) => {
   let low = 0;
@@ -1725,6 +1815,23 @@ export const createRecord = (fields: [string, Value][]): FunctionValue =>
 export const createSortedRecord = (names: Value[], range: Value[]) =>
   setFunctionClass(createSortedFunction(names, range), "record");
 
+export const setCostModel = (value: FunctionValue, costModel: ValueCostModel | undefined) => {
+  if (costModel !== undefined) value.costModel = costModel;
+  return value;
+};
+
+const getElementCostModel = (cost: SetCost | undefined) =>
+  cost?.node === undefined || cost.charges === undefined
+    ? undefined
+    : cost.charges.costModels[cost.node];
+
+const setCostModels = (elements: FunctionValue[], cost: SetCost | undefined) => {
+  const costModel = getElementCostModel(cost);
+  if (costModel === undefined) return elements;
+  for (let index = 0; index < elements.length; index++) elements[index].costModel = costModel;
+  return elements;
+};
+
 export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
 
 const formatUnion = (value: UnionValue, isStrict = false) =>
@@ -2000,6 +2107,95 @@ const enumerateSetOperation = (value: SetOperationValue, opened: OpenedStream | 
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 
+// TLC's toSetEnum leaves [S -> T], [l : S] or S \X T unsorted when its sets read as normalized before it enumerates them, as Value#isNormalized reads them.
+const isNormalizedLikeTlc = (value: Value): boolean => {
+  if (typeof value !== "object" || isCachedSet(value)) return true;
+  switch (value.kind) {
+    case "Set":
+    case "MixedSet":
+      return isNormalizedSet(value);
+    case "Interval":
+      return true;
+    case "FilteredSet":
+      return isNormalizedLikeTlc(value.base);
+    case "FunctionSet":
+      return isNormalizedLikeTlc(value.domain) && isNormalizedLikeTlc(value.range);
+    case "RecordSet":
+      return value.sets.every(isNormalizedLikeTlc);
+    case "ProductSet":
+      return value.factors.every(isNormalizedLikeTlc);
+    default:
+      return false;
+  }
+};
+
+export const hasLazyPart = (value: Value) => {
+  if (typeof value !== "object" || value.kind === "ModelValue") return false;
+  const pending: Value[] = [value];
+  for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
+    if (typeof inner !== "object") continue;
+    switch (inner.kind) {
+      case "Set":
+        for (let index = 0; index < inner.elements.length; index++) {
+          pending.push(inner.elements[index]);
+        }
+        break;
+      case "Function":
+        for (let index = 0; index < inner.domain.length; index++) {
+          pending.push(inner.domain[index], inner.range[index]);
+        }
+        break;
+      case "ModelValue":
+      case "Interval":
+      case "InfiniteSet":
+        break;
+      default:
+        return true;
+    }
+  }
+  return false;
+};
+
+const hasLazyValue = (values: Value[]) => {
+  for (let index = 0; index < values.length; index++) {
+    if (hasLazyPart(values[index])) return true;
+  }
+  return false;
+};
+
+const hasLazyComponent = (sets: Value[]) => {
+  for (let index = 0; index < sets.length; index++) {
+    if (hasLazyElements(sets[index])) return true;
+  }
+  return false;
+};
+
+const hasLazyElements = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "Set":
+      return hasLazyValue(value.elements);
+    case "MixedSet":
+      return true;
+    case "FilteredSet":
+    case "Subset":
+    case "Union":
+      return hasLazyElements(value.base);
+    case "SetOperation":
+      return hasLazyElements(value.left) || hasLazyElements(value.right);
+    case "FunctionSet":
+      return hasLazyElements(value.domain) || hasLazyElements(value.range);
+    case "RecordSet":
+      return hasLazyComponent(value.sets);
+    case "ProductSet":
+      return hasLazyComponent(value.factors);
+    default:
+      return false;
+  }
+};
+
+const isSortedLikeTlc = (value: Value) => !hasLazyElements(value) || isNormalizedLikeTlc(value);
+
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
   if (
@@ -2014,6 +2210,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   }
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
+  const isSorted = value.kind === "FilteredSet" || isSortedLikeTlc(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
@@ -2022,7 +2219,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
 };
@@ -2083,22 +2280,28 @@ const enumerateSet = (
         throw createAttemptError(describeUnenumerableFunctionSet, "range R", value.range);
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
-      return getCartesianProduct(
-        domain.map(() => range),
-        isBounded,
-      ).map((combination): Value => createSortedFunction(domain, combination));
+      return setCostModels(
+        getCartesianProduct(
+          domain.map(() => range),
+          isBounded,
+        ).map((combination) => createSortedFunction(domain, combination)),
+        value.cost,
+      );
     }
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       const fields = getComponentElements(value, getElements);
-      return getCartesianProduct(fields, isBounded).map((combination) =>
-        createSortedRecord(value.names, combination),
+      return setCostModels(
+        getCartesianProduct(fields, isBounded).map((combination) =>
+          createSortedRecord(value.names, combination),
+        ),
+        value.cost,
       );
     }
     case "ProductSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       const factors = getComponentElements(value, getElements);
-      return getCartesianProduct(factors, isBounded).map(createTuple);
+      return setCostModels(getCartesianProduct(factors, isBounded).map(createTuple), value.cost);
     }
     case "FilteredSet": {
       if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
@@ -2158,6 +2361,17 @@ const convertSet = (
   }
   const sets = setTrace.sets;
   if (!isFramedAsOpened) sets?.push(value);
+  const isSorted =
+    typeof value === "object" &&
+    (value.kind === "MixedSet" ||
+      value.kind === "Union" ||
+      value.kind === "SetOperation" ||
+      value.kind === "FilteredSet" ||
+      value.kind === "Subset" ||
+      ((value.kind === "ProductSet" ||
+        value.kind === "FunctionSet" ||
+        value.kind === "RecordSet") &&
+        isSortedLikeTlc(value)));
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
@@ -2169,15 +2383,6 @@ const convertSet = (
     isSortingLiteral = isOuterSorting;
   }
   if (!isFramedAsOpened) sets?.pop();
-  const isSorted =
-    typeof value === "object" &&
-    (value.kind === "MixedSet" ||
-      value.kind === "Union" ||
-      value.kind === "SetOperation" ||
-      value.kind === "FilteredSet" ||
-      value.kind === "ProductSet" ||
-      value.kind === "FunctionSet" ||
-      value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (lazy) lazy.enumerated = set;
   return set;
@@ -2255,6 +2460,10 @@ const toCachedSet = (value: Value) => {
   return set;
 };
 
+const isSortedAfterCharging = (value: CostedSetValue) =>
+  (value.kind === "ProductSet" || value.kind === "FunctionSet" || value.kind === "RecordSet") &&
+  !isSortedLikeTlc(value);
+
 const toChargedSet = (
   value: CostedSetValue,
   isCached: boolean,
@@ -2264,6 +2473,7 @@ const toChargedSet = (
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
   const cost = value.cost;
   const charges = cost?.charges;
+  if (charges && isSortedAfterCharging(value)) stopFirstAttempt();
   const set = charges ? charges.convertCharged(value, convert) : convert(value);
   if (isCached && cost) cost.charges = undefined;
   return set;
@@ -2286,6 +2496,7 @@ interface FilterStream {
 interface ProductStream {
   kind: "Product";
   set: FunctionSetValue | RecordSetValue | ProductSetValue;
+  costModel: ValueCostModel | undefined;
   domain: Value[];
   parts: ElementStream[];
   current: Value[];
@@ -2486,6 +2697,7 @@ const openProductStream = (
   const stream: ProductStream = {
     kind: "Product",
     set: value,
+    costModel: getElementCostModel(value.cost),
     domain: [],
     parts: [],
     current: [],
@@ -2662,11 +2874,14 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
         else restartPart(stream, index);
       }
       const set = stream.set;
-      return set.kind === "FunctionSet"
-        ? createSortedFunction(stream.domain, elements)
-        : set.kind === "RecordSet"
-          ? createSortedRecord(set.names, elements)
-          : createTuple(elements);
+      return setCostModel(
+        set.kind === "FunctionSet"
+          ? createSortedFunction(stream.domain, elements)
+          : set.kind === "RecordSet"
+            ? createSortedRecord(set.names, elements)
+            : createTuple(elements),
+        stream.costModel,
+      );
     }
     case "Concatenated":
       return getNextElement(stream.left) ?? getNextElement(stream.right);
@@ -2707,6 +2922,7 @@ const somePulledElement = (stream: ElementStream, visit: (element: Value) => boo
 export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
+  costModels: ValueCostModel[];
   isMember: typeof isElementOf;
   convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
@@ -2728,6 +2944,7 @@ interface ChargedLeafStream {
 interface ChargedProductStream {
   kind: "ChargedProduct";
   node: number;
+  costModel: ValueCostModel;
   set: FunctionSetValue | RecordSetValue | ProductSetValue;
   domain: Value[];
   parts: ChargedStream[];
@@ -2964,6 +3181,7 @@ const openChargedProduct = (
   const stream: ChargedProductStream = {
     kind: "ChargedProduct",
     node,
+    costModel: charges.costModels[node],
     set: value,
     domain: [],
     parts: [],
@@ -3049,11 +3267,14 @@ const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Val
         else restartChargedPart(charges, stream, index);
       }
       const set = stream.set;
-      return set.kind === "FunctionSet"
-        ? createSortedFunction(stream.domain, elements)
-        : set.kind === "RecordSet"
-          ? createSortedRecord(set.names, elements)
-          : createTuple(elements);
+      return setCostModel(
+        set.kind === "FunctionSet"
+          ? createSortedFunction(stream.domain, elements)
+          : set.kind === "RecordSet"
+            ? createSortedRecord(set.names, elements)
+            : createTuple(elements),
+        stream.costModel,
+      );
     }
     case "ChargedUnion":
       charges.secondary[stream.node]++;
@@ -3367,6 +3588,8 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     return isBounded ? toBoundSet(value).elements : getUnboundedElements(value);
   }
   const isRepeated = (value.kind === "Union" || value.hasFilter) && hasObservedPass(value);
+  const isSorted =
+    value.kind === "SetOperation" || value.kind === "Union" || isSortedLikeTlc(value);
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   const elements = enumerateSet(
     value,
@@ -3374,7 +3597,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     undefined,
     setTrace.sets ? openOperandStream(value, false) : undefined,
   );
-  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (!isRepeated) value.enumerated = set;
   return set.elements;
 };
@@ -3781,7 +4004,7 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
-export const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
 
 // TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
 const getAppliedSequenceElements = (value: LazyFunctionValue) => {
@@ -3817,7 +4040,9 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     }
   }
   const functionValue = toFiniteFunction(value);
-  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
+  if (!isSequenceDomain(functionValue.domain)) return undefined;
+  chargeConversionFromFunction(value);
+  return functionValue.range;
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
@@ -4032,7 +4257,7 @@ const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
     throw createAttemptError(describeNonFunctionMember, element, set);
   }
   forgetOwnWrittenOrder(element);
-  const functionValue = toFiniteFunction(element);
+  const functionValue = toFunctionRecord(element);
   const low = getIntervalLow(element, functionValue.domain);
   const isDomain =
     low === undefined
@@ -4051,6 +4276,7 @@ const getRecordSetMember = (element: Value, set: RecordSetValue) => {
     if (isModelValue(element)) return isModelValueMember(element, set);
     throw createAttemptError(describeNonRecordMember, element, set);
   }
+  chargeConversionFromFunction(functionValue);
   return functionValue.domain.length === set.names.length && functionValue;
 };
 
@@ -4059,7 +4285,7 @@ const getProductSetMemberElements = (element: Value, set: ProductSetValue) => {
   if (elements === undefined) {
     const isFunction =
       isFunctionValue(element) &&
-      toFiniteFunction(element).domain.every((key) => typeof key === "number");
+      toFunctionRecord(element).domain.every((key) => typeof key === "number");
     if (isModelValue(element)) return isModelValueMember(element, set);
     if (isFunction) return false;
     throw createAttemptError(describeNonTupleMember, element, set);
@@ -4325,12 +4551,10 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
     const domain = getFunctionDomain(value.domain, false);
-    value.enumerated = createSortedFunction(
-      domain,
-      isLazyFunctionCopy(value)
-        ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
-        : domain.map((key) => value.apply(key)),
-    );
+    const range = isLazyFunctionCopy(value)
+      ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
+      : domain.map((key) => value.apply(key));
+    value.enumerated = createConstructedFunction(value.domain, domain, range);
     finishConversion?.();
     return value.enumerated;
   }
