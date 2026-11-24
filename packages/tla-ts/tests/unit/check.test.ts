@@ -8851,6 +8851,60 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a tuple and a function",
+      "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 19 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:4",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "|line 5, col 60 to line 5, col 61 of module M: 1",
+      ],
+    ],
+    [
+      "a function and a tuple",
+      "x' = 0 /\\ [a : {[i \\in {1, 3} |-> i], <<1, 2>>}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 19 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 44 of module M: 1:2",
+        "||||line 5, col 43 to line 5, col 43 of module M: 2",
+        "||||line 5, col 32 to line 5, col 37 of module M: 1:3",
+        "|||line 5, col 47 to line 5, col 54 of module M: 1:4",
+        "|line 5, col 60 to line 5, col 61 of module M: 1",
+      ],
+    ],
+    [
+      "a set filter and a set",
+      "x' = 0 /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN [a : {F, {1}}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 57 of module M: 1:8",
+        "|line 5, col 48 to line 5, col 56 of module M: 4",
+        "|line 5, col 35 to line 5, col 44 of module M: 1",
+        "line 5, col 62 to line 5, col 80 of module M: 1",
+        "|line 5, col 62 to line 5, col 75 of module M: 1:4",
+        "||line 5, col 67 to line 5, col 74 of module M: 1:3",
+        "|||line 5, col 68 to line 5, col 68 of module M: 1",
+        "|||line 5, col 71 to line 5, col 73 of module M: 1",
+        "|line 5, col 79 to line 5, col 80 of module M: 1",
+      ],
+    ],
+  ])(
+    "sorts a set of records over %s that wasn't normalized when its conversion began, as SetOfRcdsValue#toSetEnum reads that before elements() normalizes the set",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "S \\cup T of a filter",
       "x' = [t \\in {u \\in (1..3) \\X {0} : u[1] > 1} \\cup {<<5, 0>>} |-> 0]",
       [

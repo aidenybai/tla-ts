@@ -2365,20 +2365,21 @@ const enumerateSet = (
   }
 };
 
-export const toFiniteSet = (value: Value): SetValue => {
+export const toFiniteSet = (value: Value, isSortedRead?: boolean): SetValue => {
   if (typeof value === "object" && value.kind === "Set") return value;
   if (typeof value === "object" && value.kind === "Interval") {
     return createSortedSet(enumerateSet(value));
   }
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy?.enumerated) return lazy.enumerated;
-  return convertSet(value, lazy, false);
+  return convertSet(value, lazy, false, isSortedRead);
 };
 
 const convertSet = (
   value: Value,
   lazy: ConvertibleSetValue | undefined,
   isFramedAsOpened: boolean,
+  isSortedRead?: boolean,
 ) => {
   if (isSortingLiteral && lazy !== undefined && hasObservedPass(lazy)) {
     throw new TlaEvaluationError("The set literal holds a filter");
@@ -2386,16 +2387,17 @@ const convertSet = (
   const sets = setTrace.sets;
   if (!isFramedAsOpened) sets?.push(value);
   const isSorted =
-    typeof value === "object" &&
-    (value.kind === "MixedSet" ||
-      value.kind === "Union" ||
-      value.kind === "SetOperation" ||
-      value.kind === "FilteredSet" ||
-      value.kind === "Subset" ||
-      ((value.kind === "ProductSet" ||
-        value.kind === "FunctionSet" ||
-        value.kind === "RecordSet") &&
-        isSortedLikeTlc(value)));
+    isSortedRead ??
+    (typeof value === "object" &&
+      (value.kind === "MixedSet" ||
+        value.kind === "Union" ||
+        value.kind === "SetOperation" ||
+        value.kind === "FilteredSet" ||
+        value.kind === "Subset" ||
+        ((value.kind === "ProductSet" ||
+          value.kind === "FunctionSet" ||
+          value.kind === "RecordSet") &&
+          isSortedLikeTlc(value))));
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
@@ -2419,12 +2421,14 @@ const toOpenedSet = (value: SetOperationValue | UnionValue) =>
     : toFiniteSet(value);
 
 // TLC's toSetEnum keeps nothing, so a filter inside runs again on the next conversion.
-const toArgumentSet = (value: Value) => {
+const toArgumentSet = (value: Value, isSortedRead?: boolean) => {
   const lazy = typeof value === "object" && isLazySet(value) ? value : undefined;
   if (lazy === undefined || lazy.enumerated) return toFiniteSet(value);
   const isRepeated = hasObservedPass(lazy);
   const set =
-    lazy.kind === "SetOperation" || lazy.kind === "Union" ? toOpenedSet(lazy) : toFiniteSet(lazy);
+    lazy.kind === "SetOperation" || lazy.kind === "Union"
+      ? toOpenedSet(lazy)
+      : toFiniteSet(lazy, isSortedRead);
   if (isRepeated) lazy.enumerated = undefined;
   return set;
 };
@@ -2472,34 +2476,34 @@ export const isCostedSet = (charges: ChargeTable, value: Value) => {
   }
 };
 
-const toCachedSet = (value: Value) => {
+const toCachedSet = (value: Value, isSortedRead?: boolean) => {
   if (typeof value === "object" && value.kind === "FilteredSet") {
     const set = toFiniteSet(value);
     // SetPredValue#size, equals and compareTo convert with convertAndCache, which keeps the set it converts.
     value.isCached = true;
     return set;
   }
-  const set = toFiniteSet(value);
+  const set = toFiniteSet(value, isSortedRead);
   cacheSet(value);
   return set;
 };
 
-const isSortedAfterCharging = (value: CostedSetValue) =>
-  (value.kind === "ProductSet" || value.kind === "FunctionSet" || value.kind === "RecordSet") &&
-  !isSortedLikeTlc(value);
-
 const toChargedSet = (
   value: CostedSetValue,
   isCached: boolean,
-  convert: (value: Value) => SetValue,
+  convert: (value: Value, isSortedRead?: boolean) => SetValue,
 ) => {
   // TLC's SetEnumValue#member scans an unsorted literal, so a literal whose sort charges a set stays unsorted.
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
   const cost = value.cost;
-  const charges = cost?.charges;
-  if (charges && isSortedAfterCharging(value)) stopFirstAttempt();
-  const set = charges ? charges.convertCharged(value, convert) : convert(value);
-  if (isCached && cost) cost.charges = undefined;
+  if (cost?.charges === undefined) return convert(value);
+  // SetOfRcdsValue#toSetEnum reads whether its sets are normalized before elements() normalizes them, which charging here does first.
+  const isSortedRead =
+    (value.kind !== "ProductSet" && value.kind !== "FunctionSet" && value.kind !== "RecordSet") ||
+    isSortedLikeTlc(value);
+  if (!isSortedRead) stopFirstAttempt();
+  const set = cost.charges.convertCharged(value, convert, isSortedRead);
+  if (isCached) cost.charges = undefined;
   return set;
 };
 
@@ -2948,7 +2952,11 @@ export interface ChargeTable {
   secondary: number[];
   costModels: ValueCostModel[];
   isMember: typeof isElementOf;
-  convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
+  convertCharged: (
+    set: CostedSetValue,
+    convert: (value: Value, isSortedRead: boolean) => SetValue,
+    isSortedRead: boolean,
+  ) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
