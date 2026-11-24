@@ -264,6 +264,10 @@ const getRuntimeVariableIndex = (
   if (binding?.kind === "Thunk" && !binding.isReleased) {
     return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
   }
+  const local = binding?.kind === "Operator" ? binding.operator : undefined;
+  if (local?.kind === "Closure" && local.params.length === 0) {
+    return getRuntimeVariableIndex(local.body, local.scope, partial, run, isPrimed);
+  }
   if (binding) return undefined;
   const index = run.environment.variableIndex.get(expression.name);
   if (index !== undefined) return isPrimed ? undefined : index;

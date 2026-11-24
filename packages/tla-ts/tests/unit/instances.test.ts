@@ -41,6 +41,10 @@ const PRINTED_INSTANCE_MODULES = new Map([
     "Pure3",
     "---- MODULE Pure3 ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nGrd == c >= 0\nAct == v' = v + 1 /\\ Grd /\\ c >= 0\n====",
   ],
+  [
+    "Alias",
+    "---- MODULE Alias ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nVal == c + v\nAct == v' = Val /\\ c >= 0\n====",
+  ],
 ]);
 
 const PRINTED_INSTANCE = 'LET L == INSTANCE Pure4 WITH c <- IF PrintT(<<"c">>) THEN x ELSE 0 IN';
@@ -166,6 +170,17 @@ describe("INSTANCE matches TLC", () => {
       expect([result.status, result.generatedStates, prints.length]).toEqual(["success", 3, count]);
     },
   );
+
+  it("assigns the variable a LET instance substitutes in a fairness condition with coverage, as TLC's getVar follows the substitute", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nBound == x < 2\nSpec == Init /\\ [][Next]_x /\\ WF_x(LET L(k) == INSTANCE Alias WITH c <- k, v <- x IN L(1)!Act)\nProp == <>(x = 5)\n====",
+      config: "SPECIFICATION Spec\nCONSTRAINT Bound\nPROPERTY Prop",
+      coverage: 1,
+      loadModule: (name) => PRINTED_INSTANCE_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates]).toEqual(["success", 3]);
+  });
 
   it("evaluates each definition a named instance of a parameter-free module copies at startup, as SANY gives each its own OpDefNode", async () => {
     const prints: string[] = [];
