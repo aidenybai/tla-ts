@@ -623,7 +623,9 @@ const visitFramed = (
   withFrame(replay, expression, () => {
     const coverage = replay.coverage;
     const substitution =
-      coverage && !replay.isInit ? substitutedExpressions.get(expression) : undefined;
+      coverage && !replay.isInit && coverage.substitutionNodes.size !== 0
+        ? substitutedExpressions.get(expression)
+        : undefined;
     const entered = substitution && getEnteredReplacement(expression, substitution.replacement);
     const substitutionNode =
       coverage && substitution && entered ? getSubstitutionNode(coverage, substitution, true) : -1;
