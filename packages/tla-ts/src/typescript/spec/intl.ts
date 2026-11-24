@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { getUnitsOf } from "./runtime";
+import { joinInHalves } from "./units";
 
 type Validator = (value: unknown) => boolean;
 
@@ -1424,7 +1425,10 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     ...tables.map((table) => ({
       name: table.name,
       arity: 0,
-      text: `${table.name} ==\n  ${table.entries.map(([key, value]) => `(${key} :> ${value})`).join("\n  @@ ")}`,
+      text: `${table.name} ==\n  ${joinInHalves(
+        table.entries.map(([key, value]) => `(${key} :> ${value})`),
+        (left, right) => `(${left}\n  @@ ${right})`,
+      )}`,
     })),
     {
       name: "HostIntl",
