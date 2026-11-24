@@ -17,11 +17,11 @@ export class ResourceLimit {
 
   inc(offset = 1) {
     this.count += offset;
-    if (!this.isCanceled && (this.count & CLOCK_CHECK_MASK) < offset) {
+    if (!this.isCanceled) {
       if (Date.now() > this.deadline || this.signal?.aborted === true) {
         this.isCanceled = true;
         this.release();
-      } else if (this.isHeapNearlyFull()) {
+      } else if ((this.count & HEAP_CHECK_MASK) < offset && this.isHeapNearlyFull()) {
         // Z3's memory::allocate throws out_of_memory_error under scoped_suspend_rlimit too.
         throw new SmtMemoryOutError();
       }
@@ -102,7 +102,7 @@ export class ResourceLimit {
 }
 
 const HEAP_FRACTION = 0.8;
-const CLOCK_CHECK_MASK = 255;
+const HEAP_CHECK_MASK = 255;
 // HACK: Bun's getHeapStatistics walks every live object, which made a proof 100 times slower.
 const v8 =
   typeof process === "undefined" || process.versions.bun !== undefined
