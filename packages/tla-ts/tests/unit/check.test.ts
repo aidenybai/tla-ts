@@ -13878,6 +13878,10 @@ ASSUME TLCFP(a) = -887695703
       "---- MODULE T16 ----\nEXTENDS Naturals, TLC\nCONSTANT k\nVARIABLE y\nSt == y' = y + k\n====",
     ],
     ["T19", "---- MODULE T19 ----\nEXTENDS TLC\nTwo == 2\n===="],
+    [
+      "T20",
+      '---- MODULE T20 ----\nEXTENDS TLC\nVARIABLE y\nPr(v) == Print(<<"t20", v>>, TRUE)\n====',
+    ],
   ]);
 
   it.each([
@@ -14053,6 +14057,64 @@ ASSUME TLCFP(a) = -887695703
           (relation) => `${relation.label}: ${relation.distinct}:${relation.generated}`,
         ),
       ).toEqual(relations);
+    },
+  );
+
+  const getPrintOverrides = async (assumption: string, override: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS == INSTANCE TLC\nJ == INSTANCE T20 WITH y <- x\nP == INSTANCE T19\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nMyPrint(out, val) == PrintT(<<"my", out>>) /\\ val\nInit == x = 0\nNext == x' = x\nASSUME ${assumption}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT ${override}`,
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+    });
+    return printed;
+  };
+
+  it.each([
+    [
+      "Print <- MyPrint",
+      [
+        '<<"my", "r">>',
+        '"s"  TRUE',
+        '"j"  TRUE',
+        '"p"  TRUE',
+        '<<"my", <<"t20", 1>>>>',
+        '"l"  TRUE',
+        "<<TRUE, TRUE, TRUE, TRUE, TRUE, TRUE>>",
+      ],
+    ],
+    [
+      "Print <- [TLC] MyPrint",
+      [
+        '<<"my", "r">>',
+        '<<"my", "s">>',
+        '<<"my", "j">>',
+        '<<"my", "p">>',
+        '<<"my", <<"t20", 1>>>>',
+        '<<"my", "l">>',
+        "<<TRUE, TRUE, TRUE, TRUE, TRUE, TRUE>>",
+      ],
+    ],
+  ])(
+    "applies CONSTANT %s as TLC does, where a root override replaces only the definition a call names",
+    async (override, prints) => {
+      expect(
+        await getPrintOverrides(
+          'PrintT(<<Print("r", TRUE), S!Print("s", TRUE), J!Print("j", TRUE), P!Print("p", TRUE), J!Pr(1), LET R == INSTANCE TLC IN R!Print("l", TRUE)>>)',
+          override,
+        ),
+      ).toEqual(prints);
+    },
+  );
+
+  it.each([
+    ["Print <- MyPrint", '"i"  TRUE'],
+    ["Print <- [TLC] MyPrint", '<<"my", "i">>'],
+  ])(
+    "applies CONSTANT %s to Print through an instance with parameters as TLC does through one without, where it passes the Java method the instance's argument too and fails",
+    async (override, print) => {
+      expect(await getPrintOverrides('I(1)!Print("i", TRUE)', override)).toEqual([print]);
     },
   );
 

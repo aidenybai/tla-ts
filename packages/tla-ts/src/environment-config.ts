@@ -11,7 +11,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { LinkedModule } from "./environment";
 import type { Builtin } from "./evaluate";
 import { createLocalAlias } from "./instances";
-import type { Symbols } from "./resolve";
+import { KEY_SEPARATOR, type Symbols } from "./resolve";
 import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
   createEnumeratedSet,
@@ -45,6 +45,7 @@ interface LinkedSpecification {
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
   copySources: Map<string, CopySource>;
+  standardAliasBodies: Expression[];
   operatorConstants: Map<string, Value>;
   order: TlcOrder;
 }
@@ -430,6 +431,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     }
   });
   const substitutions = new Map<string, string>();
+  const rootSubstituted = new Set<string>();
   lastSubstitutions
     .filter((substitution) => !values.has(`!${substitution.target}`))
     .forEach((substitution) => {
@@ -438,10 +440,24 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       getSubstitutedKeys(substitution).forEach((key) => {
         if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
           setOperator(key, { ...builtin, arity: 0, isLazy: true });
-        } else substitutions.set(key, targetKey);
+        } else {
+          substitutions.set(key, targetKey);
+          if (substitution.module === undefined) rootSubstituted.add(key);
+        }
       });
     });
   [...substitutions.keys()].forEach((key) => constants.delete(key));
+  // SymbolNodeValueLookupProvider#lookup finds a root override on the OpDefNode, so an instance's own OpDefNode of a standard operator still reaches the Java override on its body.
+  const getUnsubstitutedKey = (key: string) => {
+    const builtin = rootSubstituted.has(key) ? linked.builtins.get(key) : undefined;
+    if (!builtin) return key;
+    linked.builtins.set(`${key}${KEY_SEPARATOR}`, builtin);
+    return `${key}${KEY_SEPARATOR}`;
+  };
+  linked.standardAliasBodies.forEach((body) => {
+    if (body.kind === "Apply") body.operator = getUnsubstitutedKey(body.operator);
+    else if (body.kind === "Identifier") body.name = getUnsubstitutedKey(body.name);
+  });
   const getOverride = createScopedOverrides(
     config,
     (module) => linked.moduleSymbols.get(module),
