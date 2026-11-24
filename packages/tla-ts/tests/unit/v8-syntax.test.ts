@@ -355,4 +355,18 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       { name: "two numeric separators", source: "1__0;", accepted: "1_0;" },
     ]);
   });
+
+  describe("regular expressions", () => {
+    checkCases([
+      { name: "an unterminated group", source: "/(/;", accepted: "/\\(/;" },
+      { name: "a flag twice", source: "/a/gg;", accepted: "/a/g;" },
+      {
+        name: "a capture group's name twice",
+        source: "/(?<a>.)(?<a>.)/;",
+        accepted: "/(?<a>.)|(?<a>.)/;",
+      },
+      { name: "an unknown property", source: "/\\p{Foo}/u;", accepted: "/\\p{L}/u;" },
+      { name: "u and v flags together", source: "/a/uv;", accepted: "/a/v;" },
+    ]);
+  });
 });
