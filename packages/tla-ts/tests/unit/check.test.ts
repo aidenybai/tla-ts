@@ -13950,6 +13950,59 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      'Next == I(1)!Print("a", FALSE)',
+      "INIT Init\nNEXT Next",
+      '"a"  FALSE',
+      "The next state action Next cannot be a constant.",
+    ],
+    [
+      'Start == I(1)!Print("a", TRUE)\nNext == x\' = x',
+      "INIT Start\nNEXT Next",
+      '"a"  TRUE',
+      "The initial predicate Start cannot be a constant.",
+    ],
+  ])(
+    "rejects %j as constant, as TLC does through an instance without parameters, where it passes the Java method the instance's argument too and fails",
+    async (definition, config, print, message) => {
+      const printed: string[] = [];
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+          config,
+          onPrint: (text) => printed.push(text),
+          loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+        }),
+      ).rejects.toThrow(message);
+      expect(printed).toEqual([print]);
+    },
+  );
+
+  it.each([
+    [
+      'Next == x < 2 /\\ x\' = x + 1\nInv == I(1)!Print("a", TRUE) /\\ x < 5',
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      3,
+    ],
+    ['ASSUME I(1)!Print("a", TRUE)\nNext == x\' = x', "INIT Init\nNEXT Next", 1],
+  ])(
+    "evaluates %j as TLC does through an instance without parameters, where it passes the Java method the instance's argument too and fails",
+    async (definition, config, count) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+        config,
+        onPrint: (text) => printed.push(text),
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect([result.status, printed]).toEqual([
+        "success",
+        Array.from({ length: count }, () => '"a"  TRUE'),
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",
       "I!A",
       "I!Q /\\ I!G >= 0",
