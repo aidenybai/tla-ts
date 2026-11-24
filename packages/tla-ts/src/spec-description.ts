@@ -34,6 +34,7 @@ import {
   forEachBinding,
   getBodyLiteral,
   getDefinition,
+  getLookupValue,
   getRootKey,
   getStartupValue,
   lookupScope,
@@ -849,7 +850,9 @@ export const getSubscriptVariables = (
     const called = resolveClosure(expression, innerScope, environment);
     if (!called || called.params.length !== getArguments(expression).length) return true;
     const definition = getCalledDefinition(expression, innerScope, environment);
-    if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
+    if (definition?.body === called.body && getLookupValue(definition, environment) !== undefined) {
+      return true;
+    }
     return collect(called.body, getCallScope(called, expression, innerScope, environment));
   };
   return collect(subscript, scope) ? variables : undefined;

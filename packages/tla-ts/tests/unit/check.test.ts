@@ -13137,6 +13137,38 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["Spec == L!SpK", 0],
+    ["Spec == L!SpLit", 0],
+    ["Spec == LET J == INSTANCE T13 WITH N <- 2, v <- x IN J!SpLit", 0],
+    ["Spec == L!SpKN", 1],
+    ["Spec == L!SpLitN", 1],
+    ["Spec == LET J == INSTANCE T13 WITH N <- 2, v <- x IN J!SpKN", 1],
+  ])(
+    "skips a literal definition in the subscript of %s, which TLC's SubscriptCollector looks up as a value, but not a substituted one",
+    async (spec, count) => {
+      const warnings: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T13 WITH N <- 2, v <- x\n${spec}\n====\n`,
+        config: "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n",
+        loadModule: (name) =>
+          name === "T13"
+            ? "---- MODULE T13 ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nK == 1\nKN == N\nLit(a) == 1\nLitN(a) == N\nIni == v = 0\nStp == v < 2 /\\ v' = v + 1\nSpK == Ini /\\ [][Stp]_<<v, K>>\nSpKN == Ini /\\ [][Stp]_<<v, KN>>\nSpLit == Ini /\\ [][Stp]_<<v, Lit(1)>>\nSpLitN == Ini /\\ [][Stp]_<<v, LitN(1)>>\n====\n"
+            : undefined,
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress.text);
+        },
+      });
+      expect(warnings).toEqual(
+        Array.from(
+          { length: count },
+          () =>
+            "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.",
+        ),
+      );
+    },
+  );
+
+  it.each([
     [
       "LET I2 == Init IN I2",
       "I2",

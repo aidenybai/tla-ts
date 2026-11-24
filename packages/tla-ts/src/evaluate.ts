@@ -1098,7 +1098,9 @@ export const getBodyLiteral = (body: Expression, environment: Environment): Valu
   if (body.kind === "Let" && environment.boundSubstitutions.lets.has(body)) {
     return getBodyLiteral(body.body, environment);
   }
-  return body.kind === "Number" || body.kind === "String" ? body.value : undefined;
+  return (body.kind === "Number" || body.kind === "String") && !substitutedExpressions.has(body)
+    ? body.value
+    : undefined;
 };
 
 export const getLookupValue = (definition: Definition, environment: Environment) =>
