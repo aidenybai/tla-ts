@@ -12504,6 +12504,61 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const OVERRIDDEN_ACTIONS =
+    "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Op(_)\nVARIABLE x\nStp(u) == u < 2 /\\ u' = u + 1\nMStp(u) == u < 2 /\\ u' = u + 1 /\\ TRUE\nInc(k) == x < 2 /\\ x' = x + k\nMInc(k) == x < 2 /\\ x' = x + k /\\ TRUE\nInit == x = 0\nNext == Stp(x) \\/ Inc(1)\nSpec == Init /\\ [][Stp(x) \\/ Inc(1)]_x\nNextOp == Op(x)\nInv == x < 2\n====";
+
+  it.each([
+    [
+      "INIT Init\nNEXT Next",
+      "Stp <- MStp",
+      "Stp line 10, col 9 to line 10, col 14 of module M",
+      "(10 9 10 14)",
+    ],
+    [
+      "SPECIFICATION Spec",
+      "Stp <- MStp",
+      "Stp line 11, col 20 to line 11, col 25 of module M",
+      "(11 20 11 25)",
+    ],
+    [
+      "INIT Init\nNEXT Next",
+      "Stp <- [M] MStp",
+      "Stp line 10, col 9 to line 10, col 14 of module M",
+      "(10 9 10 14)",
+    ],
+  ])(
+    "names the action of %j that calls Stp with a state-level argument by Stp under %j, as TLC's Tool#getActionsAppl names it by the operator the call applies",
+    async (behavior, override, label, call) => {
+      const result = await check({
+        source: OVERRIDDEN_ACTIONS,
+        config: `${behavior}\nCONSTANT Op <- MInc\n${override}\nInc <- MInc\nINVARIANT Inv`,
+        coverage: 1,
+      });
+      expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Init line 9, col 1 to line 9, col 4 of module M",
+        "MInc line 8, col 1 to line 8, col 7 of module M",
+        `Stp line 5, col 1 to line 5, col 6 of module M ${call}`,
+        "Inv line 13, col 1 to line 13, col 3 of module M",
+      ]);
+    },
+  );
+
+  it("names an action that calls an overridden operator constant by its substitute, where TLC's Tool#getActionsAppl throws a ClassCastException", async () => {
+    const result = await check({
+      source: OVERRIDDEN_ACTIONS,
+      config: "INIT Init\nNEXT NextOp\nCONSTANT Op <- MStp\nINVARIANT Inv",
+      coverage: 1,
+    });
+    const label = "MStp line 12, col 11 to line 12, col 15 of module M";
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 9, col 1 to line 9, col 4 of module M",
+      "MStp line 6, col 1 to line 6, col 7 of module M (12 11 12 15)",
+      "Inv line 13, col 1 to line 13, col 3 of module M",
+    ]);
+  });
+
   it.each([
     [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",

@@ -474,15 +474,22 @@ const getActions = (
     ];
   }
   const args = getArguments(expression);
+  const operatorName = getOperatorName(expression) ?? "";
   const calledName = isLocallyResolved(expression)
     ? called.name
-    : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
+    : (environment.instanceNames.get(operatorName) ?? called.name);
   const calledDefinition = getCalledDefinition(expression, scope, environment);
+  // Tool#getActionsAppl names an action it doesn't enter by the definition the call names, not by the one a configuration override puts in its place.
+  // Deviation from TLC: Tool#getActionsAppl throws a ClassCastException where an override replaces a constant operator, which this names by the substitute.
+  const namedDefinition = isLocallyResolved(expression)
+    ? undefined
+    : environment.definitions.get(operatorName);
   const callAction = (): SpecAction[] => [
     {
-      name: calledName,
+      name:
+        namedDefinition && namedDefinition !== calledDefinition ? namedDefinition.name : calledName,
       location: expression.location,
-      ...getDefinitionRanges(calledDefinition),
+      ...getDefinitionRanges(namedDefinition ?? calledDefinition),
       parameters: [],
       context,
       expression,
