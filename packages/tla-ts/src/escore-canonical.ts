@@ -43,7 +43,17 @@ const stop = (what: string): never => {
   );
 };
 
-const get = (record: Value, field: string) => applyFunction(record, field);
+const get = (record: Value, field: string) => {
+  if (
+    typeof record === "object" &&
+    record.kind === "Function" &&
+    record.functionClass === "record"
+  ) {
+    const index = record.domain.indexOf(field);
+    if (index !== -1) return record.range[index];
+  }
+  return applyFunction(record, field);
+};
 
 const getNumber = (record: Value, field: string) => {
   const value = get(record, field);
@@ -72,23 +82,64 @@ const isModelValue = (value: Value, name: string) =>
 const isAbsentOrEmpty = (value: Value) =>
   isModelValue(value, "Absent") || isModelValue(value, "Empty");
 
+const isPlainOf = (
+  value: Value,
+  functionClass: FunctionValue["functionClass"],
+): value is FunctionValue =>
+  typeof value === "object" &&
+  value.kind === "Function" &&
+  value.writtenKeys === undefined &&
+  value.functionClass === functionClass;
+
+const isEveryKept = (changed: Value[], values: Value[]) =>
+  changed.length === values.length && changed.every((inner, index) => inner === values[index]);
+
 // A function with each of its values changed, which keeps its domain and its class.
 const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): FunctionValue => {
   const functionValue = toFiniteFunction(value);
-  return setFunctionClass(
-    createSortedFunction(
-      functionValue.domain,
-      functionValue.range.map((inner, index) => change(inner, functionValue.domain[index])),
-    ),
-    functionValue.functionClass,
+  const range = functionValue.range.map((inner, index) =>
+    change(inner, functionValue.domain[index]),
   );
+  return functionValue.writtenKeys === undefined && isEveryKept(range, functionValue.range)
+    ? functionValue
+    : setFunctionClass(
+        createSortedFunction(functionValue.domain, range),
+        functionValue.functionClass,
+      );
 };
 
+const toTuple = (list: Value, elements: Value[]) =>
+  isPlainOf(list, "tuple") && isEveryKept(elements, list.range) ? list : createTuple(elements);
+
+const toRecord = (record: Value, fields: [string, Value][]) =>
+  isPlainOf(record, "record") &&
+  record.domain.length === fields.length &&
+  fields.every((field) => {
+    const index = record.domain.indexOf(field[0]);
+    return index !== -1 && record.range[index] === field[1];
+  })
+    ? record
+    : createRecord(fields);
+
 // [record EXCEPT !.field = change(@), ...].
-const except = (record: Value, changes: Record<string, (inner: Value) => Value>) =>
-  mapRange(record, (inner, key) =>
-    typeof key === "string" && Object.hasOwn(changes, key) ? changes[key](inner) : inner,
-  );
+const except = (record: Value, changes: Record<string, (inner: Value) => Value>) => {
+  const functionValue = toFiniteFunction(record);
+  let range: Value[] | undefined;
+  for (const key in changes) {
+    const index = functionValue.domain.indexOf(key);
+    if (index === -1) continue;
+    const changed = changes[key](functionValue.range[index]);
+    if (changed === functionValue.range[index]) continue;
+    range ??= functionValue.range.slice();
+    range[index] = changed;
+  }
+  return range === undefined && functionValue.writtenKeys === undefined
+    ? functionValue
+    : setFunctionClass(
+        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
+        functionValue.functionClass,
+      );
+};
 
 const heapGet = (heap: Value, index: number) => {
   const pages = getList(get(heap, "pages"));
@@ -98,12 +149,14 @@ const heapGet = (heap: Value, index: number) => {
 // A heap of records, whose each page is the page of the heap before that a canonicalization made,
 // where that page holds the same records, or else a page of its own, which this one makes.
 const createHeap = (records: Value[], before: Value, isIncremental: boolean) => {
-  const pages = getList(get(before, "pages"));
-  return createRecord([
+  const pagesBefore = get(before, "pages");
+  const pages = getList(pagesBefore);
+  return toRecord(before, [
     ["size", records.length],
     [
       "pages",
-      createTuple(
+      toTuple(
+        pagesBefore,
         Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, page) => {
           const kept = records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
           const previous = pages[page];
@@ -396,8 +449,8 @@ const moduleRefs = (module: Value, realm: Realm, refs: number[]) => {
 const NULL = createRecord([["type", "null"]]);
 
 // CanonicalStateOf of a state. Where isIncremental, a record that a canonicalization made stays as
-// it is, rather than renamed anew, where the walk numbers it and each node it refers to as their
-// numbers already are, which renaming gives back equal; and so does a page of such records. The
+// it is, rather than renamed anew, where the walk numbers each node it refers to as their numbers
+// already are, which renaming gives back equal; and so does a page of such records. The
 // state is then the same value, whose records and pages that a step left alone are the same
 // objects as before it, whose hashes they hold.
 const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean): Value => {
@@ -520,7 +573,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const renameValue = (value: Value): Value =>
     getString(value, "type") === "object" && getNumber(value, "id") > realm.objects
-      ? createRecord([
+      ? toRecord(value, [
           ["type", "object"],
           ["id", getNew(getNumber(value, "id"))],
         ])
@@ -530,7 +583,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     typeof environment === "number" && environment > realm.environments
       ? getNew(-environment)
       : environment;
-  const renameValues = (list: Value) => createTuple(getList(list).map(renameMaybe));
+  const renameValues = (list: Value) => toTuple(list, getList(list).map(renameMaybe));
   const renameDescriptor = (descriptor: Value) =>
     except(descriptor, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
   const renameElement = (element: Value) => {
@@ -539,14 +592,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       ? except(renamed, { init: renameMaybe, initializers: renameValues })
       : renamed;
   };
-  const renameElements = (list: Value) => createTuple(getList(list).map(renameElement));
+  const renameElements = (list: Value) => toTuple(list, getList(list).map(renameElement));
   const renameSlots = (object: Value) => {
     const objectClass = getString(object, "class");
     const slots = get(object, "slots");
     if (PLAIN_CLASSES.has(objectClass)) {
       return except(slots, {
         initializers: renameValues,
-        trace: () => createRecord([["dropped", true]]),
+        trace: (trace) => toRecord(trace, [["dropped", true]]),
       });
     }
     if (VIEW_CLASSES.has(objectClass)) return except(slots, { buffer: renameMaybe });
@@ -564,11 +617,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       case "map":
         return except(slots, {
           mapData: (inner) =>
-            createTuple(
+            toTuple(
+              inner,
               getList(inner)
                 .filter((entry) => !isModelValue(entry, "Empty"))
                 .map((entry) =>
-                  createRecord([
+                  toRecord(entry, [
                     ["key", renameMaybe(get(entry, "key"))],
                     ["value", renameMaybe(get(entry, "value"))],
                   ]),
@@ -578,7 +632,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       case "set":
         return except(slots, {
           setData: (inner) =>
-            createTuple(
+            toTuple(
+              inner,
               getList(inner)
                 .filter((entry) => !isModelValue(entry, "Empty"))
                 .map(renameMaybe),
@@ -647,13 +702,19 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
             ? []
             : [{ key: buckets.domain[position], bucket: mapRange(bucket, renameDescriptor) }],
         );
-        return setFunctionClass(
-          createSortedFunction(
-            kept.map((entry) => entry.key),
+        return buckets.writtenKeys === undefined &&
+          isEveryKept(
             kept.map((entry) => entry.bucket),
-          ),
-          buckets.functionClass,
-        );
+            buckets.range,
+          )
+          ? buckets
+          : setFunctionClass(
+              createSortedFunction(
+                kept.map((entry) => entry.key),
+                kept.map((entry) => entry.bucket),
+              ),
+              buckets.functionClass,
+            );
       },
       privs: renameElements,
       slots: () => renameSlots(object),
@@ -689,7 +750,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) =>
     isIncremental &&
     isCanonical(record) &&
-    isUnmoved(node) &&
     (node < 0 || !WEAK_CLASSES.has(getString(record, "class"))) &&
     references.get(node)?.every(isUnmoved) === true
       ? record
@@ -721,7 +781,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     hostHandler: renameMaybe,
     hostImport: renameMaybe,
     modules: (inner) =>
-      createTuple(
+      toTuple(
+        inner,
         getList(inner).map((module) =>
           except(module, {
             env: (environment) =>
@@ -735,7 +796,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
             capability: (capability) =>
               isModelValue(capability, "Empty")
                 ? capability
-                : createRecord([
+                : toRecord(capability, [
                     ["promise", renameValue(get(capability, "promise"))],
                     ["resolve", renameMaybe(get(capability, "resolve"))],
                     ["reject", renameMaybe(get(capability, "reject"))],
@@ -743,14 +804,22 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           }),
         ),
       ),
-    hoisted: (inner) =>
-      createSet(
-        toFiniteSet(inner)
-          .elements.map(getList)
-          .filter((pair) => Number(pair[0]) <= realm.environments || numbers.has(-Number(pair[0])))
-          .map((pair) => createTuple([renameEnvironment(pair[0]), pair[1]])),
-      ),
-    out: () => createTuple([]),
+    hoisted: (inner) => {
+      const set = toFiniteSet(inner);
+      const elements = set.elements
+        .filter((pair) => {
+          const environment = Number(getList(pair)[0]);
+          return environment <= realm.environments || numbers.has(-environment);
+        })
+        .map((pair) => {
+          const elements = getList(pair);
+          return toTuple(pair, [renameEnvironment(elements[0]), elements[1]]);
+        });
+      return set.writtenElements === undefined && isEveryKept(elements, set.elements)
+        ? set
+        : createSet(elements);
+    },
+    out: (inner) => toTuple(inner, []),
   });
 };
 
