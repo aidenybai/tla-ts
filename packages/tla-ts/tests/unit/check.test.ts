@@ -12453,6 +12453,57 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each(
+    [false, true].flatMap((isShadowed) => [
+      {
+        spec: "Sp",
+        isShadowed,
+        actions: ["Stp line 4, col 1 to line 4, col 6 of module T6 (11 23 11 28)"],
+      },
+      {
+        spec: "SpNx",
+        isShadowed,
+        actions: ["Nx line 6, col 1 to line 6, col 5 of module T6 (12 25 12 29)"],
+      },
+      {
+        spec: "SpNever",
+        isShadowed,
+        actions: [
+          "Never line 7, col 1 to line 7, col 5 of module T6 (13 28 13 32)",
+          "Shut line 8, col 1 to line 8, col 4 of module T6 (13 37 13 40)",
+          "Stp line 4, col 1 to line 4, col 6 of module T6 (13 45 13 50)",
+        ],
+      },
+      {
+        spec: "SpY2",
+        isShadowed,
+        actions: ["Stp line 4, col 1 to line 4, col 6 of module T6 (14 33 14 38)"],
+      },
+    ]),
+  )(
+    "takes the definitions L!$spec(x) calls from T6 (M defines the same names: $isShadowed), as TLC's actions keep the OpDefNode they apply",
+    async (item) => {
+      const warnings: CheckProgress[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${item.isShadowed ? "Stp(a) == a\nNx(a) == a\nNever == TRUE\nShut == TRUE\nYes2 == x = 0\nK == x" : "Pad == 0"}\nL == INSTANCE T6\nSpec == L!${item.spec}(x)\n====`,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T6"
+            ? "---- MODULE T6 ----\nEXTENDS Naturals\nIni(u) == u = 0\nStp(u) == u < 2 /\\ u' = u + 1\nStay(u) == u' = u\nNx(u) == Stp(u) \\/ Stay(u)\nNever == FALSE\nShut == LET z == 1 IN z = 2\nYes2 == 1 = 1\nK == 1\nSp(u) == Ini(u) /\\ [][Stp(u)]_u\nSpNx(u) == Ini(u) /\\ [][Nx(u)]_u\nSpNever(u) == Ini(u) /\\ [][Never \\/ Shut \\/ Stp(u)]_u\nSpY2(u) == Ini(u) /\\ Yes2 /\\ [][Stp(u)]_<<u, K>>\n===="
+            : undefined,
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress);
+        },
+      });
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Action line 3, col 11 to line 3, col 15 of module T6",
+        ...item.actions,
+      ]);
+      expect(warnings).toEqual([]);
+    },
+  );
+
   it.each([
     [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",
