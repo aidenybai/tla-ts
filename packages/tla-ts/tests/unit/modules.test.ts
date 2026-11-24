@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
+import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { getModuleLoader } from "./check-harness";
 
@@ -62,6 +62,31 @@ describe("nested and trailing modules match TLC", () => {
         config: "CONSTANT Limit = [Nested]3\nSPECIFICATION Spec\n",
       }),
     ).rejects.toThrow(TlaConfigError);
+  });
+});
+
+describe("prepared modules", () => {
+  it("checks a module prepared as its tree alone without printing its text", async () => {
+    const texts: string[] = [];
+    const text = "---- MODULE Tree ----\nEXTENDS Naturals\nStart == 1\n====";
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Tree\nVARIABLE v\nInit == v = Start\nNext == UNCHANGED v\n====`,
+      config: "INIT Init\nNEXT Next",
+      preparedModules: [
+        {
+          name: "Tree",
+          get text() {
+            texts.push(text);
+            return text;
+          },
+          tokens: [],
+          module: parseModule(text),
+          levels: undefined,
+        },
+      ],
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+    expect(texts).toEqual([]);
   });
 });
 
