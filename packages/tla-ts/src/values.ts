@@ -337,6 +337,9 @@ const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key ===
 
 const SELF_COMPARED_FLAG = 1;
 
+export const isScalarValue = (value: Value) =>
+  typeof value !== "object" || value.kind === "ModelValue";
+
 const hasCompoundKeys = (domain: Value[]) => {
   if (domain.length === 0) return false;
   const last = domain[domain.length - 1];
@@ -1032,7 +1035,33 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
-export const createCanonicalizer = () => {
+const hasUnhashedLazyPart = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "Set":
+      if (value.hash !== 0) return false;
+      for (let index = 0; index < value.elements.length; index++) {
+        if (hasUnhashedLazyPart(value.elements[index])) return true;
+      }
+      return false;
+    case "Function":
+      if (value.hash !== 0) return false;
+      for (let index = 0; index < value.domain.length; index++) {
+        if (hasUnhashedLazyPart(value.domain[index]) || hasUnhashedLazyPart(value.range[index])) {
+          return true;
+        }
+      }
+      return false;
+    case "ModelValue":
+    case "Interval":
+    case "InfiniteSet":
+      return false;
+    default:
+      return true;
+  }
+};
+
+export const createCanonicalizer = (isViewed = false) => {
   const canonicalValues = new Map<number, Value | Value[]>();
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
@@ -1059,6 +1088,15 @@ export const createCanonicalizer = () => {
     else canonicalValues.set(hash, [bucket, value]);
     return value;
   };
+  // Under a VIEW, TLCStateMut#fingerPrint only deep-normalizes a state, which leaves its filters unconverted.
+  if (isViewed) {
+    return (state: Value[]) => {
+      for (let index = 0; index < state.length; index++) {
+        if (!hasUnhashedLazyPart(state[index])) state[index] = canonicalize(state[index]);
+      }
+      return state;
+    };
+  }
   return (state: Value[]) => {
     for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
     return state;
@@ -1479,12 +1517,14 @@ const normalizeDeeplyWithin = (
     case "Set":
       value.isNormalized = true;
       for (let index = 0; index < value.elements.length; index++) {
-        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+        const element = value.elements[index];
+        if (!isScalarValue(element)) pending = normalizeDeeplyWithin(element, depth + 1, pending);
       }
       return pending;
     case "MixedSet":
       for (let index = 0; index < value.elements.length; index++) {
-        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+        const element = value.elements[index];
+        if (!isScalarValue(element)) pending = normalizeDeeplyWithin(element, depth + 1, pending);
       }
       toFiniteSet(value);
       return pending;
@@ -1492,8 +1532,10 @@ const normalizeDeeplyWithin = (
       // FcnRcdValue#deepNormalize normalizes its values but only sorts its domain.
       value.writtenKeys = undefined;
       for (let index = 0; index < value.domain.length; index++) {
-        markNormalized(value.domain[index]);
-        pending = normalizeDeeplyWithin(value.range[index], depth + 1, pending);
+        const key = value.domain[index];
+        const item = value.range[index];
+        if (!isScalarValue(key)) markNormalized(key);
+        if (!isScalarValue(item)) pending = normalizeDeeplyWithin(item, depth + 1, pending);
       }
       return pending;
     case "LazyFunction": {
@@ -2176,7 +2218,7 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
   }
 };
 
-export const hasLazyPart = (value: Value) => {
+const findLazyPart = (value: Value, isAnyLazy: boolean) => {
   if (typeof value !== "object" || value.kind === "ModelValue") return false;
   const pending: Value[] = [value];
   for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
@@ -2192,9 +2234,11 @@ export const hasLazyPart = (value: Value) => {
           pending.push(inner.domain[index], inner.range[index]);
         }
         break;
+      case "InfiniteSet":
+        if (isAnyLazy && inner === ANY_SET) return true;
+        break;
       case "ModelValue":
       case "Interval":
-      case "InfiniteSet":
         break;
       default:
         return true;
@@ -2203,9 +2247,11 @@ export const hasLazyPart = (value: Value) => {
   return false;
 };
 
+export const hasLazyPart = (value: Value) => findLazyPart(value, false);
+
 const hasLazyValue = (values: Value[]) => {
   for (let index = 0; index < values.length; index++) {
-    if (hasLazyPart(values[index])) return true;
+    if (findLazyPart(values[index], true)) return true;
   }
   return false;
 };

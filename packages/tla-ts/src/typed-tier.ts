@@ -56,6 +56,7 @@ import {
   getStreamedElements,
   isEnumerable,
   isSameValue,
+  isScalarValue,
   toFiniteFunction,
   toFiniteSet,
   type FunctionValue,
@@ -991,8 +992,6 @@ const getRecordShapes = (resolved: RecType) =>
     };
   });
 
-const isScalar = (value: Value) => typeof value !== "object" || value.kind === "ModelValue";
-
 // Generates code that fingerprints a state's plains in the order given, as TLC fingerprints the
 // values they stand for, into words as its low and high words. A projection fingerprints as the
 // tuple it stands for. Scalars it knows, such as atoms and field names, extend by their extensions.
@@ -1041,7 +1040,7 @@ const createStateFingerprinter = (types: Type[], order: Projection[], plains: Pl
       );
       return `{ const ${name} = ${plain}; ${code.function(String(items.length))} ${items.join(" ")} }`;
     }
-    if (resolved.kind === "Fn" && resolved.domain.every(isScalar)) {
+    if (resolved.kind === "Fn" && resolved.domain.every(isScalarValue)) {
       const domain = domains.push(Int32Array.from(resolved.domain.flatMap(getScalarExtension))) - 1;
       const index = `3 * i${name}`;
       return `{ const ${name} = ${plain}; const d${name} = D[${domain}]; ${code.function(`${name}.length`)} for (let i${name} = 0; i${name} < ${name}.length; i${name}++) { ${code.scalar(`d${name}[${index}]`, `d${name}[${index} + 1]`, `d${name}[${index} + 2]`)} ${getCode(resolved.range, `${name}[i${name}]`)} } }`;

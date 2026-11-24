@@ -22,10 +22,11 @@ import {
   formatRange,
 } from "./errors";
 import {
+  createViewTracingEnvironment,
   describeRange,
   getDefinition,
   getRootKey,
-  type CallStack,
+  type Environment,
   type FingerprintFailure,
   type State,
 } from "./evaluate";
@@ -600,10 +601,27 @@ const searchStates = (
   const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
     throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
   };
-  const createReplayedStates = () => {
+  const createReplayedStates = (tracing: Environment) => {
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
-    return (state: Value[], callStack: CallStack | undefined) => {
-      fingerprintReplayed(getFingerprintState(state), callStack, coverage);
+    const callStack = tracing.callStack;
+    const viewTracing = createViewTracingEnvironment(tracing);
+    const getReplayedFingerprintState = (state: Value[]) => {
+      try {
+        return getFingerprintState(state, viewTracing);
+      } catch (error) {
+        const fingerprint = viewTracing.callStack?.fingerprint;
+        if (callStack && fingerprint) {
+          callStack.expressions.length = 0;
+          callStack.isFrozen = true;
+          callStack.fingerprint = fingerprint;
+        }
+        const isViewFailed = viewTracing.callStack?.isFrozen === true;
+        if (!isViewFailed) fingerprintReplayed(state, callStack, coverage);
+        throw error;
+      }
+    };
+    return (state: Value[]) => {
+      fingerprintReplayed(getReplayedFingerprintState(state), callStack, coverage);
       const fingerprintState = getFingerprintState(state);
       const hash = getStateHash(fingerprintState);
       const isSeen =
@@ -619,8 +637,8 @@ const searchStates = (
   const replayInit = () => {
     let replayedCount = 0;
     const deferred: unknown[] = [];
-    const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
+      const addReplayed = createReplayedStates(tracing);
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
         reportInitialStatesProgress(replayedCount, (progress) =>
           output.getCapturedLines()?.push(progress),
@@ -630,7 +648,7 @@ const searchStates = (
         if (deferred.length > 0) return;
         try {
           const addFingerprint = () => {
-            if (!addReplayed(state, tracing.callStack)) return;
+            if (!addReplayed(state)) return;
             runtime.queueSize++;
             liveness?.addInitialState(states.length, state, tracing);
           };
@@ -660,10 +678,10 @@ const searchStates = (
     getReplayFailure(environment, (tracing) => {
       const state = states[index];
       const source = stateWriter && getGraphState(state, depths[index]);
-      const addReplayed = createReplayedStates();
+      const addReplayed = createReplayedStates(tracing);
       replaySuccessors(coverage ? coverageActions : nextActions, state, tracing, (next, action) => {
         const addFingerprint = () => {
-          const isUnseen = addReplayed(next, tracing.callStack);
+          const isUnseen = addReplayed(next);
           if (source) {
             stateWriter?.writeSuccessor(
               source,
@@ -805,7 +823,9 @@ const searchStates = (
     return -2 - position;
   };
   // TLC's states keep their own values, and coverage charges the cost model each value carries.
-  const canonicalizeState = coverage ? (state: Value[]) => state : createCanonicalizer();
+  const canonicalizeState = coverage
+    ? (state: Value[]) => state
+    : createCanonicalizer(search.isViewed);
 
   const toRecord = search.toRecord;
   // TLC's TLCGet("level") is 0 in the initial predicate and 1 in an initial state, also as TLC rebuilds one for a trace while it explores another state.
@@ -1685,18 +1705,18 @@ const searchStates = (
         const behavior = traceError
           ? traces.getStateTrace(index, { isPrintedOnly: true })
           : traces.getTrace(index, successor, { isPrintedOnly: true });
-        const traceFailure =
+        const rebuilt =
           traceError &&
-          getTraceFailure(
-            traceError,
-            captureOutput(() => {
-              try {
-                traces.findStepAction(index, state, successor.state, true);
-              } catch (failed) {
-                if (!(failed instanceof TlaEvaluationError)) throw failed;
-              }
-            }).lines,
-          );
+          captureOutput(() => {
+            try {
+              traces.findStepAction(index, state, successor.state, true);
+              return traceError;
+            } catch (failed) {
+              if (!(failed instanceof TlaEvaluationError)) throw failed;
+              return failed;
+            }
+          });
+        const traceFailure = rebuilt && getTraceFailure(rebuilt.result, rebuilt.lines);
         const replay = is174
           ? captureOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);

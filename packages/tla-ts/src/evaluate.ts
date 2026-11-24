@@ -247,6 +247,7 @@ export interface Environment {
 export interface CallStack {
   expressions: Expression[];
   isFrozen: boolean;
+  isSourcing: boolean;
   sources: WeakMap<ObjectValue, Expression>;
   values: WeakMap<Expression, Value>;
   failures: WeakMap<Error, Expression>;
@@ -1834,7 +1835,12 @@ const traceEvaluator =
         if (node !== undefined) coverage.values.set(value, node);
       }
       callStack.values.set(expression, value);
-      if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
+      if (
+        callStack.isSourcing &&
+        typeof value === "object" &&
+        value.kind !== "FilteredSet" &&
+        isSourced(expression)
+      ) {
         callStack.sources.set(value, expression);
       }
       return value;
@@ -1871,10 +1877,7 @@ export const freezeCallStack = (
   values: (Value | undefined)[],
   error: unknown,
 ) => {
-  const sources = [...new Set(values)].flatMap((item) => {
-    const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
-    return source ? [source] : [];
-  });
+  const sources = getValueSources(callStack, values);
   const isFingerprinted = sources.length > 0 && error instanceof TlaEvaluationError;
   // TLC's CallStackTool doesn't catch the WrongInvocationException of -maxSetSize, so it pops the frames.
   if (!isFingerprinted && error instanceof TlaSetBoundError) return;
@@ -1889,13 +1892,25 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
-const headFingerprint = (callStack: CallStack, source: Expression, error: unknown) => {
+const getValueSources = (callStack: CallStack, values: (Value | undefined)[]) =>
+  [...new Set(values)].flatMap((item) => {
+    const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
+    return source ? [source] : [];
+  });
+
+const headFingerprint = (
+  callStack: CallStack,
+  source: Expression,
+  error: unknown,
+  depth: number,
+) => {
   if (!(error instanceof TlaEvaluationError)) return;
-  if (!callStack.isFrozen) callStack.expressions.push(source);
+  const sources = [source, ...getValueSources(callStack, setTrace.sets?.splice(depth) ?? [])];
+  if (!callStack.isFrozen) callStack.expressions.push(...sources);
   callStack.isFrozen = true;
   const inner = callStack.fingerprint;
   callStack.fingerprint = {
-    sources: [source, ...(inner?.sources ?? [])],
+    sources: [...sources, ...(inner?.sources ?? [])],
     reason: inner?.reason ?? error.message,
   };
 };
@@ -1908,7 +1923,20 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   callStack: {
     expressions: [],
     isFrozen: false,
+    isSourcing: true,
     sources: new WeakMap(),
+    values: new WeakMap(),
+    failures: new WeakMap(),
+  },
+});
+
+export const createViewTracingEnvironment = (tracing: Environment): Environment => ({
+  ...createTracingEnvironment(tracing),
+  callStack: {
+    expressions: [],
+    isFrozen: false,
+    isSourcing: false,
+    sources: tracing.callStack?.sources ?? new WeakMap(),
     values: new WeakMap(),
     failures: new WeakMap(),
   },
@@ -2746,10 +2774,11 @@ export const getFunctionBuilder = (
           domain.factors.every(isReducibleSet);
     if (isLazy || context.isKeepLazy || !isReducibleDomain) return createLazy(domain, context);
     if (!callStack) return construct(domain, context);
+    const depth = setTrace.sets?.length ?? 0;
     try {
       return construct(domain, context);
     } catch (error) {
-      headFingerprint(callStack, expression, error);
+      headFingerprint(callStack, expression, error, depth);
       throw error;
     }
   };

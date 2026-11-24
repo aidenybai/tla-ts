@@ -13371,6 +13371,29 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["<<1, F>>", "{1} # x[2]", "\nVIEW V", ['"c"', "{}", "{1}", '"d"', "{}", "{1}"]],
+    ["<<1, F>>", "{1} # x[2]", "", ["{}", "{1}", '"c"', '"d"']],
+    ["<<1, {F}>>", "x[2] = x[2]", "\nVIEW V", ['"c"', "{}", "{1}", '"d"']],
+    [
+      "<<1, [k \\in {1} |-> F]>>",
+      "{1} # x[2][1]",
+      "\nVIEW V",
+      ['"c"', "{}", "{1}", '"d"', "{}", "{1}"],
+    ],
+  ])(
+    "leaves the filter in the state %s unconverted until %s compares it, under a VIEW only, as TLCStateMut#fingerPrint then only deep-normalizes the state",
+    async (value, comparison, view, printed) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nF == {s \\in SUBSET {1} : PrintT(s)}\nV == x[1]\nInit == x = <<0, 0>>\nNext == (x[1] = 0 /\\ x' = ${value}) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>> /\\ PrintT("c") /\\ ${comparison} /\\ PrintT("d") /\\ ${comparison})\n====`,
+        config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE${view}`,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(printed);
+    },
+  );
+
   it("charges a filter that the initial state holds once, as TLC's fingerprint keeps the set", async () => {
     const relations = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = {u \\in (0..1) \\X {1} : u[2] = 1}\nNext == x' = x /\\ (\\A o \\in {v \\in x : TRUE} : TRUE)\nInv == TRUE\n====",
