@@ -646,11 +646,10 @@ export abstract class BvInternalize extends ThSolver {
   private internalizeRepeat(expr: number) {
     const manager = this.manager;
     const arg = manager.getArg(expr, 0);
-    const concat = mkBvApp(
-      manager,
-      OP_CONCAT,
-      Array.from({ length: this.getParameter(expr, 0) }, () => arg),
-    );
+    const count = this.getParameter(expr, 0);
+    const args: number[] = [];
+    for (let index = 0; index < count; index++) args.push(arg);
+    const concat = mkBvApp(manager, OP_CONCAT, args);
     this.mkBits((this.expr2enode(expr) as Enode).getThVar(this.id));
     this.addUnit(this.eqInternalize(expr, concat));
   }

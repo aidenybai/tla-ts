@@ -329,9 +329,7 @@ export class BvRewriter extends PolyRewriter {
       case OP_EXTRACT:
         return this.mkExtract(parameters[0], parameters[1], args[0]);
       case OP_REPEAT:
-        return parameters[0] === 1
-          ? args[0]
-          : rewrite(this.mkConcatTerm(Array.from({ length: parameters[0] }, () => args[0])), 1);
+        return this.mkRepeat(parameters[0], args[0]);
       case OP_ZERO_EXT:
         return this.mkZeroExtend(parameters[0], args[0]);
       case OP_SIGN_EXT:
@@ -1129,9 +1127,17 @@ export class BvRewriter extends PolyRewriter {
     const size = this.getSize(arg);
     if (value !== undefined) return this.mkBv(this.norm(value, size, true), size + amount);
     const sign = this.mkExtractTerm(size - 1, size - 1, arg);
-    const args = Array.from({ length: amount }, () => sign);
+    const args: number[] = [];
+    for (let index = 0; index < amount; index++) args.push(sign);
     args.push(arg);
     return rewrite(this.mkConcatTerm(args), 2);
+  }
+
+  private mkRepeat(count: number, arg: number): number | Rewrite {
+    if (count === 1) return arg;
+    const args: number[] = [];
+    for (let index = 0; index < count; index++) args.push(arg);
+    return rewrite(this.mkConcatTerm(args), 1);
   }
 
   private isSorted(args: number[]) {

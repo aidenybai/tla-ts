@@ -364,8 +364,12 @@ export class SmtMemoryOutError extends TlaError {
   }
 }
 
-// Z3 runs out of memory where V8 can't hold a BigInt past 2^30 bits or a string past 2^29 - 24 chars.
-const V8_SIZE_LIMIT_MESSAGES = new Set(["Maximum BigInt size exceeded", "Invalid string length"]);
+// V8's limits of 2^30 BigInt bits, 2^29 - 24 chars and 2^27 elements, where Z3 runs out of memory.
+const V8_SIZE_LIMIT_MESSAGES = new Set([
+  "Maximum BigInt size exceeded",
+  "Invalid string length",
+  "Invalid array length",
+]);
 
 export const toSmtMemoryOutError = (error: unknown) =>
   error instanceof RangeError && V8_SIZE_LIMIT_MESSAGES.has(error.message)
