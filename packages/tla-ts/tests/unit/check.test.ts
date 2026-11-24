@@ -9700,6 +9700,41 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "<<G>> = 1",
+      [
+        "line 6, col 9 to line 6, col 14 of module M: 0",
+        "|line 6, col 14 to line 6, col 14 of module M: 2",
+        "line 6, col 19 to line 6, col 27 of module M: 2",
+        "|line 6, col 19 to line 6, col 23 of module M: 2:2",
+        "||line 6, col 21 to line 6, col 21 of module M: 2",
+      ],
+    ],
+    [
+      "\\E y \\in {1} : <<G>> = y",
+      [
+        "line 6, col 9 to line 6, col 14 of module M: 0",
+        "|line 6, col 14 to line 6, col 14 of module M: 2",
+        "line 6, col 19 to line 6, col 42 of module M: 2",
+        "|line 6, col 34 to line 6, col 42 of module M: 2",
+        "||line 6, col 34 to line 6, col 38 of module M: 2:2",
+        "|||line 6, col 36 to line 6, col 36 of module M: 2",
+        "||line 6, col 42 to line 6, col 42 of module M: 2",
+        "|line 6, col 28 to line 6, col 30 of module M: 2:4",
+      ],
+    ],
+  ])(
+    "counts nothing for the predicate of a constant filter that the replay of %s prints",
+    async (body, rows) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nG == {s \\in SUBSET {1} : s = {}}\nInit == x = 0\nNext == x' = x /\\ ${body}\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.at(-1)).toEqual(rows);
+    },
+  );
+
   it("charges each draw of a filter from a converted Cartesian product, as TLC's SetOfTuplesValue enumerates the SetEnumValue it keeps", async () => {
     expect(
       await getNextCoverageLines(

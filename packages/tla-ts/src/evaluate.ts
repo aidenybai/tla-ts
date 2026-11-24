@@ -2774,13 +2774,19 @@ export const getLazyFilter = (
       }
       return value;
     };
-    const rebind = (tracing: Environment) =>
-      createFiltered(
+    const rebind = (tracing: Environment) => {
+      const traced = getEvaluator(expression.predicate, tracing);
+      const tracedCoverage = tracing.coverage;
+      return createFiltered(
         base,
         { ...context, environment: tracing },
-        getEvaluator(expression.predicate, tracing),
+        // A SetPredValue built outside any cost model, as a constant definition's is, records nothing when the trace runs its predicate again.
+        tracedCoverage && node < 0
+          ? (tracedContext) => runAtCoverageNode(tracedCoverage, -1, () => traced(tracedContext))
+          : traced,
         node,
       );
+    };
     if (!coverage || node < 0) {
       if (isTestObserved) {
         return {
