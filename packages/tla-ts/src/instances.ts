@@ -24,6 +24,7 @@ import {
   hasNoOperands,
   isBefore,
   isInstantiated,
+  KEY_SEPARATOR,
   LOCAL_RESOLUTION,
   untracedExpressions,
 } from "./resolve";
@@ -44,6 +45,8 @@ export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
+
+export const isCalledCopy = (definition: Definition) => definition.name.includes(KEY_SEPARATOR);
 
 // TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
 export const getActionPredicate = (expression: Expression) =>

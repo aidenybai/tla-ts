@@ -11,13 +11,14 @@ import { formatRange } from "./errors";
 import {
   frameSubstitutions,
   getActionPredicate,
+  isCalledCopy,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
   syntheticIdentifiers,
   type Substitution,
 } from "./instances";
-import { isInstantiated, KEY_SEPARATOR, SELECTION_NAME, untracedExpressions } from "./resolve";
+import { isInstantiated, SELECTION_NAME, untracedExpressions } from "./resolve";
 import { describeNode, getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
@@ -610,9 +611,7 @@ export const buildCoverage = (
           const walked = new Map<string, number[]>();
           getHashtableOrder(expression.definitions).forEach((definition) => {
             // SANY's LetInNode holds the definitions a LET instance exports, not the copies they call.
-            if (definition.name === SELECTION_NAME || definition.name.includes(KEY_SEPARATOR)) {
-              return;
-            }
+            if (definition.name === SELECTION_NAME || isCalledCopy(definition)) return;
             const start = coverage.expressions.length;
             walkDefinition({ definition, scope: inner });
             if (!isInstantiated(definition)) return;

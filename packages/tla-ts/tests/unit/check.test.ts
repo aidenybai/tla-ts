@@ -13320,6 +13320,81 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "ENABLED L!Act",
+      [
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 72 of module M: 3",
+      ],
+    ],
+    [
+      "ENABLED L!ActBoth",
+      [
+        "line 8, col 12 to line 8, col 29 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 76 of module M: 3",
+        "|line 8, col 42 to line 8, col 47 of module M: 3",
+        "|line 8, col 55 to line 8, col 55 of module M: 6",
+      ],
+    ],
+    [
+      "ENABLED (L!Act /\\ L!Grd)",
+      [
+        "line 5, col 8 to line 5, col 13 of module Pure5: 3",
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 83 of module M: 3",
+        "|line 8, col 42 to line 8, col 47 of module M: 6",
+        "|line 8, col 55 to line 8, col 55 of module M: 3",
+      ],
+    ],
+    [
+      "ENABLED (L!Act /\\ L!Act)",
+      [
+        "line 7, col 8 to line 7, col 24 of module Pure5: 6",
+        "line 8, col 60 to line 8, col 83 of module M: 3",
+        "|line 8, col 69 to line 8, col 82 of module M: 6",
+      ],
+    ],
+    [
+      "L!Grd /\\ ENABLED L!Act",
+      [
+        "line 5, col 8 to line 5, col 13 of module Pure5: 3",
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 81 of module M: 3",
+        "|line 8, col 60 to line 8, col 64 of module M: 3",
+        "|line 8, col 69 to line 8, col 81 of module M: 3",
+        "||line 8, col 42 to line 8, col 47 of module M: 6",
+        "||line 8, col 55 to line 8, col 55 of module M: 3",
+      ],
+    ],
+    [
+      "L!Both /\\ ENABLED L!ActBoth",
+      [
+        "line 6, col 9 to line 6, col 20 of module Pure5: 3",
+        "line 8, col 12 to line 8, col 29 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 86 of module M: 3",
+        "|line 8, col 60 to line 8, col 65 of module M: 3",
+        "|line 8, col 70 to line 8, col 86 of module M: 3",
+        "||line 8, col 42 to line 8, col 47 of module M: 6",
+        "||line 8, col 55 to line 8, col 55 of module M: 9",
+      ],
+    ],
+  ])(
+    "counts a definition that the instanced body of %s calls in the caller's node, as TLC's Tool#enabled finds it as an OpDefNode, not the LET's LazyValue",
+    async (body, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nBound == x < 2\nNext == x' = x + 1\nLvl(e) == 1\nInv == LET L == INSTANCE Pure5 WITH c <- Lvl(x), v <- x IN ${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure5"
+            ? "---- MODULE Pure5 ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nGrd == c >= 0\nBoth == Grd /\\ v < 5\nAct == v' = v + 1 /\\ Grd\nActBoth == v' = v + 1 /\\ Both\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.[2]).toEqual(lines);
+    },
+  );
+
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
