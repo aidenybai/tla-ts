@@ -67,6 +67,18 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  it("lists globalThis's names in the order of Node's main thread, not of the CLI's worker", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "order.mts"),
+      'const names = Object.getOwnPropertyNames(globalThis);\nif (names.indexOf("WebAssembly") < names.indexOf("process")) throw new Error("order");\n',
+    );
+    expect(runNode(directory, "order.mts").status).toBe(0);
+    const result = runCli(directory, ["order.mts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+  });
+
   // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
   // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
