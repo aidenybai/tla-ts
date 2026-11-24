@@ -257,6 +257,43 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // Each call that an ASSUME checks gives what it throws as a value, so every export that throws is
+  // printed with its message, rather than the first that throws stopping the checks of the rest,
+  // and the last ASSUME fails with the first one's message, as TLC fails at the first false one.
+  describe("reports each export that throws, with its own message", () => {
+    const getModel = (secondThrows: string) =>
+      `export const first = (n: 0 | 1 | 2) => {\n  if (n === 1) throw new Error("first " + n);\n  return n;\n};\nexport const second = (flag: boolean) => {\n  if (${secondThrows}) throw new RangeError("second " + flag);\n  return flag;\n};\nexport const third = (n: 0 | 1) => n + 1;\n`;
+    const runInNode = (directory: string, call: string) =>
+      spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", `import * as m from "./three.ts"; ${call};`],
+        { cwd: directory, encoding: "utf8" },
+      );
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "three.ts"), getModel("!flag"));
+      expect(runInNode(directory, "m.first(1)").stderr).toContain("Error: first 1");
+      expect(runInNode(directory, "m.second(false)").stderr).toContain("RangeError: second false");
+      expect(runInNode(directory, "m.third(0); m.third(1)").status).toBe(0);
+      const result = runCli(directory, ["three.ts"]);
+      expect(result.status).toBe(10);
+      expect(result.stdout).toContain('"first throws: first 1"\n"second throws: second false"\n');
+      expect(result.stdout).not.toContain("third throws");
+      expect(result.stdout).toContain('the second argument was:\n"first 1"');
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "three.ts"), getModel("false"));
+      expect(runInNode(directory, "m.second(false); m.second(true)").status).toBe(0);
+      const result = runCli(directory, ["three.ts"]);
+      expect(result.status).toBe(10);
+      expect(result.stdout).toContain('"first throws: first 1"');
+      expect(result.stdout).not.toContain("second throws");
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
