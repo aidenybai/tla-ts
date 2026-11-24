@@ -364,7 +364,7 @@ export class SmtMemoryOutError extends TlaError {
   }
 }
 
-// V8's limits of 2^30 BigInt bits, 2^29 - 24 chars and 2^27 elements, where Z3 runs out of memory.
+// V8's limits of 2^30 BigInt bits, 2^29 - 24 chars and 2^27 elements, where Z3 under 1 GB runs out of memory.
 const V8_SIZE_LIMIT_MESSAGES = new Set([
   "Maximum BigInt size exceeded",
   "Invalid string length",
