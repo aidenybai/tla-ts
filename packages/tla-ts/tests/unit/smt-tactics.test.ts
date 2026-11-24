@@ -1297,6 +1297,26 @@ describe("nlsat, as Z3 5.3.2 orders the literals of a clause", () => {
   });
 });
 
+describe("conflict_resolution, as Z3 5.3.2 orders the antecedents of a justification", () => {
+  it("explains the marked equalities before the justifications marked with them", () => {
+    expect(
+      run([
+        "(declare-const r Real)",
+        "(declare-const s Real)",
+        "(declare-const f (_ FloatingPoint 3 3))",
+        "(declare-const g (_ FloatingPoint 3 3))",
+        "(assert (= f ((_ to_fp 3 3) RTP r)))",
+        "(assert (= g ((_ to_fp 3 3) RTZ s)))",
+        "(assert (fp.lt f g))",
+        "(assert (> r 2.0))",
+        "(assert (< s 2.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 495326)"]);
+  });
+});
+
 describe("the optimizer releases what Z3 releases", () => {
   // optsmt::add rewrites with a local th_rewriter, whose cache dies with it.
   it("keeps no term of the objective rewriter's cache", () => {
