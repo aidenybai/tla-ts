@@ -393,6 +393,38 @@ describe("typed tier matches TLC", () => {
   });
 
   it.each([
+    [
+      "the same EXCEPT",
+      "F(s) == [s EXCEPT !.b = 1]\nInit == x = 0 /\\ r = F([a |-> 0])\nNext == x < 20 /\\ x' = x + 1 /\\ r' = IF x % 5 = 0 THEN F(r) ELSE r",
+      4,
+    ],
+    [
+      "different EXCEPTs",
+      "Init == x = 0 /\\ r = [[a |-> 0] EXCEPT !.b = 1]\nNext == x < 3 /\\ x' = x + 1 /\\ r' = [r EXCEPT !.c = x]",
+      3,
+    ],
+  ])(
+    "raises a warning in Init once when Init and Next warn through %s, as TLC does",
+    async (_name, body, nextWarnings) => {
+      const reported: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\n${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onProgress: (progress) => {
+          if (progress.kind === "warning" || progress.kind === "initial-states-computed") {
+            reported.push(progress.kind);
+          }
+        },
+      });
+      expect(reported).toEqual([
+        "warning",
+        "initial-states-computed",
+        ...Array.from({ length: nextWarnings }, () => "warning"),
+      ]);
+    },
+  );
+
+  it.each([
     ["c < 3 /\\ c' = c + 1", 4],
     ["c' \\in {1, 2} /\\ c' > 1", 5],
   ])(

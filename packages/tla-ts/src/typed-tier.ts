@@ -6364,6 +6364,10 @@ export const runTypedSearch = (
   environment: Environment,
   check: TypedCheck,
 ): TypedResult | undefined => {
+  const runtime = environment.runtime;
+  const warn = runtime.warn;
+  // The interpreter raises the warning again when it reruns the search.
+  runtime.warn = deopt;
   const run = (plains: Plains): TypedResult => {
     try {
       return search(environment, check, plains);
@@ -6402,6 +6406,8 @@ export const runTypedSearch = (
       return undefined;
     }
     throw error;
+  } finally {
+    runtime.warn = warn;
   }
 };
 
