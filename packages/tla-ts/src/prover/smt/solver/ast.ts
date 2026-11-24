@@ -608,9 +608,13 @@ export const isArithSort = (sort: number) => sort === SORT_INT || sort === SORT_
 const getIntegerHash = (value: bigint) => {
   const magnitude = value < 0n ? -value : value;
   if (magnitude <= 0xffffffffn) return Number(magnitude);
-  const digits: number[] = [];
-  for (let rest = magnitude; rest > 0n; rest >>= 32n) digits.push(Number(rest & 0xffffffffn));
-  return bytesHash(new Uint8Array(Uint32Array.from(digits).buffer), 17);
+  const hex = magnitude.toString(16);
+  const digits = new Uint32Array(Math.ceil(hex.length / 8));
+  for (let index = 0; index < digits.length; index++) {
+    const end = hex.length - 8 * index;
+    digits[index] = Number.parseInt(hex.slice(Math.max(0, end - 8), end), 16);
+  }
+  return bytesHash(new Uint8Array(digits.buffer), 17);
 };
 
 const getInfoHash = (family: number, kind: number, parameterHashes: number[]) =>
@@ -1761,10 +1765,9 @@ export class AstManager {
   }
 
   mkBvNumeral(value: bigint, width: number) {
-    const modulus = 1n << BigInt(width);
-    const normalized = ((value % modulus) + modulus) % modulus;
+    const normalized = BigInt.asUintN(width, value);
     const sort = this.mkBvSort(width);
-    const key = `b${width}:${normalized}`;
+    const key = `b${width}:${normalized.toString(16)}`;
     const existing = this.table.get(key);
     if (existing !== undefined) return this.revive(existing);
     let decl = this.bvDecls.get(`n${width}`);
@@ -2245,7 +2248,11 @@ export class AstManager {
   }
 
   mkRealNumeral(value: Rational) {
-    const numeral = this.internNumeral(`r${value}`, value, SORT_REAL);
+    const numeral = this.internNumeral(
+      `r${value.num.toString(16)}/${value.den.toString(16)}`,
+      value,
+      SORT_REAL,
+    );
     return value.isInt() ? this.holdSmallNumeral(numeral, value.num, this.smallReals) : numeral;
   }
 
@@ -2253,7 +2260,7 @@ export class AstManager {
     const existing = this.intNumerals.get(value);
     if (existing !== undefined)
       return this.holdSmallNumeral(this.revive(existing), value, this.smallInts);
-    const numeral = this.internNumeral(`n${value}`, Rational.of(value), SORT_INT);
+    const numeral = this.internNumeral(`n${value.toString(16)}`, Rational.of(value), SORT_INT);
     this.intNumerals.set(value, numeral);
     return this.holdSmallNumeral(numeral, value, this.smallInts);
   }

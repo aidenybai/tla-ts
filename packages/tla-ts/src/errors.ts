@@ -364,6 +364,12 @@ export class SmtMemoryOutError extends TlaError {
   }
 }
 
+// V8 can't make a BigInt past 2^30 bits, where Z3 runs out of memory for the number.
+export const toSmtMemoryOutError = (error: unknown) =>
+  error instanceof RangeError && error.message === "Maximum BigInt size exceeded"
+    ? new SmtMemoryOutError()
+    : error;
+
 export class SmtRewriterCanceledError extends SmtCanceledError {
   constructor() {
     super();

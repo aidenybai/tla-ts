@@ -177,3 +177,29 @@ describe("nla check", () => {
     expect(core.lemmas).toHaveLength(1);
   });
 });
+
+describe("the perfect squares of ps_root and the patcher, as Z3's mpz is_perfect_square finds them", () => {
+  it("rejects a number of 2^20 bits that is 3 mod 16, which no square is", () => {
+    expect(Rational.of((1n << 1048576n) + 3n).getSquareRoot()).toBeUndefined();
+  });
+
+  it("finds 2^k as the root of 4^k", () => {
+    expect(Rational.of(1n << 2000n).getSquareRoot()).toEqual(Rational.of(1n << 1000n));
+  });
+
+  it("finds no root of a number between two squares", () => {
+    expect(Rational.of((1n << 2000n) + 1n).getSquareRoot()).toBeUndefined();
+    expect(Rational.of(2n).getSquareRoot()).toBeUndefined();
+  });
+
+  it("finds the root of a fraction from its numerator and denominator", () => {
+    expect(Rational.of(9n, 4n).getSquareRoot()).toEqual(Rational.of(3n, 2n));
+    expect(Rational.of(2n, 9n).getSquareRoot()).toBeUndefined();
+  });
+
+  it("finds 0 and 1 as their own roots, and none of a negative number", () => {
+    expect(Rational.of(0n).getSquareRoot()).toEqual(Rational.of(0n));
+    expect(Rational.of(1n).getSquareRoot()).toEqual(Rational.of(1n));
+    expect(Rational.of(-4n).getSquareRoot()).toBeUndefined();
+  });
+});

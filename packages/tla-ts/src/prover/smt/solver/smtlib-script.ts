@@ -7,6 +7,7 @@ import {
   SmtMemoryOutError,
   SmtTacticError,
   SmtUnsupportedError,
+  toSmtMemoryOutError,
 } from "../../../errors";
 import type { DecideOptions } from "../../verdict";
 import {
@@ -2641,7 +2642,8 @@ export const runSmtlibScript = (
         break;
       }
       run(list);
-    } catch (error) {
+    } catch (caught) {
+      const error = toSmtMemoryOutError(caught);
       if (error instanceof SmtMemoryOutError) {
         printLine('(error "out of memory")', true);
         break;

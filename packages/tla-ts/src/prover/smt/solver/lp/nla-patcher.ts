@@ -75,7 +75,7 @@ export class Patcher {
     }
     if (!this.varBreaksCorrectMonic(lpVar) && this.tryToPatch(product)) return;
     if (monic.vars.length === 2 && monic.vars[0] === monic.vars[1]) {
-      const root = product.root(2);
+      const root = product.getSquareRoot();
       if (root === undefined) return;
       this.patchedVar = monic.vars[0];
       if (!this.varBreaksCorrectMonic(this.patchedVar) && !this.tryToPatch(root))

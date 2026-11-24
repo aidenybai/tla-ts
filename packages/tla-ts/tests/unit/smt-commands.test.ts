@@ -4021,6 +4021,39 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
   });
 });
 
+describe("the time limit, which Z3's timer applies at the next resource count", () => {
+  it("stops at the first count after a slow perfect-square test the limit falls in", () => {
+    expect(
+      run(
+        [
+          "(declare-const x Real)",
+          "(declare-const y Real)",
+          `(assert (= (+ (* ${(1n << 32768n) + 1n} x x) (* y y) (* (- 3) x y)) (- 1.0)))`,
+          "(check-sat-using (using-params sat :euf true))",
+          "(get-info :reason-unknown)",
+          "(get-info :rlimit)",
+        ],
+        200,
+      ),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")', "(:rlimit 558)"]);
+  });
+
+  it("stops at the first count once the signal has aborted", () => {
+    const output: string[] = [];
+    runSmtlibScript(
+      [
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ].join("\n"),
+      { timeLimitMs: 5000, signal: AbortSignal.abort() },
+      (line) => output.push(line),
+    );
+    expect(output).toEqual(["unknown", '(:reason-unknown "canceled")']);
+  });
+});
+
 describe("the options that turn on Z3's verbose output, which the port doesn't write", () => {
   it("throws at smt.qi.profile, whose instance counts Z3 writes to stderr", () => {
     expect(() => run(["(set-option :smt.qi.profile true)"])).toThrow(
