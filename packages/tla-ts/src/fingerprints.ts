@@ -124,8 +124,14 @@ export const markSeenState = (table: StateTable, hash: number, index: number) =>
 };
 
 export interface SharedFingerprints {
-  slots: BigInt64Array;
-  used: Int32Array;
+  slots: BigInt64Array<SharedArrayBuffer>;
+  used: Int32Array<SharedArrayBuffer>;
+}
+
+// Node posts a typed array over a SharedArrayBuffer of 4 GiB or more with length 0, so messages carry the buffers.
+export interface SharedFingerprintBuffers {
+  slots: SharedArrayBuffer;
+  used: SharedArrayBuffer;
 }
 
 const INITIAL_SHARED_CAPACITY = 1 << 10;
@@ -160,6 +166,20 @@ export const insertSharedFingerprint = (
 
 export const isSharedFingerprintsFull = (table: SharedFingerprints) =>
   Atomics.load(table.used, 0) * 2 >= table.slots.length;
+
+export const getSharedFingerprintBuffers = (
+  table: SharedFingerprints,
+): SharedFingerprintBuffers => ({
+  slots: table.slots.buffer,
+  used: table.used.buffer,
+});
+
+export const createSharedFingerprintsFromBuffers = (
+  buffers: SharedFingerprintBuffers,
+): SharedFingerprints => ({
+  slots: new BigInt64Array(buffers.slots),
+  used: new Int32Array(buffers.used),
+});
 
 export const growSharedFingerprints = (table: SharedFingerprints): SharedFingerprints => {
   const slots = new BigInt64Array(new SharedArrayBuffer(table.slots.byteLength * 2));

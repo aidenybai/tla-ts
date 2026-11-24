@@ -12,11 +12,12 @@ import type { RuntimeInvariant } from "./environment";
 import { isImpure } from "./evaluate";
 import {
   createSharedFingerprints,
+  getSharedFingerprintBuffers,
   growSharedFingerprints,
   insertSharedFingerprint,
   isSharedFingerprintsFull,
   writeStateFingerprint,
-  type SharedFingerprints,
+  type SharedFingerprintBuffers,
 } from "./fingerprints";
 import {
   createCheckEnvironment,
@@ -51,7 +52,7 @@ export interface StartMessage extends Pick<
   index: number;
   ports: (Port | undefined)[];
   seed: EncodedStates;
-  fingerprints: SharedFingerprints;
+  fingerprints: SharedFingerprintBuffers;
   requests: Int32Array;
   remaining: Int32Array;
 }
@@ -72,7 +73,7 @@ export type WorkerMessage =
 
 export type CoordinatorMessage =
   | { type: "level" }
-  | { type: "resize"; fingerprints: SharedFingerprints };
+  | { type: "resize"; fingerprints: SharedFingerprintBuffers };
 
 /** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
@@ -294,7 +295,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       fingerprintPolynomial: options.fingerprintPolynomial,
       maxSetSize: options.maxSetSize,
       isLazyValueExpanded: options.isLazyValueExpanded,
-      fingerprints: sharedFingerprints,
+      fingerprints: getSharedFingerprintBuffers(sharedFingerprints),
       requests,
       remaining,
     };
@@ -309,7 +310,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     if (pausedCount === 0 || isAborted(messages)) return messages;
     sharedFingerprints = growSharedFingerprints(sharedFingerprints);
     const resumed = waitForReports(pausedCount);
-    send({ type: "resize", fingerprints: sharedFingerprints });
+    send({ type: "resize", fingerprints: getSharedFingerprintBuffers(sharedFingerprints) });
     const unpaused = messages.filter((message) => message.type !== "paused");
     return [...unpaused, ...(await collectLevels(await resumed))];
   };
