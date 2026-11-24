@@ -11,6 +11,7 @@ import {
 import {
   createStackOverflowError,
   isStackOverflow,
+  TlaBoundValueError,
   TlaEvaluationError,
   TlaIllegalStateError,
   TlaIncompleteSuccessorError,
@@ -1609,8 +1610,11 @@ const searchStates = (
     if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
     const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
+    const replayError = replay.result.replayError;
+    // Tool#getOpContext binds an argument to a LazyValue that Tool#getNextStatesAppl enters, where the run shares the binding an identifier argument already has, so the replay, which enters it as CallStackTool does, fails at TLC's expression.
+    const failure = error instanceof TlaBoundValueError && replayError ? replayError : error;
     return createFailureResult(
-      withNextStateExitCode(error),
+      withNextStateExitCode(failure),
       appendTraceOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
       checked.postcondition,

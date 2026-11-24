@@ -1,6 +1,12 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
+import {
+  formatRange,
+  TlaBoundValueError,
+  TlaEvaluationError,
+  TlaUnassignedError,
+  TlaUncodedError,
+} from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import {
   chargeContexts,
@@ -12,6 +18,7 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
+  getLetDefinition,
   hideFrames,
   restoreFrames,
   runAtCoverageNode,
@@ -299,10 +306,17 @@ const getPrimedVariable = (
 export const getComputation = (run: RunKind) =>
   run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
 
-export const createRunError = (run: RunKind, message: string) => {
-  const error = new TlaEvaluationError(message);
-  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
-};
+const setRunExitCode = (run: RunKind, error: TlaEvaluationError) =>
+  run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+
+export const createRunError = (run: RunKind, message: string) =>
+  setRunExitCode(run, new TlaEvaluationError(message));
+
+export const createBoundValueError = (run: RunKind, expression: Expression, value: Value) =>
+  setRunExitCode(
+    run,
+    new TlaBoundValueError(getExpectedBooleanMessage(run, formatValue(value), expression)),
+  );
 
 export const getRelationMessage = (run: RunKind, expression: Expression) => {
   const node = describeNode(expression);
@@ -671,12 +685,12 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value, as it takes a LET definition's literal body.
+    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value, as it takes a LET definition's literal body. It enters any other LET definition's body, which lookup finds as an OpDefNode.
     if (
       binding?.kind === "Thunk" &&
       (replay.isEnabled
         ? !binding.isReleased
-        : binding.cache === undefined &&
+        : (binding.cache === undefined || getLetDefinition(expression.name, scope) !== undefined) &&
           getBodyLiteral(binding.expression, replay.environment) === undefined)
     ) {
       const thunkNode = replay.coverage?.values.get(binding) ?? node;

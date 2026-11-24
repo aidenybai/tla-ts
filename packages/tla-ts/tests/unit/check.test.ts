@@ -15198,6 +15198,57 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["\\E i \\in {1} : Op(i)", "1", "9, col 27 to line 9, col 27", ["9:24-9:28", "9:27-9:27"]],
+    [
+      "\\E i \\in {1} : LET LK == i IN Op(LK)",
+      "1",
+      "9, col 34 to line 9, col 34",
+      ["9:39-9:44", "9:42-9:43", "9:34-9:34"],
+    ],
+    ["\\E i \\in {1} : Op2(i)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(1)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ['Op2("a")', '"a"', "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(1 + 0)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(K)", "3", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op(K)", "3", "9, col 12 to line 9, col 12", ["9:9-9:13", "9:12-9:12"]],
+    ["LET LK == 1 IN Op(LK)", "1", "9, col 27 to line 9, col 28", ["9:24-9:29", "9:27-9:28"]],
+    ["LET LK == 1 IN Op2(LK)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    [
+      "LET LK == 1 + 0 IN Op(LK)",
+      "1",
+      "9, col 19 to line 9, col 23",
+      ["9:28-9:33", "9:31-9:32", "9:19-9:23"],
+    ],
+  ])(
+    "enters the identifier argument of Next == %s where its parameter stands as an action, as TLC's Tool#getNextStatesAppl enters a LazyValue",
+    async (next, found, node, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nOp2(q) == Op(q)\nInit == x = 0\nNext == ${next}\n====`,
+          config: "CONSTANT K = 3\nINIT Init\nNEXT Next",
+          coverage,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+              : [];
+          }),
+          result.generatedStates,
+        ];
+      };
+      const expected = [
+        `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${found}.\nline ${node} of module M`,
+        [positions[0], "6:10-6:17", "6:17-6:17", ...positions.slice(1)],
+        3,
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
     [
       "x < 9 /\\ Pre(1)",
       "TRUE",

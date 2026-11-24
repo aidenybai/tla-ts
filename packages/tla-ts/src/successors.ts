@@ -56,6 +56,7 @@ import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   bindUnchangedApplication,
+  createBoundValueError,
   createRunError,
   createUnassignedConjunctError,
   findChangedVariable,
@@ -876,6 +877,15 @@ const compileIdentifier = (
     // Tool#getNextStatesAppl enters the LazyValue that Tool#getOpContext binds a literal argument to.
     if (binding?.kind === "Value" && binding.argument !== undefined) {
       throw createRunError(run, getRelationMessage(run, binding.argument));
+    }
+    const boundValue =
+      binding?.kind === "Value"
+        ? binding.value
+        : binding?.kind === "Thunk"
+          ? getBodyLiteral(binding.expression, environment)
+          : undefined;
+    if (boundValue !== undefined && typeof boundValue !== "boolean") {
+      throw createBoundValueError(run, expression, boundValue);
     }
     if (
       binding ||

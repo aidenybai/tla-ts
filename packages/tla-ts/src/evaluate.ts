@@ -1486,7 +1486,9 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       ? undefined
       : findGlobalName(argument.name, environment);
     if (global?.kind === "Value") {
-      const binding: Binding = { kind: "Value", value: global.value };
+      const binding: Binding = environment.callStack
+        ? { kind: "Value", value: global.value, argument }
+        : { kind: "Value", value: global.value };
       return () => binding;
     }
     if (global === undefined && !environment.callStack) {
