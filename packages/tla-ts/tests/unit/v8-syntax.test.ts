@@ -181,4 +181,81 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       { name: "a return in a script", source: "return;", accepted: "function f() { return; }" },
     ]);
   });
+
+  describe("functions and classes", () => {
+    checkCases([
+      { name: "a getter's parameter", source: "({ get a(b) {} });", accepted: "({ get a() {} });" },
+      { name: "a setter without one", source: "({ set a() {} });", accepted: "({ set a(b) {} });" },
+      {
+        name: "a setter's rest parameter",
+        source: "({ set a(...b) {} });",
+        accepted: "({ set a([...b]) {} });",
+      },
+      {
+        name: "a parameter after a rest one",
+        source: "function f(...a, b) {}",
+        accepted: "function f(b, ...a) {}",
+      },
+      {
+        name: "a rest parameter's initializer",
+        source: "function f(...a = 1) {}",
+        accepted: "function f(...[a = 1]) {}",
+      },
+      {
+        name: "a constructor twice",
+        source: "class C {\n  constructor() {}\n  constructor() {}\n}",
+        accepted: "class C {\n  constructor() {}\n  static constructor() {}\n}",
+      },
+      {
+        name: "a getter constructor",
+        source: "class C { get constructor() {} }",
+        accepted: "class C { get ['constructor']() {} }",
+      },
+      {
+        name: "a generator constructor",
+        source: "class C { *constructor() {} }",
+        accepted: "class C { *['constructor']() {} }",
+      },
+      {
+        name: "a static prototype",
+        source: "class C { static prototype() {} }",
+        accepted: "class C { prototype() {} }",
+      },
+      {
+        name: "a field named constructor",
+        source: "class C { constructor = 1 }",
+        accepted: "class C { ['constructor'] = 1 }",
+      },
+      {
+        name: "a super call in a method",
+        source: "class C { m() { super(); } }",
+        accepted: "class C extends Object { constructor() { super(); } }",
+      },
+      {
+        name: "an undeclared private name",
+        source: "class C {\n  m() {\n    this.#y;\n  }\n}",
+        accepted: "class C {\n  #y;\n  m() {\n    this.#y;\n  }\n}",
+      },
+      {
+        name: "a delete of a private field",
+        source: "class C { #x; m() { delete this.#x; } }",
+        accepted: "class C { #x; m() { delete this.x; } }",
+      },
+      {
+        name: "an await in an async function's parameters",
+        source: "async function f(a = await 1) {}",
+        accepted: "async function f() { await 1; }",
+      },
+      {
+        name: "a yield in a generator's parameters",
+        source: "function* g(a = yield) {}",
+        accepted: "function* g() { yield; }",
+      },
+      {
+        name: "arguments in a field's initializer",
+        source: "class C { x = arguments; }",
+        accepted: "class C { x = function () { arguments; }; }",
+      },
+    ]);
+  });
 });
