@@ -200,8 +200,8 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
 describe("checks a module's exported functions as a model on ESCore", () => {
-  // A model without state variables or actions has no state, whose invariants TLC checks once, as
-  // it checks a spec without variables.
+  // A model without state variables or actions has no state, whose boolean exports TLC checks
+  // once, as ASSUMEs, as it recommends for constant-level invariants.
   describe("checks the calls of a model without state", () => {
     const getSource = (expected: number) =>
       `const memo = [1, 2];\nexport const isTotal = () => memo.reduce((sum, value) => sum + value, 0) === ${expected};\n`;
@@ -211,9 +211,9 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
 
     it("rejects another result", async () => {
-      expect((await checkModel(getSource(4))).message).toContain(
-        "The invariant of isTotal is equal to FALSE",
-      );
+      const result = await checkModel(getSource(4));
+      expect(result.status).toBe("assumption-violation");
+      expect(result.message ?? "").not.toContain("The invariant of isTotal is equal to FALSE");
     });
   });
 

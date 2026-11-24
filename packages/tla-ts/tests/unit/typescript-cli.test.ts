@@ -180,6 +180,34 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A model without state checks a boolean export as an ASSUME, which reports what stops its check,
+  // where an INVARIANT that TLC evaluates as it starts would leave the stop unevaluated and a spec
+  // without an initial state to check it in.
+  describe("stops where a check of a model without state stops", () => {
+    const getModel = (binding: string) =>
+      `const g = ${binding};\nexport const isSet = (): boolean => g !== null;\n`;
+
+    it("agrees with Node where the check runs", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "held.ts"), getModel("[1, 2]"));
+      expect(runNode(directory, "held.ts").status).toBe(0);
+      const result = runCli(directory, ["held.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("stops, rather than failing its config, where the check stops", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "held.ts"), getModel("globalThis as unknown as object"));
+      expect(runNode(directory, "held.ts").status).toBe(0);
+      const result = runCli(directory, ["held.ts"]);
+      expect(result.stdout).toContain(
+        "tla-ts can't keep an object other than one of data properties",
+      );
+      expect(result.stdout).not.toContain("did not specify the initial state predicate");
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
@@ -370,7 +398,12 @@ describe("the CLI with TypeScript files", () => {
       writeFileSync(join(directory, "kinds.ts"), getModel("count < 2"));
       const result = runCli(directory, ["kinds.ts"]);
       expect(result.status).not.toBe(0);
-      expect(result.stdout).toContain("The invariant of isSmall is equal to FALSE");
+      // A model without state checks a boolean export as an ASSUME, as TLC recommends for a
+      // constant-level invariant, rather than as an INVARIANT.
+      expect(result.stdout).toMatch(
+        /Error: Assumption line \d+, col \d+ to line \d+, col \d+ of module ProgramCode is false/,
+      );
+      expect(result.stdout).not.toContain("The invariant of isSmall is equal to FALSE");
     });
   });
 
