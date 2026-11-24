@@ -1789,6 +1789,23 @@ export const createRecord = (fields: [string, Value][]): FunctionValue =>
 export const createSortedRecord = (names: Value[], range: Value[]) =>
   setFunctionClass(createSortedFunction(names, range), "record");
 
+const setCostModel = (value: FunctionValue, costModel: ValueCostModel | undefined) => {
+  if (costModel !== undefined) value.costModel = costModel;
+  return value;
+};
+
+const getElementCostModel = (cost: SetCost | undefined): ValueCostModel | undefined =>
+  cost?.node === undefined || cost.charges === undefined
+    ? undefined
+    : cost.charges.costModels[cost.node];
+
+const setCostModels = (elements: FunctionValue[], cost: SetCost | undefined) => {
+  const costModel = getElementCostModel(cost);
+  if (costModel === undefined) return elements;
+  for (let index = 0; index < elements.length; index++) elements[index].costModel = costModel;
+  return elements;
+};
+
 export const isTlcEnumerable = (value: Value) => isSetValue(value) && !isOverriddenSet(value);
 
 const formatUnion = (value: UnionValue, isStrict = false) =>
@@ -2203,14 +2220,17 @@ const enumerateSet = (
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       const fields = getComponentElements(value, getElements);
-      return getCartesianProduct(fields, isBounded).map((combination) =>
-        createSortedRecord(value.names, combination),
+      return setCostModels(
+        getCartesianProduct(fields, isBounded).map((combination) =>
+          createSortedRecord(value.names, combination),
+        ),
+        value.cost,
       );
     }
     case "ProductSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
       const factors = getComponentElements(value, getElements);
-      return getCartesianProduct(factors, isBounded).map(createTuple);
+      return setCostModels(getCartesianProduct(factors, isBounded).map(createTuple), value.cost);
     }
     case "FilteredSet": {
       if (!isSetValue(value.base) || isOverriddenSet(value.base)) {
@@ -2400,6 +2420,7 @@ interface FilterStream {
 interface ProductStream {
   kind: "Product";
   set: FunctionSetValue | RecordSetValue | ProductSetValue;
+  costModel: ValueCostModel | undefined;
   domain: Value[];
   parts: ElementStream[];
   current: Value[];
@@ -2600,6 +2621,7 @@ const openProductStream = (
   const stream: ProductStream = {
     kind: "Product",
     set: value,
+    costModel: getElementCostModel(value.cost),
     domain: [],
     parts: [],
     current: [],
@@ -2778,9 +2800,12 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
       const set = stream.set;
       return set.kind === "FunctionSet"
         ? createSortedFunction(stream.domain, elements)
-        : set.kind === "RecordSet"
-          ? createSortedRecord(set.names, elements)
-          : createTuple(elements);
+        : setCostModel(
+            set.kind === "RecordSet"
+              ? createSortedRecord(set.names, elements)
+              : createTuple(elements),
+            stream.costModel,
+          );
     }
     case "Concatenated":
       return getNextElement(stream.left) ?? getNextElement(stream.right);
@@ -2843,6 +2868,7 @@ interface ChargedLeafStream {
 interface ChargedProductStream {
   kind: "ChargedProduct";
   node: number;
+  costModel: ValueCostModel;
   set: FunctionSetValue | RecordSetValue | ProductSetValue;
   domain: Value[];
   parts: ChargedStream[];
@@ -3079,6 +3105,7 @@ const openChargedProduct = (
   const stream: ChargedProductStream = {
     kind: "ChargedProduct",
     node,
+    costModel: charges.costModels[node],
     set: value,
     domain: [],
     parts: [],
@@ -3166,9 +3193,12 @@ const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Val
       const set = stream.set;
       return set.kind === "FunctionSet"
         ? createSortedFunction(stream.domain, elements)
-        : set.kind === "RecordSet"
-          ? createSortedRecord(set.names, elements)
-          : createTuple(elements);
+        : setCostModel(
+            set.kind === "RecordSet"
+              ? createSortedRecord(set.names, elements)
+              : createTuple(elements),
+            stream.costModel,
+          );
     }
     case "ChargedUnion":
       charges.secondary[stream.node]++;
