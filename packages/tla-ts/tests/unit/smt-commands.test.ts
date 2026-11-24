@@ -4065,6 +4065,14 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
       ]);
       expect(simplify("204324849")).toEqual(['(error "out of memory")']);
     });
+
+    // Deviation from Z3: it prints (error "line 1 column 36: Overflow encountered when expanding vector").
+    it("answers past 459730911 slots, where Z3's vector overflows its 32-bit byte count", () => {
+      expect(run(["(simplify (bv2nat (_ bv5 459730911)))", '(echo "after")'])).toEqual([
+        "5",
+        "after",
+      ]);
+    });
   });
 });
 

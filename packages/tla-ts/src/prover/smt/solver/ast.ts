@@ -1209,6 +1209,7 @@ export class AstManager {
   // Z3's ptr_vector grows from 2 by half, and memory_max_size counts its 8-byte slots.
   private growBvTable(capacity: number, size: number) {
     let grown = capacity;
+    // Deviation from Z3: past 459730911 slots its vector's 32-bit byte count overflows, and it throws.
     while (grown < size) grown = grown === 0 ? 2 : Math.floor((3 * grown + 1) / 2);
     this.limit.allocate(8 * (grown - capacity));
     return grown;
