@@ -1244,7 +1244,7 @@ const compileAction = (
         ? reevaluated
         : {
             impure: getObservedSubstitutes(expression.definitions, environment),
-            streamed: reevaluated.streamed,
+            streamed: new Set<Definition>(),
           };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(

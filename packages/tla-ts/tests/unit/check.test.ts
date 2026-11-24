@@ -15168,6 +15168,22 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it.each([
+    ["LET u == UNION {UNION {0..2, {1}}, {7}} IN", "u"],
+    ["LET u == UNION {UNION {0..2, {1}}, {7}} w == u IN", "w"],
+  ])(
+    "keeps the UNION a LET definition gives under ENABLED with %s, as TLC's Tool#enabled caches the definition",
+    async (definitions, name) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == UNCHANGED <<x, y>>\nInv == ENABLED (${definitions} Cardinality(${name}) > 0 /\\ y' \\in ${name} /\\ PrintT(y') /\\ FALSE) \\/ TRUE\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["0", "1", "2", "7"]);
+    },
+  );
+
+  it.each([
     ["", undefined],
     [" with coverage", 1],
   ])(
