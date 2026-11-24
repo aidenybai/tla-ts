@@ -1894,6 +1894,47 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
+  it("prints the core and then the model before get-model compacts it, as :print_unsat_core and :print_model ask", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (=> Int Int))",
+        "(assert (= (select x 0) 1))",
+        "(check-sat-using smt :print_model true :print_unsat_core true)",
+        "(get-model)",
+        "(declare-const y Int)",
+        "(assert (! (> y 2) :named a1))",
+        "(assert (! (< y 1) :named a2))",
+        "(check-sat-using smt :print_model true :print_unsat_core true)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(unsat-core)",
+      "(model \n  (define-fun x () (=> Int Int)\n    (_ as-array k!0))\n  (define-fun k!0 ((x!0 Int)) Int\n    (ite (= x!0 0) 1\n      1))\n)",
+      "(\n  (define-fun x () (=> Int Int)\n    ((as const (=> Int Int)) 1))\n)",
+      "unsat",
+      "(unsat-core a1 a2)",
+    ]);
+  });
+
+  it("has no proof or statistics to print for :print_proof and :print_statistics", () => {
+    const lines = ["(declare-const y Int)", "(assert (> y 2))", "(assert (< y 1))"];
+    expect(() =>
+      run([
+        "(set-option :produce-proofs true)",
+        ...lines,
+        "(check-sat-using smt :print_proof true)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+    expect(() => run([...lines, "(check-sat-using smt :print_statistics true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+    expect(() => run([...lines, "(apply simplify :print_statistics true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+  });
+
   it("puts the completion back after fm's model converter, so get-value evaluates each term afresh", () => {
     expect(
       run([

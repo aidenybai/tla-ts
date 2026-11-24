@@ -1769,8 +1769,30 @@ export const runSmtlibScript = (
           state.manager.limit.pop();
         }
         validateCheck(list.end);
-        if (state.check?.status === L_TRUE && state.check.model !== undefined)
-          validateCheckModel(list.end);
+        const check = state.check;
+        if (settings.isProducingUnsatCores && params.get("print_unsat_core") === true) {
+          const core = check?.status === L_FALSE ? check.core : [];
+          if (core === undefined)
+            throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
+          print(
+            `(unsat-core${core.map((value) => ` ${formatWithoutDeclarations(value)}`).join("")})`,
+          );
+        }
+        if (
+          settings.isProducingModels &&
+          check?.model !== undefined &&
+          params.get("print_model") === true
+        )
+          print(`(model \n${printModel(state.manager, getPrintEnvironment(), check.model, 2)})`);
+        if (check?.status === L_TRUE && check.model !== undefined) validateCheckModel(list.end);
+        if (
+          (settings.isProducingProofs || state.isProofsEnabled === true) &&
+          check?.status !== L_TRUE &&
+          params.get("print_proof") === true
+        )
+          throw new SmtUnsupportedError("the proof of check-sat-using");
+        if (params.get("print_statistics") === true)
+          throw new SmtUnsupportedError("the statistics of a tactic");
       },
     ],
     [
@@ -2103,6 +2125,8 @@ export const runSmtlibScript = (
             state.manager.limit.pop();
           }
         })();
+        if (params.get("print_statistics") === true)
+          throw new SmtUnsupportedError("the statistics of a tactic");
         // apply_tactic_cmd releases the result goals and then the input goal.
         if (goals === undefined) {
           input.release();
