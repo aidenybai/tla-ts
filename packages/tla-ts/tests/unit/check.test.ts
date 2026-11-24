@@ -13561,6 +13561,63 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "L!NxLit",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<L!NxLit line 4, col 1 to line 4, col 1 of module M>: 1:1",
+      ],
+    ],
+    [
+      "LET LK == 1 IN LK = 1 /\\ (Stp \\/ LK)",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<Next line 7, col 1 to line 7, col 4 of module M (7 24 7 44)>: 1:1",
+      ],
+    ],
+    [
+      "x < 5 /\\ (x' = x + 1 \\/ x' = x + 2 \\/ 1 = \"a\")",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<Next line 7, col 1 to line 7, col 4 of module M>: 2:2",
+      ],
+    ],
+    [
+      'x < 2 /\\ (x\' = x + 1 \\/ (x = 1 /\\ 1 = "a"))',
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 2:2",
+        "<Next line 7, col 1 to line 7, col 4 of module M>: 2:3",
+      ],
+    ],
+    [
+      'Stp \\/ (x = 1 /\\ x\' = 7 /\\ 1 = "a")',
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 2:2",
+        "<Stp line 5, col 1 to line 5, col 3 of module M>: 2:4",
+        "<Next line 7, col 1 to line 7, col 4 of module M (7 17 7 42)>: 0:0",
+      ],
+    ],
+  ])(
+    "counts no successor of an action that fails after it produced some in Next == %s, as ModelChecker#doNext's replay for the call stack adds them only once Tool#getNextStates returns",
+    async (next, labels) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH N <- 2, v <- x\nStp == x < 2 /\\ x' = x + 1\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T"
+            ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nLit(a) == 1\nStp == v < 2 /\\ v' = v + 1\nNxLit == Stp \\/ Lit(1)\n===="
+            : undefined,
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(labels);
+    },
+  );
+
   it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<[g EXCEPT ![1] = 7]>>\n====",

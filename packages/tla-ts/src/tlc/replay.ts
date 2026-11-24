@@ -1377,10 +1377,9 @@ export const replaySuccessors = <Action extends ReplayAction & { node?: number }
   actions.forEach((action) => {
     const successors: Value[][] = [];
     const node = action.node ?? -1;
-    walkSuccessors(action, node, state, environment, (next) => {
-      if (coverage && node !== -1) coverage.primary[node]++;
-      successors.push(next);
-    });
+    walkSuccessors(action, node, state, environment, (next) => successors.push(next));
+    // Tool#getNextStates counts an action's successors once it returns them, so an action that fails counts none.
+    if (coverage && node !== -1) coverage.primary[node] += successors.length;
     successors.forEach((successor) => onState(successor, action));
   });
 };
