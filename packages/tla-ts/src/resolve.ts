@@ -3002,7 +3002,7 @@ const checkSubstitutions = (
       return;
     }
     const name = expression.name;
-    const arity = getSymbolArity(expression, name, scope, unit);
+    const arity = getSymbolArity(expression, name, scope, unit, true);
     if (arity !== undefined && arity !== declaration.arity) {
       unit.errors.push({
         location: formatRange(getSpelledNameRange(expression, name)),
@@ -3015,26 +3015,39 @@ const checkSubstitutions = (
     }
   };
   const instanceRange = instance.location.range;
-  const isFound = (declaration: Declaration) =>
-    lookupLocal(scope, declaration.name) !== undefined ||
-    findSymbol(declaration.name, unit) !== undefined;
-  const implicit = declarations.filter(isFound).map((declaration) => {
+  const implicit = declarations.flatMap((declaration) => {
+    const name = declaration.name;
+    const binding = getModuleBinding(name, unit, undefined);
+    const symbol =
+      lookupLocal(scope, name) ??
+      findSymbol(name, unit) ??
+      (binding?.kind === "Instance" ? binding : undefined);
+    if (symbol === undefined) return [];
     const expression: Expression & { kind: "Identifier" } = {
       kind: "Identifier",
-      name: declaration.name,
+      name,
       location: instance.location,
     };
-    return { declaration, expression };
+    return [{ declaration, symbol, expression }];
   });
   implicit
     .filter((item) => item.declaration.arity === 0)
     .forEach((item) => {
-      const arity = getSymbolArity(item.expression, item.declaration.name, scope, unit);
-      if (arity && instanceRange) {
-        unit.errors.push({
-          location: formatRange(instanceRange),
-          message: `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`,
-        });
+      const symbol = item.symbol;
+      const arity =
+        symbol.kind === "Instance"
+          ? undefined
+          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      const message =
+        symbol.kind === "Instance"
+          ? "Module instance identifier where operator should be."
+          : !arity || symbol.kind === "Parameter" || symbol.kind === "Theorem"
+            ? undefined
+            : symbol.kind === "Definition"
+              ? `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`
+              : "Operator used with the wrong number of arguments.";
+      if (message && instanceRange) {
+        unit.errors.push({ location: formatRange(instanceRange), message });
       }
     });
   const substitutions = new Map<string, Expression>();
@@ -3065,10 +3078,14 @@ const checkSubstitutions = (
       const arity =
         item.declaration.arity === 0
           ? 0
-          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+          : item.symbol.kind === "Instance"
+            ? item.symbol.arity
+            : getSymbolArity(item.expression, item.declaration.name, scope, unit);
       if (
         (arity !== item.declaration.arity ||
-          (item.declaration.arity > 0 && hasOperatorParam(item.declaration.name))) &&
+          (item.declaration.arity > 0 &&
+            // Deviation from SANY: Generator#checkSubstitutionForCorrectArity accepts a module instance of the right arity, and level checking the substitute then throws a NullPointerException.
+            (hasOperatorParam(item.declaration.name) || item.symbol.kind === "Instance"))) &&
         instanceRange
       ) {
         reportArity(item.declaration, formatRange(instanceRange));

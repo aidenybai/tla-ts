@@ -352,7 +352,12 @@ const processSubstitutions = (
       substitute.kind === "OpArg" &&
       substitute.op.kind === "OpDef" &&
       (substitute.op.params ?? []).some((param) => param.arity > 0);
-    if (arity !== target.arity || hasOperatorParam) {
+    // Deviation from SANY: Generator#checkSubstitutionForCorrectArity accepts a module instance of the right arity, and level checking the substitute then throws a NullPointerException.
+    const isInstance =
+      substitute.kind === "OpArg" &&
+      substitute.op.kind === "OpDef" &&
+      substitute.op.defKind === "ModuleInstance";
+    if (arity !== target.arity || hasOperatorParam || isInstance) {
       generation.addError(
         substitute.location,
         `An operator must be substituted for symbol '${target.name}', and it must have arity ${target.arity}.`,

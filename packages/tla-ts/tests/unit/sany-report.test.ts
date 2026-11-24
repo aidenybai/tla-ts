@@ -1390,6 +1390,114 @@ Spec == Init /\\ [][Next]_x
   });
 
   it.each([
+    [
+      "CONSTANT X(_)\nINSTANCE N",
+      "CONSTANT X",
+      [
+        [
+          "line 3, col 1 to line 3, col 10 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT X(_)\nINSTANCE N WITH X <- X",
+      "VARIABLE X",
+      [
+        [
+          "line 3, col 1 to line 3, col 22 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+        ["line 3, col 22 to line 3, col 22 of module M", "The operator X requires 1 arguments."],
+      ],
+    ],
+    [
+      "THEOREM ASSUME NEW CONSTANT X(_) PROVE LET J == INSTANCE N IN TRUE",
+      "CONSTANT X",
+      [
+        [
+          "line 2, col 44 to line 2, col 58 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nJ == INSTANCE N",
+      "CONSTANT X",
+      [
+        [
+          "line 3, col 1 to line 3, col 15 of module M",
+          "Module instance identifier where operator should be.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nY == LET J == INSTANCE N IN TRUE",
+      "VARIABLE X",
+      [
+        [
+          "line 3, col 10 to line 3, col 24 of module M",
+          "Module instance identifier where operator should be.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nJ == INSTANCE N",
+      "CONSTANT X(_)",
+      [
+        [
+          "line 3, col 1 to line 3, col 15 of module M",
+          "An operator must be substituted for symbol 'X', and it must have arity 1.",
+        ],
+      ],
+    ],
+    [
+      "X(p) == INSTANCE Z\nINSTANCE N WITH X <- X",
+      "CONSTANT X(_)",
+      [
+        ["line 3, col 22 to line 3, col 22 of module M", "Operator name X is incomplete."],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'X', and it must have arity 1.",
+        ],
+      ],
+    ],
+  ])(
+    "rejects the implicit substitution in %j for N's %s as SANY's SymbolNode#match does",
+    (definitions, declaration, errors) => {
+      const report = getReport({
+        M: `---- MODULE M ----\n${definitions}\n====\n`,
+        N: `---- MODULE N ----\n${declaration}\n====\n`,
+        Z: "---- MODULE Z ----\nZz == 1\n====\n",
+      });
+      expect(report.text).toContain(
+        joinLines([
+          `*** Errors: ${errors.length}`,
+          "",
+          ...errors.flatMap((error) => [error[0], "", error[1], "", ""]).slice(0, -2),
+        ]),
+      );
+    },
+  );
+
+  it("rejects a module instance of the right arity substituted for an operator constant, where SANY throws a NullPointerException", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nX(p) == INSTANCE Z\nJ == INSTANCE N\n====\n",
+      N: "---- MODULE N ----\nCONSTANT X(_)\n====\n",
+      Z: "---- MODULE Z ----\nZz == 1\n====\n",
+    });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 1",
+        "",
+        "line 3, col 1 to line 3, col 15 of module M",
+        "",
+        "An operator must be substituted for symbol 'X', and it must have arity 1.",
+      ]),
+    );
+  });
+
+  it.each([
     ["I == INSTANCE Other WITH Op2 <- E27", "line 5, col 33 to line 5, col 35"],
     ["I == INSTANCE Other WITH Op2 <- E26!1", "line 5, col 33 to line 5, col 37"],
     ["I == LET L == INSTANCE Other WITH Op2 <- E27 IN L!Use", "line 5, col 42 to line 5, col 44"],
