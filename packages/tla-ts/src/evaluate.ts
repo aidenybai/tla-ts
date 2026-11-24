@@ -131,9 +131,10 @@ import {
   type LazyFunctionValue,
   type ObjectValue,
   type Value,
-  markNormalized,
   markStreamedSet,
+  normalizeDeeply,
   setTrace,
+  stopFirstAttempt,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 
@@ -288,6 +289,7 @@ export interface Context {
 export type Evaluator = (context: Context) => Value;
 
 const evaluateAll = (evaluators: Evaluator[], context: Context) => {
+  // eslint-disable-next-line unicorn/no-new-array
   const values = new Array<Value>(evaluators.length);
   for (let index = 0; index < evaluators.length; index++)
     values[index] = evaluators[index](context);
@@ -914,7 +916,12 @@ const createLazyFunction = (
     source,
     boundTupleLengths,
     isApplicationObserved,
-    apply: (argument) => compute(argument, self),
+    apply: isApplicationObserved
+      ? (argument) => {
+          stopFirstAttempt();
+          return compute(argument, self);
+        }
+      : (argument) => compute(argument, self),
   };
   return costModel ? Object.assign(self, { costModel }) : self;
 };
@@ -1118,10 +1125,14 @@ const evaluateAtStartup = (
 ) => {
   // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
   const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
-  const value = environment.runtime.evaluateAtStartup(() =>
-    toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
-  );
-  markNormalized(value);
+  const value = environment.runtime.evaluateAtStartup(() => {
+    const startup = toStartupValue(
+      definition,
+      compileDefinitionBody(definition, environment)(context),
+    );
+    normalizeDeeply(startup);
+    return startup;
+  });
   environment.startupValues[definitionId] = value;
 };
 
@@ -2284,7 +2295,16 @@ const compileApply = (
       }
       const cached = tlcEvalValues.get(expression);
       if (cached !== undefined) return cached;
-      const value = global.evaluate(getLazyArguments(args, context), undefined);
+      // TLCEval#tlcEvalConst evaluates with EvalControl.Clear, so an application around it keeps nothing lazy.
+      const value = global.evaluate(
+        getLazyArguments(args, {
+          environment: context.environment,
+          scope: context.scope,
+          state: context.state,
+          next: context.next,
+        }),
+        undefined,
+      );
       tlcEvalValues.set(expression, value);
       return value;
     };
@@ -2769,25 +2789,47 @@ export const getLazyFilter = (
       }
       return value;
     };
-    const rebind = (tracing: Environment) =>
-      createFiltered(
+    const rebind = (tracing: Environment) => {
+      const traced = getEvaluator(expression.predicate, tracing);
+      const tracedCoverage = tracing.coverage;
+      return createFiltered(
         base,
         { ...context, environment: tracing },
-        getEvaluator(expression.predicate, tracing),
+        // A SetPredValue built outside any cost model, as a constant definition's is, records nothing when the trace runs its predicate again.
+        tracedCoverage && node < 0
+          ? (tracedContext) => runAtCoverageNode(tracedCoverage, -1, () => traced(tracedContext))
+          : traced,
         node,
       );
+    };
     if (!coverage || node < 0) {
-      return isTestObserved || (hasEffects && hasObservedPass(base))
+      if (isTestObserved) {
+        return {
+          kind: "FilteredSet",
+          base,
+          test: (element, isMember) => {
+            stopFirstAttempt();
+            return test(element, isMember);
+          },
+          isPassObserved: true,
+          source,
+          rebind,
+        };
+      }
+      return hasEffects && hasObservedPass(base)
         ? { kind: "FilteredSet", base, test, isPassObserved: true, source, rebind }
         : { kind: "FilteredSet", base, test, source, rebind };
     }
     return {
       kind: "FilteredSet",
       base,
-      test: (element, isMember) =>
-        runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      test: (element, isMember) => {
+        stopFirstAttempt();
+        return runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember));
+      },
       isPassObserved: true,
       startPass: (isMaterialized) => {
+        stopFirstAttempt();
         const draws = createFilterBaseEnumerator(coverage, base, isMaterialized);
         return {
           test: (element) => {
@@ -2879,11 +2921,13 @@ const compileSetComprehension = (
       const size = Array.isArray(elements) ? elements.length : elements.high - elements.low + 1;
       for (let position = 0; position < size; position++) {
         const element = Array.isArray(elements) ? elements[position] : elements.low + position;
+        // SetEnumValue's enumerator charges an element as it hands it out, so a predicate that fails ends the charge there.
+        if (coverage) costCoverage(coverage, base, 1);
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
         else if (isUniform) break;
       }
-      if (coverage) costCoverage(coverage, base, size + 1);
+      if (coverage) costCoverage(coverage, base, 1);
       return createNormalizedSet(kept);
     };
   }

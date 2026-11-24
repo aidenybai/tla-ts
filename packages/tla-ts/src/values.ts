@@ -5,6 +5,7 @@ import {
   TlaFeatureUnsupportedError,
   TlaModuleError,
   TlaSetBoundError,
+  TlaStoppedAttemptError,
 } from "./errors";
 import { getJavaHashCode } from "./java-hash";
 import { prettyPrint } from "./pretty-print";
@@ -546,14 +547,18 @@ const isOverriddenComparison = (left: Value, right: Value) =>
     right.kind === "SequenceSet"
   );
 
-// TLC formats a message as it throws, which can run a spec's Print, so only a first attempt that computeLikeTlcOnFailure may retry in TLC's order defers it.
-let isFirstAttempt = false;
+// TLC formats a message as it throws, which can run a spec's Print, so a first attempt that may be retried defers it.
+let attempt: "none" | "deferring" | "stopping" = "none";
+
+export const stopFirstAttempt = () => {
+  if (attempt === "stopping") throw new TlaStoppedAttemptError();
+};
 
 // A closure written where the error throws would make V8 keep the throwing function's locals in a context on every call.
 const getAttemptMessage = <Args extends unknown[]>(
   describe: (...args: Args) => string,
   ...args: Args
-) => (isFirstAttempt ? () => describe(...args) : describe(...args));
+) => (attempt === "none" ? describe(...args) : () => describe(...args));
 
 const createAttemptError = <Args extends unknown[]>(
   describe: (...args: Args) => string,
@@ -1339,6 +1344,84 @@ export const markNormalized = (value: Value): void => {
   const deeper = markNormalizedWithin(value, 0, undefined);
   for (let inner = deeper?.pop(); inner !== undefined; inner = deeper?.pop()) {
     markNormalizedWithin(inner, 0, deeper);
+  }
+};
+
+const normalizeDeeplyWithin = (
+  value: Value,
+  depth: number,
+  deeper: Value[] | undefined,
+): Value[] | undefined => {
+  if (typeof value !== "object") return deeper;
+  if (depth === MAXIMUM_MARK_DEPTH) {
+    const pending = deeper ?? [];
+    pending.push(value);
+    return pending;
+  }
+  let pending = deeper;
+  switch (value.kind) {
+    case "Set":
+      value.isNormalized = true;
+      for (let index = 0; index < value.elements.length; index++) {
+        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+      }
+      return pending;
+    case "MixedSet":
+      for (let index = 0; index < value.elements.length; index++) {
+        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+      }
+      toFiniteSet(value);
+      return pending;
+    case "Function":
+      // FcnRcdValue#deepNormalize normalizes its values but only sorts its domain.
+      value.writtenKeys = undefined;
+      for (let index = 0; index < value.domain.length; index++) {
+        markNormalized(value.domain[index]);
+        pending = normalizeDeeplyWithin(value.range[index], depth + 1, pending);
+      }
+      return pending;
+    case "LazyFunction": {
+      if (value.enumerated) return normalizeDeeplyWithin(value.enumerated, depth + 1, pending);
+      const copies: LazyFunctionCopy[] = [];
+      for (let current = value; isLazyFunctionCopy(current); current = current.original) {
+        copies.push(current);
+      }
+      for (let index = copies.length - 1; index >= 0; index--) {
+        const copy = copies[index];
+        pending = normalizeDeeplyWithin(copy.newValue, depth + 1, pending);
+        for (let step = 0; step < copy.path.length; step++) {
+          pending = normalizeDeeplyWithin(copy.path[step], depth + 1, pending);
+        }
+      }
+      return normalizeDeeplyWithin(value.domain, depth + 1, pending);
+    }
+    case "FilteredSet":
+    case "Subset":
+    case "Union":
+      return normalizeDeeplyWithin(value.base, depth + 1, pending);
+    case "SetOperation":
+      pending = normalizeDeeplyWithin(value.left, depth + 1, pending);
+      return normalizeDeeplyWithin(value.right, depth + 1, pending);
+    case "FunctionSet":
+      pending = normalizeDeeplyWithin(value.domain, depth + 1, pending);
+      return normalizeDeeplyWithin(value.range, depth + 1, pending);
+    case "RecordSet":
+    case "ProductSet": {
+      const sets = value.kind === "RecordSet" ? value.sets : value.factors;
+      for (let index = 0; index < sets.length; index++) {
+        pending = normalizeDeeplyWithin(sets[index], depth + 1, pending);
+      }
+      return pending;
+    }
+    default:
+      return pending;
+  }
+};
+
+export const normalizeDeeply = (value: Value): void => {
+  const deeper = normalizeDeeplyWithin(value, 0, undefined);
+  for (let inner = deeper?.pop(); inner !== undefined; inner = deeper?.pop()) {
+    normalizeDeeplyWithin(inner, 0, deeper);
   }
 };
 
@@ -2167,8 +2250,9 @@ const toCachedSet = (value: Value) => {
     value.isCached = true;
     return set;
   }
+  const set = toFiniteSet(value);
   cacheSet(value);
-  return toFiniteSet(value);
+  return set;
 };
 
 const toChargedSet = (
@@ -3795,29 +3879,52 @@ const resetTrace = (mark: TraceMark | undefined) => {
 
 export const computeLikeTlcOnFailure = <Left, Right, Result>(
   compute: (left: Left, right: Right) => Result,
-  computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
+  computeLikeTlc: (left: Left, right: Right) => Result,
   left: Left,
   right: Right,
   isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
   const mark = markTrace();
-  const isOuterAttempt = isFirstAttempt;
-  isFirstAttempt = true;
+  const outerAttempt = attempt;
+  attempt = "stopping";
   try {
     const result = compute(left, right);
-    isFirstAttempt = isOuterAttempt;
+    attempt = outerAttempt;
     return result;
   } catch (error) {
-    isFirstAttempt = isOuterAttempt;
-    if (!(error instanceof TlaEvaluationError)) throw error;
-    if (isFailingLikeTlc?.(left, right)) throw formatUnlessAttempt(error);
+    attempt = outerAttempt;
+    if (!(error instanceof TlaStoppedAttemptError)) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      if (isFailingLikeTlc?.(left, right)) throw formatUnlessAttempt(error);
+    }
     resetTrace(mark);
-    return computeLikeTlc(left, right, error);
+    return computeLikeTlc(left, right);
+  }
+};
+
+export const computeOnFailure = <Left, Right, Result>(
+  compute: (left: Left, right: Right) => Result,
+  onFailure: (left: Left, right: Right, error: TlaEvaluationError) => Result,
+  left: Left,
+  right: Right,
+): Result => {
+  const mark = markTrace();
+  const outerAttempt = attempt;
+  attempt = "deferring";
+  try {
+    const result = compute(left, right);
+    attempt = outerAttempt;
+    return result;
+  } catch (error) {
+    attempt = outerAttempt;
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    resetTrace(mark);
+    return onFailure(left, right, error);
   }
 };
 
 const formatUnlessAttempt = (error: TlaEvaluationError) => {
-  if (!isFirstAttempt) error.formatMessage();
+  if (attempt === "none") error.formatMessage();
   return error;
 };
 
@@ -4329,7 +4436,7 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
+  return computeOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
 const describeBoundArgument = (
@@ -4976,7 +5083,7 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
   ) {
     return expandLazySet(value);
   }
-  if (!isEnumerable(value)) return undefined;
+  // TLC's toString tries toSetEnum and size even on a set it can't enumerate, and the failure's message formats the set's parts.
   const mark = markTrace();
   try {
     return expandLazySet(value);

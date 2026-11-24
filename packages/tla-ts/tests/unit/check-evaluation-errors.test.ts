@@ -2345,6 +2345,71 @@ describe("evaluation errors match TLC", () => {
     expect((await checkModule(`ASSUME PrintT(${expression})`)).violation?.message).toBe(message);
   });
 
+  it.each([
+    ['"s" \\in TLCEval({3, 1, 2})', 'Attempted to compare string "s" with non-string:\n2'],
+    ['"s" \\in TLCEval(<<{3, 1, 2}>>)[1]', 'Attempted to compare string "s" with non-string:\n2'],
+    [
+      '{"s"} \\in TLCEval(<<SUBSET {3, 1, 2}>>)[1]',
+      'Attempted to compare string "s" with non-string:\n2',
+    ],
+    [
+      '[a |-> "s"] \\in TLCEval(<<[a : {3, 1, 2}]>>)[1]',
+      'Attempted to compare string "s" with non-string:\n2',
+    ],
+    [
+      '<<"s", 0>> \\in TLCEval(<<{3, 1, 2} \\X {0}>>)[1]',
+      'Attempted to compare string "s" with non-string:\n2',
+    ],
+    [
+      '[n \\in {3, 1, 2} |-> "s"] \\in TLCEval(<<[{3, 1, 2} -> {0}]>>)[1]',
+      'Attempted to compare string "s" with non-string:\n0',
+    ],
+    [
+      '\\A s \\in TLCEval({<<{3, 1, 2}>>}) : "s" \\in s[1]',
+      'Attempted to compare string "s" with non-string:\n2',
+    ],
+    [
+      'TLCEval((3 :> 1) @@ (1 :> 2) @@ (2 :> 3))["s"] = 1',
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+    [
+      'TLCEval([a |-> (3 :> 1) @@ (1 :> 2) @@ (2 :> 3)]).a["s"] = 1',
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+  ])(
+    "normalizes every part of the constant value of %s as TLCEval#tlcEvalConst does",
+    async (expression, message) => {
+      expect((await checkModule(`ASSUME ${expression}`)).violation?.message).toBe(message);
+    },
+  );
+
+  it.each([
+    ["TLCEval([a |-> [n \\in {1, 2} |-> PrintT(n)]]).a[1]", ["1", "2"], undefined],
+    ["\\A i \\in {1} : TLCEval([a |-> [n \\in {1, 2} |-> PrintT(n)]]).a[1]", ["1"], undefined],
+    ["LET g == TLCEval(<<[n \\in {1, 2} |-> PrintT(n)]>>) IN g[1][1]", ["1", "2"], undefined],
+    [
+      'TLCEval(<<[n \\in {3, 1, 2} |-> n]>>)[1]["s"] = 1',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+    [
+      'TLCEval([a |-> [n \\in {3, 1, 2} |-> n]]).a["s"] = 1',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+  ])(
+    "builds the functions of a constant TLCEval argument that %s applies, as TLC clears KeepLazy",
+    async (expression, printed, message) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nASSUME ${expression}\n====`,
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      expect([prints, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
   it("evaluates a constant TLCEval argument once for every state", async () => {
     const prints: string[] = [];
     const result = await check({

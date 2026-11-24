@@ -9700,6 +9700,142 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "<<G>> = 1",
+      [
+        "line 6, col 9 to line 6, col 14 of module M: 0",
+        "|line 6, col 14 to line 6, col 14 of module M: 2",
+        "line 6, col 19 to line 6, col 27 of module M: 2",
+        "|line 6, col 19 to line 6, col 23 of module M: 2:2",
+        "||line 6, col 21 to line 6, col 21 of module M: 2",
+      ],
+    ],
+    [
+      "\\E y \\in {1} : <<G>> = y",
+      [
+        "line 6, col 9 to line 6, col 14 of module M: 0",
+        "|line 6, col 14 to line 6, col 14 of module M: 2",
+        "line 6, col 19 to line 6, col 42 of module M: 2",
+        "|line 6, col 34 to line 6, col 42 of module M: 2",
+        "||line 6, col 34 to line 6, col 38 of module M: 2:2",
+        "|||line 6, col 36 to line 6, col 36 of module M: 2",
+        "||line 6, col 42 to line 6, col 42 of module M: 2",
+        "|line 6, col 28 to line 6, col 30 of module M: 2:4",
+      ],
+    ],
+  ])(
+    "counts nothing for the predicate of a constant filter that the replay of %s prints",
+    async (body, rows) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nG == {s \\in SUBSET {1} : s = {}}\nInit == x = 0\nNext == x' = x /\\ ${body}\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.at(-1)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
+      "{1, 2} = {s \\in {1, 2} : s \\div 0 = 1}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "|line 5, col 14 to line 5, col 14 of module M: 2",
+        "line 5, col 19 to line 5, col 56 of module M: 2",
+        "|line 5, col 19 to line 5, col 24 of module M: 2",
+        "|line 5, col 28 to line 5, col 56 of module M: 2",
+        "||line 5, col 44 to line 5, col 55 of module M: 2",
+        "||line 5, col 35 to line 5, col 40 of module M: 2:2",
+      ],
+    ],
+    [
+      "{s \\in {1, 2, 3} : s < 2 \\/ s \\div 0 = 1} = {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "|line 5, col 14 to line 5, col 14 of module M: 2",
+        "line 5, col 19 to line 5, col 64 of module M: 2",
+        "|line 5, col 19 to line 5, col 59 of module M: 2",
+        "||line 5, col 38 to line 5, col 58 of module M: 4",
+        "|||line 5, col 38 to line 5, col 42 of module M: 4",
+        "|||line 5, col 47 to line 5, col 58 of module M: 2",
+        "||line 5, col 26 to line 5, col 34 of module M: 2:4",
+      ],
+    ],
+    [
+      "{s \\in {<<1>>, <<2>>} : s[1] \\div 0 = 1} = {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "|line 5, col 14 to line 5, col 14 of module M: 2",
+        "line 5, col 19 to line 5, col 63 of module M: 2",
+        "|line 5, col 19 to line 5, col 58 of module M: 2",
+        "||line 5, col 43 to line 5, col 57 of module M: 2",
+        "||line 5, col 26 to line 5, col 39 of module M: 2:2",
+        "|||line 5, col 27 to line 5, col 31 of module M: 2",
+        "|||line 5, col 34 to line 5, col 38 of module M: 2",
+      ],
+    ],
+    [
+      "\\E y \\in {1, 2} : {s \\in {1, 2} : s \\div (y - 1) = 1} = {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "|line 5, col 14 to line 5, col 14 of module M: 2",
+        "line 5, col 19 to line 5, col 76 of module M: 2",
+        "|line 5, col 37 to line 5, col 76 of module M: 2",
+        "||line 5, col 37 to line 5, col 71 of module M: 2",
+        "|||line 5, col 53 to line 5, col 70 of module M: 2",
+        "|||line 5, col 44 to line 5, col 49 of module M: 2:2",
+        "|line 5, col 28 to line 5, col 33 of module M: 2:4",
+      ],
+    ],
+  ])("charges a filter's set only for the elements it drew before %s fails", async (body, rows) => {
+    expect(await getNextCoverageLines(`x' = x /\\ ${body}`)).toEqual(rows);
+  });
+
+  it.each([
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE {s \\in SUBSET {1} : s = {}} = {{}} IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 96 of module M: 1:1",
+        "|line 5, col 39 to line 5, col 96 of module M: 1",
+        "||line 5, col 42 to line 5, col 46 of module M: 1",
+        "||line 5, col 63 to line 5, col 96 of module M: 1",
+        "|||line 5, col 63 to line 5, col 89 of module M: 1:3",
+        "||||line 5, col 83 to line 5, col 88 of module M: 2",
+        "||||line 5, col 70 to line 5, col 79 of module M: 1",
+        "|||line 5, col 93 to line 5, col 96 of module M: 1",
+        "|line 5, col 31 to line 5, col 33 of module M: 1:2",
+        "line 5, col 101 to line 5, col 132 of module M: 1",
+        "|line 5, col 101 to line 5, col 105 of module M: 1",
+        "|line 5, col 109 to line 5, col 132 of module M: 1",
+        "||line 5, col 111 to line 5, col 130 of module M: 1:1",
+        "|||line 5, col 126 to line 5, col 129 of module M: 1",
+        "|||line 5, col 118 to line 5, col 120 of module M: 1:2",
+      ],
+    ],
+    [
+      "LET f[n \\in {1, 2}] == IF n = 0 THEN f[n] ELSE n IN <<<<1, 2>>, {s \\in SUBSET {1} : s = {}}>> = <<f, {{}}>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 66 of module M: 1:2",
+        "|line 5, col 42 to line 5, col 66 of module M: 2",
+        "|line 5, col 31 to line 5, col 36 of module M: 1",
+        "line 5, col 71 to line 5, col 125 of module M: 1",
+        "|line 5, col 71 to line 5, col 111 of module M: 1",
+        "||line 5, col 73 to line 5, col 80 of module M: 1",
+        "||line 5, col 83 to line 5, col 109 of module M: 1:3",
+        "|||line 5, col 103 to line 5, col 108 of module M: 2",
+        "|||line 5, col 90 to line 5, col 99 of module M: 1",
+        "|line 5, col 115 to line 5, col 125 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts a lazy function's body once when a comparison of %s reaches a filter",
+    async (body, rows) => {
+      expect(await getNextCoverageLines(`x' = x /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
   it("charges each draw of a filter from a converted Cartesian product, as TLC's SetOfTuplesValue enumerates the SetEnumValue it keeps", async () => {
     expect(
       await getNextCoverageLines(
@@ -11324,6 +11460,38 @@ ASSUME TLCFP(a) = -887695703
       "PrintT(F \\X {1}) /\\ Cardinality(F) = 2",
       ["<<0, 1>>", "<<1, 1>>", "{<<<<0, 1>>, 1>>, <<<<1, 1>>, 1>>}"],
     ],
+    [
+      "a literal's sort compares a record set of it",
+      "LET P == [a : F] IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a literal's sort compares its product",
+      "LET P == F \\X {1} IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a literal's sort compares a record set of it in two fields",
+      "LET P == [a : F, b : F] IN {{9}, P} # {} /\\ \\A t \\in F : TRUE",
+      [
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+        "<<1, 1>>",
+        "<<0, 1>>",
+        "<<0, 1>>",
+        "<<1, 1>>",
+      ],
+    ],
+    [
+      "a literal's sort compares a record set of it with itself",
+      "LET P == [a : F] IN {P, P} # {} /\\ \\A t \\in F : TRUE",
+      ["<<0, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
   ])(
     "runs a filter's predicate again after %s only where TLC does",
     async (_name, body, printed) => {
@@ -11631,6 +11799,36 @@ ASSUME TLCFP(a) = -887695703
       ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
     ]);
   });
+
+  it.each([
+    ["a literal that fails to sort", "{<<F, F>>, 1}", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["a literal", "{F, {9}}", ["{}", "{1}", '"n"']],
+    ["a literal in a literal", "{{F, {9}}, {8}}", ["{}", "{1}", '"n"']],
+    ["a record", "[a |-> 1, b |-> {F, {9}}]", ["{}", "{1}", '"n"']],
+    ["a product", "{F, {9}} \\X {1}", ["{}", "{1}", '"n"']],
+    ["a record set", "[a : {F, {9}}]", ["{}", "{1}", '"n"']],
+    ["a function set", "[{F, {9}} -> {1}]", ["{}", "{1}", '"n"']],
+    ["a set difference", "{F, {9}} \\ {{7}}", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["a SUBSET", "SUBSET {F, {9}}", ["{}", "{1}", '"n"']],
+    ["a function's domain", "({F, {9}} :> 1)", ['"n"']],
+    ["a Seq", "Seq({F, {9}})", ['"n"']],
+    [
+      "a literal before the assumptions",
+      '{F, {9}}\nASSUME PrintT("assume")',
+      ["{}", "{1}", '"assume"', '"n"'],
+    ],
+  ])(
+    "sorts the literals of a constant definition as TLC starts in %s",
+    async (_name, body, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nK == LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${body}\nInit == x = 0\nNext == x' = x /\\ PrintT("n")\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
 
   it.each([
     [

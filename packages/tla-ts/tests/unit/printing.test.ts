@@ -11,6 +11,16 @@ const checkPrinting = async (body: string, config = "") => {
   return { result, printed };
 };
 
+const checkWithObservedFilter = async (expression: string) => {
+  const lines: string[] = [];
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
+    config: "",
+    onPrint: (text) => lines.push(text),
+  });
+  return [lines, result.violation?.message];
+};
+
 describe("printing matches TLC", () => {
   it.each([
     ["3..1", "{}"],
@@ -284,6 +294,125 @@ describe("printing matches TLC", () => {
         onPrint: (text) => lines.push(text),
       });
       expect([lines, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
+    [
+      "Len(G \\cup Nat) = 1",
+      ["{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{{}, {1}} \\cup Nat",
+    ],
+    [
+      "Len({t \\in G \\cup Nat : TRUE}) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{t \\in {{}, {1}} \\cup Nat : <expression line 4, col 32 to line 4, col 35 of module M> }",
+    ],
+    [
+      "Len([a : G \\cup Nat]) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n[a: {{}, {1}} \\cup Nat]",
+    ],
+    [
+      "Len(SUBSET (G \\cup Nat)) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\nSUBSET {{}, {1}} \\cup Nat",
+    ],
+    [
+      "Len([G -> Nat]) = 1",
+      ["{}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n[{{}, {1}} -> Nat]",
+    ],
+    [
+      "<<[y \\in {1} |-> Len(G \\cup Nat)]>> = <<[y \\in {1} |-> 1]>>",
+      ["{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{{}, {1}} \\cup Nat",
+    ],
+    [
+      "<<[y \\in {1} |-> <<G \\cup Nat>> \\in 1]>> = <<[y \\in {1} |-> TRUE]>>",
+      ["{}", "{1}", "{}", "{1}"],
+      "Attempted to check if the value:\n<<{{}, {1}} \\cup Nat>>\nis an element of the integer 1",
+    ],
+  ])(
+    "runs a filter's predicate as TLC tries to enumerate a set it formats in %s",
+    async (expression, printed, message) => {
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
+    [
+      "<<G \\cap Nat>> = <<{1}>>",
+      ["{}"],
+      "Attempted to check if the value:\n{}\nis an element of Nat.",
+    ],
+    [
+      "<<[G -> Nat]>> = <<{}>>",
+      ["{}", "{}", "{1}"],
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+    ],
+    [
+      "<<G \\X Nat>> = <<{}>>",
+      ["{}", "{}"],
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s1:\nNat",
+    ],
+    [
+      "<<[a : G, b : Nat]>> = <<{}>>",
+      ["{}", "{}"],
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `b' field:\nNat",
+    ],
+    [
+      "{1, 2} = (G \\X {2})",
+      ["{}", "{}", "{1}"],
+      "Attempted to check equality of integer 1 with non-integer:\n<<{}, 2>>",
+    ],
+    [
+      "<<G \\cup {7}>> = <<{1}>>",
+      ["{}", "{1}"],
+      "Attempted to compare the set {} with the value:\n7",
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE <<G \\cap Nat>> = <<{1}>> IN <<f>> = <<[n \\in {1} |-> FALSE]>>",
+      ["{}"],
+      "Attempted to check if the value:\n{}\nis an element of Nat.",
+    ],
+  ])(
+    "runs a filter's predicate as TLC does when %s fails",
+    async (expression, printed, message) => {
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ G = {{}, {1}} IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      ["1", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ {} \\in G IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      ["1", "{}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1, 2}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ (n = 2 => G = {{}, {1}}) IN <<f>> = <<[n \\in {1, 2} |-> TRUE]>>",
+      ["1", "2", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ G \\subseteq {{}, {1}} IN f = [n \\in {1} |-> TRUE]",
+      ["1", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ <<G>> = <<{{}, {1}}>> IN <<f, 1>> = <<[n \\in {1} |-> TRUE], {}>>",
+      ["1", "{}", "{1}"],
+      "Attempted to check equality of integer 1 with non-integer:\n{}",
+    ],
+  ])(
+    "runs a lazy function's body once as TLC does when it reaches a filter in %s",
+    async (expression, printed, message) => {
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
     },
   );
 
