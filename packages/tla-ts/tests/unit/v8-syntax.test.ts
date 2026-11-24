@@ -258,4 +258,49 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       },
     ]);
   });
+
+  describe("modules", () => {
+    checkCases([
+      {
+        name: "an export of no declaration",
+        source: "export { x };",
+        accepted: "let x;\nexport { x };",
+        isModule: true,
+      },
+      {
+        name: "an export twice",
+        source: "export let a;\nexport { a };",
+        accepted: "export let a;\nexport { a as b };",
+        isModule: true,
+      },
+      {
+        name: "a string export name without a from",
+        source: 'export { "a" };',
+        accepted: 'export { "a" } from "x";',
+        isModule: true,
+      },
+      {
+        name: "an export name's lone surrogate",
+        source: 'export { "\\uD800" as a } from "x";',
+        accepted: 'export { "\\uD800\\uDC00" as a } from "x";',
+        isModule: true,
+      },
+      {
+        name: "an import attribute twice",
+        source: 'import a from "x" with { type: "json", type: "json" };',
+        accepted: 'import a from "x" with { type: "json" };',
+        isModule: true,
+      },
+      { name: "a let named await", source: "let await;", accepted: "let wait;", isModule: true },
+      {
+        name: "an HTML comment",
+        source: "x;\n<!-- y",
+        accepted: "x;\n// y",
+        isModule: true,
+      },
+      { name: "import.meta in a script", source: "import.meta;", accepted: "import('x');" },
+      { name: "an import in a script", source: 'import x from "y";', accepted: "x;" },
+      { name: "a new of an import call", source: 'new import("x");', accepted: 'import("x");' },
+    ]);
+  });
 });
