@@ -188,6 +188,15 @@ const DEFINITIONS = [
   IF lo > hi THEN s
   ELSE IF lo = hi THEN AddRealmProperty(s, ps[lo])
   ELSE LET mid == (lo + hi) \\div 2 IN AddRealmPropertiesIn(AddRealmPropertiesIn(s, ps, lo, mid), ps, mid + 1, hi)`,
+  // The globals of a new V8 context that ESCore lacks, console and WebAssembly, each a value that
+  // stops at each use, writable and configurable as V8's, in the order of the host's keys.
+  `HostContextGlobal(s) == LET d == DefineContextStops(s, <<N("console"), N("WebAssembly")>>) IN IF IsAbrupt(d) THEN d ELSE Ok(OrderRealmKeys(d.s, 1), Empty)`,
+  `DefineContextStops(s, names) ==
+  IF names = <<>> THEN Ok(s, Empty) ELSE
+  LET target == OrdinaryObjectCreate(s, Null)
+      value == StoppingProxy(target.s, Val(target), Head(names), <<>>)
+      d == DefinePropertyOrThrow(value.s, Intrinsic(s, "GlobalObject"), Str(Head(names)), DataDesc(Val(value), TRUE, FALSE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineContextStops(d.s, Tail(names))`,
   `HeapAppendFrom(h, seq, i) == HeapAppendIn(h, seq, i, Len(seq))`,
   `HeapAppendIn(h, seq, lo, hi) ==
   IF lo > hi THEN h
@@ -2176,10 +2185,17 @@ export const getRealmDefinitions = (library: Library, realm: HostRealm): Generat
       arity: 0,
       text: all.replace("RealmProperties ==", "HostRealmProperties =="),
     },
+    // A new vm context's realm, which has none of Node's globals, and Node's realm, which has
+    // setTimeout.
+    {
+      name: "ContextPropertyList",
+      arity: 0,
+      text: `ContextPropertyList == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}})`,
+    },
     {
       name: "RealmProperties",
       arity: 0,
-      text: `RealmProperties == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}}) \\o <<M("GlobalObject", Str(${getUnitsOf("setTimeout")}), "Global", "setTimeout", 2)>>`,
+      text: `RealmProperties == ContextPropertyList \\o <<M("GlobalObject", Str(${getUnitsOf("setTimeout")}), "Global", "setTimeout", 2)>>`,
     },
   ];
 };

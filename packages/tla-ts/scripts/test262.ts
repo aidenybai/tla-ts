@@ -262,6 +262,21 @@ const getThrownType = (value: unknown) => {
   return typeof name === "string" ? name : undefined;
 };
 
+// test262's $262 on a global, as tla-ts's DefineContextHost262 gives it: an object whose method
+// createRealm gives the global of a new context, which newGlobal makes. This is the reference
+// harness of the runner, which node:vm runs for Node, not tla-ts's realm.
+const HOST_262 = `(newGlobal) => Object.defineProperty(globalThis, "$262", {
+  value: Object.defineProperty({}, "createRealm", {
+    value: { createRealm() { return newGlobal(); } }.createRealm,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  }),
+  writable: true,
+  enumerable: false,
+  configurable: true,
+})`;
+
 // Runs scripts in turn in one global object, as a page runs its scripts.
 const getNodeScriptsError = async (
   scripts: readonly string[],
@@ -274,6 +289,10 @@ const getNodeScriptsError = async (
         timers.push(callback);
       },
     });
+    runInContext(
+      HOST_262,
+      global,
+    )(() => runInContext("globalThis", createContext(constants.DONT_CONTEXTIFY)));
     scripts.forEach((script) => runInContext(script, global));
     await new Promise((resolve) => {
       setImmediate(resolve);
@@ -304,7 +323,7 @@ const transpileModule = (source: string) =>
     },
   }).outputText;
 
-// How a Node of its own failed, from the line of the error it reports and the line that THROWN_PATH
+// How a Node of its own failed, from the line of the error it reports and the line that HOST_PATH
 // writes.
 const getProcessFailure = (run: SpawnSyncReturns<string>): NodeFailure | undefined => {
   if (run.status === 0) return undefined;
@@ -321,7 +340,7 @@ const getModuleError = (source: string, path?: string) => {
   if (path !== undefined) writeFileSync(path, output);
   return getProcessFailure(
     path === undefined
-      ? spawnSync(process.execPath, ["--require", THROWN_PATH, "--input-type=module", "-"], {
+      ? spawnSync(process.execPath, ["--require", HOST_PATH, "--input-type=module", "-"], {
           input: output,
           encoding: "utf8",
         })
@@ -329,7 +348,7 @@ const getModuleError = (source: string, path?: string) => {
           process.execPath,
           [
             "--require",
-            THROWN_PATH,
+            HOST_PATH,
             ...(hasImportCall(source) ? ["--require", TIMERS_PATH] : []),
             path,
           ],
@@ -558,13 +577,16 @@ process.on("beforeExit", () => { timers.splice(0).forEach((callback) => callback
 `,
 );
 
-// Writes the name of the constructor of a value that a Node of its own leaves uncaught, as
-// getThrownType reads it, which Node then reports as it does without it.
-const THROWN_PATH = join(MODULE_DIRECTORY, "thrown.cjs");
+// The host of a Node of its own: test262's $262 on its global (HOST_262), and a line of the name of
+// the constructor of a value that it leaves uncaught, as getThrownType reads it, which Node then
+// reports as it does without it.
+const HOST_PATH = join(MODULE_DIRECTORY, "host.cjs");
 const THROWN_LINE = "test262 thrown: ";
 writeFileSync(
-  THROWN_PATH,
-  `const isObject = (value) => (typeof value === "object" && value !== null) || typeof value === "function";
+  HOST_PATH,
+  `const vm = require("node:vm");
+(${HOST_262})(() => vm.runInContext("globalThis", vm.createContext(vm.constants.DONT_CONTEXTIFY)));
+const isObject = (value) => (typeof value === "object" && value !== null) || typeof value === "function";
 process.on("uncaughtExceptionMonitor", (error) => {
   const constructor = isObject(error) ? error.constructor : undefined;
   const name = isObject(constructor) ? constructor.name : undefined;
@@ -679,7 +701,7 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
       [
         "--no-warnings",
         "--require",
-        THROWN_PATH,
+        HOST_PATH,
         "--require",
         TIMERS_PATH,
         "--eval",
@@ -741,7 +763,7 @@ const compileProgram = (
   return compileToEscore(emitted, path, RUNTIME, isModule, {
     steps: SCRIPT_STEPS,
     entries: [],
-    isModuleHost: true,
+    isTest262Host: true,
     candidates,
   });
 };

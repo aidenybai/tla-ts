@@ -101,6 +101,10 @@ const GATED_GROUPS = [
 // formats a time value through Temporal's patterns and Date's fields.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
+  // A new context's realm, whose globals that ESCore lacks are proxies of the host's that stop at
+  // each use.
+  ["79-proxy.tla", ["createRealm"]],
+  ["88-modules.tla", ["createRealm"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
   ["86-promise.tla", ["waitAsync", "disposeAsync", "asyncDispose"]],
   [
