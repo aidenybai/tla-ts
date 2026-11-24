@@ -602,6 +602,25 @@ describe("operator arguments selected behind an instance or a definition's param
     expect([result.status, prints]).toEqual(["success", ["10"]]);
   });
 
+  it("substitutes a selected LAMBDA for an operator constant through a definition or an instance, at module level and in a LET", async () => {
+    const modules = new Map([
+      ["Other", "---- MODULE Other ----\nCONSTANT Op2(_, _)\nUse == Op2(1, 2)\n===="],
+      [
+        "Pure3",
+        "---- MODULE Pure3 ----\nEXTENDS Naturals\nAp2(F(_, _)) == F(1, 2)\nD8 == Ap2(LAMBDA a, b : a * b + 10)\n====",
+      ],
+    ]);
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nAp2(F(_, _)) == F(1, 2)\nD8 == Ap2(LAMBDA a, b : a + b)\nJ == INSTANCE Pure3\nO1 == INSTANCE Other WITH Op2 <- D8!1\nO2 == INSTANCE Other WITH Op2 <- J!D8!1\nASSUME PrintT(<<O1!Use, O2!Use,\n               LET L == INSTANCE Other WITH Op2 <- D8!1 IN L!Use,\n               LET L == INSTANCE Other WITH Op2 <- J!D8!1 IN L!Use,\n               LET D7 == Ap2(LAMBDA a, b : b * 10 + a)\n                   L == INSTANCE Other WITH Op2 <- D7!1\n               IN L!Use>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => modules.get(name),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<3, 12, 3, 12, 21>>"]]);
+  });
+
   it("selects into an instance copy through a LET instance of the module that holds it, with the values TLC gives it and its local twin", async () => {
     const modules = new Map([
       [

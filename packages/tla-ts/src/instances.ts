@@ -27,7 +27,9 @@ import {
   isBefore,
   isInstantiated,
   LOCAL_RESOLUTION,
+  untracedExpressions,
 } from "./resolve";
+import type { Lookup } from "./subexpressions";
 
 export const contextualApplications = new WeakSet<Expression>();
 
@@ -52,6 +54,7 @@ export const getActionPredicate = (expression: Expression) =>
 const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
+  if (untracedExpressions.has(expression)) untracedExpressions.add(copy);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
@@ -669,7 +672,11 @@ const createSyntheticIdentifier = (name: string, location: SourceLocation) => {
 };
 
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
-  params.map((param) => createSyntheticIdentifier(param.name, location));
+  params.map((param) => {
+    const argument = createSyntheticIdentifier(param.name, location);
+    untracedExpressions.add(argument);
+    return argument;
+  });
 
 export const createInstanceArguments = (
   params: OperatorParam[],
@@ -687,11 +694,8 @@ export const createLocalAlias = (
   params: OperatorParam[],
   forwarded: OperatorParam[],
   location: SourceLocation,
-): OperatorDefinition => ({
-  kind: "Operator",
-  name,
-  params,
-  body:
+): OperatorDefinition => {
+  const body: Expression =
     forwarded.length === 0
       ? { kind: "Identifier", name: key, location }
       : {
@@ -699,11 +703,10 @@ export const createLocalAlias = (
           operator: key,
           args: createLocalArguments(forwarded, location),
           location,
-        },
-  isLocal: true,
-  isRecursive: false,
-  location,
-});
+        };
+  untracedExpressions.add(body);
+  return { kind: "Operator", name, params, body, isLocal: true, isRecursive: false, location };
+};
 
 export const getInstanceOperator = (
   key: string,
@@ -714,19 +717,17 @@ export const getInstanceOperator = (
   marks: Pick<Instantiation, "instanceArguments" | "instanceOperators">,
 ): Expression & { kind: "Lambda" } => {
   const names = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
+  const args = [
+    ...createInstanceArguments(params, location, marks.instanceArguments),
+    ...names.map((name) => createLocalIdentifier(name, location)),
+  ];
+  const body: Expression = { kind: "Apply", operator: key, args, location, resolution };
+  untracedExpressions.add(body);
+  args.forEach((argument) => untracedExpressions.add(argument));
   const operator: Expression & { kind: "Lambda" } = {
     kind: "Lambda",
     params: names,
-    body: {
-      kind: "Apply",
-      operator: key,
-      args: [
-        ...createInstanceArguments(params, location, marks.instanceArguments),
-        ...names.map((name) => createLocalIdentifier(name, location)),
-      ],
-      location,
-      resolution,
-    },
+    body,
     location,
   };
   marks.instanceOperators.add(operator);
@@ -759,6 +760,7 @@ const substitute = (
   const substituted = substituteExpression(expression, rewrite, bound);
   if (rewrite.mode === "Enabled") rewrite.instantiation.enabledSubstitutions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  if (untracedExpressions.has(expression)) untracedExpressions.add(substituted);
   const instanceArguments = rewrite.instantiation.instanceArguments;
   if (instanceArguments.has(expression)) instanceArguments.add(substituted);
   const instanceOperators = rewrite.instantiation.instanceOperators;
@@ -1216,7 +1218,7 @@ const getUnnamedStatement = (theorem: Theorem) =>
 
 export const getLetInstanceExpansion = (
   module: Module,
-  instantiate: (instance: Instance, lets: Definition[]) => Definition[],
+  instantiate: (instance: Instance, lets: Definition[], lookup: Lookup) => Definition[],
 ) => {
   const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
@@ -1226,6 +1228,12 @@ export const getLetInstanceExpansion = (
       return statement !== undefined && hasLetInstance(statement);
     });
   return hasLetInstances
-    ? (expression: Expression) => expandLetInstances(expression, instantiate, [], [])
+    ? (expression: Expression, lookup: Lookup) =>
+        expandLetInstances(
+          expression,
+          (instance, lets) => instantiate(instance, lets, lookup),
+          [],
+          [],
+        )
     : undefined;
 };

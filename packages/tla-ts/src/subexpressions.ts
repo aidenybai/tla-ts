@@ -57,12 +57,13 @@ import {
   SELECTION_NAME,
   factReferences,
   generatedArgumentCounts,
+  untracedExpressions,
   type NullSelection,
   type SelectionArguments,
   type SubexpressionRecords,
 } from "./resolve";
 
-type Lookup = (name: string) => Definition | undefined;
+export type Lookup = (name: string) => Definition | undefined;
 
 interface FoundLabel {
   label: Expression & { kind: "Label" };
@@ -228,18 +229,21 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
   const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
   const params = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
+  const args: Expression[] = params.map((name) => ({
+    kind: "Identifier",
+    name,
+    location: operand.location,
+    resolution: LOCAL_RESOLUTION,
+  }));
   const application: ApplyExpression = {
     kind: "Apply",
     operator,
-    args: params.map((name) => ({
-      kind: "Identifier",
-      name,
-      location: operand.location,
-      resolution: LOCAL_RESOLUTION,
-    })),
+    args,
     location: operand.location,
     ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
   };
+  untracedExpressions.add(application);
+  args.forEach((argument) => untracedExpressions.add(argument));
   operandApplications.set(operand, [...(operandApplications.get(operand) ?? []), application]);
   return withSubstitutionFrames(
     { kind: "Lambda", params, body: application, operator, location: operand.location },
@@ -1037,12 +1041,12 @@ const resolveInstance = (
 
 export const resolveInstanceSubexpressions = (
   instance: Instance,
-  module: Module,
+  lookup: Lookup,
   records: SubexpressionRecords,
 ): Instance =>
   resolveInstance(
     instance,
-    (name) => module.definitions.find((definition) => definition.name === name),
+    lookup,
     () => undefined,
     records,
     () => false,
@@ -1051,7 +1055,7 @@ export const resolveInstanceSubexpressions = (
 
 export const createModuleSubexpressions = (
   module: Module,
-  expand: ((expression: Expression) => Expression) | undefined,
+  expand: ((expression: Expression, lookup: Lookup) => Expression) | undefined,
   getAvailable: Lookup,
   getStandardDefinition: Lookup,
   records: SubexpressionRecords,
@@ -1119,7 +1123,8 @@ export const createModuleSubexpressions = (
       }
       return resolvedDefinitions.get(definition) ?? definition;
     };
-  const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
+  const getExpanded = (expression: Expression, lookup: Lookup) =>
+    expand ? expand(expression, lookup) : expression;
   const ordered = [
     ...module.definitions.map((definition) => ({ definition, isClause: false })),
     ...clauses.map((definition) => ({ definition, isClause: true })),
@@ -1339,7 +1344,9 @@ export const createModuleSubexpressions = (
         definition,
         resolveDefinition(definition, (expression, bound) =>
           resolve(
-            entry.isClause ? expression : getExpanded(expression),
+            entry.isClause
+              ? expression
+              : getExpanded(expression, getVisibleLookup(definitionLookup, definition.location)),
             definition.location,
             bound,
           ),
@@ -1376,7 +1383,14 @@ export const createModuleSubexpressions = (
             isMapped(assumption.expression)
               ? {
                   ...assumption,
-                  expression: resolve(getExpanded(assumption.expression), assumption.location, []),
+                  expression: resolve(
+                    getExpanded(
+                      assumption.expression,
+                      getVisibleLookup(definitionLookup, assumption.location),
+                    ),
+                    assumption.location,
+                    [],
+                  ),
                 }
               : assumption,
           ];
@@ -1394,7 +1408,9 @@ export const createModuleSubexpressions = (
                 getSharedBody(statement) ??
                 (statement.kind === "AssumeProve"
                   ? resolver.resolveStatement(statement)
-                  : resolver.resolveStatement(getExpanded(statement))),
+                  : resolver.resolveStatement(
+                      getExpanded(statement, getVisibleLookup(proofLookup, theorem.location)),
+                    )),
               proof:
                 theorem.proof &&
                 createModuleProofResolver(

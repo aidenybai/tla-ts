@@ -34,6 +34,7 @@ import {
   getMissingArgumentDescriber,
   getReevaluatedDefinitions,
   getStartupValue,
+  getSubstituteClosure,
   getUnchangedVariables,
   getZeroArityBody,
   isUnchangedState,
@@ -244,9 +245,8 @@ const getRuntimeVariableIndex = (
   }
   // SymbolNodeValueLookupProvider#getVar looks a declaration up through its SubstInNode, which a LET instance with parameters applies as an operator.
   if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
-    const binding = lookupScope(scope, expression.operator);
-    if (binding?.kind !== "Operator" || binding.operator.kind !== "Closure") return undefined;
-    const closure = binding.operator;
+    const closure = getSubstituteClosure(expression, scope);
+    if (!closure) return undefined;
     const callScope = bindOperatorArguments(
       closure,
       expression.args,
@@ -723,6 +723,20 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       return;
     }
     const context = getContext(run, scope, partial);
+    if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+      const substitute = getSubstituteClosure(expression, scope);
+      if (substitute) {
+        getRunner(getUnchangedWrapper(substitute.body), environment, false)(
+          run,
+          bindOperatorArguments(substitute, expression.args, context),
+          partial,
+          action,
+          isFixed,
+          onComplete,
+        );
+        return;
+      }
+    }
     const isHeld = run.isEnabled
       ? holdsEnabledUnchanged(expression, context)
       : holdsUnchanged(run, unchanged, context);

@@ -178,6 +178,7 @@ export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
 export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
+export const untracedExpressions = new WeakSet<Expression>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -2939,6 +2940,9 @@ const checkSubstitutions = (
       location,
       message: `An operator must be substituted for symbol '${resolveSynonym(declaration.name)}', and it must have arity ${declaration.arity}.`,
     });
+  // Deviation from SANY: Generator#generateSubst checks only the arity of an operator it substitutes and skips OpDefNode#matchingOpArgOperand's check for an operator parameter, so TLC binds that parameter to a value.
+  const hasOperatorParam = (name: string) =>
+    (findBinding(name, scope, unit)?.params ?? []).some((param) => param > 0);
   const resolveSubstitute = (declaration: Declaration, expression: Expression) => {
     const range = expression.location.range;
     if (declaration.arity === 0) {
@@ -2963,6 +2967,9 @@ const checkSubstitutions = (
         });
       }
       if (failed || arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
+      else if (operatorParamSelections.has(expression) && reference.location.range) {
+        reportArity(declaration, formatRange(reference.location.range));
+      }
       return;
     }
     if (expression.kind === "Subexpression" && !parenthesized) {
@@ -3003,6 +3010,9 @@ const checkSubstitutions = (
       });
     }
     if (arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
+    else if (hasOperatorParam(name)) {
+      reportArity(declaration, formatRange(getSpelledNameRange(expression, name)));
+    }
   };
   const instanceRange = instance.location.range;
   const isFound = (declaration: Declaration) =>
@@ -3056,7 +3066,11 @@ const checkSubstitutions = (
         item.declaration.arity === 0
           ? 0
           : getSymbolArity(item.expression, item.declaration.name, scope, unit);
-      if (arity !== item.declaration.arity && instanceRange) {
+      if (
+        (arity !== item.declaration.arity ||
+          (item.declaration.arity > 0 && hasOperatorParam(item.declaration.name))) &&
+        instanceRange
+      ) {
         reportArity(item.declaration, formatRange(instanceRange));
       }
       substitutions.set(item.declaration.name, item.expression);

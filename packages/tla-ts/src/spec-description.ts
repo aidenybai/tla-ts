@@ -18,6 +18,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   frameSubstitutions,
+  getActionPredicate,
   getSubstitutedName,
   isSubstitutionDefinition,
   substitutionFrames,
@@ -282,7 +283,7 @@ const getInstanceActions = (
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
     {
-      name: instanceAction.name,
+      ...instanceAction,
       location: expression.location,
       parameters: [],
       context,
@@ -349,6 +350,12 @@ const getActions = (
     scope,
   });
   if (LITERAL_KINDS.has(expression.kind)) throw createRelationError(expression);
+  const predicate = getActionPredicate(expression);
+  if (predicate !== expression) {
+    return [
+      { ...createSplitAction(), location: predicate.location, body: predicate.location.range },
+    ];
+  }
   switch (expression.kind) {
     case "Let":
       return getActions(

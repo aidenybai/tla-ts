@@ -3074,6 +3074,412 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "LET L == INSTANCE Pure WITH c <- 1 \\div 0, Op <- F IN x' = L!E3",
+      [
+        "Line 10, column 63 to line 10, column 71 in M",
+        "Line 10, column 68 to line 10, column 71 in M",
+        "Line 10, column 13 to line 10, column 58 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 42 to line 10, column 49 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w \\div 0, Op <- F IN x' = L(1)!E3",
+      [
+        "Line 10, column 66 to line 10, column 77 in M",
+        "Line 10, column 71 to line 10, column 77 in M",
+        "Line 10, column 13 to line 10, column 61 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 45 to line 10, column 52 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w, Op <- F IN x' = L(Bad(1))!E3",
+      [
+        "Line 10, column 59 to line 10, column 75 in M",
+        "Line 10, column 64 to line 10, column 75 in M",
+        "Line 10, column 13 to line 10, column 54 in M",
+        "Line 6, column 7 to line 6, column 11 in Pure",
+        "Line 6, column 7 to line 6, column 7 in Pure",
+        "Line 10, column 45 to line 10, column 45 in M",
+        "Line 10, column 66 to line 10, column 71 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L == INSTANCE Pure WITH c <- 1, Op <- Bad IN x' = L!E",
+      [
+        "Line 10, column 58 to line 10, column 65 in M",
+        "Line 10, column 63 to line 10, column 65 in M",
+        "Line 10, column 13 to line 10, column 53 in M",
+        "Line 5, column 6 to line 5, column 10 in Pure",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- w, Op <- Bad IN x' = L(1)!E",
+      [
+        "Line 10, column 61 to line 10, column 71 in M",
+        "Line 10, column 66 to line 10, column 71 in M",
+        "Line 10, column 13 to line 10, column 56 in M",
+        "Line 5, column 6 to line 5, column 10 in Pure",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "x' = Ap(EB!1)",
+      [
+        "Line 10, column 9 to line 10, column 21 in M",
+        "Line 10, column 14 to line 10, column 21 in M",
+        "Line 6, column 13 to line 6, column 16 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "x' = LET EL == HB(Bad) IN Ap(EL!1)",
+      [
+        "Line 10, column 9 to line 10, column 42 in M",
+        "Line 10, column 14 to line 10, column 42 in M",
+        "Line 10, column 35 to line 10, column 42 in M",
+        "Line 6, column 13 to line 6, column 16 in M",
+        "Line 5, column 11 to line 5, column 18 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : a \\div w IN x' = L(0)!E4",
+      [
+        "Line 10, column 77 to line 10, column 88 in M",
+        "Line 10, column 82 to line 10, column 88 in M",
+        "Line 10, column 13 to line 10, column 72 in M",
+        "Line 7, column 7 to line 7, column 11 in Pure",
+        "Line 4, column 12 to line 4, column 15 in Pure",
+        "Line 10, column 65 to line 10, column 72 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the reference to a LET instance's substitute or a selected operator argument in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(a) == a + 1\nBad(a) == a \\div 0\nAp(K(_)) == K(5)\nHB(K(_)) == K(7)\nEB == HB(Bad)\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE == Op(c)\nE3 == c + 1\nE4 == H(Op)\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "x' = P(0)!E",
+      [
+        "Line 6, column 9 to line 6, column 19 in M",
+        "Line 6, column 14 to line 6, column 19 in M",
+        "Line 4, column 1 to line 4, column 30 in M",
+        "Line 6, column 6 to line 6, column 9 in Q",
+        "Line 5, column 12 to line 5, column 15 in Q",
+        "Line 4, column 9 to line 4, column 16 in Q",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(0)!E",
+      [
+        "Line 6, column 47 to line 6, column 57 in M",
+        "Line 6, column 52 to line 6, column 57 in M",
+        "Line 6, column 13 to line 6, column 42 in M",
+        "Line 6, column 6 to line 6, column 9 in Q",
+        "Line 5, column 12 to line 5, column 15 in Q",
+        "Line 4, column 9 to line 4, column 16 in Q",
+      ],
+    ],
+  ])(
+    "records no frame for an operator argument of a parameterized instance in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nP(w) == INSTANCE Q WITH c <- w\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Q"
+            ? "---- MODULE Q ----\nEXTENDS Naturals\nCONSTANT c\nD(a) == a \\div c\nH(K(_)) == K(5)\nE == H(D)\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!Len(1 \\div 0)",
+      [
+        "Line 5, column 44 to line 5, column 63 in M",
+        "Line 5, column 49 to line 5, column 63 in M",
+        "Line 5, column 55 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!Len(1 \\div 0)",
+      [
+        "Line 5, column 47 to line 5, column 69 in M",
+        "Line 5, column 52 to line 5, column 69 in M",
+        "Line 5, column 61 to line 5, column 68 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the alias of a standard operator in %s, as TLC has none",
+    async (next, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Q"
+            ? "---- MODULE Q ----\nEXTENDS Sequences\nCONSTANT c\nE == c\n===="
+            : undefined,
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(expected);
+    },
+  );
+
+  it("starts the trace of an action through a LET instance with parameters at the instance, as TLC's action is its SubstInNode", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == LET L(w) == INSTANCE C WITH k <- 1 \\div w, v <- x IN L(0)!Inc\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "C"
+          ? "---- MODULE C ----\nEXTENDS Naturals\nCONSTANT k\nVARIABLE v\nInc == v' = v + k\n===="
+          : undefined,
+    });
+    expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual([
+      "Line 5, column 13 to line 5, column 57 in M",
+      "Line 5, column 8 to line 5, column 17 in C",
+      "Line 5, column 13 to line 5, column 17 in C",
+      "Line 5, column 17 to line 5, column 17 in C",
+      "Line 5, column 42 to line 5, column 49 in M",
+    ]);
+  });
+
+  const SCOPED_MODULES = new Map([
+    [
+      "Q",
+      "---- MODULE Q ----\nEXTENDS Naturals\nCONSTANT c\nD(a) == a + c\nG(a) == D(a)\nLim == 1\nUse == 10 \\div Lim\n====",
+    ],
+    [
+      "R",
+      "---- MODULE R ----\nEXTENDS Naturals\nVARIABLE v\nNG == LET L == INSTANCE Q WITH c <- 1 IN v' = L!G(1)\nNU == LET L == INSTANCE Q WITH c <- 1 IN v' = L!Use\n====",
+    ],
+    [
+      "Q2",
+      "---- MODULE Q2 ----\nEXTENDS Naturals\nCONSTANT e\nK == INSTANCE Q WITH c <- e\nH(a) == K!G(a)\n====",
+    ],
+  ]);
+
+  const checkScopedOverride = (definition: string, next: string, override: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nDiv(a) == a \\div 0\n${definition}\nInit == x = 0\nNext == ${next}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT ${override}`,
+      loadModule: (name) => SCOPED_MODULES.get(name),
+    });
+
+  it.each([
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!G(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 44 to line 7, column 54 in M",
+        "Line 7, column 49 to line 7, column 54 in M",
+        "Line 7, column 13 to line 7, column 39 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!D(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 44 to line 7, column 54 in M",
+        "Line 7, column 49 to line 7, column 54 in M",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!G(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 47 to line 7, column 60 in M",
+        "Line 7, column 52 to line 7, column 60 in M",
+        "Line 7, column 13 to line 7, column 42 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "I == INSTANCE R WITH v <- x",
+      "I!NG",
+      "D <- [Q] Div",
+      [
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 4, column 7 to line 4, column 52 in R",
+        "Line 4, column 42 to line 4, column 52 in R",
+        "Line 4, column 47 to line 4, column 52 in R",
+        "Line 4, column 11 to line 4, column 37 in R",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q2 WITH e <- 1 IN x' = L!H(1)",
+      "D <- [Q] Div",
+      [
+        "Line 7, column 45 to line 7, column 55 in M",
+        "Line 7, column 50 to line 7, column 55 in M",
+        "Line 7, column 13 to line 7, column 40 in M",
+        "Line 5, column 9 to line 5, column 14 in Q2",
+        "Line 4, column 1 to line 4, column 27 in Q2",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Q WITH c <- 1 IN x' = L!Use",
+      "Lim = [Q] 0",
+      [
+        "Line 7, column 44 to line 7, column 53 in M",
+        "Line 7, column 49 to line 7, column 53 in M",
+        "Line 7, column 13 to line 7, column 39 in M",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!Use",
+      "Lim = [Q] 0",
+      [
+        "Line 7, column 47 to line 7, column 59 in M",
+        "Line 7, column 52 to line 7, column 59 in M",
+        "Line 7, column 13 to line 7, column 42 in M",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+    [
+      "I == INSTANCE R WITH v <- x",
+      "I!NU",
+      "Lim = [Q] 0",
+      [
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 5, column 7 to line 5, column 51 in R",
+        "Line 5, column 42 to line 5, column 51 in R",
+        "Line 5, column 47 to line 5, column 51 in R",
+        "Line 5, column 11 to line 5, column 37 in R",
+        "Line 7, column 8 to line 7, column 18 in Q",
+      ],
+    ],
+  ])(
+    "applies a scoped override to the copy a LET instance makes, through %s and %s, as TLC's lookup finds it under the SubstInNode",
+    async (definition, next, override, expected) => {
+      const result = await checkScopedOverride(definition, next, override);
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]).toEqual(["The second argument of \\div is 0.", expected]);
+    },
+  );
+
+  it("passes a scoped override only the arguments of its own definition through an instance with parameters, where TLC crashes", async () => {
+    const moduleResult = await checkScopedOverride(
+      "L(w) == INSTANCE Q WITH c <- w",
+      "x' = L(1)!D(1)",
+      "D <- [Q] Div",
+    );
+    const letResult = await checkScopedOverride(
+      "Pad == 0",
+      "LET L(w) == INSTANCE Q WITH c <- w IN x' = L(1)!D(1)",
+      "D <- [Q] Div",
+    );
+    expect(
+      [moduleResult, letResult].map((result) => [
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]),
+    ).toEqual([
+      [
+        "The second argument of \\div is 0.",
+        [
+          "Line 7, column 9 to line 7, column 22 in M",
+          "Line 7, column 14 to line 7, column 22 in M",
+          "Line 4, column 11 to line 4, column 18 in M",
+        ],
+      ],
+      [
+        "The second argument of \\div is 0.",
+        [
+          "Line 7, column 47 to line 7, column 60 in M",
+          "Line 7, column 52 to line 7, column 60 in M",
+          "Line 4, column 11 to line 4, column 18 in M",
+        ],
+      ],
+    ]);
+  });
+
+  it.each([
+    [
+      "L == INSTANCE Q WITH c <- 1",
+      "x' = L!G(1)",
+      [
+        "Line 7, column 9 to line 7, column 19 in M",
+        "Line 7, column 14 to line 7, column 19 in M",
+        "Line 5, column 1 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "L(w) == INSTANCE Q WITH c <- w",
+      "x' = L(1)!G(1)",
+      [
+        "Line 7, column 9 to line 7, column 22 in M",
+        "Line 7, column 14 to line 7, column 22 in M",
+        "Line 5, column 1 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 12 in Q",
+        "Line 4, column 11 to line 4, column 18 in M",
+      ],
+    ],
+  ])(
+    "records no frame for the alias a scoped override makes of a module-level instance's copy, through %s and %s, as TLC has none",
+    async (definition, next, expected) => {
+      const result = await checkScopedOverride(definition, next, "D <- [Q] Div");
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result)?.filter((line) => line !== ""),
+      ]).toEqual(["The second argument of \\div is 0.", expected]);
+    },
+  );
+
+  it("records no frame for a selected operator argument in the action it assigns, as TLC has none", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAp2(K(_)) == \\E i \\in {1, 2} : K(i)\nBad(i) == x' = i + {1}\nH(K(_)) == K(7)\nEB == H(Bad)\nInit == x = 0\nNext == Ap2(EB!1)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual([
+      "Line 9, column 9 to line 9, column 17 in M",
+      "Line 4, column 14 to line 4, column 35 in M",
+      "Line 4, column 32 to line 4, column 35 in M",
+      "Line 5, column 11 to line 5, column 22 in M",
+      "Line 5, column 16 to line 5, column 22 in M",
+    ]);
+  });
+
+  it.each([
+    [
       "I == INSTANCE Inner WITH N <- 3",
       "I!f[x + 5]",
       "Attempted to apply function:\n<<2, 4, 6>>\nto argument 5, which is not in the domain of the function.",

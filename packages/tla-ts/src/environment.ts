@@ -17,7 +17,7 @@ import {
 } from "./ast";
 import type { ModuleOperator } from "./check";
 import type { ModelConfig } from "./config";
-import { applyConfig, type CopySource } from "./environment-config";
+import { applyConfig, createScopedOverrides, type CopySource } from "./environment-config";
 import type { FileSystem } from "./json";
 import {
   createSanyError,
@@ -85,6 +85,7 @@ import {
   resolveModule,
   resolveSubstitutions,
   SUBSTITUTE_RESOLUTION,
+  untracedExpressions,
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
@@ -105,7 +106,11 @@ import {
   STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
-import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
+import {
+  createModuleSubexpressions,
+  type Lookup,
+  resolveInstanceSubexpressions,
+} from "./subexpressions";
 import {
   checkModuleLevels,
   type InstanceCopy,
@@ -820,7 +825,13 @@ export const createEnvironment = (
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
-      resolveInstanceSubexpressions(instance, module, subexpressionRecords),
+      resolveInstanceSubexpressions(
+        instance,
+        (name) =>
+          module.definitions.find((definition) => definition.name === name) ??
+          getLinkedDefinition(resolved.get(name)?.key ?? name),
+        subexpressionRecords,
+      ),
       getSymbolTableOrdered(instance.module, declarations),
       resolved,
       module.name,
@@ -906,7 +917,11 @@ export const createEnvironment = (
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
-        const definition = create(key);
+        const created = create(key);
+        const definition =
+          instance.name !== undefined && declarations.length === 0 && created.kind === "Operator"
+            ? { ...created, head: instance.head }
+            : created;
         definitions.set(key, definition);
         if (theorems.has(source)) theorems.set(key, getInstanceRange(instance));
         const copy = createInstanceCopy(source, instance.module, substitutes);
@@ -1111,15 +1126,20 @@ export const createEnvironment = (
         : replacement.kind === "OperatorReference"
           ? replacement.operator
           : declaration.name;
-    return {
-      params,
-      body: { kind: "Apply", operator, args: createLocalArguments(params, location), location },
+    const body: Expression = {
+      kind: "Apply",
+      operator,
+      args: createLocalArguments(params, location),
+      location,
     };
+    untracedExpressions.add(body);
+    return { params, body };
   };
 
   const instantiateLocally = (
     instance: Instance,
     lets: Definition[],
+    lookup: Lookup,
     instancer: string,
     nested: LinkedModule | undefined,
     isResolved: (name: string) => boolean,
@@ -1140,11 +1160,31 @@ export const createEnvironment = (
       });
     }
     const linked = nested ?? getLinkedModule(instance.module, instancer);
-    const suffix = `#${copyCount++}`;
-    const explicitSubstitutions = new Map(
-      instance.substitutions.map((item) => [item.name, item.expression]),
+    const getOverride = createScopedOverrides(
+      config,
+      (module) => linkedModules.get(module)?.visible,
+      copySources,
     );
+    const suffix = `#${copyCount++}`;
     const declarations = linked.declarations;
+    const operatorSubstitutions = resolveInstanceSubexpressions(
+      {
+        ...instance,
+        substitutions: instance.substitutions.filter((item) =>
+          declarations.some(
+            (declaration) => declaration.name === item.name && declaration.arity > 0,
+          ),
+        ),
+      },
+      (name) => lets.find((definition) => definition.name === name) ?? lookup(name),
+      subexpressionRecords,
+    ).substitutions;
+    const explicitSubstitutions = new Map(
+      [...instance.substitutions, ...operatorSubstitutions].map((item) => [
+        item.name,
+        item.expression,
+      ]),
+    );
     const getReplacement = (declaration: OperatorParam): Expression =>
       explicitSubstitutions.get(declaration.name) ?? {
         kind: "Identifier",
@@ -1175,29 +1215,34 @@ export const createEnvironment = (
     });
     const copies: Definition[] = [];
     const localCopies = new Map<string, InstanceCopy>();
-    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
-      !isParameterDependent(declaration)
-        ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-        : declaration.arity > 0
-          ? getInstanceOperator(
-              `${declaration.name}${suffix}`,
+    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression => {
+      const isDependent = isParameterDependent(declaration);
+      if (isDependent && declaration.arity > 0) {
+        return getInstanceOperator(
+          `${declaration.name}${suffix}`,
+          instance.params,
+          declaration.arity,
+          location,
+          LOCAL_RESOLUTION,
+          subexpressionRecords,
+        );
+      }
+      const substitution: Expression = isDependent
+        ? {
+            kind: "Apply",
+            operator: `${declaration.name}${suffix}`,
+            args: createInstanceArguments(
               instance.params,
-              declaration.arity,
               location,
-              LOCAL_RESOLUTION,
-              subexpressionRecords,
-            )
-          : {
-              kind: "Apply",
-              operator: `${declaration.name}${suffix}`,
-              args: createInstanceArguments(
-                instance.params,
-                location,
-                subexpressionRecords.instanceArguments,
-              ),
-              location,
-              resolution: SUBSTITUTE_RESOLUTION,
-            };
+              subexpressionRecords.instanceArguments,
+            ),
+            location,
+            resolution: SUBSTITUTE_RESOLUTION,
+          }
+        : createLocalIdentifier(`${declaration.name}${suffix}`, location);
+      untracedExpressions.add(substitution);
+      return substitution;
+    };
     const substitutes = {
       params: instance.params,
       substitutions: new Map(
@@ -1229,8 +1274,17 @@ export const createEnvironment = (
       addDefinition: (source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
-        const copy =
-          definition.kind === "Operator"
+        const override = getOverride(source, instance.params.length);
+        const params = definition.kind === "Operator" ? definition.params : [];
+        const copy = override
+          ? createLocalAlias(
+              key,
+              override.source,
+              params,
+              params.slice(override.prefix),
+              definition.location,
+            )
+          : definition.kind === "Operator"
             ? { ...definition, name: key }
             : createLocalFunction(definition, key);
         const isTheorem = theorems.has(source);
@@ -1272,10 +1326,20 @@ export const createEnvironment = (
             ? localCopies.get(key)
             : createInstanceCopy(key, instance.module, substitutes);
           if (instanceCopy) localCopies.set(name, instanceCopy);
+          const override = getOverride(entry[1].key, instance.params.length);
           return {
             ...operator,
             name,
-            body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
+            head: instance.head,
+            body: override
+              ? createLocalAlias(
+                  name,
+                  override.source,
+                  operator.params,
+                  operator.params.slice(override.prefix),
+                  location,
+                ).body
+              : withSubstitutionFrames(operator.body, frame ? [frame] : []),
             theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
         }
@@ -1570,8 +1634,8 @@ export const createEnvironment = (
     };
     const subexpressions = createModuleSubexpressions(
       parsed,
-      getLetInstanceExpansion(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
+      getLetInstanceExpansion(parsed, (instance, lets, lookup) =>
+        instantiateLocally(instance, lets, lookup, parsed.name, getLetModule(instance), (name) =>
           isBoundBefore(name, instance.location),
         ),
       ),

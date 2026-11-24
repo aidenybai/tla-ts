@@ -36,6 +36,7 @@ import {
   getLazyFunction,
   getMissingArgumentDescriber,
   getQuantifierElements,
+  getSubstituteClosure,
   getUnchangedVariables,
   mapBoundSets,
   NULL_STATE,
@@ -72,7 +73,7 @@ import {
   substitutedExpressions,
   substitutionFrames,
 } from "../instances";
-import { getKeyName } from "../resolve";
+import { getKeyName, untracedExpressions } from "../resolve";
 import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
@@ -115,7 +116,9 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
   if (!callStack) return run();
   const isEntered = callStack.expressions.at(-1) === expression;
   const frames = (!isEntered && substitutionFrames.get(expression)) || [];
-  callStack.expressions.push(...frames, expression);
+  const isTraced = !untracedExpressions.has(expression);
+  callStack.expressions.push(...frames);
+  if (isTraced) callStack.expressions.push(expression);
   const outerSets = setTrace.sets;
   const sets = outerSets ?? [];
   const depth = sets.length;
@@ -126,7 +129,7 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
     freezeCallStack(callStack, sets.slice(depth), error);
     throw error;
   } finally {
-    if (!callStack.isFrozen) callStack.expressions.length -= frames.length + 1;
+    if (!callStack.isFrozen) callStack.expressions.length -= frames.length + (isTraced ? 1 : 0);
     sets.length = depth;
     setTrace.sets = outerSets;
   }
@@ -223,6 +226,22 @@ const getVariable = (
       bindLetDefinitions(environment, expression, scope),
       frames,
     );
+  }
+  if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+    const closure = getSubstituteClosure(expression, scope);
+    return closure
+      ? getVariable(
+          environment,
+          closure.body,
+          bindOperatorArguments(closure, expression.args, {
+            environment,
+            scope,
+            state: undefined,
+            next: undefined,
+          }),
+          frames,
+        )
+      : undefined;
   }
   const name = getIdentifierName(expression);
   if (name === undefined) {
@@ -1216,6 +1235,18 @@ const visitUnchanged = (
       // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
+      }
+    }
+    if (expression.kind === "Apply" && expression.resolution?.isSubstitute) {
+      const closure = getSubstituteClosure(expression, scope);
+      if (closure) {
+        const callScope = bindOperatorArguments(
+          closure,
+          expression.args,
+          getContext(replay, scope, partial),
+        );
+        // Tool#processUnchangedImpl0Arity counts a substitute at its declaration's CostModel, as SANY has no application there.
+        return visitUnchanged(replay, closure.body, items, callScope, partial, parent);
       }
     }
     const before = evaluateAt(replay, node, expression, {
