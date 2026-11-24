@@ -126,16 +126,21 @@ BlockOf(bytes) ==
 BlockByte(block, byteIndex) == block.pages[byteIndex \div BlockPageSize + 1][(byteIndex % BlockPageSize) + 1]
 \* The count bytes of a block from byteIndex.
 BlockBytes(block, byteIndex, count) == [i \in 1..count |-> BlockByte(block, byteIndex + i - 1)]
-\* A block with bytes stored from byteIndex, one page entry at a time for a few bytes.
+\* A block with bytes stored from byteIndex, which replaces each page the bytes reach once: through
+\* EXCEPT on its one page when they reach one, so that the list of pages is copied once a store.
 BlockStore(block, byteIndex, bytes) ==
-  IF Len(bytes) > BlockPageSize
-  THEN BlockOf([i \in 1..block.size |->
-                  IF i > byteIndex /\ i <= byteIndex + Len(bytes) THEN bytes[i - byteIndex] ELSE BlockByte(block, i - 1)])
-  ELSE BlockStoreFrom(block, byteIndex, bytes)
-BlockStoreFrom(block, byteIndex, bytes) ==
-  IF bytes = <<>> THEN block
-  ELSE BlockStoreFrom([block EXCEPT !.pages[byteIndex \div BlockPageSize + 1][(byteIndex % BlockPageSize) + 1] = Head(bytes)],
-                      byteIndex + 1, Tail(bytes))
+  LET first == byteIndex \div BlockPageSize + 1
+      last == (byteIndex + Len(bytes) - 1) \div BlockPageSize + 1
+  IN IF bytes = <<>> THEN block
+     ELSE IF first = last THEN [block EXCEPT !.pages[first] = PageStore(@, byteIndex - (first - 1) * BlockPageSize, bytes)]
+     ELSE [block EXCEPT !.pages = [p \in DOMAIN block.pages |->
+             IF p < first \/ p > last THEN block.pages[p]
+             ELSE PageStore(block.pages[p], byteIndex - (p - 1) * BlockPageSize, bytes)]]
+\* A page with bytes stored from its offset start, which is negative where they start before it.
+PageStore(page, start, bytes) ==
+  LET from == IntegerMax(start, 0)
+      to == IntegerMin(start + Len(bytes), Len(page))
+  IN SubSeq(page, 1, from) \o SubSeq(bytes, from - start + 1, to - start) \o SubSeq(page, to + 1, Len(page))
 
 ArrayBufferByteLength(s, b) == O(s, b).slots.data.size
 SetBufferData(s, b, bytes) == SetO(s, b, [O(s, b) EXCEPT !.slots.data = BlockOf(bytes)])

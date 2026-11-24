@@ -1304,6 +1304,59 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // A store replaces each byte page it reaches once, and fill, reverse, sort, slice, toSorted and
+  // toReversed store their elements' bytes at once, so stores across pages, unaligned DataView
+  // stores, and a buffer that shrinks before the stores pin the bytes.
+  describe("stores a typed array's elements across byte pages", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (bytes: Uint8Array) => {
+        let hash = 0;
+        for (const byte of bytes) hash = (hash * 31 + byte) % 1000003;
+        return hash;
+      };
+      const buffer = new ArrayBuffer(1100);
+      const view = new DataView(buffer);
+      const words = new Int32Array(buffer, 12, 270);
+      words.fill(-123456789, 3, 200);
+      for (let index = 0; index < 270; index += 7) words[index] = index * 1000003;
+      view.setFloat64(253, Math.PI, true);
+      view.setUint16(511, 0xabcd);
+      text += getHash(new Uint8Array(buffer)) + ";";
+      words.reverse();
+      text += getHash(new Uint8Array(buffer)) + ";";
+      new Float64Array(buffer, 520, 70).set([1.5, -2.25, NaN], 60);
+      new Int16Array(buffer, 8, 500).sort();
+      text += getHash(new Uint8Array(buffer)) + ";";
+      const bytes = Uint8Array.from({ length: 300 }, (_, index) => (index * 7919) % 256);
+      text += [getHash(bytes.toSorted()), getHash(bytes.toReversed()), getHash(bytes.slice(5, 290)), getHash(new Uint8Array(new Float32Array(bytes).buffer))].join(":") + ";";
+      const resizable = new ArrayBuffer(600, { maxByteLength: 600 });
+      const shrinking = new Uint16Array(resizable);
+      shrinking.set(Array.from({ length: 300 }, (_, index) => (index * 7919) % 65536));
+      shrinking.sort((left, right) => {
+        if (resizable.byteLength === 600) resizable.resize(300);
+        return left - right;
+      });
+      text += [shrinking.length, getHash(new Uint8Array(resizable))].join(":") + ";";
+      resizable.resize(600);
+      shrinking.fill({ valueOf: () => (resizable.resize(260), 9) } as unknown as number, 2);
+      text += [shrinking.length, getHash(new Uint8Array(resizable))].join(":");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "387505;518159;639084;69618:666030:429389:288694;150:655352;130:120016";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("150:655352", "150:655353");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
