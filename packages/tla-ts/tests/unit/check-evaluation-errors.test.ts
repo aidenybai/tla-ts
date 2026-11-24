@@ -3193,6 +3193,14 @@ describe("evaluation errors match TLC", () => {
     ["(x[1] = 0 /\\ x' = <<1, [a |-> Any]>>) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)", ["<<0, 0>>"]],
     ["(x[1] = 0 /\\ x' = <<1, <<Any>>>>) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)", ["<<0, 0>>"]],
     ["(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, {Any}>>)", ["<<0, 0>>", "<<1, 0>>"]],
+    [
+      "(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, SUBSET {Any}>>)",
+      ["<<0, 0>>", "<<1, 0>>"],
+    ],
+    [
+      "(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, {Any}>>)",
+      ["<<0, 0>>", "<<1, 0>>"],
+    ],
   ])(
     "reports the comparison of ANY as it rebuilds the step %s, as TLC's Tool#getState lets the EvalException of AnySet#compareTo through",
     async (next, trace) => {
@@ -3213,6 +3221,78 @@ describe("evaluation errors match TLC", () => {
       ]);
     },
   );
+
+  it.each([
+    ["(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, 0>>)", ["<<0, 0>>", "<<1, 0>>"]],
+    ["(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, \"s\">>)", ["<<0, 0>>", "<<1, 0>>"]],
+    ["x[1] = 0 /\\ x' = <<2, 0>>", ["<<0, 0>>"]],
+  ])(
+    "skips the successor of %s whose comparison with <<2, {Nat}>> throws as it rebuilds the step, as TLC's Tool#getState does",
+    async (next, trace) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = <<0, 0>>\nNext == (${next}) \\/ (x[1] = ${trace.length - 1} /\\ x' = <<2, {Nat}>>)\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([
+        result.failure?.trace.map((step) => formatValue(step.state.x)),
+        result.failure?.traceFailure?.message,
+        result.failure?.exitCode,
+      ]).toEqual([
+        trace,
+        `${UNEXPECTED_EXCEPTION}TLC has found a state in which the value of a variable contains Nat`,
+        75,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "(x[1] = 1 /\\ x' = <<2, {Nat}, 1>>)",
+      ["<<0, 0, 0>>", "<<1, 0, 0>>", "<<2, {Nat}, 1>>"],
+      undefined,
+    ],
+    [
+      "(x[1] = 1 /\\ x' = <<2, 0, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, SUBSET {Any}, 1>>)",
+      ["<<0, 0, 0>>", "<<1, 0, 0>>"],
+      `${UNEXPECTED_EVAL_EXCEPTION}Attempted to compare ANY with the value\nANY`,
+    ],
+  ])(
+    "rebuilds the violating step %s under a VIEW by comparing the state it can't fingerprint, as TLC's Tool#getState does",
+    async (next, trace, traceFailure) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nV == <<x[1], x[3]>>\nInv == x[3] = 0\nInit == x = <<0, 0, 0>>\nNext == (x[1] = 0 /\\ x' = <<1, 0, 0>>) \\/ ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V\nINVARIANT Inv",
+      });
+      expect([
+        result.status,
+        result.violation?.trace.map((step) => formatValue(step.state.x)),
+        result.violation?.traceFailure?.message,
+      ]).toEqual(["invariant-violation", trace, traceFailure]);
+    },
+  );
+
+  it("rebuilds the violating step to a successor it can't compare under a VIEW, where TLC's Tool#getState skips it and reports a TLC bug(5)", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nV == <<x[1], x[3]>>\nInv == x[3] = 0\nInit == x = <<0, 0, 0>>\nNext == (x[1] = 0 /\\ x' = <<1, 0, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, {k \\in Nat : k > 2}, 1>>)\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.trace.length, result.violation?.traceFailure]).toEqual(
+      ["invariant-violation", 3, undefined],
+    );
+  });
+
+  it("reports the failure of the VIEW as the second error when it can't compare the successor that holds [k \\in Nat |-> k], where TLC's Tool#getState skips it and TLC reports a NullPointerException", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nV == IF x[1] = 1 THEN 1 \\div 0 ELSE 0\nInit == x = <<0, 0>>\nNext == x' = <<1, [k \\in Nat |-> k]>>\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V",
+    });
+    expect([
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+    ]).toEqual([["<<0, 0>>"], `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`]);
+  });
 
   // Deviation from TLC: TLC prints "Too many possible next states for the last state in the trace." after x = 1.
   it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {

@@ -7,6 +7,7 @@ import { getStateHash, isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
+import { isEvalException } from "./tlc/messages";
 import {
   createModelValue,
   getFingerprintError,
@@ -74,6 +75,17 @@ interface TraceContext {
     isMatch: (successor: Successor) => boolean,
   ) => SpecAction | undefined;
 }
+
+// Tool#getState skips a successor whose comparison throws a TLCRuntimeException but lets an EvalException through.
+// Deviation from TLC: when it skips the step's own successor, TLC reports a TLC bug(5), or a NullPointerException after an initial state.
+const isEqualOnRebuild = (value: Value, other: Value) => {
+  try {
+    return isEqualLikeTlc(value, other);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || isEvalException(error)) throw error;
+    return false;
+  }
+};
 
 const INITIAL_RECOVERY_FAILURE = "Failed to recover the initial state from its fingerprint.";
 export const NEXT_RECOVERY_FAILURE = "Failed to recover the next state from its fingerprint.";
@@ -145,16 +157,13 @@ export const createTraceBuilder = (context: TraceContext) => {
       current.rebuilt = rebuilt;
     }
   };
-  // TLC's TLCStateMut#equals compares the variables in turn, and a lazy value fails as it reaches it.
   const isEqualState = (state: Value[], successor: Value[]) =>
     state.every((value, position) => {
       const error = getFingerprintError(value);
       if (!error) return isSameValue(value, successor[position]);
-      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC reports a TLC bug(5) or a NullPointerException.
-      if (hasLazyPart(value)) throw error;
-      // TLC compares a value that holds no lazy part, which fails on ANY, before StatePrinter fingerprints it.
-      isEqualLikeTlc(value, successor[position]);
-      throw error;
+      // TLC converts a lazy value as it compares it, so a conversion that throws an EvalException fails the comparison with the fingerprint's error.
+      if (isEvalException(error) && hasLazyPart(value)) throw error;
+      return isEqualOnRebuild(value, successor[position]);
     });
   // Deviation from TLC: Tool#getState bounds a step's successors by -maxSetSize, so TLC can't print a trace past a state with more.
   const findStepAction = (
