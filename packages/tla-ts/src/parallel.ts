@@ -204,7 +204,6 @@ const checkWithWorkers = async (
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (search.spec.init === undefined) return fallBack();
 
-  const canonicalize = createCanonicalizer();
   let sharedFingerprints = createSharedFingerprints();
   const fingerprint = new Int32Array(2);
   const frontiers = Array.from({ length: workerCount }, createStateEncoder);
@@ -236,6 +235,7 @@ const checkWithWorkers = async (
     ),
   });
   const seedInitialStates = (init: Expression) => {
+    const canonicalize = createCanonicalizer();
     const seeded: Value[][] = [];
     let isSeeded = true;
     forEachInitialState(
