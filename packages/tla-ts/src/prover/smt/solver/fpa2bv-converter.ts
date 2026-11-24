@@ -1,6 +1,6 @@
 // A statement that discards its result builds a term that upstream builds and never uses, so the
 // terms after it get the ids Z3 gives them.
-import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   OP_BADD,
@@ -65,6 +65,7 @@ import { isInf, isNan, type Mpf, mpfFromRational } from "./mpf";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import type { Rewriter } from "./rewriter";
+import { UINT_MAX } from "./sat/clause";
 
 const getLog2 = (value: number) => (value > 0 ? 31 - Math.clz32(value) : 0);
 
@@ -1438,8 +1439,8 @@ export class Fpa2BvConverter {
     const manager = this.manager;
     const ebits = manager.getEbits(sort);
     const sbits = manager.getSbits(sort);
-    // Deviation from Z3: it runs out of memory from an exponent width of 31, where this gives up as at a resource limit.
-    if (ebits > 30) throw new SmtCanceledError();
+    // Deviation from Z3: it runs out of memory at an exponent width of 31 or 32, where this gives up as at a resource limit.
+    if (ebits === 31 || ebits === 32) throw new SmtCanceledError();
     const x =
       manager.sorts[input] === SORT_INT ? manager.mkApp(OP_TO_REAL, [input], SORT_REAL) : input;
     const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);
@@ -1461,6 +1462,8 @@ export class Fpa2BvConverter {
     const rIsNan = this.mkIsNan(result);
     this.extraAssertions.push(manager.mkNot(rIsNan));
     const maxExp = getPowerOfTwoMinusOne(ebits - 1);
+    if (maxExp >= BigInt(UINT_MAX))
+      throw new SmtDefaultError("exponents requiring more than 32 bits are not supported");
     const maxReal = Rational.of(getPowerOfTwoMinusOne(sbits) << maxExp, 1n << BigInt(sbits - 1));
     const nearestMaxReal = Rational.of(1n << maxExp, 1n << BigInt(sbits)).add(maxReal);
     const rIsPinf = this.mkIsPinf(result);

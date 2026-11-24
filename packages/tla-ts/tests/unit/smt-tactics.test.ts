@@ -1057,6 +1057,31 @@ describe("the floating-point conversions round as Z3 does", () => {
       ]),
     ).toEqual(["unknown"]);
   });
+
+  it.each([
+    ["(check-sat)", 33, "(:rlimit 36)"],
+    ["(check-sat-using (using-params sat :euf true))", 33, "(:rlimit 81)"],
+    ["(check-sat-using (using-params sat :euf true))", 40, "(:rlimit 88)"],
+  ])(
+    "answers Z3's error for %s on a symbolic conversion to a %i-bit exponent",
+    (check, ebits, rlimit) => {
+      expect(
+        run([
+          "(declare-const r Real)",
+          `(declare-const f (_ FloatingPoint ${ebits} 4))`,
+          `(assert (= f ((_ to_fp ${ebits} 4) RNE r)))`,
+          "(assert (> r 1.0))",
+          check,
+          "(get-info :reason-unknown)",
+          "(get-info :rlimit)",
+        ]),
+      ).toEqual([
+        "unknown",
+        '(:reason-unknown "exponents requiring more than 32 bits are not supported")',
+        rlimit,
+      ]);
+    },
+  );
 });
 
 describe("fpa2bv, as Z3 5.3.2 builds its terms", () => {
