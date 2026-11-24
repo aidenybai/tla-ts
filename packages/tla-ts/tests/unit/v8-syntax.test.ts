@@ -110,4 +110,46 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       },
     ]);
   });
+
+  describe("strict mode", () => {
+    checkCases([
+      {
+        name: "a with statement",
+        source: '"use strict";\nwith (a) {}',
+        accepted: '"use\\x20strict";\nwith (a) {}',
+      },
+      {
+        name: "an octal literal before a later error",
+        source: 'function f() {\n  "use strict";\n  010;\n  a b\n}',
+        accepted: "function f() {\n  010;\n}",
+      },
+      { name: "a var named eval", source: '"use strict";\nvar eval;', accepted: "var eval;" },
+      {
+        name: "a function named eval that turns strict",
+        source: 'function eval() {\n  "use strict";\n}',
+        accepted: 'function f() {\n  "use strict";\n}',
+      },
+      {
+        name: "a parameter twice in a function that turns strict",
+        source: 'function f(a, a) {\n  "use strict";\n}',
+        accepted: "function f(a, a) {}",
+      },
+      {
+        name: "a strict directive after non-simple parameters",
+        source: 'function f(a = 1) {\n  "use strict";\n}',
+        accepted: 'function f(a) {\n  "use strict";\n}',
+      },
+      {
+        name: "a delete of a name",
+        source: '"use strict";\ndelete x;',
+        accepted: '"use strict";\ndelete x.y;',
+      },
+      { name: "an \\8 escape", source: '"use strict";\n"\\8";', accepted: '"\\8";' },
+      {
+        name: "a reserved word as a name",
+        source: '"use strict";\nimplements = 1;',
+        accepted: "implements = 1;",
+      },
+    ]);
+  });
 });
