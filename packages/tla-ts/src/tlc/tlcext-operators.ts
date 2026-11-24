@@ -122,7 +122,7 @@ export const setTlcValue = (
   value: Value,
   state: (Value | undefined)[] | undefined,
 ) => {
-  // TLC splits Next and evaluates constant definitions before its checker exists, so TLCSet there throws on a numbered register and drops the other writes.
+  // TLC splits Next and evaluates constant definitions before its checker exists, so TLCSet there throws on a numbered register.
   const isSplit = state === EMPTY_STATE;
   if (typeof key === "number" && key >= 0) {
     if (isSplit)
@@ -130,9 +130,9 @@ export const setTlcValue = (
     runtime.registers.set(key, value);
     return;
   }
-  // Deviation from TLC: TLCGetSet#TLCSet drops a named register's, the exit's or the pause's write before any checker exists, which keeps a constant definition's startup value without the write, so here it fails as a numbered register's does and SpecProcessor#processConstantDefns leaves the definition to be evaluated where it is used.
+  // Deviation from TLC: TLCGetSet#TLCSet drops a named register's, the exit's or the pause's write before any checker exists, which keeps the value of a constant definition or of a split of Next without the write, so here it fails as a numbered register's does and the definition or action is evaluated again where it is used.
   if (
-    runtime.isStartup &&
+    isSplit &&
     (key === "exit" ||
       key === "pause" ||
       (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)))
@@ -140,17 +140,17 @@ export const setTlcValue = (
     throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
   }
   if (key === "exit") {
-    if (value === true && !isSplit) runtime.isStopped = true;
+    if (value === true) runtime.isStopped = true;
     return;
   }
   if (key === "pause") {
-    if (value !== true || !runtime.pause || isSplit) return;
+    if (value !== true || !runtime.pause) return;
     runtime.printPrompt("Press enter to resume model checking.");
     runtime.pause();
     return;
   }
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
-    if (!isSplit) runtime.namedRegisters.set(key, value);
+    runtime.namedRegisters.set(key, value);
     return;
   }
   if (typeof key === "string" && key.startsWith("-D")) {

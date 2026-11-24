@@ -47,7 +47,6 @@ export interface CheckerRuntime {
   possibleCounts: Map<string, number>;
   isStopped: boolean;
   isStarted: boolean;
-  isStartup: boolean;
   checkDeadlock: boolean;
   startedAt: number;
   evalControl: EvalControl;
@@ -57,6 +56,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   const startupRandom = createJavaRandom(seed);
   let workerRandom = createJavaRandom(seed);
   let seededState: Value[] | undefined;
+  let isStartup = false;
   let isWorkerStateSet = false;
   let workerState: Value[] | undefined;
   const runtime: CheckerRuntime = {
@@ -74,7 +74,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
     getRandom: () => {
-      if (runtime.isStartup) return startupRandom;
+      if (isStartup) return startupRandom;
       const state = isWorkerStateSet ? workerState : runtime.getCurrentState();
       // A worker without a current state, as AbstractChecker#setErrState leaves it, draws on from its random unseeded.
       if (state === undefined) return isWorkerStateSet ? workerRandom : startupRandom;
@@ -121,12 +121,12 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
       }
     },
     evaluateAtStartup: (evaluate) => {
-      const wasStartup = runtime.isStartup;
-      runtime.isStartup = true;
+      const wasStartup = isStartup;
+      isStartup = true;
       try {
         return evaluate();
       } finally {
-        runtime.isStartup = wasStartup;
+        isStartup = wasStartup;
       }
     },
     pause: undefined,
@@ -149,7 +149,6 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     possibleCounts: new Map(),
     isStopped: false,
     isStarted: false,
-    isStartup: false,
     checkDeadlock,
     startedAt: Date.now(),
     evalControl: "Clear",

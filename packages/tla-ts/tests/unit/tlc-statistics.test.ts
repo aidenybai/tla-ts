@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
 import { simulate } from "../../src/simulate";
 import { MESSAGE_LEVEL } from "../../src/tlc/messages";
@@ -200,41 +200,102 @@ it.each(TLCSET_FORMS)(
   },
 );
 
-// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write as TLC starts, so TLC prints <<"D", TRUE>> once and fails with "TLCGet(s:x) was undefined.", where tla-ts acts as TLC does for a numbered register.
-it.each(TLCSET_FORMS)(
-  "sets a named register through %s where the constant definition is used, as for a numbered register",
-  async (_form, getDefinition) => {
+const getSplitSource = (next: string, invariant: string) =>
+  `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA(p) == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == ${next}\nInv == ${invariant}\n====`;
+
+it.each([
+  ["\\E p \\in {TLCSet(2, 5)} : x < 2 /\\ x' = x + 1", "x = 0 \\/ TLCGet(2) = 5", [], 3],
+  ["A(TLCSet(1, 5))", "TRUE", ['<<"A", TRUE>>', '<<"A", TRUE>>', '<<"A", TRUE>>'], 4],
+])(
+  "evaluates Next == %s at each state once the split's write to a numbered register fails, as TLC does",
+  async (next, invariant, expected, distinctStates) => {
     const printed: string[] = [];
     const result = await check({
-      source: getStartupSource(`${getDefinition('"s:x"', "2")}\nInv == D /\\ TLCGet("s:x") = 2`),
-      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      source: getSplitSource(next, invariant),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
     });
     expect([printed, result.status, result.distinctStates]).toEqual([
-      ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+      expected,
       "success",
-      2,
+      distinctStates,
     ]);
   },
 );
 
-// Deviation from TLC: TLCGetSet#TLCSet drops the exit as TLC starts, so TLC prints <<"D", TRUE>> there and checks both states.
-it.each(TLCSET_FORMS)(
-  "stops checking through %s where the constant definition is used",
-  async (_form, getDefinition) => {
+// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write and the exit before any checker exists, as TLC evaluates a constant definition or splits Next, so TLC finds the register undefined or never stops, where tla-ts acts as TLC does for a numbered register.
+describe("TLCSet writes that TLC drops before any checker exists", () => {
+  it.each(TLCSET_FORMS)(
+    "sets a named register through %s where the constant definition is used, as for a numbered register",
+    async (_form, getDefinition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getStartupSource(`${getDefinition('"s:x"', "2")}\nInv == D /\\ TLCGet("s:x") = 2`),
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([
+        ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+        "success",
+        2,
+      ]);
+    },
+  );
+
+  it.each(TLCSET_FORMS)(
+    "stops checking through %s where the constant definition is used",
+    async (_form, getDefinition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getStartupSource(`${getDefinition('"exit"', "TRUE")}\nInv == D`),
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([
+        ['<<"D", TRUE>>'],
+        "success",
+        1,
+      ]);
+    },
+  );
+
+  it("sets a named register at each state where Next's split would write it, as for a numbered register", async () => {
+    const result = await check({
+      source: getSplitSource(
+        '\\E p \\in {TLCSet("s:q", 5)} : x < 2 /\\ x\' = x + 1',
+        'x = 0 \\/ TLCGet("s:q") = 5',
+      ),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("stops checking where Next's split would set the exit", async () => {
     const printed: string[] = [];
     const result = await check({
-      source: getStartupSource(`${getDefinition('"exit"', "TRUE")}\nInv == D`),
-      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      source: getSplitSource('A(TLCSet("exit", TRUE))', "TRUE"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(text),
     });
     expect([printed, result.status, result.distinctStates]).toEqual([
-      ['<<"D", TRUE>>'],
+      ['<<"A", TRUE>>'],
       "success",
-      1,
+      2,
     ]);
-  },
-);
+  });
+
+  it('labels Next == A(TLCSet("exit", TRUE)) by its call, as for a numbered register', async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 7)\nInit == x = 0\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == A(TLCSet("exit", TRUE))\nInv == x < 1\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "A line 7, col 9 to line 7, col 31 of module M",
+    ]);
+  });
+});
 
 it.each([
   ['A(TLCGet("level"))', "A(1) line 6, col 9 to line 6, col 49 of module M"],
@@ -243,7 +304,6 @@ it.each([
     "A(2) line 6, col 9 to line 6, col 49 of module M",
   ],
   ['\\E q \\in {2} : A(q + TLCGet("level"))', "A(3) line 6, col 9 to line 6, col 49 of module M"],
-  ['A(TLCSet("exit", TRUE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
   ["A(TLCGet(1))", "A line 7, col 9 to line 7, col 20 of module M"],
   ["A(TLCSet(1, 5))", "A line 7, col 9 to line 7, col 23 of module M"],
   ["A(Trace)", "A line 7, col 9 to line 7, col 16 of module M"],
