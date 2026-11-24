@@ -8,7 +8,7 @@ import {
   type LetExpression,
   type SourceRange,
 } from "./ast";
-import { getDefinitionLevel, isStateLevelCall } from "./dependencies";
+import { getDefinitionLevel } from "./dependencies";
 import {
   createStackOverflowError,
   TlaEvaluationError,
@@ -229,7 +229,7 @@ export const getLevel = (
       ? getBodyLevel(operator, operator.body, operator.scope)
       : CONSTANT_LEVEL;
   };
-  const getGlobalLevel = (name: string, node: Expression, isArgument: boolean) => {
+  const getGlobalLevel = (name: string, isArgument: boolean) => {
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
@@ -253,9 +253,7 @@ export const getLevel = (
     if (!builtin) return undefined;
     if (isArgument && builtin.arity > 0) return CONSTANT_LEVEL;
     if (builtin.isActionLevel) return ACTION_LEVEL;
-    return isStateLevelCall(builtin, node) && !builtin.isLevelConstant
-      ? VARIABLE_LEVEL
-      : CONSTANT_LEVEL;
+    return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
   };
   const getNameLevel = (name: string, node: Expression) => {
     // TLC's getLevelBound takes any name a root variable shares for that variable.
@@ -265,14 +263,10 @@ export const getLevel = (
     const isArgument = isLevelBound && node.kind === "Identifier";
     if (isLocallyResolved(node)) {
       return (
-        getBindingLevel(name, isArgument) ??
-        getGlobalLevel(name, node, isArgument) ??
-        CONSTANT_LEVEL
+        getBindingLevel(name, isArgument) ?? getGlobalLevel(name, isArgument) ?? CONSTANT_LEVEL
       );
     }
-    return (
-      getGlobalLevel(name, node, isArgument) ?? getBindingLevel(name, isArgument) ?? CONSTANT_LEVEL
-    );
+    return getGlobalLevel(name, isArgument) ?? getBindingLevel(name, isArgument) ?? CONSTANT_LEVEL;
   };
   const getChildrenLevel = (node: Expression) => {
     let level = CONSTANT_LEVEL;

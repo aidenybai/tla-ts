@@ -7,10 +7,9 @@ import {
   type Definition,
   type Expression,
 } from "./ast";
-import type { Builtin, Environment } from "./evaluate";
+import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getBoundNames } from "./resolve";
-import { NAMED_REGISTER_PREFIX } from "./runtime";
 
 interface DefinitionNames extends Pick<
   Environment,
@@ -178,7 +177,7 @@ const collectLocalFacts = (
       const builtin = environment.builtins.get(target);
       if (
         variableIndex !== undefined ||
-        (builtin !== undefined && isStateLevelCall(builtin, node)) ||
+        builtin?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
         // TLC's getLevelBound takes an operator argument for a constant.
@@ -218,8 +217,7 @@ const collectLocalFacts = (
           isInnerLevelCounted &&
           !isOverridden &&
           variableIndex === undefined &&
-          builtin !== undefined &&
-          isStateLevelCall(builtin, node) &&
+          builtin?.isStateLevel &&
           !builtin.isLevelConstant
         ) {
           row[0] |= builtin.isActionLevel ? ACTION_LEVEL_FLAGS : VARIABLE_LEVEL_FLAGS;
@@ -337,16 +335,6 @@ const EFFECT_MASK = IMPURE | RANDOM;
 const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
-
-// TLCSet's deviation covers only the keys whose write TLC drops as it starts.
-export const isStateLevelCall = (builtin: Builtin, node: Expression) => {
-  if (builtin.name !== "TLCSet") return builtin.isStateLevel === true;
-  const key = node.kind === "Apply" ? node.args[0] : undefined;
-  return (
-    key?.kind === "String" &&
-    (key.value.startsWith(NAMED_REGISTER_PREFIX) || key.value === "exit" || key.value === "pause")
-  );
-};
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
