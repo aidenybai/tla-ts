@@ -1333,15 +1333,17 @@ interface ActionShape {
   next: string;
 }
 
+const getShapeModuleLoader = (next: string) => (name: string) =>
+  name === "Inner"
+    ? `---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANTS K, Loop\nVARIABLE x\nInit == x = 0\nStep == x < K /\\ x' = x + 1\n${next}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====`
+    : name === "Lib"
+      ? "---- MODULE Lib ----\nEXTENDS Naturals\nBump(v, k) == v < k /\\ v' = v + 1\nReset(v, k, b) == b /\\ v = k /\\ v' = 0\nCycle(v, k) == v' = IF v < k THEN v + 1 ELSE 0\n===="
+      : undefined;
+
 const checkActionShape = async (shape: ActionShape) => {
   const variable = shape.names[2];
   const source = `---- MODULE Outer ----\nEXTENDS Naturals, TLC\n${shape.lines}\nInv == ${variable} < 2\nProp == <>[](${variable} = 3)\nASSUME PrintT({<<a.name, a.location.beginLine, a.location.beginColumn, a.location.endLine, a.location.endColumn, a.location.module>> : a \\in TLCGet("spec").actions})\n====`;
-  const loadModule = (name: string) =>
-    name === "Inner"
-      ? `---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANTS K, Loop\nVARIABLE x\nInit == x = 0\nStep == x < K /\\ x' = x + 1\n${shape.next}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====`
-      : name === "Lib"
-        ? "---- MODULE Lib ----\nEXTENDS Naturals\nBump(v, k) == v < k /\\ v' = v + 1\nReset(v, k, b) == b /\\ v = k /\\ v' = 0\nCycle(v, k) == v' = IF v < k THEN v + 1 ELSE 0\n===="
-        : undefined;
+  const loadModule = getShapeModuleLoader(shape.next);
   const getConfig = (loop: string, property: string) =>
     `SPECIFICATION ${shape.specification}\nCONSTANTS\n${shape.names[0]} = 3\n${shape.names[1]} = ${loop}\n${property}`;
   const printed: string[] = [];
@@ -1521,6 +1523,156 @@ describe("the actions of a specification through an instance match TLC", () => {
       });
     },
   );
+});
+
+const getShapeCoverage = async (lines: string, next: string, specification: string) => {
+  const printed: string[] = [];
+  const result = await check({
+    source: `---- MODULE Outer ----\nEXTENDS Naturals, TLC\nCONSTANTS K, Loop\nVARIABLE x\n${lines}\nASSUME PrintT({<<a.name, a.location.beginLine, a.location.beginColumn, a.location.endLine, a.location.endColumn, a.location.module>> : a \\in TLCGet("spec").inits})\n====`,
+    config: `${specification}\nCONSTANTS\nK = 3\nLoop = TRUE`,
+    coverage: 1,
+    loadModule: getShapeModuleLoader(next),
+    onPrint: (text) => printed.push(text),
+  });
+  return {
+    printed,
+    coverage: result.coverage?.relations.map((relation) => [
+      `${relation.label} ${relation.distinct}:${relation.generated}`,
+      ...relation.expressions.map(
+        (expression) =>
+          `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}`,
+      ),
+    ]),
+  };
+};
+
+const DISJUNCTION_LINES = [
+  "line 6, col 9 to line 6, col 13 of module Inner: 3",
+  "|line 6, col 9 to line 6, col 9 of module Inner: 4",
+  "|line 6, col 13 to line 6, col 13 of module Inner: 4",
+  "line 6, col 18 to line 6, col 27 of module Inner: 3",
+  "line 7, col 26 to line 7, col 30 of module Inner: 5",
+  "|line 7, col 26 to line 7, col 26 of module Inner: 4",
+  "|line 7, col 30 to line 7, col 30 of module Inner: 4",
+  "line 7, col 35 to line 7, col 40 of module Inner: 1",
+  "line 7, col 55 to line 7, col 59 of module Inner: 2",
+  "|line 7, col 55 to line 7, col 55 of module Inner: 4",
+  "line 7, col 64 to line 7, col 73 of module Inner: 2",
+];
+
+describe("coverage through an instance matches TLC", () => {
+  it.each([
+    {
+      shape: "a specification from an unnamed instance",
+      behavior:
+        "counts a substituted constant that the next-state relation tests at its substitution, as Tool#getNextStatesAppl enters the expression of a LazyValue at its cost model",
+      lines: "INSTANCE Inner",
+      specification: "SPECIFICATION Spec",
+      init: "Init line 5, col 1 to line 5, col 4 of module Inner (5 1 5 14) 1:1",
+      next: "Action line 5, col 1 to line 5, col 14 of module Outer 3:6",
+      substitutions: [
+        "line 5, col 1 to line 5, col 14 of module Outer: 17",
+        "line 5, col 1 to line 5, col 14 of module Outer: 8",
+        "line 5, col 1 to line 5, col 14 of module Outer: 3",
+      ],
+      printed: '{<<"Init", 5, 1, 5, 14, "Outer">>}',
+    },
+    {
+      shape: "INIT and NEXT from an unnamed instance",
+      behavior: "declares both at the instance, as SpecProcessor names each by its OpDefNode",
+      lines: "INSTANCE Inner",
+      specification: "INIT Init\nNEXT Next",
+      init: "Init line 5, col 1 to line 5, col 14 of module Outer 1:1",
+      next: "Next line 5, col 1 to line 5, col 14 of module Outer 3:6",
+      substitutions: [
+        "line 5, col 1 to line 5, col 14 of module Outer: 17",
+        "line 5, col 1 to line 5, col 14 of module Outer: 8",
+        "line 5, col 1 to line 5, col 14 of module Outer: 3",
+      ],
+      printed: '{<<"Init", 5, 1, 5, 14, "Outer">>}',
+    },
+    {
+      shape: "a specification from a LET instance",
+      behavior: "names the initial predicate by the definition the instance calls",
+      lines: "OSpec == LET J == INSTANCE Inner IN J!Spec",
+      specification: "SPECIFICATION OSpec",
+      init: "Init line 5, col 1 to line 5, col 4 of module Inner (5 14 5 32) 1:1",
+      next: "Action line 5, col 14 to line 5, col 32 of module Outer 3:6",
+      substitutions: [
+        "line 5, col 14 to line 5, col 32 of module Outer: 17",
+        "line 5, col 14 to line 5, col 32 of module Outer: 8",
+        "line 5, col 14 to line 5, col 32 of module Outer: 3",
+      ],
+      printed: '{<<"Init", 5, 14, 5, 32, "Outer">>}',
+    },
+    {
+      shape: "the initial predicate a LET instance exports",
+      behavior:
+        "locates it at the instance, as SANY's OpDefNode for J!Init has the SubstInNode as its body",
+      lines: "OSpec == LET J == INSTANCE Inner IN J!Init /\\ [][J!Next]_x /\\ WF_x(J!Next)",
+      specification: "SPECIFICATION OSpec",
+      init: "J!Init line 5, col 14 to line 5, col 14 of module Outer 1:1",
+      next: "J!Next line 5, col 14 to line 5, col 14 of module Outer 3:6",
+      substitutions: [
+        "line 5, col 14 to line 5, col 32 of module Outer: 17",
+        "line 5, col 14 to line 5, col 32 of module Outer: 8",
+        "line 5, col 14 to line 5, col 32 of module Outer: 3",
+      ],
+      printed: '{<<"J!Init", 5, 14, 5, 32, "Outer">>}',
+    },
+    {
+      shape: "an expression an unnamed instance substitutes",
+      behavior:
+        "enters the expression at its substitution where the next-state relation tests the constant",
+      lines: "INSTANCE Inner WITH Loop <- (K > 2)",
+      specification: "SPECIFICATION Spec",
+      init: "Init line 5, col 1 to line 5, col 4 of module Inner (5 1 5 35) 1:1",
+      next: "Action line 5, col 1 to line 5, col 35 of module Outer 3:6",
+      substitutions: [
+        "line 5, col 1 to line 5, col 35 of module Outer: 17",
+        "line 5, col 1 to line 5, col 35 of module Outer: 8",
+        "line 5, col 30 to line 5, col 34 of module Outer: 3",
+        "|line 5, col 30 to line 5, col 30 of module Outer: 8",
+      ],
+      printed: '{<<"Init", 5, 1, 5, 35, "Outer">>}',
+    },
+  ])("reports $shape like TLC, which $behavior", async (row) => {
+    expect(await getShapeCoverage(row.lines, NEXT_KINDS[0].next, row.specification)).toEqual({
+      printed: [row.printed],
+      coverage: [
+        [row.init, "line 5, col 9 to line 5, col 13 of module Inner: 1"],
+        [row.next, ...row.substitutions, ...DISJUNCTION_LINES],
+      ],
+    });
+  });
+
+  it("leaves out a substituted constant that a conjunct tests as a disjunct, as TLC's Tool#getNextStatesAppl never counts its OpApplNode", async () => {
+    expect(
+      await getShapeCoverage("INSTANCE Inner", NEXT_KINDS[1].next, "SPECIFICATION Spec"),
+    ).toEqual({
+      printed: ['{<<"Init", 5, 1, 5, 14, "Outer">>}'],
+      coverage: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module Inner (5 1 5 14) 1:1",
+          "line 5, col 9 to line 5, col 13 of module Inner: 1",
+        ],
+        [
+          "Action line 5, col 1 to line 5, col 14 of module Outer 3:7",
+          "line 5, col 1 to line 5, col 14 of module Outer: 21",
+          "line 5, col 1 to line 5, col 14 of module Outer: 15",
+          "line 5, col 1 to line 5, col 14 of module Outer: 4",
+          "line 7, col 9 to line 7, col 14 of module Inner: 4",
+          "line 7, col 28 to line 7, col 32 of module Inner: 3",
+          "|line 7, col 28 to line 7, col 28 of module Inner: 4",
+          "|line 7, col 32 to line 7, col 32 of module Inner: 4",
+          "line 7, col 38 to line 7, col 70 of module Inner: 7",
+          "|line 7, col 44 to line 7, col 69 of module Inner: 7",
+          "||line 7, col 47 to line 7, col 51 of module Inner: 7",
+          "||line 7, col 58 to line 7, col 62 of module Inner: 6",
+        ],
+      ],
+    });
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {

@@ -19,6 +19,7 @@ import {
   getCoverageNode,
   getEnteredFrames,
   getLetDefinition,
+  getSubstitutionNode,
   hideFrames,
   restoreFrames,
   runAtCoverageNode,
@@ -605,6 +606,22 @@ const visitFramed = (
   node: number,
 ): boolean =>
   withFrame(replay, expression, () => {
+    const coverage = replay.coverage;
+    const substitution =
+      coverage && !replay.isInit ? substitutedExpressions.get(expression) : undefined;
+    const substitutionNode =
+      coverage && substitution ? getSubstitutionNode(coverage, substitution, true) : -1;
+    // Tool#getNextStatesAppl enters the expression of a substitution's LazyValue at the LazyValue's cost model.
+    if (substitution && substitutionNode !== -1 && substitutionNode !== node) {
+      return visitApplication(
+        replay,
+        substitution.replacement,
+        items,
+        scope,
+        partial,
+        substitutionNode,
+      );
+    }
     switch (expression.kind) {
       case "Let": {
         const context = getContext(replay, scope, partial);
