@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { stripTypeScriptTypes } from "node:module";
-import { runInNewContext, Script } from "node:vm";
+import { constants, createContext, runInContext, runInNewContext, Script } from "node:vm";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -29,12 +29,14 @@ const worker = new Worker(
     check: parallel.check,
     compileToEscore: compile.compileToEscore,
     runtime: prepare.prepareRuntime(workerData.directory),
+    steps: prepare.SCRIPT_STEPS,
   }));
   loading.then(() => parentPort.postMessage({ id: -1 }));
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule);
+      const model = spec.isTest262Host ? { steps: loaded.steps, entries: [], isTest262Host: true } : undefined;
+      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule, model);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
       const prints = [];
       const result = await loaded.check({
@@ -69,8 +71,15 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a script, with the definitions in appended added to the module of its code.
-const checkScript = (source: string, isStrict = true, appended = "", fileName = "spec.ts") =>
+// Checks a script, with the definitions in appended added to the module of its code, on Node's
+// host or on test262's.
+const checkScript = (
+  source: string,
+  isStrict = true,
+  appended = "",
+  fileName = "spec.ts",
+  isTest262Host = false,
+) =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
@@ -78,6 +87,7 @@ const checkScript = (source: string, isStrict = true, appended = "", fileName = 
       fileName,
       isModule: false,
       appended,
+      isTest262Host,
     });
     pending.push(resolve);
   });
@@ -4050,6 +4060,78 @@ if (view !== "${expected}") throw new Error(view);
 // the port must behave as the include does. A port that reads its error's stack runs in a module,
 // whose location in a stack Node gives as test262's runner does, and one that passes its global
 // this runs in a script.
+// test262's host gives its global $262, whose createRealm makes a realm as Node's vm makes a new
+// context (DONT_CONTEXTIFY), and gives its global.
+describe("gives test262's host a $262 whose createRealm makes a new context's realm", () => {
+  // The own keys of a global, each with its kind of value and its attributes, which typeof reads
+  // of a value that stops at each use without stopping.
+  const DESCRIBE = `(global) => Reflect.ownKeys(global).map((key) => {
+    const d = Reflect.getOwnPropertyDescriptor(global, key);
+    return String(key) + ":" + ("value" in d ? typeof d.value : "accessor") + ":" + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : "");
+  }).join(" ")`;
+  // The globals of a new V8 context that ESCore lacks, which tla-ts's realm has as values that stop
+  // at each use: the diff of the two realms' own keys, which are otherwise the same.
+  const STOPPING = ["console", "WebAssembly"];
+  const nodeKeys: string = runInContext(
+    `(${DESCRIBE})(globalThis)`,
+    createContext(constants.DONT_CONTEXTIFY),
+  );
+  const getSource = (expected: string) => `
+    const keys = (${DESCRIBE})(Reflect.get(globalThis, "$262").createRealm());
+    if (keys !== ${JSON.stringify(expected)}) throw new Error(keys);
+  `;
+
+  it("has a new context's own keys, as Node's vm gives them", async () => {
+    expect(STOPPING.map((name) => nodeKeys.includes(` ${name}:object:wc`))).toEqual([true, true]);
+    expect(
+      (await checkScript(getSource(nodeKeys), true, "", "spec.ts", true)).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects other keys", async () => {
+    const wrong = nodeKeys.replace(" console:object:wc", "");
+    expect((await checkScript(getSource(wrong), true, "", "spec.ts", true)).message).toContain(
+      THREW,
+    );
+  });
+
+  it("stops where a program uses a global that ESCore lacks", async () => {
+    for (const name of STOPPING) {
+      const source = `Reflect.get(globalThis, "$262").createRealm().${name}.x;`;
+      expect((await checkScript(source, true, "", "spec.ts", true)).message).toContain(
+        `tla-ts can't run the host's ${name}`,
+      );
+    }
+  });
+
+  // A realm of its own intrinsics, whose objects are other than the first realm's.
+  const getRealmSource = (expected: string) => `
+    const other = Reflect.get(globalThis, "$262").createRealm();
+    const result = [other === globalThis, other.Array === Array, Object.getPrototypeOf(other.Array.prototype) === other.Object.prototype, other.Array.isArray(new Array()), new other.Array() instanceof Array].join();
+    if (result !== "${expected}") throw new Error(result);
+  `;
+
+  it("makes a realm of its own intrinsics, as Node's vm does", async () => {
+    const node = runInContext(
+      `const other = newGlobal(); [other === globalThis, other.Array === Array, Object.getPrototypeOf(other.Array.prototype) === other.Object.prototype, other.Array.isArray(new Array()), new other.Array() instanceof Array].join()`,
+      Object.assign(createContext(constants.DONT_CONTEXTIFY), {
+        newGlobal: () => runInContext("globalThis", createContext(constants.DONT_CONTEXTIFY)),
+      }),
+    );
+    expect(node).toBe("false,false,true,true,false");
+    expect(
+      (await checkScript(getRealmSource(node), true, "", "spec.ts", true)).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects a realm that shares the first realm's intrinsics", async () => {
+    expect(
+      (await checkScript(getRealmSource("false,false,true,true,true"), true, "", "spec.ts", true))
+        .message,
+    ).toContain(THREW);
+  });
+});
+
 describe("ports test262's harness includes", () => {
   const readPort = (name: string) =>
     readFileSync(join(import.meta.dirname, "../conformance", name), "utf8");
