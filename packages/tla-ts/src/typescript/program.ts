@@ -261,27 +261,94 @@ export const getJsxText = (path: string, text: string) => {
   );
 };
 
-// The files that a run of several programs parses, by the options they parse with and their path,
-// which each program after the first reads rather than parsing and binding again, as an editor's
-// projects share theirs. A run is the CLI's check of the files it's given; outside one, each
-// program parses its own.
+// The files that a run's programs parse, by the options they parse with and their path, which each
+// program after the first reads rather than parsing and binding again, as an editor's projects
+// share theirs. A run is the CLI's check of the files it's given; outside one, each program parses
+// its own.
 let runFiles: Map<string, ts.SourceFile> | undefined;
 
-// Runs the programs of a run, which share the files they parse.
-export const shareParsedFiles = async <T>(run: () => Promise<T>) => {
+// The paths of a run's files, and the project of each, which the run reads as a file first needs
+// its program.
+let runPaths: readonly string[] | undefined;
+let runProjects: Map<string, RunProject> | undefined;
+
+// A project of a run's files: its options, where a tsconfig.json holds the files, the files, and
+// their program, which the run makes as a file of the project first needs it, with the files whose
+// types another of the files could change.
+interface RunProject {
+  project: ts.ParsedCommandLine | undefined;
+  roots: string[];
+  program?: { program: ts.Program; augmented: ReadonlySet<string> };
+}
+
+// Runs the programs of a run of the files at paths, each of whose models reads the one program of
+// the run's files that its project holds.
+export const shareParsedFiles = async <T>(paths: readonly string[], run: () => Promise<T>) => {
   runFiles = new Map();
+  runPaths = [...new Set(paths.map((path) => path.replaceAll("\\", "/")))];
   try {
     return await run();
   } finally {
     runFiles = undefined;
+    runPaths = undefined;
+    runProjects = undefined;
   }
 };
 
-// TypeScript's program of a model's file and the files it imports, whose checker gives the types
-// of their code. A file with type errors still runs, as Node runs it, so nothing here rejects one.
-export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+// Whether a file declares what a file that doesn't import it reads: a global, as a declaration file
+// that isn't a module, a global augmentation, or a namespace that a module exports as a global
+// does, a module, as an ambient module or a module augmentation does, or the files that its
+// references include.
+const isAugmenting = (file: ts.SourceFile) =>
+  (file.isDeclarationFile && !ts.isExternalModule(file)) ||
+  file.referencedFiles.length > 0 ||
+  file.typeReferenceDirectives.length > 0 ||
+  file.libReferenceDirectives.length > 0 ||
+  file.statements.some(
+    (statement) =>
+      ts.isNamespaceExportDeclaration(statement) ||
+      (ts.isModuleDeclaration(statement) &&
+        (ts.isStringLiteral(statement.name) ||
+          (statement.flags & ts.NodeFlags.GlobalAugmentation) !== 0)),
+  );
+
+// The roots of a program whose types another root's files could change: those that a file of
+// another root's imports augments, which no import of their own reaches. A program of a root alone
+// reads the files of its imports and those that every program reads, such as the default library
+// and the project's types, which no root's imports reach.
+const getAugmentedRoots = (
+  program: ts.Program,
+  roots: readonly string[],
+  imports: ReadonlyMap<ts.SourceFile, readonly string[]>,
+) => {
+  const getImported = (root: string) => {
+    const reached = new Set<ts.SourceFile>();
+    const visit = (file: ts.SourceFile | undefined) => {
+      if (file === undefined || reached.has(file)) return;
+      reached.add(file);
+      imports.get(file)?.forEach((name) => visit(program.getSourceFile(name)));
+    };
+    visit(program.getSourceFile(root));
+    return reached;
+  };
+  const imported = roots.map(getImported);
+  const augmenting = new Set(imported.flatMap((files) => [...files].filter(isAugmenting)));
+  return new Set(
+    roots.filter((_root, index) => [...augmenting].some((file) => !imported[index].has(file))),
+  );
+};
+
+// TypeScript's program of root files and the files they import, by the options of their project,
+// whose checker gives the types of their code, and the names of the files that each file imports.
+// A root's file is named as its path names it, though another file imports it, and source, where
+// given, holds the text of a root's file in place of the file system's.
+const createRootsProgram = (
+  roots: readonly string[],
+  project: ts.ParsedCommandLine | undefined,
+  library: Library,
+  source?: { path: string; text: string },
+) => {
   const libraries = library.texts;
-  const project = libraries === undefined ? getProject(path) : undefined;
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   if (libraries === undefined && ts.sys === undefined) {
     throw new TlaTypeScriptError(
@@ -290,6 +357,7 @@ export const createProgram = (source: string, path: string, library: Library = D
   }
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
+  const rootNames = new Map(roots.map((root) => [ts.sys?.resolvePath(root) ?? root, root]));
   const getSourceFile = (
     fileName: string,
     languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
@@ -297,13 +365,16 @@ export const createProgram = (source: string, path: string, library: Library = D
     if (fileName === JSON_DECLARATIONS.path) {
       return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
     }
-    if (fileName === path) return createFile(path, source, languageVersion);
-    const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
-    return file === undefined || file.isDeclarationFile
-      ? file
-      : createFile(fileName, file.text, languageVersion);
+    if (fileName === source?.path) return createFile(fileName, source.text, languageVersion);
+    const declared = library.files.get(fileName);
+    if (declared !== undefined || /\.d\.(?:[^/]*\.)?[cm]?ts$/.test(fileName)) {
+      return declared ?? host.getSourceFile(fileName, languageVersion);
+    }
+    const text = host.readFile(fileName);
+    return text === undefined ? undefined : createFile(fileName, text, languageVersion);
   };
   const optionsKey = JSON.stringify(options);
+  const imports = new Map<ts.SourceFile, string[]>();
   const programHost: ts.CompilerHost & SourceRedirectingHost = {
     ...host,
     // A project that references others compiles their code, as an editor does, rather than the
@@ -312,13 +383,15 @@ export const createProgram = (source: string, path: string, library: Library = D
     getSourceFile: (fileName, languageVersion) => {
       const key = `${optionsKey}\n${JSON.stringify(languageVersion)}\n${fileName}`;
       const shared = runFiles?.get(key);
-      if (shared !== undefined && (fileName !== path || shared.text === source)) return shared;
+      if (shared !== undefined && (fileName !== source?.path || shared.text === source.text)) {
+        return shared;
+      }
       const file = getSourceFile(fileName, languageVersion);
       if (file !== undefined) runFiles?.set(key, file);
       return file;
     },
-    fileExists: (fileName) => fileName === path || host.fileExists(fileName),
-    readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
+    fileExists: (fileName) => fileName === source?.path || host.fileExists(fileName),
+    readFile: (fileName) => (fileName === source?.path ? source.text : host.readFile(fileName)),
     resolveModuleNameLiterals:
       libraries === undefined
         ? (
@@ -327,29 +400,118 @@ export const createProgram = (source: string, path: string, library: Library = D
             redirectedReference,
             resolutionOptions,
             containingSourceFile,
-          ) =>
-            literals.map(
-              (literal) =>
-                resolveLiteral(
-                  literal,
-                  containingFile,
-                  containingSourceFile,
-                  true,
-                  resolutionOptions,
-                  host,
-                  redirectedReference,
-                ).module,
-            )
+          ) => {
+            const resolved = literals.map((literal) => {
+              const found = resolveLiteral(
+                literal,
+                containingFile,
+                containingSourceFile,
+                true,
+                resolutionOptions,
+                host,
+                redirectedReference,
+              ).module;
+              const module = found.resolvedModule;
+              const root =
+                module === undefined
+                  ? undefined
+                  : rootNames.get(ts.sys.resolvePath(module.resolvedFileName));
+              return root === undefined || module === undefined
+                ? found
+                : { ...found, resolvedModule: { ...module, resolvedFileName: root } };
+            });
+            imports.set(
+              containingSourceFile,
+              resolved.flatMap((found) => found.resolvedModule?.resolvedFileName ?? []),
+            );
+            return resolved;
+          }
         : undefined,
   };
   const program = ts.createProgram({
-    rootNames: [path, JSON_DECLARATIONS.path],
+    rootNames: [...roots, JSON_DECLARATIONS.path],
     // TypeScript parses JSX as it is, which only its types read.
     options: { ...options, jsx: ts.JsxEmit.Preserve, jsxImportSource: undefined },
     projectReferences: project?.projectReferences,
     host: programHost,
   });
+  return { program, imports };
+};
+
+// The projects of a run's files, by path.
+const getRunProjects = (paths: readonly string[]) => {
+  const projects = paths.map(getProject);
+  const groups = Map.groupBy(paths.keys(), (index) =>
+    String(projects[index]?.options.configFilePath ?? ""),
+  );
+  return new Map(
+    [...groups.values()].flatMap((indices) => {
+      const project = {
+        project: projects[indices[0]],
+        roots: indices.map((index) => paths[index]),
+      };
+      return indices.map((index) => [paths[index], project] as const);
+    }),
+  );
+};
+
+// The run's program of the project of a file of the run, which the run makes once.
+const getRunProgram = (path: string) => {
+  if (runPaths === undefined || !runPaths.includes(path)) return undefined;
+  runProjects ??= getRunProjects(runPaths);
+  const project: RunProject | undefined = runProjects.get(path);
+  if (project === undefined) return undefined;
+  if (project.program === undefined) {
+    const made = createRootsProgram(project.roots, project.project, DEFAULT_LIBRARY);
+    project.program = {
+      program: made.program,
+      augmented: getAugmentedRoots(made.program, project.roots, made.imports),
+    };
+  }
+  return project.program;
+};
+
+// The source file at path of a program that the run has made, of text, which a run's program
+// parses as a module, with its syntax errors, or undefined where none holds it.
+export const getRunSourceFile = (path: string, text: string) =>
+  [...new Set(runProjects?.values())]
+    .flatMap((project) => {
+      const program = project.program?.program;
+      const file = program?.getSourceFile(path);
+      return program !== undefined && file?.fileName === path && file.text === text
+        ? [{ file, errors: program.getSyntacticDiagnostics(file) }]
+        : [];
+    })
+    .at(0);
+
+// The source file of a file's text, as a run's program parses it, or as a file of its own.
+export const parseFile = (path: string, text: string) =>
+  getRunSourceFile(path, text)?.file ??
+  ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+
+// TypeScript's program of a model's file and the files it imports, whose checker gives the types
+// of their code, which is the run's program of the file's project in a run, unless another of the
+// run's files could change its types, which isAugmented tells. A file with type errors still runs,
+// as Node runs it, so nothing here rejects one.
+export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+  const run = library === DEFAULT_LIBRARY ? getRunProgram(path) : undefined;
+  const runFile = run?.program.getSourceFile(path);
+  const isAugmented = run?.augmented.has(path) === true;
+  const program =
+    run !== undefined && !isAugmented && runFile?.fileName === path && runFile.text === source
+      ? run.program
+      : createRootsProgram(
+          [path],
+          library.texts === undefined ? getProject(path) : undefined,
+          library,
+          { path, text: source },
+        ).program;
   const sourceFile = program.getSourceFile(path);
   if (sourceFile === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
-  return { sourceFile, checker: program.getTypeChecker(), options: program.getCompilerOptions() };
+  return {
+    sourceFile,
+    checker: program.getTypeChecker(),
+    options: program.getCompilerOptions(),
+    isAugmented,
+  };
 };

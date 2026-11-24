@@ -618,19 +618,17 @@ export const compileSharedProgram = async (
   setBound: number | undefined,
   budget: number,
 ): Promise<SharedProgram> => {
-  const ts = (await import("@typescript/typescript6")).default;
   const { compileToEscore } = await import("../typescript/spec/compile");
-  const { getModelConstants, planModel, SHARED_MODEL_DEFINITIONS } =
+  const { getAugmentedNote, getModelConstants, planModel, SHARED_MODEL_DEFINITIONS } =
     await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
-  const { getJsxText } = await import("../typescript/program");
+  const { getJsxText, parseFile } = await import("../typescript/program");
   const { getModuleFormat } = await import("../typescript/spec/resolve");
   const runtime = await getEscoreRuntime();
   const plans = paths.map((path) => {
     const source = readFileSync(path, "utf8");
     const text = getJsxText(path, source);
-    const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
-    if (isScript(sourceFile)) return undefined;
+    if (isScript(parseFile(path, text))) return undefined;
     // A file whose model stops compiles alone, which reports the stop as the file's.
     try {
       const plan = planModel(source, path, runtime, undefined, true, setBound);
@@ -671,7 +669,9 @@ export const compileSharedProgram = async (
     );
     const code = spec.loadModule("ProgramCode") ?? "";
     if (code.length > budget) return { kind: "oversize", characters: code.length };
-    const shown: string[] = [];
+    const shown = paths.flatMap((path, index) =>
+      plans[index]?.isAugmented === true ? [getAugmentedNote(path)] : [],
+    );
     const files = paths.map((path, index): SharedFile | undefined => {
       const plan = plans[index];
       if (plan === undefined) return undefined;

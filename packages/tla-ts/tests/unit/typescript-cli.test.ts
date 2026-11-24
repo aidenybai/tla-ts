@@ -1623,6 +1623,80 @@ describe("the CLI with TypeScript files", () => {
     }, 120_000);
   });
 
+  // A run's files read their types in one program of their project, but a file whose types a
+  // global that another file of the run augments could change reads them in a program of its own,
+  // as a run of it alone does. a.ts picks a key of Kinds, which holds only a where a.ts runs alone.
+  describe("reads each file's types in its run's program", () => {
+    const getKinds = (kind: string) =>
+      `declare global {\n  interface Kinds {\n    ${kind}: true;\n  }\n}\n`;
+    const writeModules = (directory: string) => {
+      writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      writeFileSync(
+        join(directory, "a.ts"),
+        `${getKinds("a")}let last: keyof Kinds | undefined = undefined;\nexport const pick = (kind: keyof Kinds) => {\n  last = kind;\n};\nexport const isA = () => last === undefined || last === "a";\n`,
+      );
+      writeFileSync(join(directory, "b.ts"), `${getKinds("b")}export const isB = () => true;\n`);
+      writeFileSync(
+        join(directory, "c.ts"),
+        `import { isA } from "./a.ts";\n${getKinds("c")}export const isC = () => isA();\n`,
+      );
+      return directory;
+    };
+    const getChecks = (output: string) =>
+      output
+        .split(/^Checking /m)
+        .slice(1)
+        .map((check) =>
+          check.includes("Model checking completed. No error has been found.")
+            ? "pass"
+            : (/^Error: .*$/m.exec(check)?.[0] ?? check),
+        );
+    // The files that read their types in a program of their own.
+    const getAugmented = (output: string) =>
+      [
+        ...output.matchAll(
+          /^tla-ts reads the types of (\S+) in a program of its own \[augmented\]/gm,
+        ),
+      ].map((match) => match[1]);
+
+    it.each([[[]], [["-shared"]]])(
+      "checks a file that another file augments as a run of it alone does, with %j",
+      (flags) => {
+        const directory = writeModules(copyFixtures("passing"));
+        expect(runNode(directory, "a.ts").status).toBe(0);
+        expect(runCli(directory, ["a.ts"]).stdout).toContain(
+          "Model checking completed. No error has been found.",
+        );
+        const result = runCli(directory, [...flags, "a.ts", "b.ts"]);
+        expect(getChecks(result.stdout)).toEqual(["pass", "pass"]);
+        expect(getAugmented(result.stdout)).toEqual(["a.ts", "b.ts"]);
+      },
+      120_000,
+    );
+
+    // A file that imports a.ts reads its augmentation as a run of it alone does, so it reads the
+    // run's program, where a.ts reads its own.
+    it("reads the run's program for a file whose imports reach the augmentation", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      const result = runCli(directory, ["a.ts", "c.ts"]);
+      expect(getChecks(result.stdout)).toEqual(["pass", "pass"]);
+      expect(getAugmented(result.stdout)).toEqual(["a.ts"]);
+    }, 120_000);
+
+    // Where a.ts imports b.ts, Kinds holds b too, which a.ts picks, so isA fails.
+    it("rejects a file whose own imports augment what it reads", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      writeFileSync(
+        join(directory, "a.ts"),
+        `import "./b.ts";\n${readFileSync(join(directory, "a.ts"), "utf8")}`,
+      );
+      expect(runNode(directory, "a.ts").status).toBe(0);
+      const result = runCli(directory, ["a.ts", "b.ts"]);
+      expect(getChecks(result.stdout)).toEqual(["Error: Invariant isA is violated.", "pass"]);
+      expect(getAugmented(result.stdout)).toEqual(["b.ts"]);
+    }, 120_000);
+  });
+
   // A file of thousands of function declarations, as react-dom's client build has, instantiates
   // them in a loop, in their order, rather than in a chain of states that overflows the stack. A
   // check of it takes 8 to 11 s on an idle machine, and up to 46 s on a loaded one.

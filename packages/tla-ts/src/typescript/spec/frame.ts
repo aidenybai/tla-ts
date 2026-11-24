@@ -1336,6 +1336,9 @@ export const frameModel = (
   ].join("\n");
   return {
     isScript: called.length === 0,
+    // Whether another file of the run could change the types that the frame reads, which it reads
+    // in a program of its own.
+    isAugmented: program.isAugmented,
     text,
     source: parseModule(text),
     config,
