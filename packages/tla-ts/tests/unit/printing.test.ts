@@ -288,6 +288,55 @@ describe("printing matches TLC", () => {
   );
 
   it.each([
+    [
+      "Len(G \\cup Nat) = 1",
+      ["{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{{}, {1}} \\cup Nat",
+    ],
+    [
+      "Len({t \\in G \\cup Nat : TRUE}) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{t \\in {{}, {1}} \\cup Nat : <expression line 4, col 32 to line 4, col 35 of module M> }",
+    ],
+    [
+      "Len([a : G \\cup Nat]) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n[a: {{}, {1}} \\cup Nat]",
+    ],
+    [
+      "Len(SUBSET (G \\cup Nat)) = 1",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\nSUBSET {{}, {1}} \\cup Nat",
+    ],
+    [
+      "Len([G -> Nat]) = 1",
+      ["{}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n[{{}, {1}} -> Nat]",
+    ],
+    [
+      "<<[y \\in {1} |-> Len(G \\cup Nat)]>> = <<[y \\in {1} |-> 1]>>",
+      ["{}", "{1}", "{}", "{1}"],
+      "The argument of Len should be a sequence, but instead it is:\n{{}, {1}} \\cup Nat",
+    ],
+    [
+      "<<[y \\in {1} |-> <<G \\cup Nat>> \\in 1]>> = <<[y \\in {1} |-> TRUE]>>",
+      ["{}", "{1}", "{}", "{1}"],
+      "Attempted to check if the value:\n<<{{}, {1}} \\cup Nat>>\nis an element of the integer 1",
+    ],
+  ])(
+    "runs a filter's predicate as TLC tries to enumerate a set it formats in %s",
+    async (expression, printed, message) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
+        config: "",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
     ["F \\in {{<<0, 1>>, <<1, 1>>}}", ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>"]],
     [
       "F \\in {{}, {<<0, 1>>}, {<<0, 1>>, <<1, 1>>}}",

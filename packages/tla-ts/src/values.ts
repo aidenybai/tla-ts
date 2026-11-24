@@ -5055,7 +5055,7 @@ const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
   ) {
     return expandLazySet(value);
   }
-  if (!isEnumerable(value)) return undefined;
+  // TLC's toString tries toSetEnum and size even on a set it can't enumerate, and the failure's message formats the set's parts.
   const mark = markTrace();
   try {
     return expandLazySet(value);
