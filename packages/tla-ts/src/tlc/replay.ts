@@ -413,7 +413,16 @@ const addState = (replay: Replay, state: Value[], node: number) => {
     countCoverage(coverage, node);
     countCoverage(coverage, coverage.roots[node]);
   }
-  replay.onState(state);
+  if (!coverage || coverage.frames.length === 0) {
+    replay.onState(state);
+    return true;
+  }
+  const hidden = hideFrames(coverage, 0);
+  try {
+    replay.onState(state);
+  } finally {
+    restoreFrames(coverage, hidden);
+  }
   return true;
 };
 

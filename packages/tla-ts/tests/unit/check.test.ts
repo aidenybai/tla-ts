@@ -15079,6 +15079,33 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["Spec == L!SpWF\nLive == L!Ev", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    ["Spec == L!SpWF\nLive == L!To", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    ["Spec == L!SpWF\nLive == L!EnLive", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    [
+      "Spec == L!SpWF2\nLive == L!To",
+      [
+        "line 5, col 9 to line 5, col 20 of module T18: 6",
+        "|line 5, col 15 to line 5, col 20 of module T18: 3:9",
+      ],
+    ],
+  ])(
+    "doesn't count the substitute of v in the initial predicate where the property of %j evaluates it, as TLC's liveness checker records no cost",
+    async (definition, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T18 WITH v <- x\n${definition}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Live",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T18"
+            ? "---- MODULE T18 ----\nEXTENDS Naturals\nVARIABLE v\nIni == v = 0\nIni2 == v \\in {0, 1}\nStp == v < 2 /\\ v' = v + 1\nSpWF == Ini /\\ [][Stp]_v /\\ WF_v(Stp)\nSpWF2 == Ini2 /\\ [][Stp]_v /\\ WF_v(Stp)\nEv == <>(v = 2)\nAcLive == <><<Stp>>_v \\/ v = 2\nEnLive == <>(~ENABLED Stp)\nTo == (v = 0) ~> (v = 2)\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.[0]).toEqual(lines);
+    },
+  );
+
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
