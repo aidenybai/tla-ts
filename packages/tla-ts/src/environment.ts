@@ -55,8 +55,8 @@ import {
   mentionsName,
   renameLocals,
   substitutedExpressions,
+  withBoundFrames,
   withInstanceParams,
-  withSubstitutionFrames,
   type BoundSubstitutions,
   type Substitution,
 } from "./instances";
@@ -1195,10 +1195,11 @@ export const createEnvironment = (
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
-    const substitutionBodies = new Map<string, Expression>();
+    const replacements = new Map<string, Expression>();
     const substitutionDefinitions = declarations.map((declaration): Definition => {
-      const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
-      if (declaration.arity === 0) substitutionBodies.set(declaration.name, substitution.body);
+      const replacement = getReplacement(declaration);
+      const substitution = getSubstitutionBody(replacement, declaration, location);
+      replacements.set(declaration.name, replacement);
       return {
         kind: "Operator",
         name: `${declaration.name}${suffix}`,
@@ -1268,7 +1269,8 @@ export const createEnvironment = (
       instanceArguments: subexpressionRecords.instanceArguments,
       instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
-      getOuterDefinition: () => undefined,
+      getOuterDefinition: (key) =>
+        substitutionDefinitions.find((definition) => definition.name === key),
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
@@ -1302,7 +1304,7 @@ export const createEnvironment = (
       setFrameSubstitutions(
         frame,
         instance.module,
-        substitutionBodies,
+        replacements,
         (name) =>
           !explicitSubstitutions.has(name) ||
           instanceParamNames.has(name) ||
@@ -1339,7 +1341,7 @@ export const createEnvironment = (
                   operator.params.slice(override.prefix),
                   location,
                 ).body
-              : withSubstitutionFrames(operator.body, frame ? [frame] : []),
+              : withBoundFrames(operator.body, frame ? [frame] : [], boundSubstitutions),
             theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
         }

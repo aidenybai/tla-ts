@@ -32,6 +32,7 @@ import {
   getContextElements,
   getEntryEvaluator,
   getMissingArgumentDescriber,
+  getObservedSubstitutes,
   getReevaluatedDefinitions,
   getStartupValue,
   getSubstituteClosure,
@@ -262,6 +263,10 @@ const getRuntimeVariableIndex = (
   const binding = lookupScope(scope, expression.name);
   if (binding?.kind === "Thunk" && !binding.isReleased) {
     return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
+  }
+  const local = binding?.kind === "Operator" ? binding.operator : undefined;
+  if (local?.kind === "Closure" && local.params.length === 0) {
+    return getRuntimeVariableIndex(local.body, local.scope, partial, run, isPrimed);
   }
   if (binding) return undefined;
   const index = run.environment.variableIndex.get(expression.name);
@@ -1241,7 +1246,10 @@ const compileAction = (
       // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use. Both bind an instance's substitutions with getVal(..., false), which caches nothing.
       const cached = environment.boundSubstitutions.lets.has(expression)
         ? reevaluated
-        : { impure: new Set<Definition>(), streamed: reevaluated.streamed };
+        : {
+            impure: getObservedSubstitutes(expression.definitions, environment),
+            streamed: new Set<Definition>(),
+          };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,

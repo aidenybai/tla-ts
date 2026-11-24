@@ -66,6 +66,17 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   return copy;
 };
 
+export const withBoundFrames = (
+  expression: Expression,
+  frames: Expression[],
+  boundSubstitutions: BoundSubstitutions,
+) => {
+  const framed = withSubstitutionFrames(expression, frames);
+  const owner = boundSubstitutions.lets.get(expression);
+  if (owner) boundSubstitutions.lets.set(framed, owner);
+  return framed;
+};
+
 // SANY selects into the instanced body, so a substitute's copy keeps the marks of the parameter it replaces, not its own.
 const withReplacedFrames = (replacement: Expression, expression: Expression) =>
   addFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
@@ -503,7 +514,7 @@ const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
   (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
 
-const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
+const isBoundOnce = (replacement: Expression, instantiation: Instantiation): boolean => {
   if (replacement.kind !== "Identifier") {
     return (
       !isVariableAlias(replacement) &&
@@ -513,8 +524,15 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
       replacement.kind !== "String"
     );
   }
-  if (isLocallyResolved(replacement)) return false;
   const definition = instantiation.getOuterDefinition(replacement.name);
+  if (isLocallyResolved(replacement)) {
+    return (
+      definition !== undefined &&
+      "isLetSubstitute" in definition &&
+      definition.params.length === 0 &&
+      isBoundOnce(definition.body, instantiation)
+    );
+  }
   // Spec#lookup gives a constant the configuration substitutes its substitute's OpDefNode, which Tool#evalImplSubstInKind binds as a cachable LazyValue.
   return (
     instantiation.isSubstitutedConstant(replacement.name) ||
@@ -719,7 +737,7 @@ export const getInstanceOperator = (
   const names = Array.from({ length: arity }, (_value, index) => getArgumentName(index));
   const args = [
     ...createInstanceArguments(params, location, marks.instanceArguments),
-    ...names.map((name) => createLocalIdentifier(name, location)),
+    ...names.map((name) => createSyntheticIdentifier(name, location)),
   ];
   const body: Expression = { kind: "Apply", operator: key, args, location, resolution };
   untracedExpressions.add(body);
@@ -896,6 +914,7 @@ const substituteExpression = (
         operator,
         args,
         resolution: replacement.kind === "Identifier" ? replacement.resolution : undefined,
+        hasSubstitutedOperator: true,
       });
     }
     if (
@@ -908,6 +927,7 @@ const substituteExpression = (
         operator: replacement.body.operator,
         args: [...replacement.body.args.slice(0, -replacement.params.length), ...args],
         resolution: replacement.body.resolution,
+        hasSubstitutedOperator: true,
       });
     }
     if (replacement?.kind === "Lambda") {
@@ -929,6 +949,7 @@ const substituteExpression = (
           operator: LAMBDA_NAME,
           args,
           resolution: LOCAL_RESOLUTION,
+          hasSubstitutedOperator: true,
         },
         location: { line: expression.location.line, column: expression.location.column },
       };
@@ -1140,11 +1161,10 @@ export const createInstantiation = (instantiation: Instantiation) => {
       definition.name,
       () => {
         const operator = getOperatorDefinition(definition);
-        const body = withSubstitutionFrames(operator.body, [frame]);
-        const lets = instantiation.boundSubstitutions.lets;
-        const owner = lets.get(operator.body);
-        if (owner) lets.set(body, owner);
-        return { ...operator, body };
+        return {
+          ...operator,
+          body: withBoundFrames(operator.body, [frame], instantiation.boundSubstitutions),
+        };
       },
       reservedKey,
     );

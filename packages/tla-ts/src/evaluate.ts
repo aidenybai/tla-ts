@@ -57,6 +57,8 @@ import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   hasEffectfulDefinition,
   isBodyVarying,
+  isDefinitionStreamed,
+  isDefinitionVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
   isImpureDefinition,
@@ -1655,15 +1657,24 @@ export const getReevaluatedDefinitions = (
     definitions.filter(
       // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
       (definition) =>
-        environment.coverage !== undefined ||
-        isImpureDefinition(definition, environment, "varying"),
+        environment.coverage !== undefined || isDefinitionVarying(definition, environment),
     ),
   ),
   streamed: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
+    definitions.filter((definition) => isDefinitionStreamed(definition, environment)),
   ),
   isFunctionRebuilt: true,
 });
+
+// TLC's SubstInNode binds a LET instance's substitute to a new LazyValue at each entry, which shows only where its evaluation does.
+export const getObservedSubstitutes = (definitions: Definition[], environment: Environment) =>
+  new Set(
+    definitions.filter(
+      (definition) =>
+        "isLetSubstitute" in definition &&
+        (environment.coverage !== undefined || isDefinitionVarying(definition, environment)),
+    ),
+  );
 
 export const isImpure = (environment: Environment) =>
   [...environment.facts.ids.keys()].some((definition) =>
@@ -2096,16 +2107,28 @@ const compileIdentifier = (
     };
   }
   const coverage = environment.coverage;
-  if (!coverage) return (context) => evaluateLocalIdentifier(name, expression, context);
   // TLC's Tool#evalAppl evaluates a LazyValue afresh where s1 is TLCState.Null.
+  const local: Evaluator = coverage
+    ? (context) => {
+        const binding = lookupScope(context.scope, name);
+        if (binding?.kind !== "Thunk" || binding.isReleased) {
+          return evaluateLocalIdentifier(name, expression, context);
+        }
+        return context.next === NULL_STATE
+          ? evaluateCoveredThunk(binding, context, coverage)
+          : forceThunk(binding, context);
+      }
+    : (context) => evaluateLocalIdentifier(name, expression, context);
+  if (!environment.boundSubstitutions.calls.has(expression)) return local;
   return (context) => {
     const binding = lookupScope(context.scope, name);
-    if (binding?.kind !== "Thunk" || binding.isReleased) {
-      return evaluateLocalIdentifier(name, expression, context);
-    }
-    return context.next === NULL_STATE
-      ? evaluateCoveredThunk(binding, context, coverage)
-      : forceThunk(binding, context);
+    const called =
+      binding?.kind === "Thunk"
+        ? getCalledBody(expression, binding.expression, environment)
+        : binding?.kind === "Operator" && binding.operator.kind === "Closure"
+          ? getCalledBody(expression, binding.operator.body, environment)
+          : undefined;
+    return called === undefined ? local(context) : evaluate(called, context);
   };
 };
 
@@ -2448,7 +2471,7 @@ const compileApply = (
     };
   }
   const binders = args.map((arg) => compileArgumentBinder(arg, environment));
-  return (context) => {
+  const call: Evaluator = (context) => {
     const operator = resolveOperator(expression.operator, context);
     if (operator) return callOperator(operator, args, context, binders);
     const definition = environment.definitions.get(expression.operator);
@@ -2457,6 +2480,26 @@ const compileApply = (
     }
     throw new TlaEvaluationError(
       `Unknown operator ${expression.operator} at ${describeLocation(expression)}`,
+    );
+  };
+  if (!environment.boundSubstitutions.calls.has(expression)) return call;
+  return (context) => {
+    const binding = lookupScope(context.scope, expression.operator);
+    const operator = binding?.kind === "Operator" ? binding.operator : undefined;
+    if (operator?.kind !== "Closure") return call(context);
+    const called = getCalledBody(expression, operator.body, environment);
+    if (called === undefined) return call(context);
+    return callOperator(
+      {
+        kind: "Closure",
+        name: operator.name,
+        params: operator.params,
+        body: called,
+        scope: context.scope,
+      },
+      args,
+      context,
+      binders,
     );
   };
 };
@@ -3147,7 +3190,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const body = getChildEvaluator(expression.body);
       const definitions = getBoundDefinitions(expression, environment);
       if (definitions.length === 0) return body;
-      return (context) => body(withScope(context, bindDefinitions(definitions, context)));
+      const observed = getObservedSubstitutes(definitions, environment);
+      const reevaluated =
+        observed.size === 0 ? undefined : { impure: observed, streamed: new Set<Definition>() };
+      return (context) =>
+        body(withScope(context, bindDefinitions(definitions, context, reevaluated)));
     }
     case "Forall":
     case "Exists":

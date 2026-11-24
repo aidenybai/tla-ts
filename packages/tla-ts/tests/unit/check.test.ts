@@ -7786,6 +7786,92 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a sibling in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "two siblings in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 F == E + 1 IN x\' = x + 1 /\\ F >= 0 /\\ F >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an enclosing LET in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "two enclosing LETs in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN LET F == E + 1 IN x\' = x + 1 /\\ F >= 0 /\\ F >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an operator in Next",
+      'LET P(a) == IF PrintT(<<"p", a>>) THEN a ELSE 0 E == P(x) + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an operator that reads it in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 Q(a) == D + a E == Q(1) IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "a recursive operator in Next",
+      'LET RECURSIVE R(_) R(n) == IF n = 0 THEN PrintT(<<"r", x>>) ELSE R(n - 1) E == R(2) IN x\' = x + 1 /\\ E /\\ E',
+      "TRUE",
+      4,
+    ],
+    [
+      "a function in Next",
+      'LET f[i \\in {1}] == IF PrintT(<<"f", x>>) THEN i ELSE 0 E == f[1] IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "a sibling in an IF condition of Next",
+      "LET D == IF PrintT(<<\"d\", x>>) THEN x ELSE 0 E == D + 1 IN IF E >= 0 THEN x' = x + 1 ELSE x' = x + 1 /\\ E >= 0",
+      "TRUE",
+      2,
+    ],
+    [
+      "a sibling in an invariant",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN E >= 0 /\\ E >= 0',
+      3,
+    ],
+    [
+      "an enclosing LET in an invariant",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN E >= 0 /\\ E >= 0',
+      3,
+    ],
+    [
+      "a sibling under ENABLED",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN ENABLED (x\' = x + 1 /\\ E >= 0 /\\ E >= 0)',
+      3,
+    ],
+  ])(
+    "evaluates a LET definition that reaches a printing one through %s as often as TLC does",
+    async (_name, next, inv, count) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nBound == x < 2\nInv == ${inv}\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      });
+      expect([result.status, result.generatedStates, prints.length]).toEqual(["success", 3, count]);
+    },
+  );
+
   it("builds a function a LET of the next-state relation defines at each reference, so TLC fails to fingerprint a set of it", async () => {
     const result = await check({
       source:
@@ -13588,6 +13674,207 @@ ASSUME TLCFP(a) = -887695703
       ]).toEqual([[undefined, label], coverageLabels]);
     },
   );
+
+  it.each([
+    [
+      "J == INSTANCE Pure WITH c <- x, Op <- F",
+      "x' = J!E6",
+      [
+        "line 7, col 9 to line 7, col 17 of module M: 3",
+        "|line 7, col 14 to line 7, col 17 of module M: 3",
+        "||line 5, col 30 to line 5, col 30 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "J == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + 1",
+      "x' = J!E3",
+      [
+        "line 7, col 9 to line 7, col 17 of module M: 2",
+        "|line 7, col 14 to line 7, col 17 of module M: 2",
+        "||line 5, col 30 to line 5, col 30 of module M: 2",
+        "||line 6, col 7 to line 6, col 15 of module Pure: 2",
+        "|||line 6, col 7 to line 6, col 11 of module Pure: 6",
+        "||||line 6, col 10 to line 6, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "P(k) == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + k",
+      "x' = P(1)!E6",
+      [
+        "line 7, col 9 to line 7, col 20 of module M: 3",
+        "|line 7, col 14 to line 7, col 20 of module M: 3",
+        "||line 5, col 33 to line 5, col 33 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 12",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- F IN x' = L!E3",
+      [
+        "line 7, col 56 to line 7, col 64 of module M: 2",
+        "|line 7, col 61 to line 7, col 64 of module M: 2",
+        "||line 7, col 42 to line 7, col 42 of module M: 2",
+        "||line 6, col 7 to line 6, col 15 of module Pure: 2",
+        "|||line 6, col 7 to line 6, col 11 of module Pure: 6",
+        "||||line 6, col 10 to line 6, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + 1 IN x' = L!E6",
+      [
+        "line 7, col 71 to line 7, col 79 of module M: 3",
+        "|line 7, col 76 to line 7, col 79 of module M: 3",
+        "||line 7, col 42 to line 7, col 42 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L == INSTANCE Pure WITH c <- x, Op <- F IN x' = L!E11",
+      [
+        "line 7, col 56 to line 7, col 65 of module M: 3",
+        "|line 7, col 61 to line 7, col 65 of module M: 3",
+        "||line 7, col 42 to line 7, col 42 of module M: 3",
+        "||line 5, col 8 to line 5, col 12 of module Pure: 3",
+        "|||line 4, col 12 to line 4, col 15 of module Pure: 9",
+        "||||line 4, col 14 to line 4, col 14 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(G(_)) == INSTANCE Pure WITH c <- x, Op <- G IN x' = L(F)!E11",
+      [
+        "line 7, col 62 to line 7, col 74 of module M: 3",
+        "|line 7, col 67 to line 7, col 74 of module M: 3",
+        "||line 7, col 48 to line 7, col 48 of module M: 3",
+        "||line 5, col 8 to line 5, col 12 of module Pure: 3",
+        "|||line 4, col 12 to line 4, col 15 of module Pure: 9",
+        "||||line 4, col 14 to line 4, col 14 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(G(_)) == INSTANCE Pure WITH c <- x, Op <- G IN x' = L(F)!E6",
+      [
+        "line 7, col 62 to line 7, col 73 of module M: 3",
+        "|line 7, col 67 to line 7, col 73 of module M: 3",
+        "||line 7, col 48 to line 7, col 48 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "Pad == 0",
+      "LET L(k) == INSTANCE Pure WITH c <- x, Op <- LAMBDA a : a + k IN x' = L(1)!E6",
+      [
+        "line 7, col 74 to line 7, col 85 of module M: 3",
+        "|line 7, col 79 to line 7, col 85 of module M: 3",
+        "||line 7, col 45 to line 7, col 45 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 12",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+  ])(
+    "counts the substitute of an operator constant through %j at the application in %s, as TLC's cost model reports a lookup it misses into the application",
+    async (definition, next, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(a) == a + 1\n${definition}\nInit == x = 0\nNext == ${next}\nBound == x < 3\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE11 == H(Op)\nE3 == Op(c) + 1\nE5 == c + 2\nE6 == Op(c)\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-2)).toEqual(lines);
+    },
+  );
+
+  it.each([
+    [
+      "c <- x + k, Op <- F",
+      "x' = L(0)!E6",
+      [
+        "line 7, col 63 to line 7, col 74 of module M: 3",
+        "|line 7, col 68 to line 7, col 74 of module M: 3",
+        "||line 7, col 45 to line 7, col 49 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' = L(0)!E3 - 1",
+      [
+        "line 7, col 63 to line 7, col 78 of module M: 3",
+        "|line 7, col 68 to line 7, col 78 of module M: 3",
+        "||line 7, col 68 to line 7, col 74 of module M: 3",
+        "|||line 7, col 45 to line 7, col 49 of module M: 3",
+        "|||line 6, col 7 to line 6, col 15 of module Pure: 3",
+        "||||line 6, col 7 to line 6, col 11 of module Pure: 9",
+        "|||||line 6, col 10 to line 6, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- LAMBDA a : a + k",
+      "x' = L(1)!E6",
+      [
+        "line 7, col 78 to line 7, col 89 of module M: 2",
+        "|line 7, col 83 to line 7, col 89 of module M: 2",
+        "||line 7, col 45 to line 7, col 49 of module M: 2",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 8",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' \\in L(0)!E14",
+      [
+        "line 7, col 63 to line 7, col 77 of module M: 6",
+        "|line 7, col 70 to line 7, col 77 of module M: 3",
+        "||line 7, col 45 to line 7, col 49 of module M: 3",
+        "||line 9, col 8 to line 9, col 29 of module Pure: 3:9",
+        "|||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "|||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' \\in L(0)!E14 \\cup L(1)!E14",
+      [
+        "line 7, col 63 to line 7, col 91 of module M: 9",
+        "|line 7, col 70 to line 7, col 91 of module M: 3",
+        "||line 7, col 70 to line 7, col 77 of module M: 3",
+        "|||line 9, col 8 to line 9, col 29 of module Pure: 3",
+        "||||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "||||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+        "||line 7, col 84 to line 7, col 91 of module M: 3",
+        "|||line 7, col 45 to line 7, col 49 of module M: 6",
+        "|||line 9, col 8 to line 9, col 29 of module Pure: 3:9",
+        "||||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "||||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+      ],
+    ],
+  ])(
+    "reports no node for the binding of a LET instance's parameter-dependent substitute with %s in %s, as TLC's cost model counts the substitute only at the instance",
+    async (substitutes, next, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(a) == a + 1\nPad == 0\nInit == x = 0\nNext == LET L(k) == INSTANCE Pure WITH ${substitutes} IN ${next}\nBound == x < 3\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE11 == H(Op)\nE3 == Op(c) + 1\nE5 == c + 2\nE6 == Op(c)\nE14 == {c + i : i \\in {1, 2}}\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-2)).toEqual(lines);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {
@@ -14879,6 +15166,39 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
     expect(result.generatedStates).toBe(21);
   });
+
+  it.each([
+    ["LET u == UNION {UNION {0..2, {1}}, {7}} IN", "u"],
+    ["LET u == UNION {UNION {0..2, {1}}, {7}} w == u IN", "w"],
+  ])(
+    "keeps the UNION a LET definition gives under ENABLED with %s, as TLC's Tool#enabled caches the definition",
+    async (definitions, name) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == UNCHANGED <<x, y>>\nInv == ENABLED (${definitions} Cardinality(${name}) > 0 /\\ y' \\in ${name} /\\ PrintT(y') /\\ FALSE) \\/ TRUE\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["0", "1", "2", "7"]);
+    },
+  );
+
+  it.each([
+    "LET u == UNION {UNION {0..2, {1}}, {7}} w == u IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} w == {e \\in u : TRUE} IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} v == u w == v IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} IN LET w == u IN",
+    "LET W(a) == UNION {UNION {0..2, {1}}, {7}} IN LET w == W(1) IN",
+  ])(
+    "evaluates w again at each reference in an action through %s, as TLC's Tool#getNextStates does",
+    async (definitions) => {
+      const result = await checkBody(
+        `EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${definitions} Cardinality(w) > 0 /\\ y' \\in w /\\ UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(result.generatedStates).toBe(21);
+    },
+  );
 
   it.each([
     ["", undefined],
