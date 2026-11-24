@@ -714,8 +714,8 @@ RECURSIVE SerializeJSONElements(_, _, _, _, _, _)
 RECURSIVE ThisStringValue(_, _)
 RECURSIVE StringBuiltin(_, _, _, _, _, _)
 RECURSIVE StringConstructor(_, _, _)
-RECURSIVE StringFromCharCode(_, _, _)
-RECURSIVE StringFromCodePoint(_, _, _)
+RECURSIVE StringFromCharCode(_, _, _, _)
+RECURSIVE StringFromCodePoint(_, _, _, _)
 RECURSIVE StringRaw(_, _, _)
 RECURSIVE StringRawFrom(_, _, _, _, _, _)
 RECURSIVE StringMethod(_, _, _, _)
@@ -10098,8 +10098,8 @@ ThisStringValue(s, v) ==
 StringBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> StringConstructor(s, args, nt)
     [] m \in {"toString", "valueOf"} -> ThisStringValue(s, this)
-    [] m = "fromCharCode" -> StringFromCharCode(s, args, <<>>)
-    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, <<>>)
+    [] m = "fromCharCode" -> StringFromCharCode(s, args, 1, NoChunks)
+    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, 1, NoChunks)
     [] m = "raw" -> StringRaw(s, Arg(args, 1), Rest(args, 2))
     [] m \in {"match", "matchAll", "replace", "replaceAll", "search", "split"} ->
          LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)
@@ -10115,19 +10115,21 @@ StringConstructor(s, args, nt) ==
   IN IF IsAbrupt(str) \/ nt = Undefined THEN str
      ELSE LET p == GetPrototypeFromConstructor(str.s, nt, "StringPrototype") IN
           IF IsAbrupt(p) THEN p ELSE StringCreate(p.s, Val(str), Val(p))
-\* String.fromCharCode (§22.1.2.1).
-StringFromCharCode(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n
-       ELSE StringFromCharCode(n.s, Tail(args), Append(acc, NumToUint16(Val(n).value)))
-\* String.fromCodePoint (§22.1.2.2).
-StringFromCodePoint(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n ELSE
+\* String.fromCharCode (§22.1.2.1), from the kth argument, with the code units so far in chunks, so
+\* that n arguments copy each code unit a few times rather than n.
+StringFromCharCode(s, args, k, units) ==
+  IF k > Len(args) THEN Ok(s, Str(ChunkValues(units)))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n
+       ELSE StringFromCharCode(n.s, args, k + 1, ChunkAppend(units, NumToUint16(Val(n).value)))
+\* String.fromCodePoint (§22.1.2.2), from the kth argument, with each code point's units so far in
+\* chunks.
+StringFromCodePoint(s, args, k, parts) ==
+  IF k > Len(args) THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n ELSE
        LET x == Val(n).value IN
        IF ~NumIsFinite(x) \/ ~NumIsIntegral(x) THEN ThrowError(n.s, "RangeError")
        ELSE IF NumLess(x, PosZero) \/ NumLess(NumFromInt(1114111), x) THEN ThrowError(n.s, "RangeError")
-       ELSE StringFromCodePoint(n.s, Tail(args), acc \o UTF16EncodeCodePoint(NumToSmallInt(x)))
+       ELSE StringFromCodePoint(n.s, args, k + 1, ChunkAppend(parts, UTF16EncodeCodePoint(NumToSmallInt(x))))
 \* String.raw (§22.1.2.4).
 StringRaw(s, template, substitutions) ==
   LET cooked == ToObject(s, template) IN IF IsAbrupt(cooked) THEN cooked ELSE

@@ -1128,6 +1128,55 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // String.fromCharCode and String.fromCodePoint read their arguments by index into chunks, so sizes
+  // around a chunk and a RangeError partway pin which arguments they convert, in order.
+  describe("makes a string from thousands of code units and code points across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const calls: number[] = [];
+        const getCode = (index: number, code: number) => ({ valueOf: () => (calls.push(index), code) });
+        const units = String.fromCharCode(
+          ...(Array.from({ length: size }, (_, index) => getCode(index, 65 + ((index * 7919) % 70000))) as unknown as number[]),
+        );
+        const points = String.fromCodePoint(
+          ...(Array.from({ length: size }, (_, index) => getCode(index, (index * 7919) % 0x110000)) as unknown as number[]),
+        );
+        text += [size, units.length, getHash(units), points.length, getHash(points), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      const calls: number[] = [];
+      try {
+        String.fromCodePoint(
+          ...(Array.from({ length: 129 }, (_, index) => ({ valueOf: () => (calls.push(index), index === 70 ? -1 : index) })) as unknown as number[]),
+        );
+      } catch (error) {
+        text += \`\${(error as Error).name}:\${calls.length}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:0:0:0:0:0;1:1:65:1:0:2:47540;63:63:865908:117:835321:126:785769;",
+      "64:64:852032:119:524887:128:363083;65:65:429795:121:199675:130:283046;",
+      "129:129:687348:249:933119:258:436396;RangeError:71",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("RangeError:71", "RangeError:72");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
