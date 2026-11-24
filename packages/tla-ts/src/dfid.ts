@@ -109,7 +109,8 @@ const getFingerprintDistance = (fingerprints: bigint[], buckets: bigint) => {
   const wraps = [...ranges.values()]
     .map((range) => range.max - range.min)
     .filter((difference) => difference > LONG_MAX)
-    .map((difference) => (difference === LONG_MAX + 1n ? -difference : (1n << 64n) - difference));
+    // Deviation from TLC: MemFPIntSet#checkFPs takes Math.abs(Long.MIN_VALUE) for two fingerprints in a bucket that differ by 2^63, and prints a negative probability.
+    .map((difference) => (1n << 64n) - difference);
   return [...gaps, ...wraps].reduce((min, gap) => (gap < min ? gap : min), LONG_MAX);
 };
 

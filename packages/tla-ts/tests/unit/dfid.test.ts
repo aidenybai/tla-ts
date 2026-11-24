@@ -419,16 +419,15 @@ it("checks the assumptions of a specification without variables and then complet
   ]);
 });
 
-it("reports the distance of two fingerprints that share a negative low word, which TLC's MemFPIntSet#checkFPs reads as equal before it divides by zero", () => {
+const searchTwoInitialStates = (source: string) => {
   const outputs: DepthFirstOutput[] = [];
   const exitCode = checkDepthFirst({
-    source:
-      "---- MODULE M ----\nVARIABLES x, y\nInit == \\/ x = 0 /\\ y = 1\n        \\/ x = 27370 /\\ y = 42572\nNext == UNCHANGED <<x, y>>\n====",
+    source,
     config: "INIT Init\nNEXT Next",
     maxDepth: 3,
     onOutput: (output) => outputs.push(output),
   });
-  expect([
+  return [
     exitCode,
     outputs.map((output) =>
       output.kind === "message"
@@ -437,12 +436,36 @@ it("reports the distance of two fingerprints that share a negative low word, whi
           ? `success ${formatProbability(output.optimistic)} ${formatProbability(output.actual)}`
           : output.kind,
     ),
-  ]).toEqual([
+  ];
+};
+
+it("reports the distance of two fingerprints that share a negative low word, which TLC's MemFPIntSet#checkFPs reads as equal before it divides by zero", () => {
+  expect(
+    searchTwoInitialStates(
+      "---- MODULE M ----\nVARIABLES x, y\nInit == \\/ x = 0 /\\ y = 1\n        \\/ x = 27370 /\\ y = 42572\nNext == UNCHANGED <<x, y>>\n====",
+    ),
+  ).toEqual([
     0,
     [
       "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
       "2205 Starting level 2: 2 states generated, 2 distinct states found.",
       "success 2.2E-19 2.2E-19",
+      "2204 4 states generated, 2 distinct states found.",
+    ],
+  ]);
+});
+
+it("reports a positive probability for two fingerprints in a bucket that differ by 2^63, where TLC's MemFPIntSet#checkFPs takes Math.abs(Long.MIN_VALUE)", () => {
+  expect(
+    searchTwoInitialStates(
+      "---- MODULE M ----\nVARIABLES x, y, z\nInit == \\/ x = 0 /\\ y = 0 /\\ z = 0\n        \\/ x = 3424530 /\\ y = 1985122 /\\ z = 1350749\nNext == UNCHANGED <<x, y, z>>\n====",
+    ),
+  ).toEqual([
+    0,
+    [
+      "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
+      "2205 Starting level 2: 2 states generated, 2 distinct states found.",
+      "success 2.2E-19 1.1E-19",
       "2204 4 states generated, 2 distinct states found.",
     ],
   ]);
