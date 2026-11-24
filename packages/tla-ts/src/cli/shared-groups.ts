@@ -13,7 +13,12 @@ export interface SharedGroup {
 // What a worker that checks a group reports: the output of its checks and their exit codes, with
 // the size of their program's code, or that code's size alone, where it is above the budget.
 type GroupReport =
-  | { kind: "checked"; output: { isError: boolean; text: string }[]; exitCodes: number[] }
+  | {
+      kind: "checked";
+      output: { isError: boolean; text: string }[];
+      exitCodes: number[];
+      characters: number;
+    }
   | { kind: "oversize"; characters: number };
 
 const isGroup = (value: unknown): value is SharedGroup =>
@@ -35,7 +40,9 @@ export const reportOversize = (characters: number) =>
 // Checks a group of more than one file with what it writes held back, from its compile on, and
 // reports it with the exit codes once every check is done, so that a group that runs out of heap
 // shows nothing. A group whose program is above the budget reports that alone.
-export const checkHeldBack = async (checkGroup: () => Promise<number[] | undefined>) => {
+export const checkHeldBack = async (
+  checkGroup: () => Promise<{ exitCodes: number[]; characters: number } | undefined>,
+) => {
   const output: { isError: boolean; text: string }[] = [];
   const getWrite =
     (isError: boolean) =>
@@ -50,11 +57,11 @@ export const checkHeldBack = async (checkGroup: () => Promise<number[] | undefin
     };
   process.stdout.write = getWrite(false);
   process.stderr.write = getWrite(true);
-  const exitCodes = await checkGroup();
-  if (exitCodes !== undefined) {
-    parentPort?.postMessage({ kind: "checked", output, exitCodes } satisfies GroupReport);
+  const checked = await checkGroup();
+  if (checked !== undefined) {
+    parentPort?.postMessage({ kind: "checked", output, ...checked } satisfies GroupReport);
   }
-  return exitCodes;
+  return checked?.exitCodes;
 };
 
 // A run's group checked in a worker whose heap is the run's, or undefined where the worker ran out
@@ -77,7 +84,9 @@ const checkGroup = (argv: string[], group: SharedGroup) =>
         if (error.code === "ERR_WORKER_OUT_OF_MEMORY") resolve(undefined);
         else reject(error);
       })
-      .on("exit", (code) => resolve(report ?? { kind: "checked", output: [], exitCodes: [code] }));
+      .on("exit", (code) =>
+        resolve(report ?? { kind: "checked", output: [], exitCodes: [code], characters: 0 }),
+      );
   });
 
 // The size of the code of a group's program, in characters, above which a group's check spends
@@ -121,7 +130,14 @@ export const checkSharedGroups = async (argv: string[], pathCount: number) => {
       (item.isError ? process.stderr : process.stdout).write(item.text),
     );
     exitCodes.push(...report.exitCodes);
-    return checkFrom(first + size, count);
+    // The next group takes as many files as this group's code suggests fit, or, after a group of
+    // one file, which compiles alone, as many as are left.
+    return checkFrom(
+      first + size,
+      report.characters > 0
+        ? Math.max(1, Math.floor((size * SHARED_PROGRAM_BUDGET) / report.characters))
+        : pathCount,
+    );
   };
   await checkFrom(0, pathCount);
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;

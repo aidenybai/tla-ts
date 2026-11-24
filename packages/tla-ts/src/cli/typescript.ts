@@ -565,6 +565,13 @@ export interface SharedSettings {
   version: TlcVersion;
 }
 
+// The specs of the files of a shared program, each undefined where the file compiles alone, and
+// the size of the program's code in characters. A program above the budget gives its size alone.
+interface SharedInputs {
+  inputs: (CompiledInput | undefined)[] | undefined;
+  characters: number;
+}
+
 // The loader of the modules of a file's spec of a shared program, which holds their texts alone, so
 // that a check keeps nothing of the compile.
 const getSharedLoader =
@@ -584,7 +591,7 @@ const compileSharedInputs = async (
   paths: readonly string[],
   setBound: number | undefined,
   budget: number,
-): Promise<(CompiledInput | undefined)[] | number> => {
+): Promise<SharedInputs> => {
   const ts = (await import("@typescript/typescript6")).default;
   const { compileToEscore } = await import("../typescript/spec/compile");
   const { getModelConstants, planModel, SHARED_MODEL_DEFINITIONS } =
@@ -611,7 +618,7 @@ const compileSharedInputs = async (
     }
   });
   const members = paths.filter((_path, index) => plans[index] !== undefined);
-  if (members.length < 2) return paths.map(() => undefined);
+  if (members.length < 2) return { inputs: paths.map(() => undefined), characters: 0 };
   const models = plans.flatMap((plan) => (plan === undefined || plan.isScript ? [] : [plan]));
   const numbered: string[] = [];
   const getProgram = () => {
@@ -632,7 +639,7 @@ const compileSharedInputs = async (
     const characters = spec.loadModule("ProgramCode")?.length ?? 0;
     return characters > budget
       ? characters
-      : { ...spec, preparedModules: [...spec.preparedModules, prepareProgram(spec)] };
+      : { ...spec, preparedModules: [...spec.preparedModules, prepareProgram(spec)], characters };
   };
   // The root of each file's spec, which extends the file's own module after the shared ones.
   const getRoot = (shared: Exclude<ReturnType<typeof getProgram>, number>) =>
@@ -686,7 +693,9 @@ const compileSharedInputs = async (
     });
   };
   const shared = getProgram();
-  return typeof shared === "number" ? shared : getInputs(shared);
+  return typeof shared === "number"
+    ? { inputs: undefined, characters: shared }
+    : { inputs: getInputs(shared), characters: shared.characters };
 };
 
 // The TypeScript files of a run, compiled to share one program: an entry that imports them in
@@ -695,13 +704,12 @@ const compileSharedInputs = async (
 // every file's spec extends link, start and run once, as the group's base, which each file's
 // check starts from where it ranks their strings and reads their definitions as the base did, and
 // otherwise checks alone. A file without a model that can start there, or every file where the run
-// throws, has none, and compiles alone. A program whose code is above the budget, in characters,
-// gives that size alone.
+// throws, has none, and compiles alone.
 export const compileSharedFiles = async (
   paths: readonly string[],
   settings: SharedSettings,
   budget: number,
-): Promise<(CompiledInput | undefined)[] | number> => {
+): Promise<SharedInputs> => {
   const { createCheckBase } = await import("../search");
   const { createTlcOrder } = await import("../tlc/order");
   const getConstants = (config: string) =>
@@ -783,14 +791,14 @@ export const compileSharedFiles = async (
     return undefined;
   };
   try {
-    const inputs = await compileSharedInputs(paths, settings.maxSetSize, budget);
-    if (typeof inputs === "number") return inputs;
-    const sample = inputs.find((input) => input !== undefined);
-    if (sample === undefined) return inputs;
+    const compiled = await compileSharedInputs(paths, settings.maxSetSize, budget);
+    const inputs = compiled.inputs;
+    const sample = inputs?.find((input) => input !== undefined);
+    if (inputs === undefined || sample === undefined) return compiled;
     const base = getBase(sample);
-    if (base === undefined) return inputs;
+    if (base === undefined) return compiled;
     const constants = getConstants(sample.config);
-    return inputs.map((input) => {
+    const shared = inputs.map((input) => {
       if (input === undefined) return undefined;
       const ranked = getRanked(input, base);
       const reason = getAloneReason(input, base, constants, ranked);
@@ -798,10 +806,11 @@ export const compileSharedFiles = async (
       console.log(`tla-ts checks ${basename(input.path)} alone [${reason[0]}]: ${reason[1]}`);
       return input;
     });
+    return { inputs: shared, characters: compiled.characters };
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     const code = error instanceof TlaSharedBaseError ? error.code : "program-stops";
     console.log(`tla-ts checks each file alone [${code}]: ${error.message}`);
-    return paths.map(() => undefined);
+    return { inputs: paths.map(() => undefined), characters: 0 };
   }
 };

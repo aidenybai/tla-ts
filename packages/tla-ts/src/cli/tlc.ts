@@ -716,12 +716,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
             },
             SHARED_PROGRAM_BUDGET,
           )
-        : [];
-    if (typeof shared === "number") {
-      reportOversize(shared);
+        : { inputs: [], characters: 0 };
+    const inputs = shared.inputs;
+    if (inputs === undefined) {
+      reportOversize(shared.characters);
       return undefined;
     }
-    return shareFiles(async () => {
+    const checkedCodes = await shareFiles(async () => {
       for (const [offset, path] of groupPaths.entries()) {
         const index = offset + (group?.first ?? 0);
         if (index > 0) console.log("");
@@ -750,7 +751,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
             // A stack overflow that nothing caught ends the check as one that the check caught does.
             try {
               const compiled = isTypeScript
-                ? (shared[programPaths.indexOf(path)] ??
+                ? (inputs[programPaths.indexOf(path)] ??
                   (await compileTypeScriptFile(path, parsed.maxSetSize)))
                 : undefined;
               compiled?.notes.forEach((note) => console.log(note));
@@ -775,11 +776,15 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       }
       return exitCodes;
     });
+    return { exitCodes: checkedCodes, characters: shared.characters };
   };
   const checked =
-    (await (group !== undefined && group.count > 1 ? checkHeldBack(checkGroup) : checkGroup())) ??
-    [];
-  return checked.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
+    group !== undefined && group.count > 1
+      ? await checkHeldBack(checkGroup)
+      : (await checkGroup())?.exitCodes;
+  return (
+    (checked ?? []).find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success
+  );
 };
 
 const createMissingFilePrinter174 = (

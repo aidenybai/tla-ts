@@ -76,7 +76,7 @@ describe("checks of the files of a group from its base", () => {
     expect(
       spawnSync(process.execPath, ["replay.mjs"], { cwd: directory, encoding: "utf8" }).stdout,
     ).toBe("true false\n");
-    const inputs = await compileSharedFiles(
+    const shared = await compileSharedFiles(
       ["first.ts", "second.ts", "late.ts", "counted.ts"].map((file) => join(directory, file)),
       {
         maxSetSize: undefined,
@@ -86,7 +86,8 @@ describe("checks of the files of a group from its base", () => {
       },
       Infinity,
     );
-    if (typeof inputs === "number") throw new Error("the program is above the budget");
+    if (shared.inputs === undefined) throw new Error("the program is above the budget");
+    const inputs = shared.inputs;
     const base = inputs[0]?.base;
     if (base === undefined) throw new Error("the files share no base");
     expect(inputs.map((input) => input?.base === base)).toEqual([true, true, true, true]);
