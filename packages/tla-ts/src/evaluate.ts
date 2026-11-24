@@ -57,6 +57,7 @@ import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   hasEffectfulDefinition,
   isBodyVarying,
+  isDefinitionStreamed,
   isDefinitionVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
@@ -1660,7 +1661,7 @@ export const getReevaluatedDefinitions = (
     ),
   ),
   streamed: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
+    definitions.filter((definition) => isDefinitionStreamed(definition, environment)),
   ),
   isFunctionRebuilt: true,
 });

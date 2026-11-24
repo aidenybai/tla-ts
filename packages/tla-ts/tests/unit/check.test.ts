@@ -15184,6 +15184,23 @@ describe("initial predicate and next-state relation match TLC", () => {
   );
 
   it.each([
+    "LET u == UNION {UNION {0..2, {1}}, {7}} w == u IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} w == {e \\in u : TRUE} IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} v == u w == v IN",
+    "LET u == UNION {UNION {0..2, {1}}, {7}} IN LET w == u IN",
+    "LET W(a) == UNION {UNION {0..2, {1}}, {7}} IN LET w == W(1) IN",
+  ])(
+    "evaluates w again at each reference in an action through %s, as TLC's Tool#getNextStates does",
+    async (definitions) => {
+      const result = await checkBody(
+        `EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${definitions} Cardinality(w) > 0 /\\ y' \\in w /\\ UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(result.generatedStates).toBe(21);
+    },
+  );
+
+  it.each([
     ["", undefined],
     [" with coverage", 1],
   ])(
