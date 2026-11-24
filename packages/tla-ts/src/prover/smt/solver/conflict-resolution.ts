@@ -91,7 +91,8 @@ export class ConflictResolution {
 
   private processJustifications() {
     for (;;) {
-      while (this.todoJustificationsHead < this.todoJustifications.length) {
+      const size = this.todoJustifications.length;
+      while (this.todoJustificationsHead < size) {
         const justification = this.todoJustifications[this.todoJustificationsHead];
         this.todoJustificationsHead++;
         justification.getAntecedents(this);

@@ -140,6 +140,7 @@ export class Rewriter extends RewriterTpl {
   private der: Der;
   releaseResult = () => this.setLastResult(-1);
   private localCtxCost = 0;
+  private defaultBool: Rewriter | undefined;
 
   constructor(
     manager: AstManager,
@@ -150,9 +151,9 @@ export class Rewriter extends RewriterTpl {
     this.arith = new ArithRewriter(manager, options.arith);
     const bvOptions = options.bv ?? { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0 };
     this.bv = new BvRewriter(manager, options.arith, bvOptions, {
-      mkEq: (left, right) => this.mkEq(left, right),
+      mkEq: (left, right) => this.getDefaultBool().mkEq(left, right),
       mkIte: (condition, thenExpr, elseExpr) => {
-        const result = this.mkIte(condition, thenExpr, elseExpr);
+        const result = this.getDefaultBool().mkIte(condition, thenExpr, elseExpr);
         return typeof result === "number" ? result : result.expr;
       },
     });
@@ -171,7 +172,13 @@ export class Rewriter extends RewriterTpl {
     this.unusedVarsEliminator.release();
     this.der.release();
     this.seq.release();
+    this.defaultBool?.release();
     super.release();
+  }
+
+  private getDefaultBool() {
+    this.defaultBool ??= new Rewriter(this.manager, TACTIC_REWRITER_OPTIONS);
+    return this.defaultBool;
   }
 
   // A rewrite that the spent resource limit stops answers its input instead of failing.

@@ -212,7 +212,7 @@ export abstract class TheoryLraAxioms extends TheoryLraState {
     this.mkAxiom([isNonnegative, isNegativeCase]);
   }
 
-  private mkDivAxiom(dividend: number, divisor: number) {
+  protected mkDivAxiom(dividend: number, divisor: number) {
     const manager = this.manager;
     if (this.isZeroNumeral(divisor)) return;
     const isZero = this.mkEq(divisor, manager.mkRealNumeral(Rational.zero));

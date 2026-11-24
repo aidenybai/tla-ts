@@ -231,8 +231,8 @@ export class NlsatSolver {
     const firstDegree = this.atoms.getDegree(firstAtom);
     const secondDegree = this.atoms.getDegree(secondAtom);
     if (firstDegree !== secondDegree) return firstDegree - secondDegree;
-    const isFirstEq = firstAtom.kind === "EQ";
-    const isSecondEq = secondAtom.kind === "EQ";
+    const isFirstEq = firstAtom.kind === "EQ" || firstAtom.kind === "ROOT_EQ";
+    const isSecondEq = secondAtom.kind === "EQ" || secondAtom.kind === "ROOT_EQ";
     if (isFirstEq !== isSecondEq) return isFirstEq ? 1 : -1;
     return first - second;
   }
