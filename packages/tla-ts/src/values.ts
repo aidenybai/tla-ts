@@ -2000,6 +2000,53 @@ const enumerateSetOperation = (value: SetOperationValue, opened: OpenedStream | 
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 
+// TLC's toSetEnum leaves [S -> T], [l : S] or S \X T unsorted when its sets read as normalized before it enumerates them, as Value#isNormalized reads them.
+const isNormalizedLikeTlc = (value: Value): boolean => {
+  if (typeof value !== "object" || isCachedSet(value)) return true;
+  switch (value.kind) {
+    case "Set":
+    case "MixedSet":
+      return isNormalizedSet(value);
+    case "Interval":
+      return true;
+    case "FilteredSet":
+      return isNormalizedLikeTlc(value.base);
+    case "FunctionSet":
+      return isNormalizedLikeTlc(value.domain) && isNormalizedLikeTlc(value.range);
+    case "RecordSet":
+      return value.sets.every(isNormalizedLikeTlc);
+    case "ProductSet":
+      return value.factors.every(isNormalizedLikeTlc);
+    default:
+      return false;
+  }
+};
+
+const hasMixedComponent = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "MixedSet":
+      return true;
+    case "FilteredSet":
+    case "Subset":
+    case "Union":
+      return hasMixedComponent(value.base);
+    case "SetOperation":
+      return hasMixedComponent(value.left) || hasMixedComponent(value.right);
+    case "FunctionSet":
+      return hasMixedComponent(value.domain) || hasMixedComponent(value.range);
+    case "RecordSet":
+      return value.sets.some(hasMixedComponent);
+    case "ProductSet":
+      return value.factors.some(hasMixedComponent);
+    default:
+      return false;
+  }
+};
+
+// Only a lazy element makes TLC's sort observable, and a set literal keeps its lazy elements in a MixedSet.
+const isSortedLikeTlc = (value: Value) => !hasMixedComponent(value) || isNormalizedLikeTlc(value);
+
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
   if (
@@ -2014,6 +2061,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   }
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
+  const isSorted = value.kind === "FilteredSet" || isSortedLikeTlc(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
@@ -2022,7 +2070,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
 };
@@ -2158,6 +2206,17 @@ const convertSet = (
   }
   const sets = setTrace.sets;
   if (!isFramedAsOpened) sets?.push(value);
+  const isSorted =
+    typeof value === "object" &&
+    (value.kind === "MixedSet" ||
+      value.kind === "Union" ||
+      value.kind === "SetOperation" ||
+      value.kind === "FilteredSet" ||
+      value.kind === "Subset" ||
+      ((value.kind === "ProductSet" ||
+        value.kind === "FunctionSet" ||
+        value.kind === "RecordSet") &&
+        isSortedLikeTlc(value)));
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
@@ -2169,15 +2228,6 @@ const convertSet = (
     isSortingLiteral = isOuterSorting;
   }
   if (!isFramedAsOpened) sets?.pop();
-  const isSorted =
-    typeof value === "object" &&
-    (value.kind === "MixedSet" ||
-      value.kind === "Union" ||
-      value.kind === "SetOperation" ||
-      value.kind === "FilteredSet" ||
-      value.kind === "ProductSet" ||
-      value.kind === "FunctionSet" ||
-      value.kind === "Subset");
   const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (lazy) lazy.enumerated = set;
   return set;
@@ -3367,6 +3417,8 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     return isBounded ? toBoundSet(value).elements : getUnboundedElements(value);
   }
   const isRepeated = (value.kind === "Union" || value.hasFilter) && hasObservedPass(value);
+  const isSorted =
+    value.kind === "SetOperation" || value.kind === "Union" || isSortedLikeTlc(value);
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   const elements = enumerateSet(
     value,
@@ -3374,7 +3426,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     undefined,
     setTrace.sets ? openOperandStream(value, false) : undefined,
   );
-  const set = value.kind === "RecordSet" ? createSet(elements) : createSortedSet(elements);
+  const set = isSorted ? createSortedSet(elements) : createSet(elements);
   if (!isRepeated) value.enumerated = set;
   return set.elements;
 };

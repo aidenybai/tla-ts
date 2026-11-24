@@ -11928,6 +11928,30 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["[a : {F, {9}}]", "K # {}", ["{}", "{1}", '"n"']],
+    ["[a : {F, {9}}, b : {1, 2}]", "K # {}", ["{}", "{1}", '"n"']],
+    ["[a : {F, {9}} \\cup {}]", "K # {}", ["{}", "{1}", '"n"']],
+    ["[a : {F, {9}}]", "\\A r \\in K : TRUE", ["{}", "{1}", '"n"']],
+    ["[a : {s \\in {F, {9}} : TRUE}]", "K # {}", ["{}", "{1}", '"n"']],
+    ["[a : {F, {9}} \\X {1}]", "K # {}", ["{}", "{1}", '"n"']],
+    ["[a : [b : {F, {9}}]]", "K # {}", ["{}", "{1}", '"n"']],
+    ["0", "({F, {9}} \\X {1}) # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    ["0", "[{1} -> {F, {9}}] # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    ["0", "[a : {s \\in {F, {9}} : TRUE}] # {}", ['"n"', "{}", "{1}"]],
+  ])(
+    "sorts the set it converts from K == %s for %s only when TLC reads its sets as unnormalized",
+    async (definition, next, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nK == LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${definition}\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
