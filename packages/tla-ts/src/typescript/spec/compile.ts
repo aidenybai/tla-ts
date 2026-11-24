@@ -21,9 +21,10 @@ import {
   apply,
   type CodeDefinition,
   defineOperator,
-  forEachBodyWord,
-  forEachTextWord,
-  getCodeText,
+  forEachBodyName,
+  forEachTextName,
+  getCodeLength,
+  layOutModule,
   num,
   printCodeDefinition,
   printCodeExpression,
@@ -75,6 +76,9 @@ export interface EscoreSteps {
   // from a file in its directory loads it, and of a name that no file of the directory has
   // rejects.
   candidates?: readonly string[];
+  // The modules besides the runtime that the code extends, and the assumptions after its steps.
+  extensions?: readonly string[];
+  assumptions?: readonly string[];
 }
 
 // The most characters of a program's TLA+ code that a check parses, past which parsing alone would
@@ -292,8 +296,8 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
     isVisited.set(definition.name, false);
     // A name inside a string, such as SourceText's, is text rather than a read.
     const reads: string[] = [];
-    forEachBodyWord(definition, (word, isInString) => {
-      if (!isInString && /^[A-Z]/.test(word)) reads.push(word);
+    forEachBodyName(definition, (name, isInString) => {
+      if (!isInString) reads.push(name);
     });
     for (const name of reads) {
       const read = byName.get(name);
@@ -1155,8 +1159,15 @@ export const compileToEscore = (
       runtime.resumableSteps,
     ).map(foldDefinition),
   );
-  const texts = new Map(definitions.map((definition) => [definition, getCodeText(definition)]));
-  const length = [...texts.values()].reduce((total, text) => total + text.length + 1, -1);
+  const length = definitions.reduce(
+    (total, definition) =>
+      total +
+      1 +
+      (definition.tree === undefined
+        ? (definition.text ?? "").length
+        : getCodeLength(definition.tree)),
+    -1,
+  );
   if (length > MOST_CODE_CHARACTERS) {
     throw new TlaTypeScriptError(
       `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${length}, which a check would parse and run past Node's default heap`,
@@ -1184,17 +1195,18 @@ export const compileToEscore = (
   // The names that the code, its steps, the modules they extend and the root read, of which the
   // runtime's view keeps the definitions.
   const names = new Set<string>();
-  const addName = (word: string) => {
-    if (/^[A-Z]/.test(word)) names.add(word);
-  };
+  const addName = (name: string) => names.add(name);
   definitions.forEach((definition) => {
-    if (definition.tree === undefined) forEachTextWord(definition.text ?? "", addName);
+    if (definition.tree === undefined) forEachTextName(definition.text ?? "", addName);
     else {
-      [definition.name, ...definition.tree.params.map((param) => param.name)].forEach(addName);
-      forEachBodyWord(definition, addName);
+      forEachTextName(
+        [definition.name, ...definition.tree.params.map((param) => param.name)].join(" "),
+        addName,
+      );
+      forEachBodyName(definition, addName);
     }
   });
-  forEachTextWord(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
+  forEachTextName(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
   const view = runtime.getView(
     [...names],
     leaves.map((leaf) => leaf.name),
@@ -1202,24 +1214,43 @@ export const compileToEscore = (
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
   const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
   const ordered = sortDefinitions(definitions);
-  const module = [
+  // The module's parts in order: its text and the trees of its definitions.
+  const parts = [
     "---- MODULE ProgramCode ----",
-    "EXTENDS ESRuntime",
+    `EXTENDS ${["ESRuntime", ...(model.extensions ?? [])].join(", ")}`,
     ...ordered.sorted
       .filter((definition) => ordered.recursive.has(definition.name))
       .map(
         (definition) =>
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
-    ...ordered.sorted.map((definition) => texts.get(definition) ?? ""),
+    ...ordered.sorted.map((definition) => definition.tree ?? definition.text ?? ""),
     ...stubs.map(
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
     steps,
+    ...(model.assumptions ?? []),
     "====",
     "",
-  ].join("\n");
+  ];
+  const laidOut = layOutModule("ProgramCode", parts);
+  const getText = () =>
+    parts
+      .map((part) =>
+        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
+      )
+      .join("\n");
+  const programCode: PreparedModule = {
+    name: "ProgramCode",
+    get text() {
+      return getText();
+    },
+    tokens: [],
+    module: laidOut.module,
+    levels: undefined,
+    texts: laidOut.texts,
+  };
   return {
     name: "Program",
     source: ROOT,
@@ -1227,7 +1258,7 @@ export const compileToEscore = (
       "\n",
     ),
     regions: program.regions,
-    loadModule: (name) => (name === "ProgramCode" ? module : undefined),
-    preparedModules: [...runtime.modules, view],
+    loadModule: (name) => (name === "ProgramCode" ? getText() : undefined),
+    preparedModules: [...runtime.modules, view, programCode],
   };
 };

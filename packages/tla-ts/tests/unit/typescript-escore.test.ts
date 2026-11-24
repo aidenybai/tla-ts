@@ -39,8 +39,12 @@ const worker = new Worker(
       const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule, model);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
       const prints = [];
+      // The code's text where the definitions appended change it, in place of its tree.
       const result = await loaded.check({
         ...compiled,
+        preparedModules: spec.appended === ""
+          ? compiled.preparedModules
+          : compiled.preparedModules.filter((prepared) => prepared.name !== "ProgramCode"),
         loadModule: (name) => (name === "ProgramCode" ? code : undefined),
         workers: 1,
         onPrint: (text) => prints.push(text),

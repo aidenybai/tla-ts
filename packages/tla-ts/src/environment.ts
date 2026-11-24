@@ -661,6 +661,8 @@ export const createEnvironment = (
       acceptedModules.add(prepared.module);
       return prepared.module;
     }
+    // A prepared module that SANY's checks didn't accept links as a module read from its text does.
+    if (prepared !== undefined) return rejectModuleLiterals(prepared.module);
     const source =
       order.getLoadedSource(name) ??
       getSanyStandardModules(runtime.version).get(name) ??

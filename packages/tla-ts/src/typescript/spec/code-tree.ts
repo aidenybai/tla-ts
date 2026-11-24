@@ -2,13 +2,17 @@ import type {
   Bound,
   ExceptPathStep,
   Expression,
+  ModuleUnit,
   OperatorDefinition,
   SourceLocation,
   SourceRange,
 } from "../../ast";
 import { TlaUnsupportedError } from "../../errors";
-import { INFIX_OPERATORS } from "../../parser";
+import { tokenize } from "../../lexer";
+import { INFIX_OPERATORS, parenthesizedRanges, parseModuleTokens } from "../../parser";
 import { formatString } from "../../printer";
+import { type PositionTable, TokenLocation } from "../../source-location";
+import { getParsedTexts } from "../../tlc/order";
 
 // The TLA+ of a program's code as syntax trees, as the parser reads them from the text the code
 // prints as: builders of the nodes, and the printer that writes them as tokens. A node's location
@@ -248,269 +252,524 @@ export interface CodeDefinition {
   text?: string;
 }
 
-// Where the tokens of a printed tree go: each with the gap before it.
+// Where the tokens of a printed tree go: each with the gap before it, which gives the token's
+// index; and, where the writer lays the tree out, the layout that its nodes take their positions
+// from.
 interface TokenWriter {
-  write: (text: string, gap: number) => void;
+  write: (text: string, gap: number) => number;
   // Ends a line of nothing but spaces.
   writeBlankLine: (indent: number) => void;
+  getCount: () => number;
+  layout?: Layout;
+  // The placements of the nodes that a layout placed, where the tree is laid out.
+  placements?: ReadonlyMap<object, Placement>;
+}
+
+// Where a node goes: where its location says before a layout, and where the layout found it after.
+const getNodePlacement = (node: { location: SourceLocation }, writer: TokenWriter) =>
+  node.location instanceof Placement ? node.location : (writer.placements?.get(node) ?? INLINE);
+
+// The positions of the tokens that a writer lays out, as the parser's table holds a module's, and
+// the placement of each node laid out that a placement places, from which a copy of the node takes
+// its own, where the tree holds a node in two places.
+interface Layout {
+  table: LaidOutTable;
+  placements: Map<object, Placement>;
+  // The value of each string token, by its index.
+  strings: Map<number, string>;
+}
+
+// The positions of a module's tokens, as the parser's table holds them, in arrays that grow as the
+// layout writes the tokens.
+class LaidOutTable implements PositionTable {
+  readonly module: string;
+  lines = new Int32Array(1024);
+  columns = new Int32Array(1024);
+  endColumns = new Int32Array(1024);
+  texts: string[] = [];
+
+  constructor(module: string) {
+    this.module = module;
+  }
+
+  add(text: string, line: number, column: number) {
+    const index = this.texts.length;
+    if (index === this.lines.length) {
+      const grow = (items: Int32Array) => {
+        const grown = new Int32Array(items.length * 2);
+        grown.set(items);
+        return grown;
+      };
+      this.lines = grow(this.lines);
+      this.columns = grow(this.columns);
+      this.endColumns = grow(this.endColumns);
+    }
+    this.lines[index] = line;
+    this.columns[index] = column;
+    this.endColumns[index] = column + text.length - 1;
+    this.texts.push(text);
+    return index;
+  }
+
+  getRange(start: number, end: number): SourceRange {
+    return {
+      module: this.module,
+      start: { line: this.lines[start], column: this.columns[start] },
+      end: { line: this.lines[end], column: this.endColumns[end] },
+    };
+  }
+
+  // A node's location at a token, whose range runs from one token to another, as the parser makes
+  // it.
+  getLocation(token: number, start: number, end: number) {
+    const location = new TokenLocation(this.lines[token], this.columns[token], this);
+    location.setRange(start, end);
+    return location;
+  }
 }
 
 const PREFIX_WORDS = new Set(["DOMAIN", "SUBSET", "UNION", "ENABLED", "UNCHANGED"]);
 
-// Writes an expression's tokens, the first after gap, unless the expression starts a line.
-const writeExpression = (expression: Expression, gap: number, writer: TokenWriter): void => {
-  const placement = getPlacement(expression.location);
-  const start = placement.indent === SPACE ? gap : placement.indent;
-  if (placement.blankIndent >= 0) writer.writeBlankLine(placement.blankIndent);
-  if (placement.isParenthesized) {
-    writer.write("(", start);
-    writeTokens(expression, NO_GAP, writer);
-    writer.write(")", NO_GAP);
-    return;
+// A copy of a node that the layout placed already, as the tree held it before: each node's copy
+// placed where the node was, so that each place of a node the tree holds twice has a node of its
+// own.
+const copyPlaced = (expression: Expression, layout: Layout): Expression => {
+  const copy = (item: Expression) => copyPlaced(item, layout);
+  const location = layout.placements.get(expression) ?? INLINE;
+  const copyBounds = (bounds: readonly Bound[]) =>
+    bounds.map((item) => ({ pattern: { ...item.pattern }, set: copy(item.set) }));
+  switch (expression.kind) {
+    case "Apply":
+      return {
+        kind: "Apply",
+        operator: expression.operator,
+        args: expression.args.map(copy),
+        location,
+      };
+    case "And":
+    case "Or":
+      return { kind: expression.kind, operands: expression.operands.map(copy), location };
+    case "Tuple":
+    case "SetEnumeration":
+      return { kind: expression.kind, elements: expression.elements.map(copy), location };
+    case "If":
+      return {
+        kind: "If",
+        condition: copy(expression.condition),
+        consequent: copy(expression.consequent),
+        alternative: copy(expression.alternative),
+        location,
+      };
+    case "Case":
+      return {
+        kind: "Case",
+        arms: expression.arms.map((arm) => ({
+          condition: copy(arm.condition),
+          body: copy(arm.body),
+        })),
+        other: expression.other === undefined ? undefined : copy(expression.other),
+        location,
+      };
+    case "Let":
+      return {
+        kind: "Let",
+        definitions: expression.definitions.map((definition) => {
+          if (definition.kind !== "Operator")
+            throw new TlaUnsupportedError("tla-ts can't lay out a LET of a function's definition");
+          return {
+            kind: "Operator",
+            name: definition.name,
+            params: definition.params.map((param) => ({ name: param.name, arity: param.arity })),
+            body: copy(definition.body),
+            isLocal: false,
+            isRecursive: false,
+            location: layout.placements.get(definition) ?? INLINE,
+          };
+        }),
+        body: copy(expression.body),
+        location,
+      };
+    case "Record":
+      return {
+        kind: "Record",
+        fields: expression.fields.map((field) => ({
+          name: field.name,
+          value: copy(field.value),
+          location: INLINE,
+        })),
+        location,
+      };
+    case "Except":
+      return {
+        kind: "Except",
+        function: copy(expression.function),
+        updates: expression.updates.map((update) => ({
+          path: update.path.map((step) =>
+            step.kind === "Field"
+              ? step
+              : { kind: "Index", args: step.args.map(copy), tupleRange: UNPLACED_RANGE },
+          ),
+          value: copy(update.value),
+          range: UNPLACED_RANGE,
+        })),
+        location,
+      };
+    case "FunctionApplication":
+      return {
+        kind: "FunctionApplication",
+        function: copy(expression.function),
+        args: expression.args.map(copy),
+        location,
+      };
+    case "FieldAccess":
+      return {
+        kind: "FieldAccess",
+        record: copy(expression.record),
+        field: expression.field,
+        location,
+      };
+    case "FunctionConstruction":
+      return {
+        kind: "FunctionConstruction",
+        bounds: copyBounds(expression.bounds),
+        body: copy(expression.body),
+        location,
+      };
+    case "Forall":
+    case "Exists":
+      return {
+        kind: expression.kind,
+        bounds: copyBounds(expression.bounds),
+        body: copy(expression.body),
+        location,
+      };
+    case "Number":
+      return { kind: "Number", value: expression.value, text: expression.text, location };
+    case "String":
+      return { kind: "String", value: expression.value, location };
+    case "Identifier":
+      return { kind: "Identifier", name: expression.name, location };
+    case "ExceptAt":
+      return { kind: "ExceptAt", location };
+    default:
+      throw new TlaUnsupportedError(`tla-ts can't lay out a ${expression.kind} expression of code`);
   }
-  writeTokens(expression, start, writer);
 };
 
-const writeList = (
-  items: readonly Expression[],
-  writer: TokenWriter,
-  separator = ",",
-  gap = NO_GAP,
-) =>
-  items.forEach((item, position) => {
-    if (position > 0) writer.write(separator, separator === "," ? NO_GAP : SPACE);
-    writeExpression(item, position === 0 ? gap : SPACE, writer);
-  });
+// Writes an expression's tokens, the first after gap, unless the expression starts a line, and
+// gives the expression laid out: itself, or its copy where the layout placed it already.
+const writeExpression = (input: Expression, gap: number, writer: TokenWriter): Expression => {
+  const layout = writer.layout;
+  const expression =
+    layout !== undefined && !(input.location instanceof Placement)
+      ? copyPlaced(input, layout)
+      : input;
+  const placement = getNodePlacement(expression, writer);
+  if (layout !== undefined && placement !== INLINE) layout.placements.set(expression, placement);
+  const first = placement.indent === SPACE ? gap : placement.indent;
+  if (placement.blankIndent >= 0) writer.writeBlankLine(placement.blankIndent);
+  if (placement.isParenthesized) {
+    const open = writer.write("(", first);
+    writeTokens(expression, NO_GAP, writer);
+    const close = writer.write(")", NO_GAP);
+    if (layout !== undefined)
+      parenthesizedRanges.set(expression, layout.table.getRange(open, close));
+    return expression;
+  }
+  writeTokens(expression, first, writer);
+  return expression;
+};
 
-const writeBounds = (bounds: readonly Bound[], writer: TokenWriter, gap: number) =>
+// Writes expressions in order, after the first, with a separator before each of the rest.
+const writeList = (items: Expression[], writer: TokenWriter, separator = ",", gap = NO_GAP) => {
+  for (let position = 0; position < items.length; position++) {
+    if (position > 0) writer.write(separator, separator === "," ? NO_GAP : SPACE);
+    items[position] = writeExpression(items[position], position === 0 ? gap : SPACE, writer);
+  }
+};
+
+const writeBounds = (bounds: Bound[], writer: TokenWriter, gap: number) =>
   bounds.forEach((item, position) => {
     if (position > 0) writer.write(",", NO_GAP);
     const pattern = item.pattern;
-    if (pattern.kind === "Name") writer.write(pattern.name, position === 0 ? gap : SPACE);
-    else {
+    const table = writer.layout?.table;
+    if (pattern.kind === "Name") {
+      const name = writer.write(pattern.name, position === 0 ? gap : SPACE);
+      if (table !== undefined) pattern.ranges = [table.getRange(name, name)];
+    } else {
       writer.write("<<", position === 0 ? gap : SPACE);
-      pattern.names.forEach((patternName, namePosition) => {
+      const ranges = pattern.names.map((patternName, namePosition) => {
         if (namePosition > 0) writer.write(",", NO_GAP);
-        writer.write(patternName, namePosition === 0 ? NO_GAP : SPACE);
+        const name = writer.write(patternName, namePosition === 0 ? NO_GAP : SPACE);
+        return table?.getRange(name, name);
       });
+      if (table !== undefined) pattern.ranges = ranges.flatMap((range) => range ?? []);
       writer.write(">>", NO_GAP);
     }
     writer.write("\\in", SPACE);
-    writeExpression(item.set, SPACE, writer);
+    item.set = writeExpression(item.set, SPACE, writer);
   });
 
-const writePath = (step: ExceptPathStep, writer: TokenWriter) => {
-  if (step.kind === "Field") {
-    writer.write(".", NO_GAP);
-    writer.write(step.name, NO_GAP);
-    return;
-  }
-  writer.write("[", NO_GAP);
-  writeList(step.args, writer);
-  writer.write("]", NO_GAP);
+// Gives a node the location at a token, whose range runs from one token to another, where the
+// writer lays the tree out.
+const locate = (
+  node: { location: SourceLocation },
+  writer: TokenWriter,
+  token: number,
+  start: number,
+  end = writer.getCount() - 1,
+) => {
+  if (writer.layout !== undefined)
+    node.location = writer.layout.table.getLocation(token, start, end);
 };
 
 const writeTokens = (expression: Expression, gap: number, writer: TokenWriter): void => {
+  const table = writer.layout?.table;
+  const start = writer.getCount();
   switch (expression.kind) {
-    case "Number":
-      writer.write(expression.text ?? String(expression.value), gap);
+    case "Number": {
+      const token = writer.write(expression.text ?? String(expression.value), gap);
+      locate(expression, writer, token, token);
       return;
-    case "String":
-      writer.write(formatString(expression.value), gap);
+    }
+    case "String": {
+      const token = writer.write(formatString(expression.value), gap);
+      writer.layout?.strings.set(token, expression.value);
+      locate(expression, writer, token, token);
       return;
+    }
     case "Identifier":
-      writer.write(expression.name, gap);
+    case "ExceptAt": {
+      const token = writer.write(expression.kind === "Identifier" ? expression.name : "@", gap);
+      locate(expression, writer, token, token);
       return;
-    case "ExceptAt":
-      writer.write("@", gap);
-      return;
+    }
     case "Apply": {
       const args = expression.args;
       if (args.length === 2 && INFIX_OPERATORS.has(expression.operator)) {
-        writeExpression(args[0], gap, writer);
-        writer.write(expression.operator, SPACE);
-        writeExpression(args[1], SPACE, writer);
+        args[0] = writeExpression(args[0], gap, writer);
+        const operator = writer.write(expression.operator, SPACE);
+        args[1] = writeExpression(args[1], SPACE, writer);
+        locate(expression, writer, operator, start);
         return;
       }
       if (args.length === 1 && (expression.operator === "-." || expression.operator === "~")) {
-        writer.write(expression.operator === "-." ? "-" : "~", gap);
-        writeExpression(args[0], NO_GAP, writer);
+        const operator = writer.write(expression.operator === "-." ? "-" : "~", gap);
+        args[0] = writeExpression(args[0], NO_GAP, writer);
+        locate(expression, writer, operator, operator);
         return;
       }
       if (args.length === 1 && PREFIX_WORDS.has(expression.operator)) {
-        writer.write(expression.operator, gap);
-        writeExpression(args[0], SPACE, writer);
+        const operator = writer.write(expression.operator, gap);
+        args[0] = writeExpression(args[0], SPACE, writer);
+        locate(expression, writer, operator, operator);
         return;
       }
-      writer.write(expression.operator, gap);
-      writer.write("(", NO_GAP);
+      const name = writer.write(expression.operator, gap);
+      const open = writer.write("(", NO_GAP);
       writeList(args, writer);
-      writer.write(")", NO_GAP);
+      const close = writer.write(")", NO_GAP);
+      if (table !== undefined) expression.argumentsRange = table.getRange(open, close);
+      locate(expression, writer, name, name);
       return;
     }
     case "And":
-    case "Or":
-      writeList(expression.operands, writer, expression.kind === "And" ? "/\\" : "\\/", gap);
+    case "Or": {
+      const operands = expression.operands;
+      const prefixEnds: { line: number; column: number }[] = [];
+      let first = -1;
+      operands.forEach((operand, position) => {
+        if (position > 0) {
+          const operator = writer.write(expression.kind === "And" ? "/\\" : "\\/", SPACE);
+          if (first === -1) first = operator;
+        }
+        operands[position] = writeExpression(operand, position === 0 ? gap : SPACE, writer);
+        if (position > 0 && table !== undefined) {
+          prefixEnds.push(table.getRange(start, writer.getCount() - 1).end);
+        }
+      });
+      if (table !== undefined) expression.prefixEnds = prefixEnds;
+      locate(expression, writer, first, start);
       return;
-    case "If":
-      writer.write("IF", gap);
-      writeExpression(expression.condition, SPACE, writer);
+    }
+    case "If": {
+      const keyword = writer.write("IF", gap);
+      expression.condition = writeExpression(expression.condition, SPACE, writer);
       writer.write("THEN", SPACE);
-      writeExpression(expression.consequent, SPACE, writer);
+      expression.consequent = writeExpression(expression.consequent, SPACE, writer);
       writer.write("ELSE", SPACE);
-      writeExpression(expression.alternative, SPACE, writer);
+      expression.alternative = writeExpression(expression.alternative, SPACE, writer);
+      locate(expression, writer, keyword, keyword);
       return;
+    }
     case "Case": {
-      const innerIndent = getPlacement(expression.location).innerIndent;
-      writer.write("CASE", gap);
+      const innerIndent = getNodePlacement(expression, writer).innerIndent;
+      const keyword = writer.write("CASE", gap);
       expression.arms.forEach((arm, position) => {
         if (position > 0) writer.write("[]", innerIndent);
-        writeExpression(arm.condition, SPACE, writer);
+        arm.condition = writeExpression(arm.condition, SPACE, writer);
         writer.write("->", SPACE);
-        writeExpression(arm.body, SPACE, writer);
+        arm.body = writeExpression(arm.body, SPACE, writer);
       });
       if (expression.other !== undefined) {
         writer.write("[]", innerIndent);
-        writer.write("OTHER", SPACE);
+        const other = writer.write("OTHER", SPACE);
         writer.write("->", SPACE);
-        writeExpression(expression.other, SPACE, writer);
+        expression.other = writeExpression(expression.other, SPACE, writer);
+        if (table !== undefined)
+          expression.otherRange = table.getRange(other, writer.getCount() - 1);
       }
+      locate(expression, writer, keyword, keyword);
       return;
     }
-    case "Let":
-      writer.write("LET", gap);
+    case "Let": {
+      const keyword = writer.write("LET", gap);
       expression.definitions.forEach((definition) => {
         if (definition.kind !== "Operator") {
           throw new TlaUnsupportedError("tla-ts can't print a LET of a function's definition");
         }
         writeDefinition(definition, SPACE, writer);
       });
-      writer.write("IN", getPlacement(expression.location).innerIndent);
-      writeExpression(expression.body, SPACE, writer);
+      writer.write("IN", getNodePlacement(expression, writer).innerIndent);
+      expression.body = writeExpression(expression.body, SPACE, writer);
+      locate(expression, writer, keyword, keyword);
       return;
+    }
     case "Tuple":
-      writer.write("<<", gap);
+    case "SetEnumeration": {
+      const isTuple = expression.kind === "Tuple";
+      const open = writer.write(isTuple ? "<<" : "{", gap);
       writeList(expression.elements, writer);
-      writer.write(">>", NO_GAP);
+      writer.write(isTuple ? ">>" : "}", NO_GAP);
+      locate(expression, writer, open, open);
       return;
-    case "SetEnumeration":
-      writer.write("{", gap);
-      writeList(expression.elements, writer);
-      writer.write("}", NO_GAP);
-      return;
+    }
     case "Record":
-    case "RecordSet":
-      writer.write("[", gap);
+    case "RecordSet": {
+      const open = writer.write("[", gap);
       expression.fields.forEach((field, position) => {
         if (position > 0) writer.write(",", NO_GAP);
-        writer.write(field.name, position === 0 ? NO_GAP : SPACE);
+        const name = writer.write(field.name, position === 0 ? NO_GAP : SPACE);
+        locate(field, writer, name, name);
         writer.write(expression.kind === "Record" ? "|->" : ":", SPACE);
-        writeExpression(field.value, SPACE, writer);
+        field.value = writeExpression(field.value, SPACE, writer);
       });
       writer.write("]", NO_GAP);
+      locate(expression, writer, open, open);
       return;
-    case "Except":
-      writer.write("[", gap);
-      writeExpression(expression.function, NO_GAP, writer);
+    }
+    case "Except": {
+      const open = writer.write("[", gap);
+      expression.function = writeExpression(expression.function, NO_GAP, writer);
       writer.write("EXCEPT", SPACE);
       expression.updates.forEach((update, position) => {
         if (position > 0) writer.write(",", NO_GAP);
-        writer.write("!", SPACE);
-        update.path.forEach((step) => writePath(step, writer));
-        writer.write("=", SPACE);
-        writeExpression(update.value, SPACE, writer);
+        // The tokens where the update's heirs start, as the parser's ExceptSpec holds them.
+        const heirStarts = [writer.write("!", SPACE)];
+        update.path.forEach((step) => {
+          if (step.kind === "Field") {
+            heirStarts.push(writer.write(".", NO_GAP));
+            writer.write(step.name, NO_GAP);
+            return;
+          }
+          heirStarts.push(writer.write("[", NO_GAP));
+          writeList(step.args, writer);
+          writer.write("]", NO_GAP);
+        });
+        const equals = writer.write("=", SPACE);
+        heirStarts.push(equals, equals + 1);
+        update.value = writeExpression(update.value, SPACE, writer);
+        heirStarts.push(writer.getCount());
+        if (table === undefined) return;
+        const getHeirRange = (index: number) =>
+          table.getRange(heirStarts[index], heirStarts[index + 1] - 1);
+        update.path.forEach((step, index) => {
+          // SANY's Generator locates the $Tuple of component i at heir 2i + 1 of its ExceptSpec,
+          // as the parser does.
+          if (step.kind === "Index") {
+            step.tupleRange = getHeirRange(
+              2 * index + 1 < heirStarts.length - 1 ? 2 * index + 1 : index + 1,
+            );
+          }
+        });
+        update.range = table.getRange(heirStarts[0], writer.getCount() - 1);
       });
       writer.write("]", NO_GAP);
+      locate(expression, writer, open, open);
       return;
-    case "FunctionApplication":
-      writeExpression(expression.function, gap, writer);
-      writer.write("[", NO_GAP);
+    }
+    case "FunctionApplication": {
+      expression.function = writeExpression(expression.function, gap, writer);
+      const open = writer.write("[", NO_GAP);
       writeList(expression.args, writer);
       writer.write("]", NO_GAP);
+      locate(expression, writer, open, start);
       return;
-    case "FieldAccess":
-      writeExpression(expression.record, gap, writer);
-      writer.write(".", NO_GAP);
+    }
+    case "FieldAccess": {
+      expression.record = writeExpression(expression.record, gap, writer);
+      const dot = writer.write(".", NO_GAP);
       writer.write(expression.field, NO_GAP);
+      locate(expression, writer, dot, start);
       return;
-    case "FunctionConstruction":
-      writer.write("[", gap);
+    }
+    case "FunctionConstruction": {
+      const open = writer.write("[", gap);
       writeBounds(expression.bounds, writer, NO_GAP);
       writer.write("|->", SPACE);
-      writeExpression(expression.body, SPACE, writer);
+      expression.body = writeExpression(expression.body, SPACE, writer);
       writer.write("]", NO_GAP);
+      locate(expression, writer, open, open);
       return;
-    case "FunctionSet":
-      writer.write("[", gap);
-      writeExpression(expression.domain, NO_GAP, writer);
-      writer.write("->", SPACE);
-      writeExpression(expression.range, SPACE, writer);
-      writer.write("]", NO_GAP);
-      return;
+    }
     case "Forall":
-    case "Exists":
-      writer.write(expression.kind === "Forall" ? "\\A" : "\\E", gap);
+    case "Exists": {
+      const keyword = writer.write(expression.kind === "Forall" ? "\\A" : "\\E", gap);
       writeBounds(expression.bounds, writer, SPACE);
       writer.write(":", SPACE);
-      writeExpression(expression.body, SPACE, writer);
+      expression.body = writeExpression(expression.body, SPACE, writer);
+      locate(expression, writer, keyword, keyword);
       return;
-    case "Choose":
-      writer.write("CHOOSE", gap);
-      if (expression.set === undefined && expression.pattern.kind === "Name") {
-        writer.write(expression.pattern.name, SPACE);
-      } else if (expression.set !== undefined) {
-        writeBounds([{ pattern: expression.pattern, set: expression.set }], writer, SPACE);
-      }
-      writer.write(":", SPACE);
-      writeExpression(expression.body, SPACE, writer);
-      return;
-    case "SetFilter":
-      writer.write("{", gap);
-      writeBounds([expression.bound], writer, NO_GAP);
-      writer.write(":", SPACE);
-      writeExpression(expression.predicate, SPACE, writer);
-      writer.write("}", NO_GAP);
-      return;
-    case "SetMap":
-      writer.write("{", gap);
-      writeExpression(expression.expression, NO_GAP, writer);
-      writer.write(":", SPACE);
-      writeBounds(expression.bounds, writer, SPACE);
-      writer.write("}", NO_GAP);
-      return;
-    case "Lambda":
-      writer.write("LAMBDA", gap);
-      expression.params.forEach((param, position) => {
-        if (position > 0) writer.write(",", NO_GAP);
-        writer.write(param, SPACE);
-      });
-      writer.write(":", SPACE);
-      writeExpression(expression.body, SPACE, writer);
-      return;
+    }
     default:
       throw new TlaUnsupportedError(`tla-ts can't print a ${expression.kind} expression of code`);
   }
 };
 
+// Writes a definition's tokens, the first after gap, unless the definition starts a line, and lays
+// it out as the parser reads it where the writer lays the tree out.
 const writeDefinition = (definition: OperatorDefinition, gap: number, writer: TokenWriter) => {
-  const placement = getPlacement(definition.location);
-  writer.write(definition.name, placement.indent === SPACE ? gap : placement.indent);
-  if (definition.params.length > 0) {
-    writer.write("(", NO_GAP);
-    definition.params.forEach((param, position) => {
-      if (position > 0) writer.write(",", NO_GAP);
-      writer.write(param.name, position === 0 ? NO_GAP : SPACE);
-    });
-    writer.write(")", NO_GAP);
-  }
+  const layout = writer.layout;
+  const placement = getNodePlacement(definition, writer);
+  if (layout !== undefined && placement !== INLINE) layout.placements.set(definition, placement);
+  const name = writer.write(definition.name, placement.indent === SPACE ? gap : placement.indent);
+  const params = definition.params.map((param, position) => {
+    if (position === 0) writer.write("(", NO_GAP);
+    else writer.write(",", NO_GAP);
+    return writer.write(param.name, position === 0 ? NO_GAP : SPACE);
+  });
+  if (params.length > 0) writer.write(")", NO_GAP);
+  const head = writer.getCount() - 1;
   writer.write("==", SPACE);
-  writeExpression(definition.body, SPACE, writer);
+  const bodyStart = writer.getCount();
+  definition.body = writeExpression(definition.body, SPACE, writer);
+  if (layout === undefined) return;
+  const table = layout.table;
+  definition.params.forEach((param, position) => {
+    const range = table.getRange(params[position], params[position]);
+    param.location = { line: range.start.line, column: range.start.column, range };
+  });
+  definition.head = table.getRange(name, head);
+  definition.bodyRange = table.getRange(bodyStart, writer.getCount() - 1);
+  locate(definition, writer, name, name);
 };
 
-// The text of tokens, each after its gap.
-const createTextWriter = () => {
+// The text of tokens, each after its gap, of a tree that a layout placed where placements give.
+const createTextWriter = (placements?: ReadonlyMap<object, Placement>) => {
   const parts: string[] = [];
+  let count = 0;
   const writer: TokenWriter = {
+    placements,
     writeBlankLine: (indent) => {
       parts.push(`\n${" ".repeat(indent)}`);
     },
@@ -518,16 +777,41 @@ const createTextWriter = () => {
       if (gap === SPACE) parts.push(" ");
       else if (gap >= 0) parts.push(`\n${" ".repeat(gap)}`);
       parts.push(text);
+      count += 1;
+      return count - 1;
     },
+    getCount: () => count,
   };
   return { writer, getText: () => parts.join("") };
 };
 
-// A definition's text, as a module holds it on lines of its own.
-export const printCodeDefinition = (definition: OperatorDefinition) => {
-  const text = createTextWriter();
+// A definition's text, as a module holds it on lines of its own, where a layout that placed it
+// gives the placements.
+export const printCodeDefinition = (
+  definition: OperatorDefinition,
+  placements?: ReadonlyMap<object, Placement>,
+) => {
+  const text = createTextWriter(placements);
   writeDefinition(definition, NO_GAP, text.writer);
   return text.getText();
+};
+
+// The characters of a definition's text.
+export const getCodeLength = (definition: OperatorDefinition) => {
+  let length = 0;
+  let count = 0;
+  writeDefinition(definition, NO_GAP, {
+    writeBlankLine: (indent) => {
+      length += indent + 1;
+    },
+    write: (text, gap) => {
+      length += text.length + (gap === SPACE ? 1 : gap >= 0 ? gap + 1 : 0);
+      count += 1;
+      return count - 1;
+    },
+    getCount: () => count,
+  });
+  return length;
 };
 
 export const printCodeExpression = (expression: Expression) => {
@@ -536,36 +820,41 @@ export const printCodeExpression = (expression: Expression) => {
   return text.getText();
 };
 
-const WORD = /\b[A-Za-z_]\w*\b/g;
+const CAPITALIZED = /\b[A-Z]\w*\b/g;
 
 const NAME = /^[A-Za-z_]\w*$/;
 
-// Each word of an expression's text, as \b[A-Za-z_]\w*\b finds them in it, in order, and whether
-// it's in a string.
-export const forEachCodeWord = (
+// Each capitalized word of an expression's text, as \b[A-Z]\w*\b finds them in it, in order, and
+// whether it's in a string: the names of definitions, which no other word is.
+export const forEachCodeName = (
   expression: Expression,
-  visit: (word: string, isInString: boolean) => void,
-) =>
+  visit: (name: string, isInString: boolean) => void,
+) => {
+  let count = 0;
   writeExpression(expression, NO_GAP, {
     writeBlankLine: () => undefined,
     write: (text) => {
-      if (NAME.test(text)) {
-        visit(text, false);
-        return;
+      const first = text.charCodeAt(0);
+      // A capital starts a name, a quote a string, and a backslash an operator such as \E.
+      if (first >= 65 && first <= 90 && NAME.test(text)) visit(text, false);
+      else if (first === 34 || first === 92 || (first >= 65 && first <= 90)) {
+        for (const match of text.matchAll(CAPITALIZED)) visit(match[0], first === 34);
       }
-      const isInString = text.startsWith('"');
-      for (const match of text.matchAll(WORD)) visit(match[0], isInString);
+      count += 1;
+      return count - 1;
     },
+    getCount: () => count,
   });
+};
 
-// Each word of a text, as forEachCodeWord gives an expression's.
-export const forEachTextWord = (
+// Each capitalized word of a text, as forEachCodeName gives an expression's.
+export const forEachTextName = (
   text: string,
-  visit: (word: string, isInString: boolean) => void,
+  visit: (name: string, isInString: boolean) => void,
 ) => {
-  for (const match of text.matchAll(/"[^"\\]*(?:\\.[^"\\]*)*"|\b[A-Za-z_]\w*\b/g)) {
+  for (const match of text.matchAll(/"[^"\\]*(?:\\.[^"\\]*)*"|\b[A-Z]\w*\b/g)) {
     if (!match[0].startsWith('"')) visit(match[0], false);
-    else for (const word of match[0].matchAll(WORD)) visit(word[0], true);
+    else for (const name of match[0].matchAll(CAPITALIZED)) visit(name[0], true);
   }
 };
 
@@ -662,18 +951,145 @@ export const replaceCodeChildren = (
   }
 };
 
-// A definition's text, as a module holds it on lines of its own.
-export const getCodeText = (definition: CodeDefinition) =>
-  definition.text ?? (definition.tree === undefined ? "" : printCodeDefinition(definition.tree));
-
-// Each word of a definition's body, as forEachCodeWord gives them.
-export const forEachBodyWord = (
+// Each capitalized word of a definition's body, as forEachCodeName gives them.
+export const forEachBodyName = (
   definition: CodeDefinition,
-  visit: (word: string, isInString: boolean) => void,
+  visit: (name: string, isInString: boolean) => void,
 ) => {
-  if (definition.tree !== undefined) forEachCodeWord(definition.tree.body, visit);
+  if (definition.tree !== undefined) forEachCodeName(definition.tree.body, visit);
   else {
     const text = definition.text ?? "";
-    forEachTextWord(text.slice(text.indexOf("==")), visit);
+    forEachTextName(text.slice(text.indexOf("==")), visit);
   }
+};
+
+const getUnitLine = (unit: ModuleUnit) => {
+  switch (unit.kind) {
+    case "Definition":
+      return unit.definition.location.line;
+    case "Instance":
+      return unit.instance.location.line;
+    case "Assumption":
+      return unit.assumption.location.line;
+    case "Theorem":
+      return unit.theorem.location.line;
+    case "Use":
+      return unit.use.location.line;
+    case "Module":
+      return unit.module.location.line;
+    default:
+      return unit.location.line;
+  }
+};
+
+// Two lists in order of their lines, merged in order of their lines.
+const mergeByLine = <Item>(
+  left: readonly Item[],
+  right: readonly Item[],
+  getLine: (item: Item) => number,
+) => {
+  const merged: Item[] = [];
+  let position = 0;
+  for (const item of left) {
+    while (position < right.length && getLine(right[position]) < getLine(item)) {
+      merged.push(right[position]);
+      position++;
+    }
+    merged.push(item);
+  }
+  return [...merged, ...right.slice(position)];
+};
+
+// A module of definitions as trees and parts as text, one after another, each from a line of its
+// own, as the parser reads the text they print as: the trees laid out as the parser places their
+// nodes, and the text parsed where it is, with the lines of the trees blank; and the texts that its
+// tokens add to TLC's order of strings.
+export const layOutModule = (name: string, parts: readonly (string | OperatorDefinition)[]) => {
+  const table = new LaidOutTable(name);
+  const layout: Layout = { table, placements: new Map(), strings: new Map() };
+  let line = 1;
+  let column = 1;
+  const writer: TokenWriter = {
+    writeBlankLine: () => {
+      line += 1;
+    },
+    write: (text, gap) => {
+      if (gap === SPACE) column += 1;
+      else if (gap >= 0) {
+        line += 1;
+        column = gap + 1;
+      }
+      const index = table.add(text, line, column);
+      column += text.length;
+      return index;
+    },
+    getCount: () => table.texts.length,
+    layout,
+  };
+  // The text's lines, with each tree's blank, and where each tree's tokens start and end.
+  const lines: string[] = [];
+  const trees: { definition: OperatorDefinition; start: number; end: number }[] = [];
+  for (const part of parts) {
+    if (typeof part === "string") {
+      for (const partLine of part.split("\n")) lines.push(partLine);
+      continue;
+    }
+    line = lines.length + 1;
+    column = 1;
+    const start = table.texts.length;
+    writeDefinition(part, NO_GAP, writer);
+    trees.push({ definition: part, start, end: table.texts.length });
+    for (let blank = lines.length + 1; blank <= line; blank++) lines.push("");
+  }
+  const text = lines.join("\n");
+  const tokens = tokenize(text);
+  const module = parseModuleTokens(text, tokens);
+  const recursive = new Set(
+    module.units.flatMap((unit) =>
+      unit.kind === "Recursive" ? unit.declarations.map((declaration) => declaration.name) : [],
+    ),
+  );
+  trees.forEach((tree) => {
+    tree.definition.isRecursive = recursive.has(tree.definition.name);
+  });
+  // The texts of the tokens in order: the trees' and the text's, merged by line.
+  const parsed: string[] = [];
+  const strings: string[] = [];
+  let position = 0;
+  const addTokens = (end: number) => {
+    const slice = tokens.slice(position, end);
+    position = end;
+    for (const parsedText of getParsedTexts(slice)) parsed.push(parsedText);
+    for (const token of slice) if (token.kind === "String") strings.push(token.text);
+  };
+  for (const tree of trees) {
+    const treeLine = table.lines[tree.start];
+    let end = position;
+    while (end < tokens.length && tokens[end].line < treeLine) end++;
+    addTokens(end);
+    for (let index = tree.start; index < tree.end; index++) {
+      parsed.push(table.texts[index]);
+      const value = layout.strings.get(index);
+      if (value !== undefined) strings.push(value);
+    }
+  }
+  addTokens(tokens.length);
+  const definitions = trees.map((tree) => tree.definition);
+  return {
+    module: {
+      ...module,
+      definitions: mergeByLine(
+        module.definitions,
+        definitions,
+        (definition) => definition.location.line,
+      ),
+      units: mergeByLine(
+        module.units,
+        definitions.map((definition): ModuleUnit => ({ kind: "Definition", definition })),
+        getUnitLine,
+      ),
+    },
+    texts: { parsed: [...new Set(parsed)], strings: [...new Set(strings)] },
+    placements: layout.placements,
+  };
 };

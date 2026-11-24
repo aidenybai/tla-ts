@@ -1,19 +1,28 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { Definition } from "../../src/ast";
-import { parseModule } from "../../src/parser";
+import { tokenize } from "../../src/lexer";
+import { parenthesizedRanges, parseModule } from "../../src/parser";
+import { getParsedTexts } from "../../src/tlc/order";
 import {
   afterBlankLine,
   apply,
   boundIn,
+  caseOf,
   defineOperator,
+  except,
+  exceptAt,
   functionOf,
   ifThen,
+  layOutModule,
   letIn,
   num,
   onLine,
   parenthesized,
+  pathTo,
   printCodeDefinition,
   printCodeExpression,
+  recordOf,
+  setOf,
   string,
   subscript,
   tuple,
@@ -131,5 +140,90 @@ describe("the syntax trees of a program's code", () => {
     expect(getSyntax(parseDefinition(printCodeDefinition(definition)))).not.toEqual(
       getSyntax(definition),
     );
+  });
+});
+
+// A module's syntax with each node's position, its keys in order, as the parser and the layout
+// give it.
+const getPlacedSyntax = (value: unknown) =>
+  JSON.stringify(value, (_key, item: unknown) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) return item;
+    const plain: object =
+      "toJSON" in item && typeof item.toJSON === "function" ? item.toJSON() : item;
+    return Object.fromEntries(
+      Object.entries(plain).sort((left, right) => (left[0] < right[0] ? -1 : 1)),
+    );
+  });
+
+// A module's text and its parts: a definition of each kind of node, on lines of their own, and text.
+const getModuleParts = () => [
+  "---- MODULE Code ----",
+  "EXTENDS Naturals",
+  "RECURSIVE Units1(_)",
+  getSourceUnits(),
+  defineOperator(
+    "Units1",
+    ["x"],
+    letIn(
+      [defineOperator("r", [], apply("F", ["x.s", num(-1)]))],
+      ifThen(
+        apply("IsAbrupt", ["r"]),
+        "r",
+        onLine(
+          except("x", [
+            [[pathTo("a"), pathTo([num(1)])], apply("\\cup", [exceptAt(), setOf([])])],
+            [[pathTo("b")], recordOf([["c", string('d"e')]])],
+          ]),
+          2,
+        ),
+      ),
+    ),
+  ),
+  "Text == <<1, 2>>",
+  defineOperator("Declarations", ["s"], onLine(afterBlankLine("s", 2), 2)),
+  defineOperator(
+    "Dispatch",
+    ["id"],
+    parenthesized(
+      withInnerLines(caseOf([[apply("=", ["id", num(1)]), string("one")]], "Empty"), 4),
+    ),
+  ),
+  "====",
+  "",
+];
+
+describe("the layout of a program's code", () => {
+  it("places each node where the parser reads it in the text it prints as", () => {
+    const parts = getModuleParts();
+    const laidOut = layOutModule("Code", parts);
+    const text = parts
+      .map((part) =>
+        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
+      )
+      .join("\n");
+    const tokens = tokenize(text);
+    const parsed = parseModule(text);
+    expect(getPlacedSyntax(laidOut.module)).toBe(getPlacedSyntax(parsed));
+    expect(laidOut.texts).toEqual({
+      parsed: [...new Set(getParsedTexts(tokens))],
+      strings: [
+        ...new Set(tokens.flatMap((token) => (token.kind === "String" ? [token.text] : []))),
+      ],
+    });
+    const getParenthesized = (definitions: Definition[]) => {
+      const body = definitions.find((definition) => definition.name === "Dispatch")?.body;
+      return getPlacedSyntax(body === undefined ? undefined : parenthesizedRanges.get(body));
+    };
+    expect(getParenthesized(laidOut.module.definitions)).toContain("start");
+    expect(getParenthesized(laidOut.module.definitions)).toBe(getParenthesized(parsed.definitions));
+  });
+
+  it("places a node of a tree at another line than its text puts it", () => {
+    const parts = getModuleParts();
+    const laidOut = layOutModule("Code", parts);
+    const text = parts
+      .map((part) => (typeof part === "string" ? part : printCodeDefinition(part)))
+      .join("\n");
+    expect(getPlacedSyntax(laidOut.module)).not.toBe(getPlacedSyntax(parseModule(text)));
   });
 });

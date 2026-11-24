@@ -3,7 +3,7 @@ import { TlaTypeScriptError } from "../../errors";
 import { mapChildren } from "../../instances";
 import { parseModule } from "../../parser";
 import { printDefinition } from "../../printer";
-import { type CodeDefinition, forEachBodyWord } from "./code-tree";
+import { type CodeDefinition, forEachBodyName } from "./code-tree";
 
 const printText = (definition: OperatorDefinition) => printDefinition(definition).join("\n");
 
@@ -37,11 +37,11 @@ const apply = (operator: string, args: Expression[]): Expression => ({
 });
 
 // The names a definition's body reads, with LoopN for each loop N that it runs, whose iterations
-// the runtime runs through LoopIteration: each word of its text, and of a loop's record [id |-> N,
-// labels |-> ...], LoopN.
+// the runtime runs through LoopIteration: each capitalized word of its text, as the names of
+// definitions and steps are, and of a loop's record [id |-> N, labels |-> ...], LoopN.
 const getReferencedNames = (definition: CodeDefinition) => {
   const names = new Set<string>();
-  forEachBodyWord(definition, (word) => names.add(word));
+  forEachBodyName(definition, (name) => names.add(name));
   if (definition.tree === undefined) {
     const text = definition.text ?? "";
     for (const match of text.slice(text.indexOf("==")).matchAll(/\bid \|-> (\d+), labels \|->/g)) {
