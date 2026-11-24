@@ -7,6 +7,7 @@ import {
   type CheckProgress,
   type CheckResult,
   type InitialStates,
+  type SearchStatistics,
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
@@ -99,6 +100,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       "text" in progress ? progress.text : "",
     ].join(" ");
   const reported = new Map<string, number>();
+  let reportedStatistics: SearchStatistics | undefined;
   const createAttempt = (): Attempt => {
     let printCount = 0;
     const counts = new Map<string, number>();
@@ -110,7 +112,18 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
         print(text);
       },
       onProgress: (progress: CheckProgress) => {
-        if (progress.kind !== "progress") {
+        if (progress.kind === "progress") {
+          const statistics = progress.statistics;
+          // A search that starts again counts from zero, while TLC's counts never go back.
+          if (
+            reportedStatistics &&
+            (statistics.generatedStates < reportedStatistics.generatedStates ||
+              statistics.distinctStates < reportedStatistics.distinctStates)
+          ) {
+            return;
+          }
+          reportedStatistics = statistics;
+        } else {
           const key = getKey(progress);
           const count = (counts.get(key) ?? 0) + 1;
           counts.set(key, count);

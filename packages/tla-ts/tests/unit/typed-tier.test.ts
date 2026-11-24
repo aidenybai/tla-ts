@@ -383,6 +383,32 @@ describe("typed tier matches TLC", () => {
     },
   );
 
+  it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    const reported: SearchStatistics[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\nInit == x = 0 /\\ r = [i \\in 1..3 |-> i]\nNext == x < 1000 /\\ x' = x + 1 /\\ r' = IF x = 900 THEN [r EXCEPT ![x] = 0] ELSE r\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onProgress: (progress) => {
+        if (progress.kind === "progress") reported.push(progress.statistics);
+      },
+    });
+    clock.mockRestore();
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      1001, 1001, 1001,
+    ]);
+    expect(reported.length).toBeGreaterThan(1);
+    reported.forEach((statistics, index) => {
+      const previous = reported[index - 1] ?? statistics;
+      expect([
+        statistics.generatedStates >= previous.generatedStates,
+        statistics.distinctStates >= previous.distinctStates,
+      ]).toEqual([true, true]);
+    });
+  });
+
   it("reports the initial states once when the interpreter checks again what the tier searched", async () => {
     const checked = await checkCounter("x + 1 + 0 \\div (500 - x)", true);
     expect([
