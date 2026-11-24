@@ -288,7 +288,9 @@ const prepareModules = (
 // A spec's program code, read and checked by SANY's checks once, so that the specs of several models
 // that extend it link it as the checks accepted it. It keeps no tokens, as a module that tla-ts
 // compiles declares what its units declare.
-export const prepareProgram = (spec: EscoreSpec): PreparedModule => {
+export const prepareProgram = (
+  spec: Pick<EscoreSpec, "config" | "loadModule" | "preparedModules">,
+): PreparedModule => {
   const prepared = prepare("ProgramCode", spec.loadModule("ProgramCode") ?? "");
   const levels = new Map<Module, (OperatorLevels | undefined)[]>();
   let warning: string | undefined;

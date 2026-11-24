@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import { compileSharedFiles, type CompiledInput } from "../../src/cli/typescript";
+import {
+  compileSharedFiles,
+  compileSharedProgram,
+  type CompiledInput,
+} from "../../src/cli/typescript";
 import type { CheckOptions } from "../../src/check";
 import { TlaError } from "../../src/errors";
 import { check } from "../../src/parallel";
@@ -76,18 +80,18 @@ describe("checks of the files of a group from its base", () => {
     expect(
       spawnSync(process.execPath, ["replay.mjs"], { cwd: directory, encoding: "utf8" }).stdout,
     ).toBe("true false\n");
-    const shared = await compileSharedFiles(
+    const program = await compileSharedProgram(
       ["first.ts", "second.ts", "late.ts", "counted.ts"].map((file) => join(directory, file)),
-      {
-        maxSetSize: undefined,
-        seed: undefined,
-        fingerprintPolynomial: undefined,
-        version: "master",
-      },
+      undefined,
       Infinity,
     );
-    if (shared.inputs === undefined) throw new Error("the program is above the budget");
-    const inputs = shared.inputs;
+    if (program.kind !== "compiled") throw new Error("the files share no program");
+    const inputs = await compileSharedFiles(program, {
+      maxSetSize: undefined,
+      seed: undefined,
+      fingerprintPolynomial: undefined,
+      version: "master",
+    });
     const base = inputs[0]?.base;
     if (base === undefined) throw new Error("the files share no base");
     expect(inputs.map((input) => input?.base === base)).toEqual([true, true, true, true]);

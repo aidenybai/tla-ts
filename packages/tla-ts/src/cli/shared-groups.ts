@@ -2,23 +2,21 @@ import { parentPort, resourceLimits, Worker, workerData } from "node:worker_thre
 import { getErrorExitCode, TlaHeapLimitError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { CHECK_STACK_MB } from "../worker";
+import type { SharedProgram } from "./typescript";
 
-// The files of a run with -shared that one worker checks: count of them, from the one at first.
+// The files of a run with -shared that one worker checks: count of them, from the one at first,
+// with their shared program, which the run compiled, where they have more than one TypeScript file.
 export interface SharedGroup {
   first: number;
   count: number;
+  program?: Exclude<SharedProgram, { kind: "oversize" }>;
 }
 
-// What a worker that checks a group reports: the output of its checks and their exit codes, with
-// the size of their program's code, or that code's size alone, where it is above the budget.
-type GroupReport =
-  | {
-      kind: "checked";
-      output: { isError: boolean; text: string }[];
-      exitCodes: number[];
-      characters: number;
-    }
-  | { kind: "oversize"; characters: number };
+// What a worker that checks a group reports: the output of its checks and their exit codes.
+interface GroupReport {
+  output: { isError: boolean; text: string }[];
+  exitCodes: number[];
+}
 
 const isGroup = (value: unknown): value is SharedGroup =>
   typeof value === "object" &&
@@ -32,16 +30,10 @@ export const getSharedGroup = (): SharedGroup | undefined => {
   return isGroup(group) ? group : undefined;
 };
 
-// Reports to the run that a group's program is above the budget, without checking its files.
-export const reportOversize = (characters: number) =>
-  parentPort?.postMessage({ kind: "oversize", characters } satisfies GroupReport);
-
 // Checks a group of more than one file with what it writes held back, from its compile on, and
 // reports it with the exit codes once every check is done, so that a group that runs out of heap
-// shows nothing. A group whose program is above the budget reports that alone.
-export const checkHeldBack = async (
-  checkGroup: () => Promise<{ exitCodes: number[]; characters: number } | undefined>,
-) => {
+// shows nothing.
+export const checkHeldBack = async (checkGroup: () => Promise<number[]>) => {
   const output: { isError: boolean; text: string }[] = [];
   const getWrite =
     (isError: boolean) =>
@@ -56,11 +48,9 @@ export const checkHeldBack = async (
     };
   process.stdout.write = getWrite(false);
   process.stderr.write = getWrite(true);
-  const checked = await checkGroup();
-  if (checked !== undefined) {
-    parentPort?.postMessage({ kind: "checked", output, ...checked } satisfies GroupReport);
-  }
-  return checked?.exitCodes;
+  const exitCodes = await checkGroup();
+  parentPort?.postMessage({ output, exitCodes } satisfies GroupReport);
+  return exitCodes;
 };
 
 // A run's group checked in a worker whose heap is the run's, or undefined where the worker ran out
@@ -83,9 +73,7 @@ const checkGroup = (argv: string[], group: SharedGroup) =>
         if (error.code === "ERR_WORKER_OUT_OF_MEMORY") resolve(undefined);
         else reject(error);
       })
-      .on("exit", (code) =>
-        resolve(report ?? { kind: "checked", output: [], exitCodes: [code], characters: 0 }),
-      );
+      .on("exit", (code) => resolve(report ?? { output: [], exitCodes: [code] }));
   });
 
 // The size of the code of a group's program, in characters, above which a group's check spends
@@ -96,17 +84,27 @@ const checkGroup = (argv: string[], group: SharedGroup) =>
 export const SHARED_PROGRAM_BUDGET = 20_000_000;
 
 // Checks the files of a run with -shared in consecutive groups, each in a worker of its own, which
-// a group's base lives and dies with. A group starts with as many of the files left as the last
-// one's program code suggests fit the budget, and one whose code is above it starts again with
-// fewer. A group that runs out of heap shows nothing and checks again as two halves, down to files
-// alone, each of which shows what a run of it alone shows.
-export const checkSharedGroups = async (argv: string[], pathCount: number) => {
+// a group's base lives and dies with, from the program that the run compiled for it. A group starts
+// with as many of the files left as the last one's program code suggests fit the budget, and one
+// whose code is above it compiles again with fewer. A group that runs out of heap shows nothing and
+// checks again as two halves, down to files alone, each of which shows what a run of it alone
+// shows.
+export const checkSharedGroups = async (
+  argv: string[],
+  pathCount: number,
+  compileGroup: (first: number, count: number) => Promise<SharedProgram | undefined>,
+) => {
   const exitCodes: number[] = [];
   const heapMb = resourceLimits.maxOldGenerationSizeMb ?? 0;
+  // How many files of a group whose program's code is as long as that of size files fit the budget.
+  const getFitting = (size: number, characters: number) =>
+    Math.max(1, Math.floor((size * SHARED_PROGRAM_BUDGET) / characters));
   const checkFrom = async (first: number, count: number): Promise<void> => {
     if (first >= pathCount) return;
     const size = Math.min(count, pathCount - first);
-    const report = await checkGroup(argv, { first, count: size });
+    const program = await compileGroup(first, size);
+    if (program?.kind === "oversize") return checkFrom(first, getFitting(size, program.characters));
+    const report = await checkGroup(argv, { first, count: size, program });
     if (report === undefined && size === 1) {
       const stop = new TlaHeapLimitError(heapMb);
       console.error(`${stop.name}: ${stop.message}`);
@@ -119,23 +117,15 @@ export const checkSharedGroups = async (argv: string[], pathCount: number) => {
       );
       return checkFrom(first, Math.ceil(size / 2));
     }
-    if (report.kind === "oversize") {
-      return checkFrom(
-        first,
-        Math.max(1, Math.floor((size * SHARED_PROGRAM_BUDGET) / report.characters)),
-      );
-    }
     report.output.forEach((item) =>
       (item.isError ? process.stderr : process.stdout).write(item.text),
     );
     exitCodes.push(...report.exitCodes);
-    // The next group takes as many files as this group's code suggests fit, or, after a group of
-    // one file, which compiles alone, as many as are left.
+    // The next group takes as many files as this group's code suggests fit, or, after a group
+    // whose files compile alone, as many as are left.
     return checkFrom(
       first + size,
-      report.characters > 0
-        ? Math.max(1, Math.floor((size * SHARED_PROGRAM_BUDGET) / report.characters))
-        : pathCount,
+      program?.kind === "compiled" ? getFitting(size, program.characters) : pathCount,
     );
   };
   await checkFrom(0, pathCount);

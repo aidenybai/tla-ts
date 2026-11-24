@@ -39,7 +39,6 @@ import {
   checkHeldBack,
   checkSharedGroups,
   getSharedGroup,
-  reportOversize,
   SHARED_PROGRAM_BUDGET,
 } from "./shared-groups";
 import type { CliSettings } from "../search";
@@ -98,6 +97,7 @@ import {
 } from "./shared";
 import {
   compileSharedFiles,
+  compileSharedProgram,
   compileTypeScriptFile,
   getNodeExit,
   isProgramPath,
@@ -697,32 +697,33 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     parsed.workers === 1 &&
     parsed.moduleOperators.length + parsed.invariants.length === 0;
   const group = getSharedGroup();
-  if (isShared && group === undefined)
-    return checkSharedGroups(process.argv.slice(2), paths.length);
+  // The run compiles the shared program of each group of its TypeScript files, so that it parses
+  // each file once for every group, and checks the group in a worker of its own.
+  if (isShared && group === undefined) {
+    return shareFiles(() =>
+      checkSharedGroups(process.argv.slice(2), paths.length, (first, count) => {
+        const programPaths = paths.slice(first, first + count).filter(isProgramPath);
+        return programPaths.length > 1
+          ? compileSharedProgram(programPaths, parsed.maxSetSize, SHARED_PROGRAM_BUDGET)
+          : Promise.resolve(undefined);
+      }),
+    );
+  }
   const groupPaths =
     group === undefined ? paths : paths.slice(group.first, group.first + group.count);
   const programPaths = groupPaths.filter(isProgramPath);
-  // The checks of the files, or undefined where their program is above the budget.
   const checkGroup = async () => {
-    const shared =
-      isShared && programPaths.length > 1
-        ? await compileSharedFiles(
-            programPaths,
-            {
-              maxSetSize: parsed.maxSetSize,
-              seed: parsed.seed,
-              fingerprintPolynomial: parsed.fingerprintIndex,
-              version,
-            },
-            SHARED_PROGRAM_BUDGET,
-          )
-        : { inputs: [], characters: 0 };
-    const inputs = shared.inputs;
-    if (inputs === undefined) {
-      reportOversize(shared.characters);
-      return undefined;
-    }
-    const checkedCodes = await shareFiles(async () => {
+    const program = group?.program;
+    const inputs =
+      program === undefined
+        ? []
+        : await compileSharedFiles(program, {
+            maxSetSize: parsed.maxSetSize,
+            seed: parsed.seed,
+            fingerprintPolynomial: parsed.fingerprintIndex,
+            version,
+          });
+    return shareFiles(async () => {
       for (const [offset, path] of groupPaths.entries()) {
         const index = offset + (group?.first ?? 0);
         if (index > 0) console.log("");
@@ -776,15 +777,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       }
       return exitCodes;
     });
-    return { exitCodes: checkedCodes, characters: shared.characters };
   };
   const checked =
-    group !== undefined && group.count > 1
-      ? await checkHeldBack(checkGroup)
-      : (await checkGroup())?.exitCodes;
-  return (
-    (checked ?? []).find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success
-  );
+    group !== undefined && group.count > 1 ? await checkHeldBack(checkGroup) : await checkGroup();
+  return checked.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
 const createMissingFilePrinter174 = (
