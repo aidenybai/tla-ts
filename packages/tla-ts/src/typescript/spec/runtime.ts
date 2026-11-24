@@ -1,4 +1,5 @@
 import { TlaError } from "../../errors";
+import { CHARACTERS } from "./units";
 import type { GeneratedDefinition, Library } from "./library";
 import type { HostRealm } from "./realm";
 import { CALENDAR_TABLES } from "../calendars";
@@ -692,42 +693,6 @@ const DEFINITIONS = [
   Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that ESCore leaves out"
                 ELSE "tla-ts can't model " \\o UnitsText(SubSeq(what, 14, Len(what))))`,
 ];
-
-// The characters that a TLA+ string can hold, as a string spells each, by code unit.
-const CHARACTERS = new Map([
-  [9, "\\t"],
-  [10, "\\n"],
-  [12, "\\f"],
-  [13, "\\r"],
-  ...Array.from(
-    { length: 95 },
-    (_, index) =>
-      [
-        index + 32,
-        index + 32 === 34 ? '\\"' : index + 32 === 92 ? "\\\\" : String.fromCharCode(index + 32),
-      ] as const,
-  ),
-]);
-
-// A text as a TLA+ string, if a string can hold each of its characters.
-export const getTlaString = (text: string) =>
-  [...text].every((character) => CHARACTERS.has(character.charCodeAt(0)))
-    ? `"${[...text].map((character) => CHARACTERS.get(character.charCodeAt(0))).join("")}"`
-    : undefined;
-
-// A file's text as a TLA+ string of one character for each code unit, with "?" for each unit that a
-// string can't hold, and those units by their positions, from 1.
-export const getSourceString = (text: string) => {
-  const patches: number[][] = [];
-  // Every code unit but a printable one that a string spells as itself.
-  const spelled = text.replace(/[^\x20\x21\x23-\x5b\x5d-\x7e]/g, (character, index: number) => {
-    const unit = character.charCodeAt(0);
-    const spelling = CHARACTERS.get(unit);
-    if (spelling === undefined) patches.push([index + 1, unit]);
-    return spelling ?? "?";
-  });
-  return { text: `"${spelled}"`, patches };
-};
 
 // V8's stack traces as Node 26 writes them: each call's frame records the position of the call in
 // the frame below, an error constructor captures the frames of the state's calls, and the error's
