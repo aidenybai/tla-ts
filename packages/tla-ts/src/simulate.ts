@@ -848,7 +848,13 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
-  for (const error of reported) {
+  const trailing = errors[errors.length - 1];
+  // TLC's LiveCheck1 prints the violation the worker finds after the error it reported, without the Simulator's summary.
+  const printedErrors =
+    printed < errors.length - 1 && trailing.violation
+      ? [...reported, { ...trailing, isSummarized: false }]
+      : reported;
+  for (const error of printedErrors) {
     if (error.violation) {
       error.failures?.forEach((failure) =>
         reportMessage(failure.code, failure.message, failure.toolMessage),
@@ -858,7 +864,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         status: "liveness-violation",
         violation: error.violation,
       });
-      printSummary();
+      if (error.isSummarized) printSummary();
       if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
       continue;
     }

@@ -473,7 +473,7 @@ const checkSpec = async (
           : `Trace exploration spec path: ${path}`,
       );
     };
-    // Deviation from TLC: under -continue, its recorder appends every trace it prints to one trace spec, which is no behavior of the spec, so tla-ts writes the last trace's.
+    // Deviation from TLC: its recorder appends every trace it prints to one trace spec, as under -continue or after a simulation error, which is no behavior of the spec, so tla-ts writes the last trace's.
     let recordedTraceSpec: string | undefined;
     if (args.mode !== "model-check") {
       const status = simulate({

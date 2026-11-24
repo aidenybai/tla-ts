@@ -834,6 +834,33 @@ it("finishes every behavior when fewer than 150 states remain after a deadlock, 
   expect(totals).toEqual([11, 161, 8]);
 });
 
+it("reports the liveness violation of a behavior after a deadlock, which TLC's LiveCheck1 prints as the worker goes on", () => {
+  const reported: string[] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nA == x = 2 /\\ x' = 3\nB == x < 3 /\\ x' = (x + 1) % 3\nInit == x = 0\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ WF_x(B) /\\ WF_x(A)\nProp == <>(x = 3)\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop",
+    seed: 4n,
+    traceDepth: 15,
+    traceCount: 30n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        reported.push(output.message);
+      if (output.kind === "summary") reported.push(`${output.statistics.generatedStates} states`);
+    },
+    onProgress: (progress) => {
+      if (progress.kind === "violation")
+        reported.push(
+          `${progress.violation.name}: ${progress.violation.trace.map((step) => formatValue(step.state.x)).join(" ")}`,
+        );
+    },
+  });
+  expect([status, reported]).toEqual([11, ["Deadlock reached.", "88 states", "Prop: 0 1 2"]]);
+});
+
 it("stops simulating about 150 states after an error that -continue can't continue, as TLC's worker does", () => {
   const totals = getStopTotals(
     "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x < 2 \\/ (CHOOSE y \\in {} : TRUE)\n====",
