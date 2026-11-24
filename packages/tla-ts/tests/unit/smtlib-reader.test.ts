@@ -328,6 +328,15 @@ describe("a bit-vector numeral of 2^30 bits or more, as Z3 5.3.2 reads it", () =
   });
 });
 
+describe("a bit-vector literal longer than V8's longest string, as Z3 5.3.2 prints it in 1 GB", () => {
+  it.each(["(_ bv5 536870913)", "(_ bv5 4294967292)"])(
+    "runs out of memory printing %s",
+    (numeral) => {
+      expect(run([`(simplify ${numeral})`, '(echo "after")'])).toEqual(['(error "out of memory")']);
+    },
+  );
+});
+
 describe("a qualified constant, as Z3 5.3.2 reports it", () => {
   it("reports one that is unknown at the token after it", () => {
     expect(
