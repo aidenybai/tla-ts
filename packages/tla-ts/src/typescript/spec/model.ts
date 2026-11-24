@@ -1547,7 +1547,10 @@ export const compileModelToEscore = (
     config.specification === undefined
       ? "INIT Init\nNEXT Next"
       : `SPECIFICATION ${config.specification}`,
-    ...config.invariants.map((name) => `INVARIANT ${name}`),
+    // A model without state checks its boolean exports once, as ASSUMEs, which TLC recommends
+    // for constant-level invariants: an invariant that TLC evaluates as it starts and that
+    // throws is left unevaluated, where a spec without state has no initial state to check it in.
+    ...(isStateless ? [] : config.invariants.map((name) => `INVARIANT ${name}`)),
     ...config.properties.map((name) => `PROPERTY ${name}`),
     ...config.constraints.map((name) => `CONSTRAINT ${name}`),
     ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
@@ -1567,9 +1570,12 @@ export const compileModelToEscore = (
     ...(isStateless ? [] : ["ALIAS ModelAlias"]),
     "",
   ];
-  const assumptions = module.assumptions.flatMap((assumption) =>
-    assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
-  );
+  const assumptions = [
+    ...module.assumptions.flatMap((assumption) =>
+      assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
+    ),
+    ...(isStateless ? config.invariants.map((name) => `ASSUME ${name}`) : []),
+  ];
   const finalCode = (compiled.loadModule("ProgramCode") ?? "")
     .replace(
       "\nEXTENDS ESRuntime\n",

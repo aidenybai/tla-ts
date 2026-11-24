@@ -1073,6 +1073,24 @@ export const compileToEscore = (
     );
   }
   const steps = typeof model.steps === "string" ? model.steps : model.steps(files);
+  // A name that the program's code and its steps define twice, or that the runtime's modules
+  // declare, which TLA+ rejects as multiply defined.
+  const seen = new Set<string>();
+  const twice = [
+    ...definitions.map((definition) => definition.name),
+    ...[...steps.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)(?:\([^)\n]*\))? ==/gm)].map(
+      (match) => match[1],
+    ),
+  ].find((name) => {
+    const isTwice = seen.has(name) || runtime.names.has(name);
+    seen.add(name);
+    return isTwice;
+  });
+  if (twice !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't name ${twice} in TLA+, which the program's spec defines twice or its runtime declares`,
+    );
+  }
   const view = runtime.getView(
     `${code}\n${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
