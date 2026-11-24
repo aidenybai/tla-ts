@@ -694,9 +694,9 @@ describe("compile on JS.tla from a recorded realm as from Node's", () => {
     });
   });
 
-  // Without a Node to parse a file, as in a browser, TypeScript's checks find its early errors,
-  // whose inference of a long chain of JSDoc types, as a large program's code makes, can run out
-  // of stack, where only V8 could tell.
+  // Without a Node to parse a file, as in a browser, tla-ts's port of V8's parser finds its early
+  // errors, where TypeScript's checker, which tla-ts ran before, inferred a long chain of JSDoc
+  // types past any stack.
   describe("check a file's early errors without a Node to parse it", () => {
     const getSource = (expected: number) =>
       `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
@@ -715,12 +715,24 @@ describe("compile on JS.tla from a recorded realm as from Node's", () => {
       expect(getFailure(await getOutcome(getSource(1), "kinds.js", true))).toContain('"kind 0"');
     });
 
-    // On the CLI's stack, TypeScript's checker runs out of stack on a chain of ten thousand types.
-    it("stops where TypeScript's checks run out of stack", async () => {
-      const source = `${Array.from({ length: 10000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {10000} Kind10000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\n`;
-      expect(getFailure(await getCliStackOutcome(source, "kinds.js", true))).toContain(
-        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+    it("rejects an early error with V8's message", async () => {
+      const source = "let kind = 0;\nlet kind = 1;\n";
+      expect(runNode({ "kinds.js": source }, "kinds.js").stderr).toContain(
+        "SyntaxError: Identifier 'kind' has already been declared",
       );
+      expect(getFailure(await getOutcome(source, "kinds.js", true))).toContain(
+        "kinds.js:2:1 SyntaxError: Identifier 'kind' has already been declared",
+      );
+    });
+
+    // On the CLI's stack, TypeScript's checker ran out of stack on a chain of ten thousand types,
+    // which V8's parse reads as comments.
+    it("agrees with Node on a chain of ten thousand JSDoc types", async () => {
+      const source = `${Array.from({ length: 10000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {10000} Kind10000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\n`;
+      expect(runNode({ "kinds.js": source }, "kinds.js").status).toBe(0);
+      expect(await getCliStackOutcome(source, "kinds.js", true)).toMatchObject({
+        status: "success",
+      });
     }, 120_000);
   });
 
