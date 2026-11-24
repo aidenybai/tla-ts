@@ -1028,6 +1028,56 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // ListFromArrayLike reads an array-like into chunks, so sizes around a chunk and a proxy that logs
+  // its gets pin what apply, Reflect.apply, Reflect.construct and a proxy's ownKeys read, in order.
+  describe("reads an array-like's elements into a list across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (values: unknown[]) => {
+        let hash = 0;
+        for (const value of String(values).split("")) hash = (hash * 31 + value.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const gets: string[] = [];
+        const arrayLike = new Proxy({} as Record<string, number>, {
+          get: (_, key) => {
+            gets.push(String(key));
+            return key === "length" ? size : (Number(key) * 37) % 101;
+          },
+        });
+        const applied = function (...values: number[]) {
+          return getHash(values);
+        }.apply(null, arrayLike as unknown as number[]);
+        const reflected = Reflect.apply((...values: number[]) => getHash(values), null, arrayLike);
+        const constructed = Reflect.construct(function (this: { hash: number }, ...values: number[]) {
+          this.hash = getHash(values);
+        }, arrayLike) as { hash: number };
+        const keys = Reflect.ownKeys(
+          new Proxy({}, { ownKeys: () => Array.from({ length: size }, (_, index) => \`k\${(index * 37) % 1000}\`) }),
+        );
+        text += [size, gets.length, getHash(gets), applied, reflected, constructed.hash, keys.length, getHash(keys)].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:3:203473:0:0:0:0:0;1:6:232754:48:48:48:1:3365;63:192:602842:675116:675116:675116:63:414857;",
+      "64:195:338231:785952:785952:785952:64:938576;65:198:750854:269739:269739:269739:65:290487;",
+      "129:390:367503:795648:795648:795648:129:141019;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:390:367503", "129:390:367504");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

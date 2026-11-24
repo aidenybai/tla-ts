@@ -6483,13 +6483,15 @@ CreateListFromArrayLike(s, v, types) ==
   ELSE LET l == LengthOfArrayLike(s, v) IN
   IF IsAbrupt(l) THEN l
   ELSE IF NumLess(NumFromInt(10000000), Val(l).value) THEN ThrowError(l.s, "RangeError")
-  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, <<>>, types)
+  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, NoChunks, types)
+\* The elements from index i, after those so far, in chunks, so that reading n elements copies each
+\* a few times rather than n.
 ListFromArrayLike(s, v, n, i, acc, types) ==
-  IF i = n THEN Ok(s, acc)
+  IF i = n THEN Ok(s, ChunkValues(acc))
   ELSE LET e == Get(s, v, Str(NumToString(NumFromInt(i)))) IN
        IF IsAbrupt(e) THEN e
        ELSE IF types = "property-key" /\ ~IsPropertyKey(Val(e)) THEN ThrowTypeError(e.s)
-       ELSE ListFromArrayLike(e.s, v, n, i + 1, Append(acc, Val(e)), types)
+       ELSE ListFromArrayLike(e.s, v, n, i + 1, ChunkAppend(acc, Val(e)), types)
 \* Invoke (§7.3.21).
 Invoke(s, v, k, args) ==
   LET f == GetValueProperty(s, v, k) IN
