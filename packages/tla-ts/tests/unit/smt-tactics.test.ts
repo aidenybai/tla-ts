@@ -1261,6 +1261,23 @@ describe("theory_fpa, as Z3 5.3.2 internalizes its conversions", () => {
   });
 });
 
+describe("bv_rewriter, as Z3 5.3.2 compares a bit of an ite", () => {
+  it("builds the equalities with a bool_rewriter of default parameters", () => {
+    expect(
+      run([
+        "(declare-const r Real)",
+        "(declare-const s Real)",
+        "(declare-const f (_ FloatingPoint 2 3))",
+        "(assert (= f ((_ to_fp 2 3) RTZ r)))",
+        "(assert (= (fp.to_real f) s))",
+        "(assert (> r 2.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 17546)"]);
+  });
+});
+
 describe("the optimizer releases what Z3 releases", () => {
   // optsmt::add rewrites with a local th_rewriter, whose cache dies with it.
   it("keeps no term of the objective rewriter's cache", () => {
