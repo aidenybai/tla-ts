@@ -826,6 +826,50 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // MergeElements merges by index into chunks of 64 values, so the sizes around a chunk and a
+  // comparator that throws partway pin the order and the arguments of its calls.
+  describe("calls a typed array's sort comparator on the pairs that V8's merge sort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [1, 3, 7, 63, 64, 65, 129]) {
+        const array = Int16Array.from({ length: size }, (_, index) => ((index * 7919) % 101) - 50);
+        let calls = 0;
+        let hash = 0;
+        array.sort((left, right) => {
+          calls += 1;
+          hash = (hash * 31 + (left + 50) * 101 + (right + 50)) % 1000003;
+          return left - right;
+        });
+        text += \`\${size}:\${calls}:\${hash}:\${array[0]}:\${array[size - 1]};\`;
+      }
+      const thrown = Int16Array.from({ length: 65 }, (_, index) => ((index * 7919) % 101) - 50);
+      let calls = 0;
+      try {
+        thrown.sort((left, right) => {
+          calls += 1;
+          if (calls === 50) throw new Error(\`at \${left},\${right}\`);
+          return left - right;
+        });
+      } catch (error) {
+        text += \`\${(error as Error).message}:\${thrown[0]}:\${thrown[64]}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "1:0:0:-50:-50;3:2:130954:-50:32;7:13:117066:-50:32;63:308:764496:-50:50;64:317:878231:-50:50;65:321:94865:-50:50;129:769:469886:-50:50;at -19,22:-50:49";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:769:469886", "129:769:469887");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

@@ -1350,7 +1350,8 @@ RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
-RECURSIVE MergeElements(_, _, _, _, _)
+RECURSIVE MergeElements(_, _, _, _, _, _, _, _)
+RECURSIVE ConcatChunks(_, _, _)
 RECURSIVE TypedArrayMethod(_, _, _, _, _)
 RECURSIVE TypedArrayBuiltin(_, _, _, _, _, _)
 RECURSIVE ValidateUint8Array(_, _, _)
@@ -5317,6 +5318,7 @@ BlockPageSize == 256
 DataViewGetters ==
   {"getInt8", "getUint8", "getInt16", "getUint16", "getInt32", "getUint32", "getBigInt64", "getBigUint64",
    "getFloat16", "getFloat32", "getFloat64"}
+MergeChunk == 64
 Base64Alphabets == (N("base64") :> "base64") @@ (N("base64url") :> "base64url")
 LastChunkHandlings ==
   (N("loose") :> "loose") @@ (N("strict") :> "strict") @@ (N("stop-before-partial") :> "stop-before-partial")
@@ -15851,14 +15853,27 @@ SortElements(s, values, comparator) ==
            left == SortElements(s, SubSeq(values, 1, half), comparator)
        IN IF IsAbrupt(left) THEN left ELSE
           LET right == SortElements(left.s, SubSeq(values, half + 1, Len(values)), comparator) IN
-          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, <<>>)
-MergeElements(s, left, right, comparator, acc) ==
-  IF left = <<>> THEN Ok(s, acc \o right)
-  ELSE IF right = <<>> THEN Ok(s, acc \o left)
-  ELSE LET c == CompareTypedArrayElements(s, Head(left), Head(right), comparator) IN
+          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, <<>>, <<>>)
+\* The merge of left from i and right from j, after the values merged so far: the full chunks of
+\* MergeChunk values, then chunk. A step copies its chunk rather than every value merged so far,
+\* so that a merge of n values copies about n * MergeChunk + (n \div MergeChunk)^2 values, not n^2.
+MergeElements(s, left, right, comparator, i, j, chunks, chunk) ==
+  IF i > Len(left) \/ j > Len(right)
+  THEN Ok(s, ConcatChunks(chunks, 1, Len(chunks)) \o chunk \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
+  ELSE LET c == CompareTypedArrayElements(s, left[i], right[j], comparator) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, Tail(right), comparator, Append(acc, Head(right)))
-       ELSE MergeElements(c.s, Tail(left), right, comparator, Append(acc, Head(left)))
+       ELSE LET isRight == NumLess(PosZero, Val(c))
+                next == Append(chunk, IF isRight THEN right[j] ELSE left[i])
+                ni == IF isRight THEN i ELSE i + 1
+                nj == IF isRight THEN j + 1 ELSE j
+            IN IF Len(next) = MergeChunk THEN MergeElements(c.s, left, right, comparator, ni, nj, Append(chunks, next), <<>>)
+               ELSE MergeElements(c.s, left, right, comparator, ni, nj, chunks, next)
+\* The values of the chunks from first to last, in order, joined in halves.
+ConcatChunks(chunks, first, last) ==
+  IF first > last THEN <<>>
+  ELSE IF first = last THEN chunks[first]
+  ELSE LET middle == (first + last) \div 2
+       IN ConcatChunks(chunks, first, middle) \o ConcatChunks(chunks, middle + 1, last)
 \* The %TypedArray%.prototype methods (§23.2.3) that start with ValidateTypedArray, on ta of
 \* length len.
 TypedArrayMethod(s, ta, len, m, args) ==
