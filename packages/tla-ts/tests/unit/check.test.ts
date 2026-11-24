@@ -9395,6 +9395,252 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a tuple compared with a function on other keys",
+      "<<1>> # [i \\in {2} |-> 1]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 43 of module M: 1",
+        "|line 5, col 19 to line 5, col 23 of module M: 1:1",
+        "|line 5, col 27 to line 5, col 43 of module M: 1:1",
+        "||line 5, col 34 to line 5, col 36 of module M: 1:2",
+      ],
+    ],
+    [
+      "a function compared with a tuple",
+      "[i \\in {2} |-> 1] # <<1>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 43 of module M: 1",
+        "|line 5, col 19 to line 5, col 35 of module M: 1:1",
+        "||line 5, col 26 to line 5, col 28 of module M: 1:2",
+        "|line 5, col 39 to line 5, col 43 of module M: 1:1",
+      ],
+    ],
+    [
+      "tuples compared inside sets",
+      "{<<1>>} # {[i \\in {2} |-> 1]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 47 of module M: 1",
+        "|line 5, col 19 to line 5, col 25 of module M: 1",
+        "||line 5, col 20 to line 5, col 24 of module M: 1:1",
+        "|line 5, col 29 to line 5, col 47 of module M: 1",
+        "||line 5, col 30 to line 5, col 46 of module M: 1:1",
+        "|||line 5, col 37 to line 5, col 39 of module M: 1:2",
+      ],
+    ],
+    [
+      "tuples compared inside tuples",
+      "<<<<1>>>> # <<[i \\in {2} |-> 1]>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 51 of module M: 1",
+        "|line 5, col 19 to line 5, col 27 of module M: 1",
+        "||line 5, col 21 to line 5, col 25 of module M: 1:1",
+        "|line 5, col 31 to line 5, col 51 of module M: 1",
+        "||line 5, col 33 to line 5, col 49 of module M: 1:1",
+        "|||line 5, col 40 to line 5, col 42 of module M: 1:2",
+      ],
+    ],
+    [
+      "a tuple sorted into a set literal",
+      "{<<1>>, [i \\in {2} |-> 1]} # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 49 of module M: 1",
+        "|line 5, col 19 to line 5, col 44 of module M: 1",
+        "||line 5, col 20 to line 5, col 24 of module M: 1:1",
+        "||line 5, col 27 to line 5, col 43 of module M: 1:1",
+        "|||line 5, col 34 to line 5, col 36 of module M: 1:2",
+        "|line 5, col 48 to line 5, col 49 of module M: 1",
+      ],
+    ],
+    [
+      "a tuple searched for among functions",
+      "<<1>> \\notin {[i \\in {2} |-> 1]}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 50 of module M: 1",
+        "|line 5, col 19 to line 5, col 23 of module M: 1:1",
+        "|line 5, col 32 to line 5, col 50 of module M: 1",
+        "||line 5, col 33 to line 5, col 49 of module M: 1:1",
+        "|||line 5, col 40 to line 5, col 42 of module M: 1:2",
+      ],
+    ],
+    [
+      "a function searched for among tuples",
+      "[i \\in {2} |-> 1] \\notin {<<1>>}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 50 of module M: 1",
+        "|line 5, col 19 to line 5, col 35 of module M: 1:1",
+        "||line 5, col 26 to line 5, col 28 of module M: 1:2",
+        "|line 5, col 44 to line 5, col 50 of module M: 1",
+        "||line 5, col 45 to line 5, col 49 of module M: 1:1",
+      ],
+    ],
+    [
+      "a tuple checked against [S -> T]",
+      "<<1, 2>> \\in [{1, 2} -> {1, 2}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 49 of module M: 1",
+        "|line 5, col 19 to line 5, col 26 of module M: 1:2",
+        "|line 5, col 32 to line 5, col 49 of module M: 1",
+      ],
+    ],
+    [
+      "a record checked against [S -> T]",
+      '[a |-> 1] \\in [{"a"} -> {1}]',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 46 of module M: 1",
+        "|line 5, col 19 to line 5, col 27 of module M: 1:1",
+        "|line 5, col 33 to line 5, col 46 of module M: 1",
+      ],
+    ],
+    [
+      "records compared inside sets",
+      '{[i \\in {"a"} |-> 1]} = {[a |-> 1]}',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 53 of module M: 1",
+        "|line 5, col 19 to line 5, col 39 of module M: 1",
+        "||line 5, col 20 to line 5, col 38 of module M: 1:1",
+        "|||line 5, col 27 to line 5, col 31 of module M: 1:2",
+        "|line 5, col 43 to line 5, col 53 of module M: 1",
+        "||line 5, col 44 to line 5, col 52 of module M: 1:1",
+      ],
+    ],
+    [
+      "a tuple combined with @@",
+      "<<1>> @@ [i \\in {2} |-> 1] # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 51 of module M: 1",
+        "|line 5, col 19 to line 5, col 44 of module M: 1",
+        "||line 5, col 19 to line 5, col 23 of module M: 1:1",
+        "||line 5, col 28 to line 5, col 44 of module M: 1:1",
+        "|||line 5, col 35 to line 5, col 37 of module M: 1:2",
+        "|line 5, col 48 to line 5, col 51 of module M: 1",
+      ],
+    ],
+    [
+      "records combined with @@",
+      "[a |-> 1] @@ [b |-> 2] # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 47 of module M: 1",
+        "|line 5, col 19 to line 5, col 40 of module M: 1",
+        "||line 5, col 19 to line 5, col 27 of module M: 1:1",
+        "||line 5, col 32 to line 5, col 40 of module M: 1:1",
+        "|line 5, col 44 to line 5, col 47 of module M: 1",
+      ],
+    ],
+    [
+      "a record checked against S \\X T",
+      "[a |-> 1] \\notin {1} \\X {2}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 19 to line 5, col 45 of module M: 2",
+        "|line 5, col 19 to line 5, col 27 of module M: 2:2",
+        "|line 5, col 36 to line 5, col 45 of module M: 2:6",
+        "||line 5, col 36 to line 5, col 38 of module M: 2:4",
+        "||line 5, col 43 to line 5, col 45 of module M: 2:6",
+      ],
+    ],
+    [
+      "tuples compared inside function ranges",
+      "[y \\in {1} |-> <<1>>] # [y \\in {1} |-> [i \\in {2} |-> 1]]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 75 of module M: 1",
+        "|line 5, col 19 to line 5, col 39 of module M: 1:1",
+        "||line 5, col 34 to line 5, col 38 of module M: 1:1",
+        "||line 5, col 26 to line 5, col 28 of module M: 1:2",
+        "|line 5, col 43 to line 5, col 75 of module M: 1:1",
+        "||line 5, col 58 to line 5, col 74 of module M: 1:1",
+        "|||line 5, col 65 to line 5, col 67 of module M: 1:2",
+        "||line 5, col 50 to line 5, col 52 of module M: 1:2",
+      ],
+    ],
+    [
+      "a record sorted into a set literal",
+      '{[a |-> 1], [i \\in {"a"} |-> 2]} # {}',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 55 of module M: 1",
+        "|line 5, col 19 to line 5, col 50 of module M: 1",
+        "||line 5, col 20 to line 5, col 28 of module M: 1:1",
+        "||line 5, col 31 to line 5, col 49 of module M: 1:1",
+        "|||line 5, col 38 to line 5, col 42 of module M: 1:2",
+        "|line 5, col 54 to line 5, col 55 of module M: 1",
+      ],
+    ],
+    [
+      "a tuple TLCEval converts",
+      "TLCEval(<<1, 2>>) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 42 of module M: 1",
+        "|line 5, col 19 to line 5, col 35 of module M: 1",
+        "||line 5, col 27 to line 5, col 34 of module M: 1:2",
+        "|line 5, col 39 to line 5, col 42 of module M: 1",
+      ],
+    ],
+    [
+      "a record TLCEval converts",
+      "TLCEval([a |-> 1]) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 43 of module M: 1",
+        "|line 5, col 19 to line 5, col 36 of module M: 1",
+        "||line 5, col 27 to line 5, col 35 of module M: 1:1",
+        "|line 5, col 40 to line 5, col 43 of module M: 1",
+      ],
+    ],
+    [
+      "a tuple whose field is selected",
+      "<<1>>.a = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 19 to line 5, col 29 of module M: 2",
+        "|line 5, col 19 to line 5, col 25 of module M: 2",
+        "||line 5, col 19 to line 5, col 23 of module M: 2:2",
+      ],
+    ],
+    [
+      "a tuple compared with a record",
+      "<<1, 2>> # [a |-> 1]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 38 of module M: 1",
+        "|line 5, col 19 to line 5, col 26 of module M: 1:2",
+        "|line 5, col 30 to line 5, col 38 of module M: 1:1",
+      ],
+    ],
+    [
+      "a function combined with a tuple by @@",
+      "[i \\in {2} |-> 1] @@ <<1>> # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 51 of module M: 1",
+        "|line 5, col 19 to line 5, col 44 of module M: 1",
+        "||line 5, col 19 to line 5, col 35 of module M: 1:1",
+        "|||line 5, col 26 to line 5, col 28 of module M: 1:2",
+        "||line 5, col 40 to line 5, col 44 of module M: 1:1",
+        "|line 5, col 48 to line 5, col 51 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges the length of %s, as TupleValue#toFcnRcd and RecordValue#toFcnRcd charge their cost model",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "an equality",
       "((0..1) \\X {1}) = {1}",
       [

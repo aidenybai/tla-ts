@@ -129,6 +129,7 @@ import {
   sortLikeFcnRcdValue,
   toFiniteFunction,
   toFiniteSet,
+  toFunctionRecord,
   updateFunction,
   valuesEqual,
   type CostModel,
@@ -380,7 +381,10 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
       );
     }
     const functionClass = getFunctionClass(value);
-    if (functionClass === "tuple") throw createNonIntegerKeyError(field);
+    if (functionClass === "tuple") {
+      toFunctionRecord(value);
+      throw createNonIntegerKeyError(field);
+    }
     return applyFunction(
       value.kind === "LazyFunction" ? toFiniteFunction(value) : value,
       field,
@@ -1937,8 +1941,6 @@ const traceFrames =
 const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean) | undefined => {
   switch (expression.kind) {
     case "SetEnumeration":
-    case "Tuple":
-    case "Record":
       return () => true;
     case "FunctionConstruction":
       return (value) => typeof value === "object" && value.kind === "Function";
@@ -1963,6 +1965,7 @@ const countEvaluator = (
   coverage: Coverage,
 ): Evaluator => {
   const isTagged = getTaggedValueTest(expression);
+  const isCostModelled = expression.kind === "Tuple" || expression.kind === "Record";
   return (context) => {
     const outer = coverage.current;
     if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
@@ -1971,7 +1974,9 @@ const countEvaluator = (
     coverage.current = node;
     try {
       const value = evaluator(context);
-      if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
+      if (isCostModelled && typeof value === "object" && value.kind === "Function") {
+        value.costModel = coverage.costModels[node];
+      } else if (isTagged !== undefined && typeof value === "object" && isTagged(value)) {
         coverage.values.set(value, node);
       }
       return value;

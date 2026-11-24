@@ -51,6 +51,7 @@ export interface FunctionValue {
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
   walkFlags: number;
+  costModel?: ValueCostModel;
 }
 
 export interface IntervalValue {
@@ -146,9 +147,12 @@ export interface LazyFunctionSource {
   body: string;
 }
 
-export interface CostModel {
+export interface ValueCostModel {
   secondary: number[];
   node: number;
+}
+
+export interface CostModel extends ValueCostModel {
   startConversion: () => () => void;
 }
 
@@ -335,6 +339,12 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
   if (isWrittenOrderUsed) {
     left.writtenKeys = undefined;
     right.writtenKeys = undefined;
+  }
+  if (
+    (left.costModel !== undefined || right.costModel !== undefined) &&
+    left.functionClass !== right.functionClass
+  ) {
+    return compareLikeTlc(left, right);
   }
   const leftDomain = left.domain;
   const rightDomain = right.domain;
@@ -1046,9 +1056,21 @@ interface TlcFunction {
 const getIntervalLow = (value: Value, domain: Value[]) =>
   domain.length === 0 || getFunctionClass(value) === "tuple" ? 1 : getDomainInterval(domain)?.low;
 
+const chargeFunctionConversion = (value: FunctionValue) => {
+  const costModel = value.costModel;
+  if (costModel === undefined || value.functionClass === undefined) return;
+  stopFirstAttempt();
+  costModel.secondary[costModel.node] += value.range.length;
+};
+
+export const toFunctionRecord = (value: FunctionValue | LazyFunctionValue) => {
+  if (value.kind === "Function") chargeFunctionConversion(value);
+  return toFiniteFunction(value);
+};
+
 const toTlcFunction = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
-  const functionValue = toFiniteFunction(value);
+  const functionValue = toFunctionRecord(value);
   return {
     domain: functionValue.domain,
     range: functionValue.range,
@@ -1161,7 +1183,9 @@ const compareFunctionLikeTlc = (
   const functionValue = toFiniteFunction(left);
   if (getFunctionClass(left) === "tuple") {
     const tuple = isFunctionValue(right) ? getSequenceElements(right) : undefined;
-    if (!tuple) return compareTlcFunctions({ ...functionValue, low: 1 }, left, right, isEquality);
+    if (!tuple) {
+      return compareTlcFunctions({ ...toFunctionRecord(left), low: 1 }, left, right, isEquality);
+    }
     return (
       functionValue.range.length - tuple.length ||
       compareElementsLikeTlc(functionValue.range, tuple, isEquality)
@@ -2797,6 +2821,7 @@ const somePulledElement = (stream: ElementStream, visit: (element: Value) => boo
 export interface ChargeTable {
   values: WeakMap<object, number>;
   secondary: number[];
+  costModels: ValueCostModel[];
   isMember: typeof isElementOf;
   convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
@@ -4124,7 +4149,7 @@ const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
     throw createAttemptError(describeNonFunctionMember, element, set);
   }
   forgetOwnWrittenOrder(element);
-  const functionValue = toFiniteFunction(element);
+  const functionValue = toFunctionRecord(element);
   const low = getIntervalLow(element, functionValue.domain);
   const isDomain =
     low === undefined
@@ -4151,7 +4176,7 @@ const getProductSetMemberElements = (element: Value, set: ProductSetValue) => {
   if (elements === undefined) {
     const isFunction =
       isFunctionValue(element) &&
-      toFiniteFunction(element).domain.every((key) => typeof key === "number");
+      toFunctionRecord(element).domain.every((key) => typeof key === "number");
     if (isModelValue(element)) return isModelValueMember(element, set);
     if (isFunction) return false;
     throw createAttemptError(describeNonTupleMember, element, set);

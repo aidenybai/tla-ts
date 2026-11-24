@@ -39,6 +39,7 @@ import {
   normalizeDeeply,
   toFiniteFunction,
   toFiniteSet,
+  toFunctionRecord,
   type Value,
   rankString,
 } from "../values";
@@ -167,10 +168,11 @@ const getPermutations = (elements: Value[]): Value[][] =>
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;
   switch (value.kind) {
-    case "Function":
-      return value.functionClass === undefined
-        ? value
-        : createSortedFunction(value.domain, value.range);
+    case "Function": {
+      if (value.functionClass === undefined) return value;
+      const record = toFunctionRecord(value);
+      return createSortedFunction(record.domain, record.range);
+    }
     case "ModelValue":
     case "MixedSet":
     case "InfiniteSet":
@@ -217,8 +219,8 @@ export const createTlcOperators = (
   defineOperator("@@", 2, (args) => {
     const leftValue = getValue(args, 0, "@@");
     const rightValue = getValue(args, 1, "@@");
-    const left = isFunctionValue(leftValue) ? toFiniteFunction(leftValue) : undefined;
-    const right = isFunctionValue(rightValue) ? toFiniteFunction(rightValue) : undefined;
+    const left = isFunctionValue(leftValue) ? toFunctionRecord(leftValue) : undefined;
+    const right = isFunctionValue(rightValue) ? toFunctionRecord(rightValue) : undefined;
     if (!left) throw createModuleArgumentError("first", "@@", "function", leftValue);
     if (!right) throw createModuleArgumentError("second", "@@", "function", rightValue);
     const leftPairs = getWrittenPairs(left);
