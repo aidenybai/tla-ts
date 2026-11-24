@@ -284,32 +284,32 @@ const compact = (definitions: readonly CodeDefinition[]): CodeDefinition[] => {
   ];
 };
 
+interface DefinitionReads {
+  definition: CodeDefinition;
+  reads: string[];
+}
+
 // A program's definitions in an order where each comes after those that it reads, unless they read
 // each other, and the names of the ones that a definition reads before they come, which TLA+ needs
 // declared RECURSIVE.
-const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
-  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+const sortDefinitions = (readers: readonly DefinitionReads[]) => {
+  const byName = new Map(readers.map((reader) => [reader.definition.name, reader]));
   const isVisited = new Map<string, boolean>();
   const sorted: CodeDefinition[] = [];
   const recursive = new Set<string>();
-  const visit = (definition: CodeDefinition) => {
-    isVisited.set(definition.name, false);
-    // A name inside a string, such as SourceText's, is text rather than a read.
-    const reads: string[] = [];
-    forEachBodyName(definition, (name, isInString) => {
-      if (!isInString) reads.push(name);
-    });
-    for (const name of reads) {
+  const visit = (reader: DefinitionReads) => {
+    isVisited.set(reader.definition.name, false);
+    for (const name of reader.reads) {
       const read = byName.get(name);
       if (read === undefined) continue;
       if (isVisited.get(name) === false) recursive.add(name);
       else if (!isVisited.has(name)) visit(read);
     }
-    isVisited.set(definition.name, true);
-    sorted.push(definition);
+    isVisited.set(reader.definition.name, true);
+    sorted.push(reader.definition);
   };
-  definitions.forEach((definition) => {
-    if (!isVisited.has(definition.name)) visit(definition);
+  readers.forEach((reader) => {
+    if (!isVisited.has(reader.definition.name)) visit(reader);
   });
   return { sorted, recursive };
 };
@@ -1238,15 +1238,22 @@ export const compileToEscore = (
   // runtime's view keeps the definitions.
   const names = new Set<string>();
   const addName = (name: string) => names.add(name);
-  definitions.forEach((definition) => {
-    if (definition.tree === undefined) forEachTextName(definition.text ?? "", addName);
+  const readers = definitions.map((definition) => {
+    const tree = definition.tree;
+    if (tree === undefined) forEachTextName(definition.text ?? "", addName);
     else {
       forEachTextName(
-        [definition.name, ...definition.tree.params.map((param) => param.name)].join(" "),
+        [definition.name, ...tree.params.map((param) => param.name)].join(" "),
         addName,
       );
-      forEachBodyName(definition, addName);
     }
+    // A name inside a string, such as SourceText's, is text rather than a read.
+    const reads: string[] = [];
+    forEachBodyName(definition, (name, isInString) => {
+      if (tree !== undefined) addName(name);
+      if (!isInString) reads.push(name);
+    });
+    return { definition, reads };
   });
   forEachTextName(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
   const view = runtime.getView(
@@ -1255,7 +1262,7 @@ export const compileToEscore = (
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
   const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
-  const ordered = sortDefinitions(definitions);
+  const ordered = sortDefinitions(readers);
   // The module's parts in order: its text and the trees of its definitions.
   const parts = [
     "---- MODULE ProgramCode ----",
