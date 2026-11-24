@@ -15021,6 +15021,260 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "Op(TRUE)",
+      "action Op of the next-state relation",
+      4,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:2",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 9 10 16)>: 0:4",
+      ],
+    ],
+    [
+      "Op(FALSE)",
+      undefined,
+      5,
+      3,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 2:6",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 9 10 17)>: 0:2",
+      ],
+    ],
+    [
+      "Stp \\/ Op(TRUE)",
+      "action Op of the next-state relation",
+      5,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:4",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 16 10 23)>: 0:4",
+      ],
+    ],
+    [
+      "Outer(TRUE)",
+      "action Op of the next-state relation",
+      5,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:4",
+        "<Op line 5, col 1 to line 5, col 5 of module M (7 20 7 24)>: 0:4",
+      ],
+    ],
+    [
+      "Two(TRUE, FALSE)",
+      "action Two of the next-state relation",
+      4,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:2",
+        "<Two line 8, col 1 to line 8, col 9 of module M (10 9 10 24)>: 0:4",
+      ],
+    ],
+    [
+      "First(TRUE)",
+      "the next-state action",
+      2,
+      1,
+      ["<First line 6, col 1 to line 6, col 8 of module M (10 9 10 19)>: 0:3"],
+    ],
+    [
+      "\\E i \\in {TRUE} : Stp \\/ i",
+      "the next-state action",
+      3,
+      2,
+      ["<Next line 10, col 1 to line 10, col 4 of module M>: 1:4"],
+    ],
+  ])(
+    "splits Next == %s where a parameter stands as an action, as TLC's Tool#getActionsAppl catches the ClassCastException",
+    async (next, action, generatedStates, distinctStates, relations) => {
+      const getRun = (coverage: number | undefined) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nFirst(p) == p \\/ Stp\nOuter(q) == Stp \\/ Op(q)\nTwo(p, r) == (Stp \\/ r) \\/ p\nInit == x = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next",
+          coverage,
+        });
+      const expected = [
+        action &&
+          `Successor state is not completely specified by ${action}. The following variable is not defined: x.\n`,
+        generatedStates,
+        distinctStates,
+      ];
+      const getOutcome = (result: Awaited<ReturnType<typeof check>>) => [
+        result.status === "deadlock" ? undefined : result.failure?.message,
+        result.generatedStates,
+        result.distinctStates,
+      ];
+      const covered = await getRun(1);
+      expect([
+        getOutcome(await getRun(undefined)),
+        getOutcome(covered),
+        covered.coverage?.relations.flatMap((relation) =>
+          relation.kind === "next"
+            ? [`<${relation.label}>: ${relation.distinct}:${relation.generated}`]
+            : [],
+        ),
+      ]).toEqual([expected, expected, relations]);
+    },
+  );
+
+  it.each([
+    [
+      "Op(1)",
+      "The next state relation is not a boolean expression.\n1",
+      ["M 8:9-8:13", "M 6:10-6:17", "M 6:17-6:17", "M 8:12-8:12"],
+      3,
+    ],
+    [
+      'Op("a")',
+      "The next state relation is not a boolean expression.\nline 8, col 12 to line 8, col 14 of module M",
+      ["M 8:9-8:15", "M 6:10-6:17", "M 6:17-6:17", "M 8:12-8:14"],
+      3,
+    ],
+    [
+      "Stp \\/ Op(1)",
+      "The next state relation is not a boolean expression.\n1",
+      ["M 8:16-8:20", "M 6:10-6:17", "M 6:17-6:17", "M 8:19-8:19"],
+      4,
+    ],
+    [
+      "L!OpT(1)",
+      "In computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 5, col 18 to line 5, col 18 of module T",
+      ["M 4:1-4:27", "T 5:11-5:18", "T 5:18-5:18"],
+      2,
+    ],
+  ])(
+    "enters the literal argument of Next == %s where its parameter stands as an action, as TLC's Tool#getNextStatesAppl enters a LazyValue",
+    async (next, message, positions, generatedStates) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+          coverage,
+          loadModule: (name) =>
+            name === "T"
+              ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nOpT(p) == Stp \\/ p\n===="
+              : undefined,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+          result.generatedStates,
+        ];
+      };
+      const expected = [`${UNEXPECTED_EXCEPTION}${message}`, positions, generatedStates];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    ["Op(1)", "1"],
+    ['Op("a")', "line 9, col 19 to line 9, col 21 of module M"],
+    ["L!OpT(1)", "1"],
+  ])(
+    "enters the literal argument of ENABLED %s, as TLC's Tool#enabled enters a LazyValue",
+    async (call, node) => {
+      const getMessage = async (coverage: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == Stp\nInv == ENABLED ${call}\n====`,
+            config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nOpT(p) == Stp \\/ p\n===="
+                : undefined,
+          })
+        ).failure?.message;
+      const expected = `Evaluating invariant Inv failed.\nAttempted to compute ENABLED on a non-boolean expression.\n${node}`;
+      expect([await getMessage(undefined), await getMessage(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    [
+      "x < 9 /\\ Pre(1)",
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n1`,
+      ["M 9:9-9:23", "M 9:9-9:13", "M 9:18-9:23", "M 6:11-6:21", "M 6:11-6:11", "M 9:22-9:22"],
+    ],
+    [
+      "x < 9 /\\ Conj(1)",
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 5, col 22 to line 5, col 22 of module M`,
+      ["M 9:9-9:24", "M 9:9-9:13", "M 9:18-9:24", "M 5:12-5:22", "M 5:12-5:17"],
+    ],
+    [
+      'Pre("a")',
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found "a".\nline 6, col 11 to line 6, col 11 of module M`,
+      ["M 6:11-6:21", "M 6:11-6:11"],
+    ],
+    [
+      "Stp",
+      "ENABLED Pre(1)",
+      "Attempted to compute ENABLED on a non-boolean expression.\n1",
+      [
+        "M 8:9-8:13",
+        "M 10:8-10:21",
+        "M 10:16-10:21",
+        "M 6:11-6:21",
+        "M 6:11-6:11",
+        "M 10:20-10:20",
+      ],
+    ],
+    [
+      "Stp",
+      "ENABLED Conj(1)",
+      "Attempted to compute ENABLED on a non-boolean expression.\n1",
+      [
+        "M 8:9-8:13",
+        "M 10:8-10:22",
+        "M 10:16-10:22",
+        "M 5:12-5:22",
+        "M 5:12-5:17",
+        "M 5:22-5:22",
+        "M 10:21-10:21",
+      ],
+    ],
+  ])(
+    "enters a literal argument that stands as a conjunct, with Next == %s and Inv == %s, until every variable is assigned, as TLC does",
+    async (next, invariant, message, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const failure = (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nConj(p) == x' = 1 /\\ p\nPre(p) == p /\\ x' = 1\nIConj(p) == x = 0 /\\ p\nInit == x = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+            config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+            coverage,
+          })
+        ).failure;
+        return [
+          failure?.message,
+          failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+        ];
+      };
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([
+        [message, positions],
+        [message, positions],
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "LET I2 == Init IN I2",
       "I2",
       "6, col 13 to line 6, col 14",

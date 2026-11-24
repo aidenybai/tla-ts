@@ -682,6 +682,9 @@ const visitDefined = (
       const thunkNode = replay.coverage?.values.get(binding) ?? node;
       return visit(replay, binding.expression, items, binding.scope, partial, thunkNode);
     }
+    if (binding?.kind === "Value" && binding.argument !== undefined) {
+      return visit(replay, binding.argument, items, scope, partial, node);
+    }
     if (
       binding?.kind === "Operator" &&
       binding.operator.kind === "Closure" &&

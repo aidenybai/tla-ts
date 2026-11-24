@@ -873,6 +873,10 @@ const compileIdentifier = (
       );
       return;
     }
+    // Tool#getNextStatesAppl enters the LazyValue that Tool#getOpContext binds a literal argument to.
+    if (binding?.kind === "Value" && binding.argument !== undefined) {
+      throw createRunError(run, getRelationMessage(run, binding.argument));
+    }
     if (
       binding ||
       !definition ||
