@@ -30,7 +30,6 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
-  chargeEquality,
   chargeFunctionConstruction,
   chargeSetOperation,
   chargeSize,
@@ -480,14 +479,27 @@ const bindSelf = (scope: Scope | undefined, name: string, value: Value): Scope =
   parent: scope,
 });
 
-export const bindPattern = (scope: Scope | undefined, pattern: BoundPattern, value: Value) => {
+const describeArgumentMismatch = (pattern: BoundPattern & { kind: "Tuple" }) => {
+  const range = pattern.ranges?.[0];
+  return `Argument mismatch in operator application.${range ? formatRange(range) : ""}`;
+};
+
+const describeNonTupleFilterElement = (pattern: BoundPattern & { kind: "Tuple" }, element: Value) =>
+  `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`;
+
+export const bindPattern = (
+  scope: Scope | undefined,
+  pattern: BoundPattern,
+  value: Value,
+  describeMismatch: (
+    pattern: BoundPattern & { kind: "Tuple" },
+    value: Value,
+  ) => string = describeArgumentMismatch,
+) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);
   if (!elements || elements.length !== pattern.names.length) {
-    const range = pattern.ranges?.[0];
-    throw new TlaEvaluationError(
-      `Argument mismatch in operator application.${range ? formatRange(range) : ""}`,
-    );
+    throw new TlaEvaluationError(describeMismatch(pattern, value));
   }
   return pattern.names.reduce<Scope | undefined>(
     (current, name, index) => bindValue(current, name, elements[index]),
@@ -1942,8 +1954,6 @@ const getTaggedValueTest = (expression: Expression): ((value: Value) => boolean)
   switch (expression.kind) {
     case "SetEnumeration":
       return () => true;
-    case "FunctionConstruction":
-      return (value) => typeof value === "object" && value.kind === "Function";
     case "SetMap":
       return isReducibleSet;
     case "SetFilter":
@@ -2378,23 +2388,6 @@ const compileApply = (
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
   if (
     coverage &&
-    combine &&
-    (expression.operator === "=" || expression.operator === "#") &&
-    args.length === 2 &&
-    isValueArgument(args[0], environment) &&
-    isValueArgument(args[1], environment)
-  ) {
-    const left = getEvaluator(args[0], environment);
-    const right = getEvaluator(args[1], environment);
-    return (context) => {
-      const leftValue = left(context);
-      const rightValue = right(context);
-      if (typeof leftValue === "object") chargeEquality(coverage, leftValue, rightValue);
-      return combine(leftValue, rightValue);
-    };
-  }
-  if (
-    coverage &&
     global?.kind === "Builtin" &&
     (global.name === "\\in" || global.name === "\\notin") &&
     args.length === 2 &&
@@ -2747,10 +2740,11 @@ const compileFunctionConstruction = (
       const domain = getBoundsDomain(bounds, context);
       const value = build(domain, context);
       const sets = getBoundSets(bounds, domain);
-      const isConverted =
-        (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
-      if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
-        chargeFunctionConstruction(coverage, coverage.current, sets);
+      const isCounted = coverage.current >= 0 && coverage.covered.has(expression);
+      if (isCounted && typeof value === "object" && value.kind === "Function") {
+        value.costModel = coverage.costModels[coverage.current];
+        if (sets.every(isReducibleSet))
+          chargeFunctionConstruction(coverage, coverage.current, sets);
       }
       return value;
     };
@@ -2835,15 +2829,12 @@ export const getLazyFilter = (
     node: number,
   ): RebindableFilteredSet => {
     const test = (element: Value, isMember: boolean) => {
-      if (
-        pattern.kind === "Tuple" &&
-        getSequenceElements(element)?.length !== pattern.names.length
-      ) {
-        throw new TlaEvaluationError(
-          `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
-        );
-      }
-      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
+      const value = evaluator(
+        withScope(
+          context,
+          bindPattern(context.scope, pattern, element, describeNonTupleFilterElement),
+        ),
+      );
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
@@ -3018,6 +3009,8 @@ const compileSetComprehension = (
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
   const coverage = environment.coverage;
+  const describeNonTupleChoice = () =>
+    `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`;
   const choose = (
     context: Context,
     elements: ReturnType<typeof getQuantifierElements>,
@@ -3027,15 +3020,7 @@ const compileSetComprehension = (
     const pattern = expression.pattern;
     someElement(elements, (element) => {
       enumerator?.next();
-      if (
-        pattern.kind === "Tuple" &&
-        getSequenceElements(element)?.length !== pattern.names.length
-      ) {
-        throw new TlaEvaluationError(
-          `Attempted to compute the value of an expression of form\nCHOOSE <<x1, ... , xN>> \\in S: P, but S was not a set\nof N-tuples.\n${describeRange(expression)}`,
-        );
-      }
-      const scope = bindPattern(context.scope, pattern, element);
+      const scope = bindPattern(context.scope, pattern, element, describeNonTupleChoice);
       if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
       chosen = getBoundValue(pattern, scope);
       return true;

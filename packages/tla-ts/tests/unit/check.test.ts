@@ -9970,6 +9970,286 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a function searched for in a set of records",
+      '[i \\in {"a"} |-> 1] \\in {[a |-> 1]}',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 53 of module M: 1",
+        "|line 5, col 19 to line 5, col 37 of module M: 1:2",
+        "|line 5, col 43 to line 5, col 53 of module M: 1",
+      ],
+    ],
+    [
+      "a function compared with a record inside tuples",
+      '<<[a |-> 1]>> # <<[i \\in {"a"} |-> 1]>>',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 19 to line 5, col 57 of module M: 1",
+        "|line 5, col 19 to line 5, col 31 of module M: 1",
+        "|line 5, col 35 to line 5, col 57 of module M: 1",
+        "||line 5, col 37 to line 5, col 55 of module M: 1:2",
+      ],
+    ],
+    [
+      "a function a tuple is compared with",
+      "<<1, 2>> = [i \\in {1, 2} |-> i]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 49 of module M: 1",
+        "|line 5, col 19 to line 5, col 26 of module M: 1",
+        "|line 5, col 30 to line 5, col 49 of module M: 1:4",
+        "||line 5, col 48 to line 5, col 48 of module M: 2",
+        "||line 5, col 37 to line 5, col 42 of module M: 1:3",
+      ],
+    ],
+    [
+      "a function a record is compared with",
+      '[a |-> 1] = [i \\in {"a"} |-> 1]',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 49 of module M: 1",
+        "|line 5, col 19 to line 5, col 27 of module M: 1",
+        "|line 5, col 31 to line 5, col 49 of module M: 1:2",
+      ],
+    ],
+    [
+      "a function checked against a record set",
+      '[i \\in {"a"} |-> 1] \\in [a : {1}]',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 51 of module M: 1",
+        "|line 5, col 19 to line 5, col 37 of module M: 1:2",
+        "|line 5, col 43 to line 5, col 51 of module M: 1",
+      ],
+    ],
+    [
+      "a function checked against a product",
+      "[i \\in {1, 2} |-> i] \\in {1} \\X {2}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 53 of module M: 1",
+        "|line 5, col 19 to line 5, col 38 of module M: 1:4",
+        "||line 5, col 37 to line 5, col 37 of module M: 2",
+        "||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "|line 5, col 44 to line 5, col 53 of module M: 1",
+      ],
+    ],
+    [
+      "a function Len converts",
+      "Len([i \\in {1, 2} |-> i]) = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 47 of module M: 1",
+        "|line 5, col 19 to line 5, col 43 of module M: 1",
+        "||line 5, col 23 to line 5, col 42 of module M: 1:4",
+        "|||line 5, col 41 to line 5, col 41 of module M: 2",
+        "|||line 5, col 30 to line 5, col 35 of module M: 1:3",
+      ],
+    ],
+    [
+      "a function Head converts",
+      "Head([i \\in {1, 2} |-> i]) = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 48 of module M: 1",
+        "|line 5, col 19 to line 5, col 44 of module M: 1",
+        "||line 5, col 24 to line 5, col 43 of module M: 1:4",
+        "|||line 5, col 42 to line 5, col 42 of module M: 2",
+        "|||line 5, col 31 to line 5, col 36 of module M: 1:3",
+      ],
+    ],
+    [
+      "a function concatenated with a tuple",
+      "[i \\in {1, 2} |-> i] \\o <<3>> # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 54 of module M: 1",
+        "|line 5, col 19 to line 5, col 47 of module M: 1",
+        "||line 5, col 19 to line 5, col 38 of module M: 1:4",
+        "|||line 5, col 37 to line 5, col 37 of module M: 2",
+        "|||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "||line 5, col 43 to line 5, col 47 of module M: 1",
+        "|line 5, col 51 to line 5, col 54 of module M: 1",
+      ],
+    ],
+    [
+      "a function Append converts",
+      "Append([i \\in {1, 2} |-> i], 3) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 56 of module M: 1",
+        "|line 5, col 19 to line 5, col 49 of module M: 1",
+        "||line 5, col 26 to line 5, col 45 of module M: 1:4",
+        "|||line 5, col 44 to line 5, col 44 of module M: 2",
+        "|||line 5, col 33 to line 5, col 38 of module M: 1:3",
+        "|line 5, col 53 to line 5, col 56 of module M: 1",
+      ],
+    ],
+    [
+      "a drawn function a tuple is compared with",
+      "\\E f \\in [{1, 2} -> {3}] : <<3, 3>> = f",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 57 of module M: 1",
+        "|line 5, col 46 to line 5, col 57 of module M: 1",
+        "|line 5, col 28 to line 5, col 42 of module M: 1:7",
+        "||line 5, col 29 to line 5, col 34 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+      ],
+    ],
+    [
+      "a drawn function a record is compared with",
+      '\\E f \\in [{"a"} -> {3}] : [a |-> 3] = f',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 57 of module M: 1",
+        "|line 5, col 45 to line 5, col 57 of module M: 1",
+        "|line 5, col 28 to line 5, col 41 of module M: 1:5",
+        "||line 5, col 29 to line 5, col 33 of module M: 1",
+        "||line 5, col 38 to line 5, col 40 of module M: 1:2",
+      ],
+    ],
+    [
+      "a drawn function checked against a record set",
+      '\\E f \\in [{"a", "b"} -> {3}] : f \\in [a : {3}, b : {3}]',
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 73 of module M: 1",
+        "|line 5, col 50 to line 5, col 73 of module M: 1",
+        "|line 5, col 28 to line 5, col 46 of module M: 1:7",
+        "||line 5, col 29 to line 5, col 38 of module M: 1",
+        "||line 5, col 43 to line 5, col 45 of module M: 1:5",
+      ],
+    ],
+    [
+      "a function on a filtered domain that Len converts",
+      "Len([i \\in {j \\in {1, 2} : TRUE} |-> i]) = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 62 of module M: 1",
+        "|line 5, col 19 to line 5, col 58 of module M: 1",
+        "||line 5, col 23 to line 5, col 57 of module M: 1:4",
+        "|||line 5, col 56 to line 5, col 56 of module M: 2",
+        "|||line 5, col 30 to line 5, col 50 of module M: 1:3",
+        "||||line 5, col 46 to line 5, col 49 of module M: 2",
+        "||||line 5, col 37 to line 5, col 42 of module M: 1:3",
+      ],
+    ],
+    [
+      "a function SubSeq converts",
+      "SubSeq([i \\in {1, 2, 3} |-> i], 1, 2) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 62 of module M: 1",
+        "|line 5, col 19 to line 5, col 55 of module M: 1",
+        "||line 5, col 26 to line 5, col 48 of module M: 1:6",
+        "|||line 5, col 47 to line 5, col 47 of module M: 3",
+        "|||line 5, col 33 to line 5, col 41 of module M: 1:4",
+        "|line 5, col 59 to line 5, col 62 of module M: 1",
+      ],
+    ],
+    [
+      "a function checked against Seq(S)",
+      "[i \\in {1, 2} |-> i] \\in Seq({1, 2})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 54 of module M: 1",
+        "|line 5, col 19 to line 5, col 38 of module M: 1:4",
+        "||line 5, col 37 to line 5, col 37 of module M: 2",
+        "||line 5, col 26 to line 5, col 31 of module M: 1:3",
+        "|line 5, col 44 to line 5, col 54 of module M: 1",
+      ],
+    ],
+    [
+      "a drawn function Len converts",
+      "\\E f \\in [{1, 2} -> {3}] : Len(f) = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 55 of module M: 1",
+        "|line 5, col 46 to line 5, col 55 of module M: 1",
+        "|line 5, col 28 to line 5, col 42 of module M: 1:7",
+        "||line 5, col 29 to line 5, col 34 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+      ],
+    ],
+    [
+      "a function Tail converts",
+      "Tail([i \\in {1, 2} |-> i]) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 51 of module M: 1",
+        "|line 5, col 19 to line 5, col 44 of module M: 1",
+        "||line 5, col 24 to line 5, col 43 of module M: 1:4",
+        "|||line 5, col 42 to line 5, col 42 of module M: 2",
+        "|||line 5, col 31 to line 5, col 36 of module M: 1:3",
+        "|line 5, col 48 to line 5, col 51 of module M: 1",
+      ],
+    ],
+    [
+      "a function a tuple is concatenated with",
+      "<<0>> \\o [i \\in {1, 2} |-> i] # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 54 of module M: 1",
+        "|line 5, col 19 to line 5, col 47 of module M: 1",
+        "||line 5, col 19 to line 5, col 23 of module M: 1",
+        "||line 5, col 28 to line 5, col 47 of module M: 1:4",
+        "|||line 5, col 46 to line 5, col 46 of module M: 2",
+        "|||line 5, col 35 to line 5, col 40 of module M: 1:3",
+        "|line 5, col 51 to line 5, col 54 of module M: 1",
+      ],
+    ],
+    [
+      "a function CHOOSE binds to a tuple pattern",
+      "(CHOOSE <<a, b>> \\in {[i \\in {1, 2} |-> i]} : TRUE) # <<>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 76 of module M: 1",
+        "|line 5, col 20 to line 5, col 68 of module M: 1",
+        "||line 5, col 65 to line 5, col 68 of module M: 1",
+        "||line 5, col 40 to line 5, col 61 of module M: 1:1",
+        "|||line 5, col 41 to line 5, col 60 of module M: 1:4",
+        "||||line 5, col 59 to line 5, col 59 of module M: 2",
+        "||||line 5, col 48 to line 5, col 53 of module M: 1:3",
+        "|line 5, col 73 to line 5, col 76 of module M: 1",
+      ],
+    ],
+    [
+      "a function converted twice",
+      "LET f == [i \\in {1, 2} |-> i] IN <<1, 2>> = f /\\ Len(f) = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1:6",
+        "|line 5, col 46 to line 5, col 46 of module M: 2",
+        "|line 5, col 35 to line 5, col 40 of module M: 1:3",
+        "line 5, col 52 to line 5, col 77 of module M: 1",
+      ],
+    ],
+    [
+      "a drawn function checked against a product",
+      "\\E f \\in [{1, 2} -> {3}] : f \\in {3} \\X {3}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 46 to line 5, col 61 of module M: 1",
+        "|line 5, col 28 to line 5, col 42 of module M: 1:7",
+        "||line 5, col 29 to line 5, col 34 of module M: 1",
+        "||line 5, col 39 to line 5, col 41 of module M: 1:5",
+      ],
+    ],
+  ])(
+    "charges the length of %s, as FcnRcdValue#toTuple and FcnRcdValue#toRcd charge its cost model",
+    async (_name, body, rows) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ ${body}\nInv == TRUE\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(lines?.at(-1)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "an equality",
       "((0..1) \\X {1}) = {1}",
       [

@@ -1068,6 +1068,21 @@ export const toFunctionRecord = (value: FunctionValue | LazyFunctionValue) => {
   return toFiniteFunction(value);
 };
 
+const chargeConversionFromFunction = (value: FunctionValue | LazyFunctionValue) => {
+  if (value.kind !== "Function") return;
+  const costModel = value.costModel;
+  // FcnRcdValue#toTuple and FcnRcdValue#toRcd charge a function only when its domain isn't an interval.
+  if (
+    costModel === undefined ||
+    value.functionClass !== undefined ||
+    getDomainInterval(value.domain) !== undefined
+  ) {
+    return;
+  }
+  stopFirstAttempt();
+  costModel.secondary[costModel.node] += value.range.length;
+};
+
 const toTlcFunction = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   const functionValue = toFunctionRecord(value);
@@ -1082,7 +1097,9 @@ const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   forgetOwnWrittenOrder(value);
   const functionValue = toFiniteFunction(value);
-  return isRecordDomain(functionValue.domain) ? functionValue : undefined;
+  if (!isRecordDomain(functionValue.domain)) return undefined;
+  chargeConversionFromFunction(value);
+  return functionValue;
 };
 
 const compareModelValueWith = (modelValue: ModelValue, other: Value, isEquality: boolean) => {
@@ -2212,10 +2229,13 @@ const enumerateSet = (
         throw createAttemptError(describeUnenumerableFunctionSet, "range R", value.range);
       }
       const range = domain.length === 0 ? [] : getElements(value.range);
-      return getCartesianProduct(
-        domain.map(() => range),
-        isBounded,
-      ).map((combination): Value => createSortedFunction(domain, combination));
+      return setCostModels(
+        getCartesianProduct(
+          domain.map(() => range),
+          isBounded,
+        ).map((combination) => createSortedFunction(domain, combination)),
+        value.cost,
+      );
     }
     case "RecordSet": {
       if (!isVersion174 && isEmptySet(value)) return [];
@@ -2798,14 +2818,14 @@ const getNextElement = (stream: ElementStream): Value | undefined => {
         else restartPart(stream, index);
       }
       const set = stream.set;
-      return set.kind === "FunctionSet"
-        ? createSortedFunction(stream.domain, elements)
-        : setCostModel(
-            set.kind === "RecordSet"
-              ? createSortedRecord(set.names, elements)
-              : createTuple(elements),
-            stream.costModel,
-          );
+      return setCostModel(
+        set.kind === "FunctionSet"
+          ? createSortedFunction(stream.domain, elements)
+          : set.kind === "RecordSet"
+            ? createSortedRecord(set.names, elements)
+            : createTuple(elements),
+        stream.costModel,
+      );
     }
     case "Concatenated":
       return getNextElement(stream.left) ?? getNextElement(stream.right);
@@ -3191,14 +3211,14 @@ const getNextChargedElement = (charges: ChargeTable, stream: ChargedStream): Val
         else restartChargedPart(charges, stream, index);
       }
       const set = stream.set;
-      return set.kind === "FunctionSet"
-        ? createSortedFunction(stream.domain, elements)
-        : setCostModel(
-            set.kind === "RecordSet"
-              ? createSortedRecord(set.names, elements)
-              : createTuple(elements),
-            stream.costModel,
-          );
+      return setCostModel(
+        set.kind === "FunctionSet"
+          ? createSortedFunction(stream.domain, elements)
+          : set.kind === "RecordSet"
+            ? createSortedRecord(set.names, elements)
+            : createTuple(elements),
+        stream.costModel,
+      );
     }
     case "ChargedUnion":
       charges.secondary[stream.node]++;
@@ -3928,7 +3948,7 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
-export const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
 
 // TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
 const getAppliedSequenceElements = (value: LazyFunctionValue) => {
@@ -3964,7 +3984,9 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     }
   }
   const functionValue = toFiniteFunction(value);
-  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
+  if (!isSequenceDomain(functionValue.domain)) return undefined;
+  chargeConversionFromFunction(value);
+  return functionValue.range;
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
@@ -4198,6 +4220,7 @@ const getRecordSetMember = (element: Value, set: RecordSetValue) => {
     if (isModelValue(element)) return isModelValueMember(element, set);
     throw createAttemptError(describeNonRecordMember, element, set);
   }
+  chargeConversionFromFunction(functionValue);
   return functionValue.domain.length === set.names.length && functionValue;
 };
 

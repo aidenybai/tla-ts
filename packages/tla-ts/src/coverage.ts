@@ -27,7 +27,6 @@ import {
   drainChargedSet,
   getCardinality,
   getChargedSet,
-  getDomainInterval,
   getDrawnSet,
   getStreamedElements,
   getValueNode,
@@ -38,7 +37,6 @@ import {
   isCostedSet,
   isElementOfSetLikeTlc,
   isReducibleSet,
-  isSequenceDomain,
   markStreamedSet,
   type CostedSetValue,
   type IntervalValue,
@@ -983,26 +981,6 @@ export const getSubstitutionNode = (
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = getValueNode(coverage, value);
   if (node !== undefined) coverage.secondary[node] += cost;
-};
-
-export const chargeEquality = (coverage: Coverage, left: Value, right: Value) => {
-  if (
-    typeof left !== "object" ||
-    left.kind !== "Function" ||
-    typeof right !== "object" ||
-    right.kind !== "Function" ||
-    right.functionClass !== undefined ||
-    getDomainInterval(right.domain) !== undefined
-  ) {
-    return;
-  }
-  // FcnRcdValue#toTuple and FcnRcdValue#toRcd charge a function only when its domain isn't an interval.
-  if (
-    (left.functionClass === "tuple" && isSequenceDomain(right.domain)) ||
-    (left.functionClass === "record" && right.domain.every((key) => typeof key === "string"))
-  ) {
-    costCoverage(coverage, right, right.range.length);
-  }
 };
 
 export const chargeSetOperation = (
