@@ -702,7 +702,8 @@ export const runSmtlibScript = (
       for (const init of state.tacticInits) init();
       return checkWithStrategy(tactic, getGoal(state.isSolverProducingModels));
     } catch (error) {
-      if (!(error instanceof SmtUnsupportedError)) throw error;
+      // Z3's qffd never runs the smt kernel, so the kernel's answer can't stand in for it.
+      if (!(error instanceof SmtUnsupportedError) || strategy === "qffd") throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
       );

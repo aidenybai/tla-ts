@@ -2557,6 +2557,19 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toThrow(SmtUnsupportedError);
   });
 
+  it("answers for the parallel qffd of QF_FD with the smt kernel only once the solver is incremental", () => {
+    const lines = [
+      "(set-option :parallel.enable true)",
+      "(set-logic QF_FD)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+    ];
+    expect(() => run([...lines, "(assert (> x y))", "(check-sat)"])).toThrow(SmtUnsupportedError);
+    expect(
+      run([...lines, "(push)", "(assert (> x y))", "(check-sat)", "(get-info :rlimit)"]),
+    ).toEqual(["sat", "(:rlimit 106)"]);
+  });
+
   it("checks the named assertions as assumptions and keeps the goal it gives up on", () => {
     expect(
       run([
@@ -2993,13 +3006,14 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
   });
 
   it("numbers the declarations without the one Z3 makes as it starts the smt solver", () => {
-    const getModel = (options: string[]) =>
+    const getModel = (options: string[], scopes: string[] = []) =>
       run([
         ...options,
         "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
         "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
         "(declare-const e0 C)",
         "(declare-const e1 D)",
+        ...scopes,
         "(check-sat)",
         "(get-model)",
       ]);
@@ -3016,9 +3030,9 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ];
     expect(getModel(["(set-logic QF_FD)"])).toEqual(getExpected("k5", "d2"));
     expect(getModel(["(set-logic QF_DT)"])).toEqual(getExpected("k1", "d5"));
-    expect(getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"])).toEqual(
-      getExpected("k1", "d5"),
-    );
+    expect(
+      getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"], ["(push)"]),
+    ).toEqual(getExpected("k1", "d5"));
   });
 
   it("keeps the 1-bit zero Z3 makes as it starts the smt solver", () => {
