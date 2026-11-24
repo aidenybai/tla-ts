@@ -16,7 +16,6 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
-  describeRange,
   bindLazyArguments,
   bindDefinitions,
   bindOperatorArguments,
@@ -62,12 +61,12 @@ import {
   findChangedVariable,
   getCaseGuardMessage,
   getCaseOtherMessage,
-  getComputation,
   getEnabledFailure,
   getFunctionResultMessage,
   getIfConditionMessage,
   getImpliesConditionMessage,
   getNonFunctionMessage,
+  getNotEnumerableMessage,
   getRelationMessage,
   holdsValue,
   isAssignedShortcut,
@@ -522,12 +521,8 @@ const compileMembership = (
       expression.operator === "\\subseteq"
         ? { kind: "Subset", base: evaluated, cost: undefined }
         : evaluated;
-    if (!isTlcEnumerable(value)) {
-      const message = run.isEnabled
-        ? "The right side of \\IN is not enumerable."
-        : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.`;
-      throw createRunError(run, `${message}\n${describeRange(expression)}`);
-    }
+    if (!isTlcEnumerable(value))
+      throw createRunError(run, getNotEnumerableMessage(run, expression));
     if (run.generator) {
       const elements = getStreamedElements(value);
       for (const element of getRandomSubset(

@@ -1809,6 +1809,39 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    [
+      "Start == x \\in Nat /\\ x < 1\nNext == Up",
+      "INIT Start\nNEXT Next",
+      "In computing initial states, the right side of \\IN is not enumerable.\nline 6, col 10 to line 6, col 18 of module M",
+    ],
+    [
+      "Next == x' \\in Nat /\\ x' < 1",
+      "INIT Init\nNEXT Next",
+      "In computing next states, the right side of \\IN is not enumerable.\nline 6, col 9 to line 6, col 18 of module M",
+    ],
+    [
+      "Next == \\E s \\in {Nat} : x' \\in s",
+      "INIT Init\nNEXT Next",
+      "In computing next states, the right side of \\IN is not enumerable.\nline 6, col 26 to line 6, col 33 of module M",
+    ],
+    [
+      "Next == Up\nInv == ENABLED (x' \\in Nat)",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "The right side of \\IN is not enumerable.\nline 7, col 17 to line 7, col 26 of module M",
+    ],
+  ])(
+    "words a set it can't enumerate in %j under coverage like TLC",
+    async (definitions, config, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nUp == x < 2 /\\ x' = x + 1\n${definitions}\n====`,
+        config: `${config}\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+      });
+      expect(result.failure?.message).toContain(message);
+    },
+  );
+
+  it.each([
     ["3", "Attempted to compute ENABLED on a non-boolean expression.\n3"],
     [
       "x + 3",

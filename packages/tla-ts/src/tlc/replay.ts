@@ -320,6 +320,11 @@ export const getIfConditionMessage = (run: RunKind, value: Value, expression: Ex
   return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
 
+export const getNotEnumerableMessage = (run: RunKind, expression: Expression) =>
+  run.isEnabled
+    ? `The right side of \\IN is not enumerable.\n${describeRange(expression)}`
+    : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.\n${describeRange(expression)}`;
+
 export const getNonFunctionMessage = (run: RunKind, value: Value, expression: Expression) =>
   `In computing ${getComputation(run)}, a non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
 
@@ -792,7 +797,7 @@ const visitAssignment = (
     );
   }
   if (!isTlcEnumerable(set))
-    throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
+    throw createRunError(replay, getNotEnumerableMessage(replay, expression));
   const generator = replay.generator;
   const streamed =
     replay.coverage && !generator ? streamChargedSet(replay.coverage, set) : undefined;
