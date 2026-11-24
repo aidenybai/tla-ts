@@ -2249,7 +2249,6 @@ const findLazyPart = (value: Value, isAnyLazy: boolean) => {
 
 export const hasLazyPart = (value: Value) => findLazyPart(value, false);
 
-// TLC's sort fails when it compares ANY, so a product holding ANY is sorted with TLC's comparisons.
 const hasLazyValue = (values: Value[]) => {
   for (let index = 0; index < values.length; index++) {
     if (findLazyPart(values[index], true)) return true;

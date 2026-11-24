@@ -605,7 +605,6 @@ const searchStates = (
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
     const callStack = tracing.callStack;
     const viewTracing = createViewTracingEnvironment(tracing);
-    // TLC reports a FingerprintException from the VIEW of a state that DoInitFunctor or Worker fingerprints with an empty call stack.
     const getReplayedFingerprintState = (state: Value[]) => {
       try {
         return getFingerprintState(state, viewTracing);
@@ -616,7 +615,6 @@ const searchStates = (
           callStack.isFrozen = true;
           callStack.fingerprint = fingerprint;
         }
-        // TLCStateMut#fingerPrint deep-normalizes the state before the VIEW, and a set fails to sort where its fingerprint would.
         if (!fingerprint) fingerprintReplayed(state, callStack, coverage);
         throw error;
       }

@@ -150,7 +150,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     state.every((value, position) => {
       const error = getFingerprintError(value);
       if (!error) return isSameValue(value, successor[position]);
-      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC misses the step and reports a TLC bug(5), or a NullPointerException after an initial state.
+      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC reports a TLC bug(5) or a NullPointerException.
       if (hasLazyPart(value)) throw error;
       // TLC compares a value that holds no lazy part, which fails on ANY, before StatePrinter fingerprints it.
       isEqualLikeTlc(value, successor[position]);

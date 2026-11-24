@@ -455,7 +455,7 @@ describe("evaluation errors match TLC", () => {
         config:
           "CONSTANT M1 = M1\nCONSTANT M2 = M2\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V",
       });
-      // Deviation from TLC: TLCTrace#printTrace can't compare the successor with the state it rebuilds, so TLC's second error is a NullPointerException.
+      // Deviation from TLC: TLCTrace#printTrace's second error is a NullPointerException.
       expect([
         result.failure?.message,
         result.failure?.trace.map((step) => formatValue(step.state.x)),

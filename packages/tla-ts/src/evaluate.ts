@@ -1898,7 +1898,6 @@ const getValueSources = (callStack: CallStack, values: (Value | undefined)[]) =>
     return source ? [source] : [];
   });
 
-// FcnLambdaValue#toFcnRcd heads the frames that its domain's size() and elements() add.
 const headFingerprint = (
   callStack: CallStack,
   source: Expression,
@@ -1931,7 +1930,6 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   },
 });
 
-// TLCStateMut#fingerPrint evaluates the VIEW with TLC's Tool rather than its CallStackTool, so only the state's values have sources.
 export const createViewTracingEnvironment = (tracing: Environment): Environment => ({
   ...createTracingEnvironment(tracing),
   callStack: {
