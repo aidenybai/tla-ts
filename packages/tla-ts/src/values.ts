@@ -336,7 +336,6 @@ const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key ===
 
 const SELF_COMPARED_FLAG = 1;
 
-// A sorted domain holds its untyped model values first, and its other keys compare only with keys of their own kind, so its last key shows whether any key is a set or a function.
 const hasCompoundKeys = (domain: Value[]) => {
   if (domain.length === 0) return false;
   const last = domain[domain.length - 1];
@@ -1383,7 +1382,6 @@ const sortPairsLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
   }
 };
 
-// FcnLambdaValue#toFcnRcd normalizes the function it builds.
 export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
   sortPairsLikeFcnRcdValue(domain, range);
   return createSortedFunction(domain, range);
@@ -4755,7 +4753,6 @@ const createBoundNonMemberError = (
     ),
   );
 
-// FcnLambdaValue#apply binds its parameters to the elements of the tuple that toTuple returns, so a function converted here isn't converted again when bound.
 export const toBoundTuple = (value: Value, elements: Value[]) =>
   typeof value === "object" && value.kind === "Function" && value.functionClass === "tuple"
     ? value
@@ -5241,7 +5238,6 @@ export const getValueHash = (value: Value): number => {
     if (value.kind === "Set" && !value.isNormalized) value.isNormalized = true;
     if (value.hash === 0) {
       value.hash = computeValueHash(value);
-      // TLC's fingerPrint converts and caches every lazy part, so a fingerprinted value compares with itself without effect.
       if (value.hash !== UNFINGERPRINTABLE_HASH) value.walkFlags |= SELF_COMPARED_FLAG;
     }
     return value.hash;
