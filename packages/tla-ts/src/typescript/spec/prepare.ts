@@ -54,9 +54,9 @@ export interface Gate {
 export interface EscoreRuntime {
   // The modules that the runtime extends, which every program's spec links whole.
   modules: PreparedModule[];
-  // The runtime with the definitions that a text reads, and the leaves given without what they
+  // The runtime with the definitions that the names read, and the leaves given without what they
   // read.
-  getView: (text: string, leaves: readonly string[]) => PreparedModule;
+  getView: (names: readonly string[], leaves: readonly string[]) => PreparedModule;
   // The names that the runtime's modules declare or define, which a program's own definitions
   // avoid.
   names: ReadonlySet<string>;
@@ -142,7 +142,7 @@ const EXTENSION_TEXTS = [
 
 // The realm's tables and what building them runs, which a program's spec keeps whole, so that a
 // program sees every property the realm has, even of the built-ins it can't run.
-const REALM_ROOTS = "InitialState Intrinsics RealmProperties IntrinsicIndex";
+const REALM_ROOTS = ["InitialState", "Intrinsics", "RealmProperties", "IntrinsicIndex"];
 
 const prepare = (name: string, text: string): PreparedModule => {
   const tokens = tokenize(text);
@@ -273,9 +273,8 @@ const prepareModules = (
       ),
     };
     const definitions = isRuntime
-      ? createModuleView(valued)(
-          valued.module.definitions.map((definition) => definition.name).join(" "),
-        ).module.definitions
+      ? createModuleView(valued)(valued.module.definitions.map((definition) => definition.name))
+          .module.definitions
       : valued.module.definitions;
     return {
       ...valued,

@@ -302,6 +302,10 @@ export interface ModelPlan {
   isShareable: boolean;
   isAugmented: boolean;
   getSteps: (file: number) => string;
+  // The modules besides the runtime that the model's code extends, and its assumptions, which a
+  // program of its own compiles into its code.
+  extensions: readonly string[];
+  assumptions: readonly string[];
   finish: (compiled: EscoreSpec, shared?: number) => EscoreModel;
 }
 
@@ -1629,14 +1633,11 @@ export const planModel = (
       ...(isStateless ? [] : ["ALIAS ModelAlias"]),
       "",
     ];
+    // A program shared with other files has its model in a module of its own; a program of its
+    // own compiles with the model's extensions and assumptions in its code.
     const modelCode =
       shared === undefined
-        ? (compiled.loadModule("ProgramCode") ?? "")
-            .replace(
-              "\nEXTENDS ESRuntime\n",
-              `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
-            )
-            .replace(/\n====\n$/, `\n${assumed}`)
+        ? undefined
         : `---- MODULE ProgramModel ----\nEXTENDS ProgramCode, ESCanonical\n${getModelSteps(shared, "Completed(SharedRun).s").replace(SHARED_MODEL_DEFINITIONS, "")}\n${assumed}`;
     return {
       ...compiled,
@@ -1655,7 +1656,7 @@ export const planModel = (
         ),
       ],
       loadModule: (name) =>
-        name === (shared === undefined ? "ProgramCode" : "ProgramModel")
+        name === "ProgramModel" && modelCode !== undefined
           ? modelCode
           : name === "ESCanonical"
             ? CANONICAL_MODULE
@@ -1680,6 +1681,8 @@ export const planModel = (
     isShareable: isModule && lowered === undefined && choose.length === 0 && appended.length === 0,
     isAugmented: today.isAugmented,
     getSteps: (file: number) => getModelSteps(file, "Completed(ApplyTo(RunProgram, s)).s"),
+    extensions: lowered === undefined ? ["ESCanonical"] : ["ESCanonical", "ESNative"],
+    assumptions,
     finish,
   };
 };
@@ -1715,6 +1718,8 @@ export const compileModelToEscore = (
       steps: plan.getSteps(1),
       entries: [...plan.entries],
       reads: plan.reads,
+      extensions: plan.extensions,
+      assumptions: plan.assumptions,
     }),
   );
   return { ...model, notes: [...augmented, ...model.notes] };

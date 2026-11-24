@@ -3,14 +3,9 @@ import { TlaTypeScriptError } from "../../errors";
 import { mapChildren } from "../../instances";
 import { parseModule } from "../../parser";
 import { printDefinition } from "../../printer";
+import { type CodeDefinition, forEachBodyName } from "./code-tree";
 
 const printText = (definition: OperatorDefinition) => printDefinition(definition).join("\n");
-
-interface CodeDefinition {
-  name: string;
-  arity: number;
-  text: string;
-}
 
 // The steps whose results suspend the body that evaluates them: a yield, a delegated yield, an
 // await, an async generator's return, which awaits its value, and the disposal of an await using
@@ -41,13 +36,32 @@ const apply = (operator: string, args: Expression[]): Expression => ({
   location: LOCATION,
 });
 
-// The names a definition's text reads, with LoopN for each loop N that it runs, whose iterations
-// the runtime runs through LoopIteration.
-const getReferencedNames = (text: string) =>
-  new Set([
-    ...(text.match(/\b[A-Za-z_]\w*\b/g) ?? []),
-    ...[...text.matchAll(/\bid \|-> (\d+), labels \|->/g)].map((match) => `Loop${match[1]}`),
-  ]);
+// The names a definition's body reads, with LoopN for each loop N that it runs, whose iterations
+// the runtime runs through LoopIteration: each capitalized word of its text, as the names of
+// definitions and steps are, and of a loop's record [id |-> N, labels |-> ...], LoopN.
+const getReferencedNames = (definition: CodeDefinition) => {
+  const names = new Set<string>();
+  forEachBodyName(definition, (name) => names.add(name));
+  if (definition.tree === undefined) {
+    const text = definition.text ?? "";
+    for (const match of text.slice(text.indexOf("==")).matchAll(/\bid \|-> (\d+), labels \|->/g)) {
+      names.add(`Loop${match[1]}`);
+    }
+  } else addLoops(definition.tree.body, names);
+  return names;
+};
+
+const addLoops = (expression: Expression, names: Set<string>): void => {
+  if (expression.kind === "Record") {
+    expression.fields.forEach((field, position) => {
+      const next = expression.fields[position + 1];
+      if (field.name === "id" && field.value.kind === "Number" && next?.name === "labels") {
+        names.add(`Loop${field.value.text ?? field.value.value}`);
+      }
+    });
+  }
+  getChildren(expression).forEach((child) => addLoops(child, names));
+};
 
 const getNames = (expression: Expression, names = new Set<string>()): Set<string> => {
   if (expression.kind === "Identifier") names.add(expression.name);
@@ -76,7 +90,7 @@ export const suspendDefinitions = (
   const readers = new Map<string, string[]>();
   definitions.forEach((definition) => {
     if (/^Code\d+$/.test(definition.name)) return;
-    getReferencedNames(definition.text.slice(definition.text.indexOf("=="))).forEach((name) => {
+    getReferencedNames(definition).forEach((name) => {
       const names = readers.get(name);
       if (names === undefined) readers.set(name, [definition.name]);
       else names.push(definition.name);
@@ -252,11 +266,13 @@ export const suspendDefinitions = (
   };
   const transformed = definitions.map((definition) => {
     if (!suspending.has(definition.name)) return definition;
-    const parsed = parseModule(`---- MODULE Suspended ----\n${definition.text}\n====`)
-      .definitions[0];
+    const parsed =
+      definition.tree ??
+      parseModule(`---- MODULE Suspended ----\n${definition.text ?? ""}\n====`).definitions[0];
     if (parsed.kind !== "Operator") return definition;
     return {
-      ...definition,
+      name: definition.name,
+      arity: definition.arity,
       text: printText({
         ...parsed,
         body: transform(

@@ -16,7 +16,24 @@ import {
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
-import { getPatchedUnits, getTlaString } from "./units";
+import type { Expression } from "../../ast";
+import {
+  apply,
+  type CodeDefinition,
+  defineOperator,
+  forEachBodyName,
+  forEachTextName,
+  getCodeLength,
+  layOutModule,
+  num,
+  printCodeDefinition,
+  printCodeExpression,
+  ref,
+  replaceCodeChildren,
+  string,
+  tuple,
+} from "./code-tree";
+import { getPatchedUnits, isTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
@@ -59,12 +76,9 @@ export interface EscoreSteps {
   // from a file in its directory loads it, and of a name that no file of the directory has
   // rejects.
   candidates?: readonly string[];
-}
-
-interface CodeDefinition {
-  name: string;
-  arity: number;
-  text: string;
+  // The modules besides the runtime that the code extends, and the assumptions after its steps.
+  extensions?: readonly string[];
+  assumptions?: readonly string[];
 }
 
 // The most characters of a program's TLA+ code that a check parses, past which parsing alone would
@@ -91,11 +105,9 @@ const MOST_CODE_CHARACTERS = 55_000_000;
 // and with each literal sequence of numbers, such as a name's code units, a definition of its own,
 // so that a check reads each one once. A sequence of the code units of characters that a TLA+
 // string can hold is that string's units.
-const getStringUnits = (sequence: string) => {
-  const text = getTlaString(
-    (sequence.match(/\d+/g) ?? []).map((unit) => String.fromCharCode(Number(unit))).join(""),
-  );
-  return text === undefined ? undefined : `StringUnits(${text})`;
+const getStringUnits = (units: readonly number[]) => {
+  const text = units.map((unit) => String.fromCharCode(unit)).join("");
+  return isTlaString(text) ? apply("StringUnits", [string(text)]) : undefined;
 };
 
 // A long sequence of code units as runs of consecutive code points, the first of each and the code
@@ -104,80 +116,169 @@ const getStringUnits = (sequence: string) => {
 // holds. Each run's code points are all below 65536 or all from there, so that each takes one code
 // unit or two; a surrogate pair is one code point and a lone surrogate one code unit, which the
 // runs encode back to the units they came from.
-const getUnitRuns = (sequence: string) => {
-  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+const getUnitRuns = (units: readonly number[]) => {
   if (units.length < 4096 || units.some((unit) => unit > 0xffff)) return undefined;
   const starts: number[] = [];
   const ends: number[] = [];
-  let index = 0;
+  let position = 0;
   let previous = -2;
-  while (index < units.length) {
-    const unit = units[index];
-    const next = units[index + 1];
+  while (position < units.length) {
+    const unit = units[position];
+    const next = units[position + 1];
     const isPair = unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
     const codePoint = isPair ? (unit - 0xd800) * 1024 + (next - 0xdc00) + 0x10000 : unit;
-    index += isPair ? 2 : 1;
-    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = index;
+    position += isPair ? 2 : 1;
+    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = position;
     else {
       starts.push(codePoint);
-      ends.push(index);
+      ends.push(position);
     }
     previous = codePoint;
   }
   return starts.length * 16 > units.length
     ? undefined
-    : `CodeUnitsOfRuns(<<${starts.join(", ")}>>, <<${ends.join(", ")}>>)`;
+    : apply("CodeUnitsOfRuns", [tuple(starts.map(num)), tuple(ends.map(num))]);
 };
 
 // A long sequence of code units as its text's source string and the units that the string holds as
 // "?" (see getPatchedUnits), where that's shorter than the sequence.
-const getLongUnits = (sequence: string) => {
-  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+const getLongUnits = (units: readonly number[], sequence: string) => {
   if (units.length < 4096) return undefined;
   const patched = getPatchedUnits(units.map((unit) => String.fromCharCode(unit)).join(""));
-  return patched.length < sequence.length ? patched : undefined;
+  return printCodeExpression(patched).length < sequence.length ? patched : undefined;
 };
 
-const compact = (definitions: readonly CodeDefinition[]) => {
+// The units of a literal sequence of numbers, as the definition of its own that reads them.
+const getUnitsDefinition = (unitsName: string, sequence: string) => {
+  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+  return defineOperator(
+    unitsName,
+    [],
+    getStringUnits(units) ??
+      getUnitRuns(units) ??
+      getLongUnits(units, sequence) ??
+      tuple(units.map(num)),
+  );
+};
+
+// The names of the hooks, which the program's code takes the place of, as the program's own, and
+// each literal N or SV of a string, its units, as foldNames makes them.
+const foldTree = (expression: Expression): Expression => {
+  if (expression.kind === "Identifier" && HOOKS.has(expression.name)) {
+    expression.name = `Program${expression.name}`;
+  }
+  if (expression.kind === "Apply") {
+    const literal = expression.args[0];
+    if (
+      (expression.operator === "N" || expression.operator === "SV") &&
+      expression.args.length === 1 &&
+      literal.kind === "String"
+    ) {
+      const units = tuple(
+        Array.from({ length: literal.value.length }, (_, index) =>
+          num(literal.value.charCodeAt(index)),
+        ),
+      );
+      return expression.operator === "N" ? units : apply("Str", [units]);
+    }
+    if (HOOKS.has(expression.operator)) expression.operator = `Program${expression.operator}`;
+  }
+  replaceCodeChildren(expression, foldTree);
+  return expression;
+};
+
+const HOOK_NAMES = new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g");
+
+const foldDefinition = (definition: CodeDefinition): CodeDefinition => {
+  const name = HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name;
+  if (definition.tree === undefined) {
+    return {
+      name,
+      arity: definition.arity,
+      text: foldNames((definition.text ?? "").replace(HOOK_NAMES, (hook) => `Program${hook}`)),
+    };
+  }
+  definition.tree.body = foldTree(definition.tree.body);
+  return { name, arity: definition.arity, tree: { ...definition.tree, name } };
+};
+
+// Whether an expression is a literal sequence of numbers, which compact makes a definition of its
+// own.
+const isUnits = (expression: Expression) =>
+  expression.kind === "Tuple" &&
+  expression.elements.length > 0 &&
+  expression.elements.every((element) => element.kind === "Number");
+
+const compact = (definitions: readonly CodeDefinition[]): CodeDefinition[] => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
   const rename = (text: string) =>
     text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
+  const renameTree = (expression: Expression): Expression => {
+    if (expression.kind === "Identifier")
+      expression.name = merged.get(expression.name) ?? expression.name;
+    if (expression.kind === "Apply") {
+      expression.operator = merged.get(expression.operator) ?? expression.operator;
+    }
+    replaceCodeChildren(expression, renameTree);
+    return expression;
+  };
   for (const definition of definitions) {
     if (HOOKS.has(definition.name.replace(/^Program/, ""))) continue;
-    const key = `${definition.arity} ${rename(definition.text).slice(definition.name.length)}`;
+    if (definition.tree !== undefined) renameTree(definition.tree.body);
+    const text =
+      definition.tree === undefined
+        ? rename(definition.text ?? "")
+        : printCodeDefinition(definition.tree);
+    const key = `${definition.arity} ${text.slice(definition.name.length)}`;
     const first = firsts.get(key);
     if (first === undefined) firsts.set(key, definition.name);
     else merged.set(definition.name, first);
   }
   const sequences = new Map<string, string>();
+  const getUnitsName = (sequence: string) => {
+    const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
+    sequences.set(sequence, name);
+    return name;
+  };
+  // An expression with each of its literal sequences of numbers replaced by its definition's name.
+  const replaceUnits = (expression: Expression): Expression => {
+    if (isUnits(expression) && expression.kind === "Tuple") {
+      return ref(
+        getUnitsName(
+          `<<${expression.elements.map((element) => (element.kind === "Number" ? (element.text ?? String(element.value)) : "")).join(", ")}>>`,
+        ),
+      );
+    }
+    replaceCodeChildren(expression, replaceUnits);
+    return expression;
+  };
   const kept = definitions
     .filter((definition) => !merged.has(definition.name))
-    .map((definition) => ({
-      ...definition,
-      text: /^SourceText\d+$/.test(definition.name)
-        ? definition.text
-        : // The parts of a long sequence are split rather than matched by a repeated group,
-          // whose backtracking runs out of stack.
-          rename(definition.text).replace(/<<[\d, ]+>>/g, (sequence) => {
-            if (
-              !sequence
-                .slice(2, -2)
-                .split(", ")
-                .every((part) => /^\d+$/.test(part))
-            ) {
-              return sequence;
-            }
-            const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
-            sequences.set(sequence, name);
-            return name;
-          }),
-    }));
+    .map((definition) => {
+      if (definition.tree !== undefined) {
+        definition.tree.body = replaceUnits(renameTree(definition.tree.body));
+        return definition;
+      }
+      return {
+        ...definition,
+        // The parts of a long sequence are split rather than matched by a repeated group, whose
+        // backtracking runs out of stack.
+        text: rename(definition.text ?? "").replace(/<<[\d, ]+>>/g, (sequence) =>
+          sequence
+            .slice(2, -2)
+            .split(", ")
+            .every((part) => /^\d+$/.test(part))
+            ? getUnitsName(sequence)
+            : sequence,
+        ),
+      };
+    });
   return [
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? getLongUnits(entry[0]) ?? entry[0]}`,
+      tree: getUnitsDefinition(entry[1], entry[0]),
     })),
     ...kept,
   ];
@@ -194,10 +295,11 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   const visit = (definition: CodeDefinition) => {
     isVisited.set(definition.name, false);
     // A name inside a string, such as SourceText's, is text rather than a read.
-    for (const name of definition.text
-      .slice(definition.text.indexOf("=="))
-      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, "")
-      .match(/\b[A-Z]\w*/g) ?? []) {
+    const reads: string[] = [];
+    forEachBodyName(definition, (name, isInString) => {
+      if (!isInString) reads.push(name);
+    });
+    for (const name of reads) {
       const read = byName.get(name);
       if (read === undefined) continue;
       if (isVisited.get(name) === false) recursive.add(name);
@@ -857,7 +959,7 @@ const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostR
     ...[...text.matchAll(/(["'`])((?:(?!\1)[^\\\n]){1,100})\1/g)].map((match) => match[2]),
     "[object Object]",
   ]);
-  return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${getNumber(parseDate(string))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
+  return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${printCodeExpression(getNumber(parseDate(string)))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
 };
 
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
@@ -1097,21 +1199,20 @@ export const compileToEscore = (
         },
       ],
       runtime.resumableSteps,
-    ).map((definition) => ({
-      name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
-      arity: definition.arity,
-      text: foldNames(
-        definition.text.replace(
-          new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g"),
-          (name) => `Program${name}`,
-        ),
-      ),
-    })),
+    ).map(foldDefinition),
   );
-  const code = definitions.map((definition) => definition.text).join("\n");
-  if (code.length > MOST_CODE_CHARACTERS) {
+  const length = definitions.reduce(
+    (total, definition) =>
+      total +
+      1 +
+      (definition.tree === undefined
+        ? (definition.text ?? "").length
+        : getCodeLength(definition.tree)),
+    -1,
+  );
+  if (length > MOST_CODE_CHARACTERS) {
     throw new TlaTypeScriptError(
-      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${code.length}, which a check would parse and run past Node's default heap`,
+      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${length}, which a check would parse and run past Node's default heap`,
     );
   }
   const steps = typeof model.steps === "string" ? model.steps : model.steps(files);
@@ -1133,31 +1234,65 @@ export const compileToEscore = (
       `tla-ts can't name ${twice} in TLA+, which the program's spec defines twice or its runtime declares`,
     );
   }
+  // The names that the code, its steps, the modules they extend and the root read, of which the
+  // runtime's view keeps the definitions.
+  const names = new Set<string>();
+  const addName = (name: string) => names.add(name);
+  definitions.forEach((definition) => {
+    if (definition.tree === undefined) forEachTextName(definition.text ?? "", addName);
+    else {
+      forEachTextName(
+        [definition.name, ...definition.tree.params.map((param) => param.name)].join(" "),
+        addName,
+      );
+      forEachBodyName(definition, addName);
+    }
+  });
+  forEachTextName(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
   const view = runtime.getView(
-    `${code}\n${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
+    [...names],
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
   const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
   const ordered = sortDefinitions(definitions);
-  const module = [
+  // The module's parts in order: its text and the trees of its definitions.
+  const parts = [
     "---- MODULE ProgramCode ----",
-    "EXTENDS ESRuntime",
+    `EXTENDS ${["ESRuntime", ...(model.extensions ?? [])].join(", ")}`,
     ...ordered.sorted
       .filter((definition) => ordered.recursive.has(definition.name))
       .map(
         (definition) =>
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
-    ...ordered.sorted.map((definition) => definition.text),
+    ...ordered.sorted.map((definition) => definition.tree ?? definition.text ?? ""),
     ...stubs.map(
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
     steps,
+    ...(model.assumptions ?? []),
     "====",
     "",
-  ].join("\n");
+  ];
+  const laidOut = layOutModule("ProgramCode", parts);
+  const getText = () =>
+    parts
+      .map((part) =>
+        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
+      )
+      .join("\n");
+  const programCode: PreparedModule = {
+    name: "ProgramCode",
+    get text() {
+      return getText();
+    },
+    tokens: [],
+    module: laidOut.module,
+    levels: undefined,
+    texts: laidOut.texts,
+  };
   return {
     name: "Program",
     source: ROOT,
@@ -1165,7 +1300,7 @@ export const compileToEscore = (
       "\n",
     ),
     regions: program.regions,
-    loadModule: (name) => (name === "ProgramCode" ? module : undefined),
-    preparedModules: [...runtime.modules, view],
+    loadModule: (name) => (name === "ProgramCode" ? getText() : undefined),
+    preparedModules: [...runtime.modules, view, programCode],
   };
 };

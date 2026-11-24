@@ -515,14 +515,18 @@ const createModuleSet = (
       return file;
     }
     const preparedModule = prepared.find((item) => item.name === name);
-    const loaded = name === undefined ? undefined : (preparedModule?.text ?? loadModule?.(name));
-    const text =
+    const getLoaded = () =>
+      name === undefined ? undefined : (preparedModule?.text ?? loadModule?.(name));
+    // A prepared module's text, which a tree prints only where something reads it.
+    const getText = () =>
       name === undefined
         ? rootText
-        : (loaded ??
+        : (getLoaded() ??
           TLC_MODULE_SOURCES.get(name) ??
           SANY_STANDARD_MODULES.get(name) ??
           (rootText === undefined ? undefined : extractModule(rootText, name)));
+    const loaded = preparedModule === undefined ? getLoaded() : undefined;
+    const text = preparedModule === undefined ? getText() : undefined;
     const moduleText = preparedModule
       ? {
           getTokens: () => listTokens(preparedModule.tokens),
@@ -543,8 +547,12 @@ const createModuleSet = (
         preparedModule || name === undefined || text === undefined
           ? moduleText.getModule
           : () => parseWithSanyError(moduleText.getModule, text, name),
-      text,
-      loaded,
+      get text() {
+        return preparedModule === undefined ? text : getText();
+      },
+      get loaded() {
+        return preparedModule === undefined ? loaded : getLoaded();
+      },
       texts: preparedModule?.texts,
     };
     files.set(name ?? "", file);

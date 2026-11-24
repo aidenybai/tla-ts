@@ -114,11 +114,14 @@ const worker = new Worker(
       ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
         .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
         .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
-      // The unprepared mode reads ESCanonical and ESNative as the spec's texts rather than as the
-      // runtime prepared them.
-      const preparedModules = spec.mode === "unprepared"
-        ? compiled.preparedModules.filter((prepared) => prepared.name !== "ESCanonical" && prepared.name !== "ESNative")
-        : compiled.preparedModules;
+      // The code's text where the test changes it, in place of its tree. The unprepared mode reads
+      // ESCanonical and ESNative as the spec's texts rather than as the runtime prepared them.
+      const isChanged = changed !== compiled.loadModule("ProgramCode");
+      const preparedModules = compiled.preparedModules.filter(
+        (prepared) =>
+          (!isChanged || prepared.name !== "ProgramCode") &&
+          (spec.mode !== "unprepared" || (prepared.name !== "ESCanonical" && prepared.name !== "ESNative")),
+      );
       const result = await loaded.check({
         ...compiled,
         preparedModules,

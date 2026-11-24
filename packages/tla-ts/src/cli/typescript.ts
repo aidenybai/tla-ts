@@ -23,6 +23,7 @@ import type { TlcVersion } from "../tlc/version";
 import { parseModule } from "../parser";
 import { printModule } from "../printer";
 import { foldNames } from "../typescript/spec/library";
+import { printCodeExpression } from "../typescript/spec/code-tree";
 import { getPatchedUnits } from "../typescript/spec/units";
 import type { ProgramFile } from "../typescript/spec/specialize";
 
@@ -248,7 +249,7 @@ const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string 
   // A line's units as its string's, where that's shorter than their tuple, as it is for most lines.
   const getLineUnits = (line: string) => {
     const units = getUnits(line);
-    const patched = getPatchedUnits(line);
+    const patched = printCodeExpression(getPatchedUnits(line));
     return patched.length < units.length ? patched : units;
   };
   const getFunction = (pairs: string[]) =>
@@ -591,7 +592,7 @@ export type SharedProgram =
       characters: number;
       config: string;
       code: string;
-      view: { text: string; leaves: readonly string[] };
+      view: { names: readonly string[]; leaves: readonly string[] };
       files: (SharedFile | undefined)[];
       shown: string[];
     };
@@ -645,16 +646,16 @@ export const compileSharedProgram = async (
   const numbered: string[] = [];
   // The text and leaves of the runtime's view that the code extends, from which the group's worker
   // makes the view again.
-  const views: { text: string; leaves: readonly string[] }[] = [];
+  const views: { names: readonly string[]; leaves: readonly string[] }[] = [];
   try {
     const spec = compileToEscore(
       members.map((path) => `import ${JSON.stringify(realpathSync(path))};`).join("\n"),
       join(dirname(realpathSync(members[0])), "tla-ts-shared.mjs"),
       {
         ...runtime,
-        getView: (text, leaves) => {
-          views.push({ text, leaves });
-          return runtime.getView(text, leaves);
+        getView: (names, leaves) => {
+          views.push({ names, leaves });
+          return runtime.getView(names, leaves);
         },
       },
       true,
@@ -828,7 +829,7 @@ export const compileSharedFiles = async (
     return undefined;
   };
   try {
-    const shared = [...runtime.modules, runtime.getView(program.view.text, program.view.leaves)];
+    const shared = [...runtime.modules, runtime.getView(program.view.names, program.view.leaves)];
     const loadProgram = (name: string) => (name === "ProgramCode" ? program.code : undefined);
     const preparedModules = [
       ...shared,
