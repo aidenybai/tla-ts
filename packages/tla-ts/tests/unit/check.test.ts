@@ -9970,6 +9970,35 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a union of a tuple and a function",
+      "LET S == {<<1, 2>>} \\cup {[i \\in {1, 2} |-> i + 1]} IN Cardinality(S) = 2 /\\ (S \\X {1}) # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 69 of module M: 1",
+        "|line 5, col 28 to line 5, col 37 of module M: 1",
+        "||line 5, col 29 to line 5, col 36 of module M: 1:4",
+        "|line 5, col 44 to line 5, col 69 of module M: 1:2",
+        "||line 5, col 45 to line 5, col 68 of module M: 1:4",
+        "|||line 5, col 63 to line 5, col 67 of module M: 2",
+        "|||line 5, col 52 to line 5, col 57 of module M: 1:3",
+        "line 5, col 74 to line 5, col 110 of module M: 1",
+        "|line 5, col 74 to line 5, col 91 of module M: 1",
+        "|line 5, col 96 to line 5, col 110 of module M: 1",
+        "||line 5, col 97 to line 5, col 104 of module M: 1:6",
+        "|||line 5, col 97 to line 5, col 97 of module M: 1",
+        "|||line 5, col 102 to line 5, col 104 of module M: 1:5",
+        "||line 5, col 109 to line 5, col 110 of module M: 1",
+      ],
+    ],
+  ])(
+    "charges a product of %s once, though its sort compares values TLC charges",
+    async (_name, body, rows) => {
+      expect(await getNextCoverageLines(`x' = 0 /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
+  it.each([
+    [
       "a function searched for in a set of records",
       '[i \\in {"a"} |-> 1] \\in {[a |-> 1]}',
       [

@@ -2409,6 +2409,10 @@ const toCachedSet = (value: Value) => {
   return set;
 };
 
+const isSortedAfterCharging = (value: CostedSetValue) =>
+  (value.kind === "ProductSet" || value.kind === "FunctionSet" || value.kind === "RecordSet") &&
+  !isSortedLikeTlc(value);
+
 const toChargedSet = (
   value: CostedSetValue,
   isCached: boolean,
@@ -2418,6 +2422,7 @@ const toChargedSet = (
   if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a charged set");
   const cost = value.cost;
   const charges = cost?.charges;
+  if (charges && isSortedAfterCharging(value)) stopFirstAttempt();
   const set = charges ? charges.convertCharged(value, convert) : convert(value);
   if (isCached && cost) cost.charges = undefined;
   return set;
