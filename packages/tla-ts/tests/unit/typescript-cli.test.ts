@@ -150,6 +150,36 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // An export named as a constant of the runtime's modules, as ESCore's Empty, None, and Absent,
+  // takes a name of its own in TLA+, as one named as a definition of theirs does.
+  describe("names an export that a constant of the runtime's modules takes", () => {
+    const getModel = (last: number) =>
+      `export const Empty = (code: 0 | 1 | 2) => {\n  if (code === ${last}) throw new Error("Empty " + code);\n  return code + 1;\n};\nexport const None = (flag: boolean) => !flag;\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "empty.ts"), getModel(3));
+      expect(runNode(directory, "empty.ts").status).toBe(0);
+      const result = runCli(directory, ["empty.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "empty.ts"), getModel(2));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { Empty } from "./empty.ts"; Empty(2);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: Empty 2");
+      const result = runCli(directory, ["empty.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('the second argument was:\n"Empty 2"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
