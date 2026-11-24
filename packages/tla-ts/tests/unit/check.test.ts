@@ -13561,6 +13561,63 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "L!NxLit",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<L!NxLit line 4, col 1 to line 4, col 1 of module M>: 1:1",
+      ],
+    ],
+    [
+      "LET LK == 1 IN LK = 1 /\\ (Stp \\/ LK)",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<Next line 7, col 1 to line 7, col 4 of module M (7 24 7 44)>: 1:1",
+      ],
+    ],
+    [
+      "x < 5 /\\ (x' = x + 1 \\/ x' = x + 2 \\/ 1 = \"a\")",
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 1:1",
+        "<Next line 7, col 1 to line 7, col 4 of module M>: 2:2",
+      ],
+    ],
+    [
+      'x < 2 /\\ (x\' = x + 1 \\/ (x = 1 /\\ 1 = "a"))',
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 2:2",
+        "<Next line 7, col 1 to line 7, col 4 of module M>: 2:3",
+      ],
+    ],
+    [
+      'Stp \\/ (x = 1 /\\ x\' = 7 /\\ 1 = "a")',
+      [
+        "<Init line 6, col 1 to line 6, col 4 of module M>: 2:2",
+        "<Stp line 5, col 1 to line 5, col 3 of module M>: 2:4",
+        "<Next line 7, col 1 to line 7, col 4 of module M (7 17 7 42)>: 0:0",
+      ],
+    ],
+  ])(
+    "counts no successor of an action that fails after it produced some in Next == %s, as ModelChecker#doNext's replay for the call stack adds them only once Tool#getNextStates returns",
+    async (next, labels) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH N <- 2, v <- x\nStp == x < 2 /\\ x' = x + 1\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T"
+            ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nLit(a) == 1\nStp == v < 2 /\\ v' = v + 1\nNxLit == Stp \\/ Lit(1)\n===="
+            : undefined,
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `<${relation.label}>: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(labels);
+    },
+  );
+
   it("charges the domain of the copy EXCEPT makes of a recursive function when TLC fingerprints a state holding it, as FcnParams#elements charges each bound set", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in {0, 1, 2}] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<[g EXCEPT ![1] = 7]>>\n====",
@@ -13852,18 +13909,315 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
-  it("names an action that calls an overridden operator constant by its substitute, where TLC's Tool#getActionsAppl throws a ClassCastException", async () => {
+  it("names an action that calls an overridden operator constant by its declaration, as TLC's Tool#getActionsAppl would if its cast to an OpDefNode didn't throw a ClassCastException", async () => {
     const result = await check({
       source: OVERRIDDEN_ACTIONS,
       config: "INIT Init\nNEXT NextOp\nCONSTANT Op <- MStp\nINVARIANT Inv",
       coverage: 1,
     });
-    const label = "MStp line 12, col 11 to line 12, col 15 of module M";
+    const label = "Op line 12, col 11 to line 12, col 15 of module M";
     expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
     expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
       "Init line 9, col 1 to line 9, col 4 of module M",
-      "MStp line 6, col 1 to line 6, col 7 of module M (12 11 12 15)",
+      "Op line 3, col 10 to line 3, col 14 of module M (12 11 12 15)",
       "Inv line 13, col 1 to line 13, col 3 of module M",
+    ]);
+  });
+
+  const OVERRIDDEN_INSTANCES = new Map([
+    [
+      "T11",
+      "---- MODULE T11 ----\nEXTENDS Naturals\nVARIABLE x\nIni == x = 0\nStp(u) == u < 2 /\\ u' = u + 1\nInc(k) == x < 2 /\\ x' = x + k\nNx == x < 2 /\\ x' = x + 1\n====",
+    ],
+    ["T15", "---- MODULE T15 ----\nEXTENDS Naturals\nVARIABLE x\nK == INSTANCE T11\n===="],
+    [
+      "T16",
+      "---- MODULE T16 ----\nEXTENDS Naturals, TLC\nCONSTANT k\nVARIABLE y\nSt == y' = y + k\n====",
+    ],
+    ["T19", "---- MODULE T19 ----\nEXTENDS TLC\nTwo == 2\n===="],
+    [
+      "T20",
+      '---- MODULE T20 ----\nEXTENDS TLC\nVARIABLE y\nPr(v) == Print(<<"t20", v>>, TRUE)\n====',
+    ],
+  ]);
+
+  it.each([
+    [
+      "Next == L!Inc(1) \\/ L!Stp(x)",
+      "INIT Init\nNEXT Next\nCONSTANT Inc <- [T11] MInc\nStp <- [T11] MStp",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MInc line 6, col 1 to line 6, col 7 of module M: 2:2",
+        "L!Stp line 9, col 1 to line 9, col 1 of module M (13 21 13 28): 0:2",
+      ],
+    ],
+    [
+      "Next == L!Nx",
+      "INIT Init\nNEXT Next\nCONSTANT Nx <- [T11] MOr",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MOr line 8, col 1 to line 8, col 3 of module M (8 9 8 27): 1:2",
+        "MOr line 8, col 1 to line 8, col 3 of module M (8 34 8 52): 1:1",
+      ],
+    ],
+    [
+      "Next == L2!K!Nx",
+      "INIT Init\nNEXT Next\nCONSTANT Nx <- [T11] MNx",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MNx line 7, col 1 to line 7, col 3 of module M: 2:2",
+      ],
+    ],
+    [
+      "Spec == L!Ini /\\ [][L!Nx]_x",
+      "SPECIFICATION Spec\nCONSTANT Ini <- [T11] MIni\nNx <- [T11] MNx",
+      [
+        "MIni line 4, col 1 to line 4, col 4 of module M: 1:1",
+        "MNx line 7, col 1 to line 7, col 3 of module M: 2:2",
+      ],
+    ],
+    [
+      "Spec == LET J == INSTANCE T11 IN J!Ini /\\ [][J!Nx]_x",
+      "SPECIFICATION Spec\nCONSTANT Ini <- [T11] MIni",
+      [
+        "MIni line 4, col 1 to line 4, col 4 of module M: 1:1",
+        "J!Nx line 13, col 13 to line 13, col 13 of module M: 2:2",
+      ],
+    ],
+    [
+      'Start == x = 0 /\\ FALSE\nNext == I(1)!St \\/ I(1)!Print("a", FALSE)',
+      "INIT Start\nNEXT Next",
+      [
+        "Start line 13, col 1 to line 13, col 5 of module M: 0:1",
+        "I!St line 11, col 1 to line 11, col 4 of module M: 0:0",
+        "I!Print line 11, col 1 to line 11, col 4 of module M (14 20 14 41): 0:0",
+      ],
+    ],
+  ])(
+    "names the actions of %j as TLC does, whose lookup finds an override under an instance's SubstInNode",
+    async (definition, config, relations) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nMIni == x = 0 /\\ TRUE\nMStp(u) == u < 2 /\\ u' = u + 1 /\\ TRUE\nMInc(k) == x < 2 /\\ x' = x + k /\\ TRUE\nMNx == x < 2 /\\ x' = x + 1 /\\ TRUE\nMOr == (x < 2 /\\ x' = x + 1) \\/ (x < 1 /\\ x' = x + 2)\nL == INSTANCE T11\nL2 == INSTANCE T15\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+        config: `${config}\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `${relation.label}: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(relations);
+    },
+  );
+
+  it.each([
+    [
+      'Next == I(1)!Print("a", FALSE)',
+      "INIT Init\nNEXT Next",
+      '"a"  FALSE',
+      "The next state action Next cannot be a constant.",
+    ],
+    [
+      'Start == I(1)!Print("a", TRUE)\nNext == x\' = x',
+      "INIT Start\nNEXT Next",
+      '"a"  TRUE',
+      "The initial predicate Start cannot be a constant.",
+    ],
+  ])(
+    "rejects %j as constant, as TLC does through an instance without parameters, where it passes the Java method the instance's argument too and fails",
+    async (definition, config, print, message) => {
+      const printed: string[] = [];
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+          config,
+          onPrint: (text) => printed.push(text),
+          loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+        }),
+      ).rejects.toThrow(message);
+      expect(printed).toEqual([print]);
+    },
+  );
+
+  it.each([
+    [
+      'Next == x < 2 /\\ x\' = x + 1\nInv == I(1)!Print("a", TRUE) /\\ x < 5',
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      3,
+    ],
+    ['ASSUME I(1)!Print("a", TRUE)\nNext == x\' = x', "INIT Init\nNEXT Next", 1],
+  ])(
+    "evaluates %j as TLC does through an instance without parameters, where it passes the Java method the instance's argument too and fails",
+    async (definition, config, count) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+        config,
+        onPrint: (text) => printed.push(text),
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect([result.status, printed]).toEqual([
+        "success",
+        Array.from({ length: count }, () => '"a"  TRUE'),
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "Naturals, TLC",
+      "S == INSTANCE TLC\nJ == INSTANCE T16 WITH k <- 1, y <- x\nJ2 == INSTANCE T16 WITH k <- 1, y <- x\nP == INSTANCE T19",
+      'Next == Up \\/ Print("a", FALSE) \\/ S!Print("b", FALSE) \\/ J!Print("c", FALSE) \\/ J2!Print("d", FALSE) \\/ P!Print("e", FALSE)',
+      [
+        "Init line 8, col 1 to line 8, col 4 of module M: 1:1",
+        "Up line 9, col 1 to line 9, col 2 of module M: 2:2",
+        "Print line 17, col 1 to line 17, col 15 of module TLC (10 15 10 31): 0:0",
+        "S!Print line 4, col 1 to line 4, col 1 of module M (10 36 10 54): 0:0",
+        "J!Print line 5, col 1 to line 5, col 1 of module M (10 59 10 77): 0:0",
+        "J2!Print line 6, col 1 to line 6, col 2 of module M (10 82 10 101): 0:0",
+        "P!Print line 7, col 1 to line 7, col 1 of module M (10 106 10 124): 0:0",
+      ],
+    ],
+    [
+      "Naturals, TLC",
+      "J == INSTANCE T16 WITH k <- 1, y <- x",
+      'Next == Up \\/ (LET R == INSTANCE TLC IN R!Print("a", FALSE)) \\/ (LET R2 == INSTANCE T16 WITH k <- 1, y <- x IN R2!Print("b", FALSE))',
+      [
+        "Init line 5, col 1 to line 5, col 4 of module M: 1:1",
+        "Up line 6, col 1 to line 6, col 2 of module M: 2:2",
+        "R!Print line 7, col 20 to line 7, col 20 of module M (7 41 7 59): 0:0",
+        "R2!Print line 7, col 70 to line 7, col 71 of module M (7 112 7 131): 0:0",
+      ],
+    ],
+    [
+      "Naturals",
+      "INSTANCE T16 WITH k <- 1, y <- x\nJ == INSTANCE T16 WITH k <- 1, y <- x",
+      'Next == Up \\/ Print("a", FALSE) \\/ J!Print("b", FALSE)',
+      [
+        "Init line 6, col 1 to line 6, col 4 of module M: 1:1",
+        "Up line 7, col 1 to line 7, col 2 of module M: 2:2",
+        "Print line 17, col 1 to line 17, col 15 of module TLC (8 15 8 31): 0:0",
+        "J!Print line 5, col 1 to line 5, col 1 of module M (8 36 8 54): 0:0",
+      ],
+    ],
+  ])(
+    "names the action of a standard operator by the instance the call names, as TLC does, with EXTENDS %s and %j",
+    async (extended, instances, next, relations) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS ${extended}\nVARIABLE x\n${instances}\nInit == x = 0\nUp == x < 2 /\\ x' = x + 1\n${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `${relation.label}: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(relations);
+    },
+  );
+
+  const getPrintOverrides = async (assumption: string, override: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS == INSTANCE TLC\nJ == INSTANCE T20 WITH y <- x\nP == INSTANCE T19\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nMyPrint(out, val) == PrintT(<<"my", out>>) /\\ val\nInit == x = 0\nNext == x' = x\nASSUME ${assumption}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT ${override}`,
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+    });
+    return printed;
+  };
+
+  it.each([
+    [
+      "Print <- MyPrint",
+      [
+        '<<"my", "r">>',
+        '"s"  TRUE',
+        '"j"  TRUE',
+        '"p"  TRUE',
+        '<<"my", <<"t20", 1>>>>',
+        '"l"  TRUE',
+        "<<TRUE, TRUE, TRUE, TRUE, TRUE, TRUE>>",
+      ],
+    ],
+    [
+      "Print <- [TLC] MyPrint",
+      [
+        '<<"my", "r">>',
+        '<<"my", "s">>',
+        '<<"my", "j">>',
+        '<<"my", "p">>',
+        '<<"my", <<"t20", 1>>>>',
+        '<<"my", "l">>',
+        "<<TRUE, TRUE, TRUE, TRUE, TRUE, TRUE>>",
+      ],
+    ],
+  ])(
+    "applies CONSTANT %s as TLC does, where a root override replaces only the definition a call names",
+    async (override, prints) => {
+      expect(
+        await getPrintOverrides(
+          'PrintT(<<Print("r", TRUE), S!Print("s", TRUE), J!Print("j", TRUE), P!Print("p", TRUE), J!Pr(1), LET R == INSTANCE TLC IN R!Print("l", TRUE)>>)',
+          override,
+        ),
+      ).toEqual(prints);
+    },
+  );
+
+  it.each([
+    ["Print <- MyPrint", '"i"  TRUE'],
+    ["Print <- [TLC] MyPrint", '<<"my", "i">>'],
+  ])(
+    "applies CONSTANT %s to Print through an instance with parameters as TLC does through one without, where it passes the Java method the instance's argument too and fails",
+    async (override, print) => {
+      expect(await getPrintOverrides('I(1)!Print("i", TRUE)', override)).toEqual([print]);
+    },
+  );
+
+  const getTlcEvalPrints = async (call: string, override: string, assumption: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nS == INSTANCE TLC\nJ == INSTANCE T19\nI(j) == INSTANCE T16 WITH k <- j, y <- y\nMyEval(v) == v\nInit == y = 0\nNext == y' = (y + 1) % 2\nD == ${call}(RandomElement(1..100))\nASSUME ${assumption}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT N <- D${override}`,
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+    });
+    return printed;
+  };
+
+  it.each([
+    ["S!TLCEval", "", "<<74, 74, 74, 74, 74>>"],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- MyEval", "<<74, 74, 74, 74, 74>>"],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- [TLC] MyEval", "<<74, 92, 92, 68, 74>>"],
+    ["J!TLCEval", "\nCONSTANT TLCEval <- MyEval", "<<74, 74, 74, 74, 74>>"],
+    ["LET R == INSTANCE TLC IN R!TLCEval", "", "<<74, 92, 92, 68, 74>>"],
+  ])(
+    "caches %s(RandomElement(1..100)) at each reference to N <- D%j as TLC's Java TLCEval does with the call's arguments",
+    async (call, override, expected) => {
+      expect(await getTlcEvalPrints(call, override, "PrintT(<<D, N, N, N, D>>)")).toEqual([
+        expected,
+      ]);
+    },
+  );
+
+  it.each([
+    ["S!TLCEval", ""],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- MyEval"],
+    ["J!TLCEval", "\nCONSTANT TLCEval <- MyEval"],
+  ])(
+    "draws %s(RandomElement(1..100)) again at each reference to N <- D%j under a bound name, where TLC's Java TLCEval sees the caller's context",
+    async (call, override) => {
+      expect(
+        await getTlcEvalPrints(call, override, "\\A a \\in {1} : PrintT(<<D, N, N, D>>)"),
+      ).toEqual(["<<74, 92, 92, 74>>"]);
+    },
+  );
+
+  it("caches I(1)!TLCEval(RandomElement(1..100)) as TLC does through an instance without parameters, where it passes TLCEval the instance's argument too", async () => {
+    expect(await getTlcEvalPrints("I(1)!TLCEval", "", "PrintT(<<D, N, N, N, D>>)")).toEqual([
+      "<<74, 74, 74, 74, 74>>",
     ]);
   });
 
@@ -14537,6 +14891,455 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "LET LK == 1 IN Stp \\/ LK",
+      "1",
+      "line 8, col 31 to line 8, col 32 of module M",
+      ["M 8:31-8:32"],
+    ],
+    [
+      'LET LK == "a" IN Stp \\/ LK',
+      '"a"',
+      "line 8, col 33 to line 8, col 34 of module M",
+      ["M 8:33-8:34"],
+    ],
+    [
+      "LET LK == 1 IN LK \\/ Stp",
+      "1",
+      "line 8, col 24 to line 8, col 25 of module M",
+      ["M 8:24-8:25"],
+    ],
+    [
+      "LET LK == 1 IN LET LJ == LK IN Stp \\/ LJ",
+      "1",
+      "line 8, col 34 to line 8, col 35 of module M",
+      ["M 8:34-8:35"],
+    ],
+    [
+      "LET LK == 1 IN Stp \\/ (LET LJ == 2 IN LJ)",
+      "2",
+      "line 8, col 47 to line 8, col 48 of module M",
+      ["M 8:47-8:48"],
+    ],
+    [
+      "LET LK == 1 IN LK = 1 /\\ (Stp \\/ LK)",
+      "1",
+      "line 8, col 42 to line 8, col 43 of module M",
+      ["M 8:24-8:44", "M 8:24-8:29", "M 8:35-8:43", "M 8:42-8:43"],
+    ],
+    [
+      "L!NxLet",
+      "1",
+      "line 5, col 32 to line 5, col 33 of module T",
+      ["M 4:1-4:27", "T 5:10-5:33", "T 5:25-5:33", "T 5:32-5:33"],
+    ],
+  ])(
+    "takes the literal body of a LET definition in Next == %s as its value, as TLC's Tool#getNextStatesAppl looks up its OpDefNode",
+    async (next, value, location, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const failure = (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == ${next}\n====`,
+            config: "INIT Init\nNEXT Next",
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nNxLet == LET LK == 1 IN Stp \\/ LK\n===="
+                : undefined,
+          })
+        ).failure;
+        return [
+          failure?.message,
+          failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+        ];
+      };
+      const expected = [
+        `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${value}.\n${location}`,
+        positions,
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it("enters the literal body of a LET definition under ENABLED, as TLC's Tool#enabled binds it to a LazyValue", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nInit == x = 0\nNext == Stp\nInv == ENABLED (LET LK == 1 IN Stp \\/ LK)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.failure?.message).toBe(
+      "Evaluating invariant Inv failed.\nAttempted to compute ENABLED on a non-boolean expression.\n1",
+    );
+  });
+
+  it.each([
+    [
+      "Op(TRUE)",
+      "action Op of the next-state relation",
+      4,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:2",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 9 10 16)>: 0:4",
+      ],
+    ],
+    [
+      "Op(FALSE)",
+      undefined,
+      5,
+      3,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 2:6",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 9 10 17)>: 0:2",
+      ],
+    ],
+    [
+      "Stp \\/ Op(TRUE)",
+      "action Op of the next-state relation",
+      5,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:4",
+        "<Op line 5, col 1 to line 5, col 5 of module M (10 16 10 23)>: 0:4",
+      ],
+    ],
+    [
+      "Outer(TRUE)",
+      "action Op of the next-state relation",
+      5,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:4",
+        "<Op line 5, col 1 to line 5, col 5 of module M (7 20 7 24)>: 0:4",
+      ],
+    ],
+    [
+      "Two(TRUE, FALSE)",
+      "action Two of the next-state relation",
+      4,
+      2,
+      [
+        "<Stp line 4, col 1 to line 4, col 3 of module M>: 1:2",
+        "<Two line 8, col 1 to line 8, col 9 of module M (10 9 10 24)>: 0:4",
+      ],
+    ],
+    [
+      "First(TRUE)",
+      "the next-state action",
+      2,
+      1,
+      ["<First line 6, col 1 to line 6, col 8 of module M (10 9 10 19)>: 0:3"],
+    ],
+    [
+      "\\E i \\in {TRUE} : Stp \\/ i",
+      "the next-state action",
+      3,
+      2,
+      ["<Next line 10, col 1 to line 10, col 4 of module M>: 1:4"],
+    ],
+  ])(
+    "splits Next == %s where a parameter stands as an action, as TLC's Tool#getActionsAppl catches the ClassCastException",
+    async (next, action, generatedStates, distinctStates, relations) => {
+      const getRun = (coverage: number | undefined) =>
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nFirst(p) == p \\/ Stp\nOuter(q) == Stp \\/ Op(q)\nTwo(p, r) == (Stp \\/ r) \\/ p\nInit == x = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next",
+          coverage,
+        });
+      const expected = [
+        action &&
+          `Successor state is not completely specified by ${action}. The following variable is not defined: x.\n`,
+        generatedStates,
+        distinctStates,
+      ];
+      const getOutcome = (result: Awaited<ReturnType<typeof check>>) => [
+        result.status === "deadlock" ? undefined : result.failure?.message,
+        result.generatedStates,
+        result.distinctStates,
+      ];
+      const covered = await getRun(1);
+      expect([
+        getOutcome(await getRun(undefined)),
+        getOutcome(covered),
+        covered.coverage?.relations.flatMap((relation) =>
+          relation.kind === "next"
+            ? [`<${relation.label}>: ${relation.distinct}:${relation.generated}`]
+            : [],
+        ),
+      ]).toEqual([expected, expected, relations]);
+    },
+  );
+
+  it.each([
+    [
+      "Op(1)",
+      "The next state relation is not a boolean expression.\n1",
+      ["M 8:9-8:13", "M 6:10-6:17", "M 6:17-6:17", "M 8:12-8:12"],
+      3,
+    ],
+    [
+      'Op("a")',
+      "The next state relation is not a boolean expression.\nline 8, col 12 to line 8, col 14 of module M",
+      ["M 8:9-8:15", "M 6:10-6:17", "M 6:17-6:17", "M 8:12-8:14"],
+      3,
+    ],
+    [
+      "Stp \\/ Op(1)",
+      "The next state relation is not a boolean expression.\n1",
+      ["M 8:16-8:20", "M 6:10-6:17", "M 6:17-6:17", "M 8:19-8:19"],
+      4,
+    ],
+    [
+      "L!OpT(1)",
+      "In computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 5, col 18 to line 5, col 18 of module T",
+      ["M 4:1-4:27", "T 5:11-5:18", "T 5:18-5:18"],
+      2,
+    ],
+  ])(
+    "enters the literal argument of Next == %s where its parameter stands as an action, as TLC's Tool#getNextStatesAppl enters a LazyValue",
+    async (next, message, positions, generatedStates) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == ${next}\nInv == TRUE\n====`,
+          config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+          coverage,
+          loadModule: (name) =>
+            name === "T"
+              ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nOpT(p) == Stp \\/ p\n===="
+              : undefined,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+          result.generatedStates,
+        ];
+      };
+      const expected = [`${UNEXPECTED_EXCEPTION}${message}`, positions, generatedStates];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    ["Op(1)", "1"],
+    ['Op("a")', "line 9, col 19 to line 9, col 21 of module M"],
+    ["L!OpT(1)", "1"],
+  ])(
+    "enters the literal argument of ENABLED %s, as TLC's Tool#enabled enters a LazyValue",
+    async (call, node) => {
+      const getMessage = async (coverage: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == Stp\nInv == ENABLED ${call}\n====`,
+            config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nOpT(p) == Stp \\/ p\n===="
+                : undefined,
+          })
+        ).failure?.message;
+      const expected = `Evaluating invariant Inv failed.\nAttempted to compute ENABLED on a non-boolean expression.\n${node}`;
+      expect([await getMessage(undefined), await getMessage(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    ["\\E i \\in {1} : Op(i)", "1", "9, col 27 to line 9, col 27", ["9:24-9:28", "9:27-9:27"]],
+    [
+      "\\E i \\in {1} : LET LK == i IN Op(LK)",
+      "1",
+      "9, col 34 to line 9, col 34",
+      ["9:39-9:44", "9:42-9:43", "9:34-9:34"],
+    ],
+    ["\\E i \\in {1} : Op2(i)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(1)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ['Op2("a")', '"a"', "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(1 + 0)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op2(K)", "3", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    ["Op(K)", "3", "9, col 12 to line 9, col 12", ["9:9-9:13", "9:12-9:12"]],
+    ["LET LK == 1 IN Op(LK)", "1", "9, col 27 to line 9, col 28", ["9:24-9:29", "9:27-9:28"]],
+    ["LET LK == 1 IN Op2(LK)", "1", "7, col 14 to line 7, col 14", ["7:11-7:15", "7:14-7:14"]],
+    [
+      "LET LK == 1 + 0 IN Op(LK)",
+      "1",
+      "9, col 19 to line 9, col 23",
+      ["9:28-9:33", "9:31-9:32", "9:19-9:23"],
+    ],
+  ])(
+    "enters the identifier argument of Next == %s where its parameter stands as an action, as TLC's Tool#getNextStatesAppl enters a LazyValue",
+    async (next, found, node, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nOp2(q) == Op(q)\nInit == x = 0\nNext == ${next}\n====`,
+          config: "CONSTANT K = 3\nINIT Init\nNEXT Next",
+          coverage,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+              : [];
+          }),
+          result.generatedStates,
+        ];
+      };
+      const expected = [
+        `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${found}.\nline ${node} of module M`,
+        [positions[0], "6:10-6:17", "6:17-6:17", ...positions.slice(1)],
+        3,
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    [
+      "\\E i \\in {1} : Op(i)",
+      "1",
+      "9, col 34 to line 9, col 34",
+      ["9:8-9:35", "9:16-9:35", "9:31-9:35", "5:10-5:31", "5:31-5:31", "9:34-9:34"],
+    ],
+    [
+      "\\E i \\in {1} : Op2(i)",
+      "1",
+      "9, col 35 to line 9, col 35",
+      [
+        "9:8-9:36",
+        "9:16-9:36",
+        "9:31-9:36",
+        "6:11-6:15",
+        "5:10-5:31",
+        "5:31-5:31",
+        "6:14-6:14",
+        "9:35-9:35",
+      ],
+    ],
+    [
+      "Op(K)",
+      "3",
+      "9, col 19 to line 9, col 19",
+      ["9:8-9:20", "9:16-9:20", "5:10-5:31", "5:31-5:31", "9:19-9:19"],
+    ],
+  ])(
+    "enters the identifier argument of ENABLED %s in an initial state's invariant, as TLC's Tool#enabled enters a LazyValue",
+    async (call, found, node, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nOp(p) == (x < 0 /\\ x' = x) \\/ p\nOp2(q) == Op(q)\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == ENABLED ${call}\n====`,
+          config: "CONSTANT K = 3\nINIT Init\nNEXT Next\nINVARIANT Inv",
+          coverage,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+              : [];
+          }),
+        ];
+      };
+      const expected = [
+        `In computing ENABLED, TLC expected a boolean expression,\nbut instead found ${found}.\nline ${node} of module M`,
+        ["7:9-7:13", ...positions],
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    [
+      "x < 9 /\\ Pre(1)",
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n1`,
+      ["M 9:9-9:23", "M 9:9-9:13", "M 9:18-9:23", "M 6:11-6:21", "M 6:11-6:11", "M 9:22-9:22"],
+    ],
+    [
+      "x < 9 /\\ Conj(1)",
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 5, col 22 to line 5, col 22 of module M`,
+      ["M 9:9-9:24", "M 9:9-9:13", "M 9:18-9:24", "M 5:12-5:22", "M 5:12-5:17"],
+    ],
+    [
+      'Pre("a")',
+      "TRUE",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found "a".\nline 6, col 11 to line 6, col 11 of module M`,
+      ["M 6:11-6:21", "M 6:11-6:11"],
+    ],
+    [
+      "Stp",
+      "ENABLED Pre(1)",
+      "Attempted to compute ENABLED on a non-boolean expression.\n1",
+      [
+        "M 8:9-8:13",
+        "M 10:8-10:21",
+        "M 10:16-10:21",
+        "M 6:11-6:21",
+        "M 6:11-6:11",
+        "M 10:20-10:20",
+      ],
+    ],
+    [
+      "Stp",
+      "ENABLED Conj(1)",
+      "Attempted to compute ENABLED on a non-boolean expression.\n1",
+      [
+        "M 8:9-8:13",
+        "M 10:8-10:22",
+        "M 10:16-10:22",
+        "M 5:12-5:22",
+        "M 5:12-5:17",
+        "M 5:22-5:22",
+        "M 10:21-10:21",
+      ],
+    ],
+  ])(
+    "enters a literal argument that stands as a conjunct, with Next == %s and Inv == %s, until every variable is assigned, as TLC does",
+    async (next, invariant, message, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const failure = (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nConj(p) == x' = 1 /\\ p\nPre(p) == p /\\ x' = 1\nIConj(p) == x = 0 /\\ p\nInit == x = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+            config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+            coverage,
+          })
+        ).failure;
+        return [
+          failure?.message,
+          failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+        ];
+      };
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([
+        [message, positions],
+        [message, positions],
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "LET I2 == Init IN I2",
       "I2",
       "6, col 13 to line 6, col 14",
@@ -14995,6 +15798,33 @@ ASSUME TLCFP(a) = -887695703
           ...(lines?.[index] ?? []),
         ]),
       ).toEqual(item.relations);
+    },
+  );
+
+  it.each([
+    ["Spec == L!SpWF\nLive == L!Ev", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    ["Spec == L!SpWF\nLive == L!To", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    ["Spec == L!SpWF\nLive == L!EnLive", ["line 4, col 8 to line 4, col 12 of module T18: 3"]],
+    [
+      "Spec == L!SpWF2\nLive == L!To",
+      [
+        "line 5, col 9 to line 5, col 20 of module T18: 6",
+        "|line 5, col 15 to line 5, col 20 of module T18: 3:9",
+      ],
+    ],
+  ])(
+    "doesn't count the substitute of v in the initial predicate where the property of %j evaluates it, as TLC's liveness checker records no cost",
+    async (definition, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T18 WITH v <- x\n${definition}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Live",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T18"
+            ? "---- MODULE T18 ----\nEXTENDS Naturals\nVARIABLE v\nIni == v = 0\nIni2 == v \\in {0, 1}\nStp == v < 2 /\\ v' = v + 1\nSpWF == Ini /\\ [][Stp]_v /\\ WF_v(Stp)\nSpWF2 == Ini2 /\\ [][Stp]_v /\\ WF_v(Stp)\nEv == <>(v = 2)\nAcLive == <><<Stp>>_v \\/ v = 2\nEnLive == <>(~ENABLED Stp)\nTo == (v = 0) ~> (v = 2)\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.[0]).toEqual(lines);
     },
   );
 

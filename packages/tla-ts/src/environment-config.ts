@@ -1,4 +1,4 @@
-import type { Definition, Expression } from "./ast";
+import type { Declaration, Definition, Expression } from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
@@ -11,7 +11,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { LinkedModule } from "./environment";
 import type { Builtin } from "./evaluate";
 import { createLocalAlias } from "./instances";
-import type { Symbols } from "./resolve";
+import { KEY_SEPARATOR, type Symbols } from "./resolve";
 import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
   createEnumeratedSet,
@@ -45,6 +45,7 @@ interface LinkedSpecification {
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
   copySources: Map<string, CopySource>;
+  standardAliasBodies: Set<Expression>;
   operatorConstants: Map<string, Value>;
   order: TlcOrder;
 }
@@ -53,6 +54,7 @@ interface AppliedConfig {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  overriddenOperatorConstants: Map<string, Declaration>;
 }
 
 const toValue = (value: ConfigValue): Value => {
@@ -430,6 +432,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     }
   });
   const substitutions = new Map<string, string>();
+  const rootSubstituted = new Set<string>();
   lastSubstitutions
     .filter((substitution) => !values.has(`!${substitution.target}`))
     .forEach((substitution) => {
@@ -438,10 +441,29 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       getSubstitutedKeys(substitution).forEach((key) => {
         if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
           setOperator(key, { ...builtin, arity: 0, isLazy: true });
-        } else substitutions.set(key, targetKey);
+        } else {
+          substitutions.set(key, targetKey);
+          if (substitution.module === undefined) rootSubstituted.add(key);
+        }
       });
     });
   [...substitutions.keys()].forEach((key) => constants.delete(key));
+  const overriddenOperatorConstants = new Map(
+    linked.root.constants
+      .filter((constant) => constant.arity > 0 && substitutions.has(constant.key))
+      .map((constant) => [constant.key, constant]),
+  );
+  // A root override replaces only the root's definition, not an instance's copy of a standard operator.
+  const getUnsubstitutedKey = (key: string) => {
+    const builtin = rootSubstituted.has(key) ? linked.builtins.get(key) : undefined;
+    if (!builtin) return key;
+    linked.builtins.set(`${key}${KEY_SEPARATOR}`, builtin);
+    return `${key}${KEY_SEPARATOR}`;
+  };
+  linked.standardAliasBodies.forEach((body) => {
+    if (body.kind === "Apply") body.operator = getUnsubstitutedKey(body.operator);
+    else if (body.kind === "Identifier") body.name = getUnsubstitutedKey(body.name);
+  });
   const getOverride = createScopedOverrides(
     config,
     (module) => linked.moduleSymbols.get(module),
@@ -462,5 +484,5 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.set(key, alias);
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  return { constants, bodyValues, substitutions };
+  return { constants, bodyValues, substitutions, overriddenOperatorConstants };
 };

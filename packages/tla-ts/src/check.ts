@@ -11,6 +11,7 @@ import {
 import {
   createStackOverflowError,
   isStackOverflow,
+  TlaBoundValueError,
   TlaEvaluationError,
   TlaIllegalStateError,
   TlaIncompleteSuccessorError,
@@ -899,7 +900,12 @@ const searchStates = (
     failureOptions: FailureOptions = {},
     postcondition?: Postcondition,
   ) => {
-    const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
+    // TLC enters an argument's LazyValue where the argument was written, which only the replay mirrors.
+    const error = isStackOverflow(failed)
+      ? new TlaStackOverflowError()
+      : failed instanceof TlaBoundValueError && failureOptions.replayError
+        ? failureOptions.replayError
+        : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
     return {
       ...createResult("error", undefined, {
@@ -945,10 +951,11 @@ const searchStates = (
       }
     });
     const action = found.result.action;
+    const actionName = action?.name ?? error.action;
     const traceFailure = found.result.failed && getTraceFailure(found.result.failed, found.lines);
     const message = getIncompleteSuccessorMessage(
       error.variables,
-      error.action,
+      actionName,
       nextActions.length,
       options.version,
     );
@@ -968,7 +975,7 @@ const searchStates = (
                   error.state,
                   trace.length + 1,
                   {
-                    action: error.action,
+                    action: actionName,
                     label: action && getActionLabel(action, options.version),
                     output: found.lines,
                   },
@@ -1309,7 +1316,8 @@ const searchStates = (
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
     options.maxSetSize === undefined &&
     // The trace spec's _TLCTraceSilent holds without effect while CounterExample.state = {}, as it is after any run the tier decides.
-    !hasUserPostconditions
+    !hasUserPostconditions &&
+    !getDescription().isNextOverlapping
       ? search.getTypedChecks(liveness?.solutions)
       : undefined;
   const typed =
@@ -1464,7 +1472,7 @@ const searchStates = (
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
   // Tool's constructor evaluates the bounds and arguments it splits Next on once, which shows when they draw, print or read a register.
-  const isNextSplit = isNamingEdges || search.isNextReplayed;
+  const isNextSplit = isNamingEdges || search.isNextReplayed || getDescription().isNextOverlapping;
   const forEachActionSuccessor = (
     state: Value[],
     onUnsatisfied:
@@ -1562,6 +1570,34 @@ const searchStates = (
       { phase: "next" },
       checked.postcondition,
     );
+  };
+  // TLC runs the split actions, which bind a literal argument to its value instead of a LazyValue.
+  const getSplitFailure = (error: unknown, index: number) => {
+    if (
+      coverage ||
+      isNextSplit ||
+      !getDescription().hasLiteralArgument ||
+      !(error instanceof TlaEvaluationError)
+    ) {
+      return error;
+    }
+    return captureOutput(() => {
+      try {
+        nextActions.forEach((action) =>
+          forEachSuccessor(
+            action.expression,
+            states[index],
+            environment,
+            () => false,
+            action.scope,
+          ),
+        );
+        return error;
+      } catch (split) {
+        if (!(split instanceof TlaEvaluationError)) throw split;
+        return split;
+      }
+    }).result;
   };
   // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
   // Deviation from TLC: under -continue, ModelChecker#doNextEvalFailed rethrows a failed invariant to Worker#doNextFailed, which reports it again with the code of its error.
@@ -1976,10 +2012,11 @@ const searchStates = (
     try {
       outcome = expandState(index, liveSuccessors);
     } catch (error) {
+      const failure = getSplitFailure(error, index);
       outcome =
-        error instanceof TlaIncompleteSuccessorError
-          ? reportIncompleteSuccessor(index, error, liveSuccessors)
-          : reportNextStateFailure(error, index, liveSuccessors, generated);
+        failure instanceof TlaIncompleteSuccessorError
+          ? reportIncompleteSuccessor(index, failure, liveSuccessors)
+          : reportNextStateFailure(failure, index, liveSuccessors, generated);
     }
     if (outcome) return outcome;
     outDegrees[getOutDegreeBucket()]++;

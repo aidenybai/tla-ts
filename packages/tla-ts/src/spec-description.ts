@@ -45,6 +45,7 @@ import {
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
+import { untracedExpressions } from "./resolve";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -76,6 +77,8 @@ export interface SpecDescription {
   inits: SpecAction[];
   actions: SpecAction[];
   temporals: SpecAction[];
+  isNextOverlapping: boolean;
+  hasLiteralArgument: boolean;
 }
 
 interface PropertyDescription {
@@ -350,8 +353,18 @@ const getActions = (
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
   context: [string, Value][],
+  description: SpecDescription,
   definition?: Definition,
-): SpecAction[] => {
+): void => {
+  const actions = description.actions;
+  // Tool#getActionsAppl keeps the actions it added before an exception and adds the call after them.
+  const splitCall = (split: () => void, getAction: () => SpecAction) => {
+    const count = actions.length;
+    tryCollect(split, () => {
+      if (actions.length > count) description.isNextOverlapping = true;
+      actions.push(getAction());
+    });
+  };
   const createSplitAction = (): SpecAction => ({
     name: closure?.name ?? UNNAMED_ACTION,
     location: expression.location,
@@ -364,73 +377,106 @@ const getActions = (
   if (LITERAL_KINDS.has(expression.kind)) throw createRelationError(expression);
   const predicate = getActionPredicate(expression);
   if (predicate !== expression) {
-    return [
-      { ...createSplitAction(), location: predicate.location, body: predicate.location.range },
-    ];
+    actions.push({
+      ...createSplitAction(),
+      location: predicate.location,
+      body: predicate.location.range,
+    });
+    return;
   }
   switch (expression.kind) {
     case "Let":
-      return getActions(
+      getActions(
         expression.body,
         bindLetDefinitions(expression, scope, environment),
         closure,
         environment,
         instanceActions,
         context,
+        description,
         definition,
       );
+      return;
     case "Label":
-      return getActions(
+      getActions(
         expression.body,
         scope,
         closure,
         environment,
         instanceActions,
         context,
+        description,
         definition,
       );
+      return;
     case "Selection":
       // TLC's Tool#getActions takes SANY's $Nop as an action of its own.
-      return expression.location.range === undefined
-        ? getActions(
-            expression.expression,
-            scope,
-            closure,
-            environment,
-            instanceActions,
-            context,
-            definition,
-          )
-        : [createSplitAction()];
+      if (expression.location.range === undefined) {
+        getActions(
+          expression.expression,
+          scope,
+          closure,
+          environment,
+          instanceActions,
+          context,
+          description,
+          definition,
+        );
+        return;
+      }
+      actions.push(createSplitAction());
+      return;
     case "Or":
-      return expression.operands.flatMap((operand) =>
-        getActions(operand, scope, closure, environment, instanceActions, context, definition),
+      expression.operands.forEach((operand) =>
+        getActions(
+          operand,
+          scope,
+          closure,
+          environment,
+          instanceActions,
+          context,
+          description,
+          definition,
+        ),
       );
-    case "Exists":
-      return tryCollect(
+      return;
+    case "Exists": {
+      const count = actions.length;
+      tryCollect(
         () => {
-          const actions: SpecAction[] = [];
           const names = expression.bounds.flatMap((bound) =>
             bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
           );
           forEachBinding(expression.bounds, getSplitContext(environment, scope), (boundScope) => {
-            actions.push(
-              ...getActions(
-                expression.body,
-                boundScope,
-                closure,
-                environment,
-                instanceActions,
-                [...context, ...getBoundValues(names, boundScope)],
-                definition,
-              ),
+            getActions(
+              expression.body,
+              boundScope,
+              closure,
+              environment,
+              instanceActions,
+              [...context, ...getBoundValues(names, boundScope)],
+              description,
+              definition,
             );
             return false;
           });
-          return actions.length === 0 ? [createSplitAction()] : actions;
+          if (actions.length === count) actions.push(createSplitAction());
         },
-        () => [createSplitAction()],
+        () => {
+          actions.length = count;
+          actions.push(createSplitAction());
+        },
       );
+      return;
+    }
+  }
+  // Tool#getActionsAppl throws a ClassCastException at a parameter in action position.
+  if (
+    expression.kind === "Identifier" &&
+    isLocallyResolved(expression) &&
+    lookupScope(scope, expression.name)?.kind === "Value"
+  ) {
+    throw createRelationError(expression);
   }
   const instanceAction = isLocallyResolved(expression)
     ? undefined
@@ -439,64 +485,106 @@ const getActions = (
   const theorem = called && getAssumeProveBody(called.body);
   // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
   if (theorem) throw createRelationError(theorem);
-  if (instanceAction)
-    return getInstanceActions(instanceAction, expression, scope, called, environment, context);
+  const args = getArguments(expression);
+  if (called && args.some((arg) => arg.kind === "Number" || arg.kind === "String")) {
+    description.hasLiteralArgument = true;
+  }
+  // SymbolNodeValueLookupProvider#lookup takes a module override on the body over the instance's SubstInNode.
+  if (instanceAction && !(called && untracedExpressions.has(called.body))) {
+    actions.push(
+      ...getInstanceActions(instanceAction, expression, scope, called, environment, context),
+    );
+    return;
+  }
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {
-    return getActions(
-      thunk.expression,
-      thunk.scope,
-      {
-        kind: "Closure",
-        name: letDefinition.name,
-        params: [],
-        body: thunk.expression,
-        scope: thunk.scope,
-      },
-      environment,
-      instanceActions,
-      context,
-      letDefinition,
+    const getLetAction = (): SpecAction => ({
+      ...createSplitAction(),
+      name: letDefinition.name,
+      ...getDefinitionRanges(letDefinition),
+      parameters: [],
+    });
+    // Tool#getActionsAppl doesn't enter a LET definition whose lookup finds its literal body's value.
+    if (getBodyLiteral(thunk.expression, environment) !== undefined) {
+      actions.push(getLetAction());
+      return;
+    }
+    splitCall(
+      () =>
+        getActions(
+          thunk.expression,
+          thunk.scope,
+          {
+            kind: "Closure",
+            name: letDefinition.name,
+            params: [],
+            body: thunk.expression,
+            scope: thunk.scope,
+          },
+          environment,
+          instanceActions,
+          context,
+          description,
+          letDefinition,
+        ),
+      getLetAction,
     );
+    return;
   }
   if (!called) {
     const builtin = isLocallyResolved(expression)
       ? undefined
       : environment.builtins.get(getOperatorName(expression) ?? "");
     const head = builtin && getStandardHead(builtin.name, environment);
-    return [
+    actions.push(
       builtin && head
         ? { ...createSplitAction(), name: resolveSynonym(builtin.name), head }
         : createSplitAction(),
-    ];
+    );
+    return;
   }
-  const args = getArguments(expression);
   const operatorName = getOperatorName(expression) ?? "";
   const calledName = isLocallyResolved(expression)
     ? called.name
     : (environment.instanceNames.get(operatorName) ?? called.name);
   const calledDefinition = getCalledDefinition(expression, scope, environment);
   // Tool#getActionsAppl names an action it doesn't enter by the definition the call names, not by the one a configuration override puts in its place.
-  // Deviation from TLC: Tool#getActionsAppl throws a ClassCastException where an override replaces a constant operator, which this names by the substitute.
   const namedDefinition = isLocallyResolved(expression)
     ? undefined
     : environment.definitions.get(operatorName);
-  const callAction = (): SpecAction[] => [
-    {
-      name:
-        namedDefinition && namedDefinition !== calledDefinition ? namedDefinition.name : calledName,
-      location: expression.location,
-      ...getDefinitionRanges(namedDefinition ?? calledDefinition),
-      parameters: [],
-      context,
-      expression,
-      scope,
-    },
-  ];
-  if (isConstantDefinition(called, expression, scope, environment)) return callAction();
-  if (!hasConstantArguments(args, scope, environment)) return callAction();
-  return tryCollect(() => {
+  // Deviation from TLC: Tool#getActionsAppl throws a ClassCastException on a call of an overridden constant operator it doesn't enter, which this names by its declaration.
+  const namedConstant = isLocallyResolved(expression)
+    ? undefined
+    : environment.overriddenOperatorConstants.get(operatorName);
+  const getCallAction = (): SpecAction => ({
+    ...(instanceAction ??
+      (namedConstant
+        ? { name: namedConstant.name, head: namedConstant.location.range }
+        : {
+            name:
+              namedDefinition && namedDefinition !== calledDefinition
+                ? namedDefinition.name
+                : calledName,
+            ...getDefinitionRanges(namedDefinition ?? calledDefinition),
+          })),
+    location: expression.location,
+    parameters: [],
+    context,
+    expression,
+    scope,
+  });
+  if (
+    isConstantDefinition(called, expression, scope, environment) ||
+    !hasConstantArguments(args, scope, environment) ||
+    // Tool#getActionsAppl doesn't enter a call whose lookup finds a Java override.
+    (untracedExpressions.has(called.body) &&
+      resolveClosure(called.body, called.scope, environment) === undefined)
+  ) {
+    actions.push(getCallAction());
+    return;
+  }
+  splitCall(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
         name: called.params[index].name,
@@ -508,16 +596,17 @@ const getActions = (
       }),
       called.scope,
     );
-    return getActions(
+    getActions(
       called.body,
       boundScope,
       { ...called, name: calledName },
       environment,
       instanceActions,
       [...context, ...getParameters(called, boundScope)],
+      description,
       calledDefinition,
     );
-  }, callAction);
+  }, getCallAction);
 };
 
 // TLC bounds the level of a definition without the substitutions of its instances, so an instance's declaration counts as a variable only by the name of a root variable.
@@ -615,6 +704,7 @@ const describeSpecification = (
   if (called && isArgumentFree) {
     const calledScope = getCallScope(called, expression, scope, environment);
     if (
+      !untracedExpressions.has(called.body) &&
       getLevelBound(called.body, calledScope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
@@ -761,7 +851,13 @@ export const getSpecDescription = (
   environment: Environment,
   instanceActions: Map<string, InstanceAction>,
 ) => {
-  const description: SpecDescription = { inits: [], actions: [], temporals: [] };
+  const description: SpecDescription = {
+    inits: [],
+    actions: [],
+    temporals: [],
+    isNextOverlapping: false,
+    hasLiteralArgument: false,
+  };
   const next: NextItem[] = [];
   const specification =
     config.specification === undefined
@@ -776,22 +872,28 @@ export const getSpecDescription = (
       description,
       next,
     );
-    next.forEach((item) =>
-      description.actions.push(
-        ...(item.frames.length > 0
-          ? [
-              {
-                name: UNNAMED_ACTION,
-                location: item.frames[0].location,
-                parameters: [],
-                context: [],
-                expression: withSubstitutionFrames(item.expression, item.frames),
-                scope: item.scope,
-              },
-            ]
-          : getActions(item.expression, item.scope, undefined, environment, instanceActions, [])),
-      ),
-    );
+    next.forEach((item) => {
+      if (item.frames.length === 0) {
+        getActions(
+          item.expression,
+          item.scope,
+          undefined,
+          environment,
+          instanceActions,
+          [],
+          description,
+        );
+        return;
+      }
+      description.actions.push({
+        name: UNNAMED_ACTION,
+        location: item.frames[0].location,
+        parameters: [],
+        context: [],
+        expression: withSubstitutionFrames(item.expression, item.frames),
+        scope: item.scope,
+      });
+    });
   }
   const init =
     config.init === undefined
@@ -803,15 +905,14 @@ export const getSpecDescription = (
       ? undefined
       : resolveGlobalOperator(getRootKey(config.next, environment), environment);
   if (nextOperator?.kind === "Closure") {
-    description.actions.push(
-      ...getActions(
-        nextOperator.body,
-        nextOperator.scope,
-        nextOperator,
-        environment,
-        instanceActions,
-        [],
-      ),
+    getActions(
+      nextOperator.body,
+      nextOperator.scope,
+      nextOperator,
+      environment,
+      instanceActions,
+      [],
+      description,
     );
   }
   // TLC creates the checker, which interns these, once Tool's constructor has split the next-state relation.

@@ -1,6 +1,12 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
+import {
+  formatRange,
+  TlaBoundValueError,
+  TlaEvaluationError,
+  TlaUnassignedError,
+  TlaUncodedError,
+} from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import {
   chargeContexts,
@@ -12,6 +18,7 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
+  getLetDefinition,
   hideFrames,
   restoreFrames,
   runAtCoverageNode,
@@ -299,10 +306,17 @@ const getPrimedVariable = (
 export const getComputation = (run: RunKind) =>
   run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
 
-export const createRunError = (run: RunKind, message: string) => {
-  const error = new TlaEvaluationError(message);
-  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
-};
+const setRunExitCode = (run: RunKind, error: TlaEvaluationError) =>
+  run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+
+export const createRunError = (run: RunKind, message: string) =>
+  setRunExitCode(run, new TlaEvaluationError(message));
+
+export const createBoundValueError = (run: RunKind, expression: Expression, value: Value) =>
+  setRunExitCode(
+    run,
+    new TlaBoundValueError(getExpectedBooleanMessage(run, formatValue(value), expression)),
+  );
 
 export const getRelationMessage = (run: RunKind, expression: Expression) => {
   const node = describeNode(expression);
@@ -319,6 +333,11 @@ export const getIfConditionMessage = (run: RunKind, value: Value, expression: Ex
   }
   return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
 };
+
+export const getNotEnumerableMessage = (run: RunKind, expression: Expression) =>
+  run.isEnabled
+    ? `The right side of \\IN is not enumerable.\n${describeRange(expression)}`
+    : `In computing ${getComputation(run)}, the right side of \\IN is not enumerable.\n${describeRange(expression)}`;
 
 export const getNonFunctionMessage = (run: RunKind, value: Value, expression: Expression) =>
   `In computing ${getComputation(run)}, a non-function (${getKindString(value)}) was applied as a function.\n${describeRange(expression)}`;
@@ -413,7 +432,16 @@ const addState = (replay: Replay, state: Value[], node: number) => {
     countCoverage(coverage, node);
     countCoverage(coverage, coverage.roots[node]);
   }
-  replay.onState(state);
+  if (!coverage || coverage.frames.length === 0) {
+    replay.onState(state);
+    return true;
+  }
+  const hidden = hideFrames(coverage, 0);
+  try {
+    replay.onState(state);
+  } finally {
+    restoreFrames(coverage, hidden);
+  }
   return true;
 };
 
@@ -657,18 +685,25 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value.
+    // Tool#enabledApplImpl enters a LazyValue that holds a value, where Tool#getNextStatesAppl takes the value but enters a LET definition without a literal body.
     if (
       binding?.kind === "Thunk" &&
-      (replay.isEnabled ? !binding.isReleased : binding.cache === undefined)
+      (replay.isEnabled
+        ? !binding.isReleased
+        : (binding.cache === undefined || getLetDefinition(expression.name, scope) !== undefined) &&
+          getBodyLiteral(binding.expression, replay.environment) === undefined)
     ) {
       const thunkNode = replay.coverage?.values.get(binding) ?? node;
       return visit(replay, binding.expression, items, binding.scope, partial, thunkNode);
     }
+    if (binding?.kind === "Value" && binding.argument !== undefined) {
+      return visit(replay, binding.argument, items, scope, partial, node);
+    }
     if (
       binding?.kind === "Operator" &&
       binding.operator.kind === "Closure" &&
-      binding.operator.params.length === 0
+      binding.operator.params.length === 0 &&
+      getBodyLiteral(binding.operator.body, replay.environment) === undefined
     ) {
       return visit(replay, binding.operator.body, items, binding.operator.scope, partial, node);
     }
@@ -783,7 +818,7 @@ const visitAssignment = (
     );
   }
   if (!isTlcEnumerable(set))
-    throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
+    throw createRunError(replay, getNotEnumerableMessage(replay, expression));
   const generator = replay.generator;
   const streamed =
     replay.coverage && !generator ? streamChargedSet(replay.coverage, set) : undefined;
@@ -1359,10 +1394,9 @@ export const replaySuccessors = <Action extends ReplayAction & { node?: number }
   actions.forEach((action) => {
     const successors: Value[][] = [];
     const node = action.node ?? -1;
-    walkSuccessors(action, node, state, environment, (next) => {
-      if (coverage && node !== -1) coverage.primary[node]++;
-      successors.push(next);
-    });
+    walkSuccessors(action, node, state, environment, (next) => successors.push(next));
+    // Tool#getNextStates counts an action's successors only once the action returns.
+    if (coverage && node !== -1) coverage.primary[node] += successors.length;
     successors.forEach((successor) => onState(successor, action));
   });
 };

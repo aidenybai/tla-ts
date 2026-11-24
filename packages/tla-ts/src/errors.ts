@@ -165,6 +165,8 @@ export const createStackOverflowError = () =>
 
 export class TlaUncodedError extends TlaEvaluationError {}
 
+export class TlaBoundValueError extends TlaEvaluationError {}
+
 export class TlaIncompleteSuccessorError extends TlaEvaluationError {
   state: (Value | undefined)[];
   action: string | undefined;

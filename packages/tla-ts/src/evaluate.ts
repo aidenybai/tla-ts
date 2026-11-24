@@ -8,6 +8,7 @@ import {
   type Bound,
   type BoundPattern,
   type DecimalExpression,
+  type Declaration,
   type Definition,
   type Expression,
   type FunctionDefinition,
@@ -219,8 +220,10 @@ export interface Environment {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  overriddenOperatorConstants: Map<string, Declaration>;
   reevaluatedSubstitutes: Map<string, Definition>;
   instanceNames: Map<string, string>;
+  standardAliasBodies: Set<Expression>;
   variables: string[];
   variableIndex: Map<string, number>;
   variableLocations: SourceLocation[];
@@ -1484,7 +1487,9 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       ? undefined
       : findGlobalName(argument.name, environment);
     if (global?.kind === "Value") {
-      const binding: Binding = { kind: "Value", value: global.value };
+      const binding: Binding = environment.callStack
+        ? { kind: "Value", value: global.value, argument }
+        : { kind: "Value", value: global.value };
       return () => binding;
     }
     if (global === undefined && !environment.callStack) {
@@ -2329,6 +2334,39 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
+  const called =
+    global?.kind === "Closure" &&
+    global.body.kind === "Apply" &&
+    environment.standardAliasBodies.has(global.body)
+      ? resolveGlobalOperator(global.body.operator, environment)
+      : global;
+  if (called?.kind === "Builtin" && called.name === "TLCEval" && args.length > 0) {
+    // Deviation from TLC: Tool#evalAppl passes TLCEval an instance's arguments too, so through an instance with parameters it answers with the first.
+    const forwarded = args.slice(args.length - 1);
+    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
+    const isCached =
+      !contextualApplications.has(expression) && !isNonconstant(forwarded[0], environment);
+    const tlcEvalValues = environment.tlcEvalValues;
+    return (context) => {
+      if (!isCached || !isTlcContextEmpty(context.scope)) {
+        return called.evaluate(getLazyArguments(forwarded, context), context);
+      }
+      const cached = tlcEvalValues.get(expression);
+      if (cached !== undefined) return cached;
+      // TLCEval#tlcEvalConst evaluates with EvalControl.Clear, so an application around it keeps nothing lazy.
+      const value = called.evaluate(
+        getLazyArguments(forwarded, {
+          environment: context.environment,
+          scope: context.scope,
+          state: context.state,
+          next: context.next,
+        }),
+        undefined,
+      );
+      tlcEvalValues.set(expression, value);
+      return value;
+    };
+  }
   if (global?.kind === "Closure") {
     return compileClosureCall(
       global,
@@ -2341,31 +2379,6 @@ const compileApply = (
     const operand = getEvaluator(args[0], environment);
     const domain = getDomainOperator(expression);
     return (context) => domain(operand(context));
-  }
-  if (global?.kind === "Builtin" && global.name === "TLCEval" && args.length === 1) {
-    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
-    const isCached =
-      !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
-    const tlcEvalValues = environment.tlcEvalValues;
-    return (context) => {
-      if (!isCached || !isTlcContextEmpty(context.scope)) {
-        return global.evaluate(getLazyArguments(args, context), context);
-      }
-      const cached = tlcEvalValues.get(expression);
-      if (cached !== undefined) return cached;
-      // TLCEval#tlcEvalConst evaluates with EvalControl.Clear, so an application around it keeps nothing lazy.
-      const value = global.evaluate(
-        getLazyArguments(args, {
-          environment: context.environment,
-          scope: context.scope,
-          state: context.state,
-          next: context.next,
-        }),
-        undefined,
-      );
-      tlcEvalValues.set(expression, value);
-      return value;
-    };
   }
   if (
     global?.kind === "Builtin" &&

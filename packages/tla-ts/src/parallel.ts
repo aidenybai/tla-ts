@@ -153,13 +153,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     specification.runtimeInvariants,
   );
   // Tool's constructor describes the specification before TLC creates the checker.
-  getSpecDescription(config, environment, specification.instanceActions);
+  const description = getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
     !search ||
     search.spec.init === undefined ||
     search.spec.next === undefined ||
     search.properties.liveness.length > 0 ||
+    description.isNextOverlapping ||
     isImpure(environment)
   ) {
     return fallBack();

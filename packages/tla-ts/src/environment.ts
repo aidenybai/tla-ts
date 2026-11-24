@@ -357,6 +357,7 @@ export const createEnvironment = (
   const standardSources = new Map<string, LinkedModule>();
   const replacedDefinitions = new Map<string, Definition>();
   const builtinAliases = new Map<string, string>();
+  const standardAliasBodies = new Set<Expression>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
@@ -722,10 +723,14 @@ export const createEnvironment = (
     key: string,
     params: OperatorParam[],
     forwarded: OperatorParam[],
-    location: SourceLocation,
+    instance: Instance,
   ) => {
     // Deviation from TLC: Tool#evalImplLetInKind binds a 0-arity LET definition to a LazyValue of its body, so a LET instance's copy of a 0-arity override runs SANY's placeholder body, such as Nat == {}, where the alias forwards to the Java override.
-    const alias = createLocalAlias(name, key, params, forwarded, location);
+    const alias = {
+      ...createLocalAlias(name, key, params, forwarded, instance.location),
+      head: instance.head,
+    };
+    standardAliasBodies.add(alias.body);
     const standardDefinition = builtins.has(key) ? getStandardDefinition(key) : undefined;
     return standardDefinition ? { ...alias, standardDefinition } : alias;
   };
@@ -815,9 +820,7 @@ export const createEnvironment = (
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) {
       return getStandardInstanceSymbols(instance, standardSymbols, (symbol, name) =>
-        instance.params.length > 0
-          ? addOwnArgumentsAlias(symbol, name, instance.params, module.name, instance.location)
-          : symbol.key,
+        addOwnArgumentsAlias(symbol, name, instance.params, module.name, instance),
       );
     }
     const linked = nested ?? getLinkedModule(instance.module, module.name);
@@ -968,13 +971,13 @@ export const createEnvironment = (
       const copy =
         instance.name === undefined
           ? instantiation.getKey(key)
-          : params.length > 0 && builtins.has(key) && !definitions.has(key)
-            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location, {
+          : builtins.has(key) && !definitions.has(key)
+            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance, {
                 ...substitutes,
                 module: instance.module,
               })
             : instantiation.getQualifiedKey(key);
-      setInstanceNames(copy, name);
+      if (copy !== key) setInstanceNames(copy, name);
       if (
         unresolvedBodyKeys.has(key) &&
         !isSubstituted(instance, linked, substitutions.size, key)
@@ -1089,12 +1092,17 @@ export const createEnvironment = (
     name: string,
     params: OperatorParam[],
     instancer: string,
-    location: SourceLocation,
+    instance: Instance,
     copy?: Omit<InstanceCopy, "source">,
   ) => {
+    const location = instance.location;
     const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
     const ownParams = createArgumentParams(symbol.arity, symbol.params);
-    const alias = createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location);
+    const alias = {
+      ...createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
+      head: instance.head,
+    };
+    standardAliasBodies.add(alias.body);
     definitions.set(key, alias);
     if (copy) {
       instanceCopies.set(alias, {
@@ -1155,7 +1163,7 @@ export const createEnvironment = (
           entry[1].key,
           [...instance.params, ...forwarded],
           forwarded,
-          location,
+          instance,
         );
       });
     }
@@ -1358,7 +1366,7 @@ export const createEnvironment = (
           key,
           [...instance.params, ...ownParams],
           ownParams,
-          location,
+          instance,
         );
       });
     if (instance.location.range) {
@@ -1993,6 +2001,7 @@ export const createEnvironment = (
     definitions,
     builtins,
     copySources,
+    standardAliasBodies,
     operatorConstants: new Map(
       moduleOperators.flatMap((operator) =>
         getLinkedModule(operator.module, root.name).constants.flatMap(
@@ -2042,8 +2051,10 @@ export const createEnvironment = (
     constants,
     bodyValues,
     substitutions,
+    overriddenOperatorConstants: applied.overriddenOperatorConstants,
     reevaluatedSubstitutes: new Map(),
     instanceNames,
+    standardAliasBodies,
     variables,
     variableIndex,
     variableLocations: linkedRoot.variableLocations,
