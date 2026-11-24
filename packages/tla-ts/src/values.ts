@@ -4561,24 +4561,6 @@ export const getLazyFunctionNode = (value: LazyFunctionValue) =>
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
-// FcnLambdaValue#apply and #select take the value of an EXCEPT that ends at the argument without
-// checking the domain, matching each EXCEPT from the newest until one does.
-const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
-  for (
-    let current: LazyFunctionValue = copy;
-    isLazyFunctionCopy(current);
-    current = current.original
-  ) {
-    if (
-      isEqualLikeTlc(current.path[current.depth], argument) &&
-      current.depth === current.path.length - 1
-    ) {
-      return true;
-    }
-  }
-  return false;
-};
-
 // FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
 const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
   const previous = isLazyFunctionCopy(copy.original)
@@ -4862,6 +4844,61 @@ const checkLazyArgumentWith = (
   return argument;
 };
 
+const applyLazyBody = (
+  functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+) => body.apply(checkLazyArgumentWith(functionValue, argument, isMember));
+
+const selectLazyBody = (
+  functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+) => {
+  if (
+    functionValue.boundTupleLengths !== undefined &&
+    getSequenceElements(argument) === undefined
+  ) {
+    throw createArgumentListError(functionValue, argument);
+  }
+  return isElementOf(argument, functionValue.domain) ? body.apply(argument) : undefined;
+};
+
+// FcnLambdaValue#apply and #select compare the argument once with each EXCEPT, newest first, and check the domain only when none ends at it.
+const applyExcepts = <Result extends Value | undefined>(
+  functionValue: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+  evaluateBody: (
+    functionValue: LazyFunctionValue,
+    body: LazyFunctionValue,
+    argument: Value,
+    isMember: typeof isElementOf,
+  ) => Result,
+): Result | Value => {
+  let deeper: LazyFunctionCopy[] | undefined;
+  let current: LazyFunctionValue = functionValue;
+  while (isLazyFunctionCopy(current)) {
+    if (isEqualLikeTlc(current.path[current.depth], argument)) {
+      if (current.depth === current.path.length - 1) break;
+      if (deeper === undefined) deeper = [];
+      deeper.push(current);
+    }
+    current = current.original;
+  }
+  const below = isLazyFunctionCopy(current)
+    ? current.newValue
+    : evaluateBody(functionValue, current, argument, isMember);
+  if (deeper === undefined || below === undefined) return below;
+  let value: Value = below;
+  for (let index = deeper.length - 1; index >= 0; index--) {
+    const copy = deeper[index];
+    value = takeExcept(value, copy.path, copy.depth + 1, copy.newValue);
+  }
+  return value;
+};
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -4871,8 +4908,8 @@ export const applyFunction = (
     if (functionValue.enumerated) {
       return applyFunction(functionValue.enumerated, argument, describeMissing);
     }
-    if (isLazyFunctionCopy(functionValue) && hasReplacedKey(functionValue, argument)) {
-      return functionValue.apply(argument);
+    if (isLazyFunctionCopy(functionValue)) {
+      return applyExcepts(functionValue, argument, isElementOf, applyLazyBody);
     }
     const tupleLengths = functionValue.boundTupleLengths;
     if (tupleLengths !== undefined) {
@@ -4907,10 +4944,10 @@ export const applyFunctionWith = (
   ) {
     return applyFunction(functionValue, argument, describeMissing);
   }
-  if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
-    return functionValue.apply(checkLazyArgumentWith(functionValue, argument, isMember));
+  if (isLazyFunctionCopy(functionValue)) {
+    return applyExcepts(functionValue, argument, isMember, applyLazyBody);
   }
-  return functionValue.apply(argument);
+  return functionValue.apply(checkLazyArgumentWith(functionValue, argument, isMember));
 };
 
 export const getDomainInterval = (domain: Value[]) =>
@@ -4989,16 +5026,9 @@ const selectPath = (value: Value, path: Value[], depth: number) => {
       selected.kind === "LazyFunction" &&
       selected.enumerated === undefined
     ) {
-      if (!isLazyFunctionCopy(selected) || !hasReplacedKey(selected, argument)) {
-        if (
-          selected.boundTupleLengths !== undefined &&
-          getSequenceElements(argument) === undefined
-        ) {
-          throw createArgumentListError(selected, argument);
-        }
-        if (!isElementOf(argument, selected.domain)) return undefined;
-      }
-      selected = selected.apply(argument);
+      const applied = applyExcepts(selected, argument, isElementOf, selectLazyBody);
+      if (applied === undefined) return undefined;
+      selected = applied;
       continue;
     }
     const finite = getExceptTarget(selected);
