@@ -13,6 +13,16 @@ const checkBags = (body: string) =>
 
 const getPassedLines = (numbers: number[]) => numbers.map((number) => `"Test ${number} OK"  TRUE`);
 
+const getPrintedLines = async (next: string) => {
+  const printed: string[] = [];
+  await check({
+    source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${next}\n====`,
+    config: "INIT Init\nNEXT Next",
+    onPrint: (text) => printed.push(text),
+  });
+  return printed;
+};
+
 describe("the Bags module matches TLC", () => {
   it("evaluates every assumption in TLC's BagsTest", async () => {
     const result = await checkBagsFixture("BagsTest");
@@ -149,6 +159,64 @@ describe("the Bags module matches TLC", () => {
   ])("applies an operator with a literal body in %s", async (expression) => {
     expect((await checkBags(`ASSUME ${expression}`)).status).toBe("success");
   });
+
+  it.each([
+    ['("b" :> 1) (+) ("a" :> 1)', '"[b |-> 1, a |-> 1]"'],
+    ['BagUnion({"c" :> 1 @@ "a" :> 1, "b" :> 1})', '"[b |-> 1, a |-> 1, c |-> 1]"'],
+    ['BagOfAll(LAMBDA e : IF e = 1 THEN "b" ELSE "a", SetToBag({1, 2}))', '"[b |-> 1, a |-> 1]"'],
+    ['(("b" :> 1) (+) ("a" :> 1)) (-) ("c" :> 1)', '"[b |-> 1, a |-> 1]"'],
+    ['<<("b" :> 1) (+) ("a" :> 1)>>', '"<<[b |-> 1, a |-> 1]>>"'],
+    ['[("b" :> 1) (+) ("a" :> 1) EXCEPT !["b"] = 2]', '"[b |-> 2, a |-> 1]"'],
+    ['SetToBag({"b", "a"})', '"[a |-> 1, b |-> 1]"'],
+  ])("keeps the order in which TLC's Bags builds %s", async (expression, line) => {
+    expect(await getPrintedLines(`PrintT(ToString(${expression}))`)).toEqual([line]);
+  });
+
+  it.each([
+    [
+      'LET g == (F :> 1) (+) ({9} :> 2) IN PrintT("a") /\\ DOMAIN g # {} /\\ PrintT("b") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"', "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      'LET g == (F :> 1) (+) ({9} :> 2) IN PrintT("a") /\\ g[{9}] = 2 /\\ PrintT("b")',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"'],
+    ],
+    [
+      'LET g == BagOfAll(LAMBDA e : IF e = 1 THEN F ELSE {9}, SetToBag({1, 2})) IN PrintT("a") /\\ DOMAIN g # {} /\\ PrintT("b") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"', "({9} :> 1 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      'LET g == [n \\in {F, {9}} |-> 2] (-) ({9} :> 1) IN PrintT("a") /\\ DOMAIN g # {} /\\ PrintT("b") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", "{}", "{1}", '"b"', "({9} :> 1 @@ {{}, {1}} :> 2)"],
+    ],
+  ])(
+    "compares the lazy keys of the bag in %s as TLC's first normalize does",
+    async (body, lines) => {
+      expect(
+        await getPrintedLines(
+          `PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${body}`,
+        ),
+      ).toEqual(lines);
+    },
+  );
+
+  it.each([
+    ["(F :> 1) (+) ({9} :> 2)", '"({{}, {1}} :> 1 @@ {9} :> 2)"'],
+    ["((F :> 1) (+) ({9} :> 2)) (-) ({9} :> 1)", '"({{}, {1}} :> 1 @@ {9} :> 1)"'],
+    [
+      "BagOfAll(LAMBDA e : IF e = 1 THEN F ELSE {9}, SetToBag({1, 2}))",
+      '"({{}, {1}} :> 1 @@ {9} :> 1)"',
+    ],
+  ])(
+    "prints %s in its written order once its lazy keys are sorted, as TLC's ToString prints an unnormalized bag",
+    async (expression, line) => {
+      expect(
+        await getPrintedLines(
+          `PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN PrintT(ToString(${expression}))`,
+        ),
+      ).toEqual(['"n"', "{}", "{1}", "{}", "{1}", line]);
+    },
+  );
 
   it("applies an operator whose body is not a literal", async () => {
     const result = await checkBags(

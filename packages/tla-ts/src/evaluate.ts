@@ -127,6 +127,7 @@ import {
   isSettledValue,
   isTlcInteger,
   sortLikeFcnRcdValue,
+  toBoundTuple,
   toFiniteFunction,
   toFiniteSet,
   toFunctionRecord,
@@ -852,7 +853,9 @@ export const bindLazyArguments = (
     new TlaEvaluationError(
       `In applying the function\n${prettyPrint(formatValue(value))},\nthe argument list is:\n${prettyPrint(formatValue(argument))}\nwhich does not match its formal parameter.\n`,
     );
-  bounds.forEach((bound, index) => {
+  let components = elements;
+  for (let index = 0; index < bounds.length; index++) {
+    const pattern = bounds[index].pattern;
     if (index >= elements.length) throw createListError();
     const element = elements[index];
     const ordinal = `argument number ${index + 1}`;
@@ -861,21 +864,30 @@ export const bindLazyArguments = (
         describeArgument(
           ordinal,
           element,
-          `${bound.pattern.kind === "Name" ? "" : "\n"}which is not in its domain`,
+          `${pattern.kind === "Name" ? "" : "\n"}which is not in its domain`,
         ),
       );
     }
-    if (
-      bound.pattern.kind === "Tuple" &&
-      getSequenceElements(element)?.length !== bound.pattern.names.length
-    ) {
-      throw new TlaEvaluationError(
-        describeArgument(ordinal, element, "which does not match its formal parameter"),
-      );
+    if (pattern.kind === "Tuple") {
+      const tupleElements = getSequenceElements(element);
+      if (tupleElements === undefined || tupleElements.length !== pattern.names.length) {
+        throw new TlaEvaluationError(
+          describeArgument(ordinal, element, "which does not match its formal parameter"),
+        );
+      }
+      const tuple = toBoundTuple(element, tupleElements);
+      if (tuple !== element) {
+        if (components === elements) components = [...elements];
+        components[index] = tuple;
+      }
     }
-  });
+  }
   if (elements.length > bounds.length) throw createListError();
-  return bindArgument(bounds, lambda.scope, argument);
+  return bindArgument(
+    bounds,
+    lambda.scope,
+    components === elements ? toBoundTuple(argument, elements) : createTuple(components),
+  );
 };
 
 interface LazyFunctionTemplate {

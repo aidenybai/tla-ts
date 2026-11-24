@@ -85,7 +85,11 @@ export interface Coverage {
   hiddenFrames: CoverageFrame[];
   nextState: NextStateMode;
   isMember: typeof isElementOf;
-  convertCharged: (set: CostedSetValue, convert: (value: Value) => SetValue) => SetValue;
+  convertCharged: (
+    set: CostedSetValue,
+    convert: (value: Value, isSortedRead: boolean) => SetValue,
+    isSortedRead: boolean,
+  ) => SetValue;
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
@@ -195,13 +199,14 @@ export const createCoverage = (variableCount: number): Coverage => {
     hiddenFrames: [],
     nextState: "given",
     isMember: isElementOf,
-    convertCharged: (set, convert) => convert(set),
+    convertCharged: (set, convert, isSortedRead) => convert(set, isSortedRead),
     chargeSubsetElements: () => {},
     chargePrintedSize: () => {},
     chargeIsEmpty: () => {},
   };
   coverage.isMember = createChargedMembership(coverage);
-  coverage.convertCharged = (set, convert) => convertCharged(coverage, set, convert);
+  coverage.convertCharged = (set, convert, isSortedRead) =>
+    convertCharged(coverage, set, convert, isSortedRead);
   coverage.chargeSubsetElements = (set) => chargeSubsetElements(coverage, set);
   coverage.chargePrintedSize = (set) => chargePrintedSize(coverage, set);
   coverage.chargeIsEmpty = (set) => chargeIsEmpty(coverage, set);
@@ -1422,22 +1427,23 @@ const chargeSetEnumeration = (coverage: Coverage, set: Value) => {
 const convertCharged = (
   coverage: Coverage,
   set: CostedSetValue,
-  convert: (value: Value) => SetValue,
+  convert: (value: Value, isSortedRead: boolean) => SetValue,
+  isSortedRead: boolean,
 ) => {
   if (set.kind === "Subset") {
     // SubsetValue#toSetEnum sizes SUBSET S before its elements() sizes S again.
     chargeSize(coverage, set);
     chargeSubsetElements(coverage, set);
-    const converted = convert(set);
+    const converted = convert(set, isSortedRead);
     const node = set.cost?.node;
     if (node !== undefined) coverage.secondary[node] += converted.elements.length;
     return converted;
   }
   if (getKnownSize(set) !== undefined) {
     chargeSetEnumeration(coverage, set);
-    return convert(set);
+    return convert(set, isSortedRead);
   }
-  const converted = convert(set);
+  const converted = convert(set, isSortedRead);
   // SetOfTuplesValue, SetOfRcdsValue and SetOfFcnsValue draw a filter they hold, whose size is known only once it converts.
   const size = converted.elements.length;
   const node = getValueNode(coverage, set);

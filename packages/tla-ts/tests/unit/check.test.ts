@@ -8790,6 +8790,121 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "two parameters",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN g[[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 78 of module M: 1",
+        "|line 5, col 52 to line 5, col 74 of module M: 1",
+        "||line 5, col 52 to line 5, col 52 of module M: 1",
+        "||line 5, col 54 to line 5, col 73 of module M: 1:4",
+        "|||line 5, col 61 to line 5, col 66 of module M: 1:3",
+      ],
+    ],
+    [
+      "a tuple pattern and a parameter",
+      "x' = 0 /\\ LET g == [<<a, b>> \\in {<<1, 1>>}, c \\in {1} |-> a] IN g[[i \\in {1, 2} |-> 1], 1] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 69 of module M: 1",
+        "line 5, col 74 to line 5, col 103 of module M: 1",
+        "|line 5, col 74 to line 5, col 99 of module M: 1",
+        "||line 5, col 74 to line 5, col 74 of module M: 1",
+        "||line 5, col 74 to line 5, col 99 of module M: 1",
+        "|||line 5, col 76 to line 5, col 95 of module M: 1:6",
+        "||||line 5, col 83 to line 5, col 88 of module M: 1:3",
+      ],
+    ],
+    [
+      "a recursive function",
+      "x' = 0 /\\ LET f[a, b \\in {1}] == a IN f[[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 42 of module M: 1",
+        "line 5, col 47 to line 5, col 73 of module M: 1",
+        "|line 5, col 47 to line 5, col 69 of module M: 1",
+        "||line 5, col 47 to line 5, col 47 of module M: 1",
+        "||line 5, col 49 to line 5, col 68 of module M: 1:4",
+        "|||line 5, col 56 to line 5, col 61 of module M: 1:3",
+      ],
+    ],
+    [
+      "the copy EXCEPT makes",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN [g EXCEPT ![2, 2] = 5][[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 99 of module M: 1",
+        "|line 5, col 52 to line 5, col 95 of module M: 1",
+        "||line 5, col 52 to line 5, col 73 of module M: 1",
+        "||line 5, col 75 to line 5, col 94 of module M: 1:4",
+        "|||line 5, col 82 to line 5, col 87 of module M: 1:3",
+      ],
+    ],
+  ])(
+    "converts the argument of a function of %s to a tuple once, as TLC's FcnLambdaValue#apply binds its parameters from one toTuple",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a tuple and a function",
+      "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 19 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:4",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "|line 5, col 60 to line 5, col 61 of module M: 1",
+      ],
+    ],
+    [
+      "a function and a tuple",
+      "x' = 0 /\\ [a : {[i \\in {1, 3} |-> i], <<1, 2>>}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 19 to line 5, col 56 of module M: 1:4",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 44 of module M: 1:2",
+        "||||line 5, col 43 to line 5, col 43 of module M: 2",
+        "||||line 5, col 32 to line 5, col 37 of module M: 1:3",
+        "|||line 5, col 47 to line 5, col 54 of module M: 1:4",
+        "|line 5, col 60 to line 5, col 61 of module M: 1",
+      ],
+    ],
+    [
+      "a set filter and a set",
+      "x' = 0 /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN [a : {F, {1}}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 57 of module M: 1:8",
+        "|line 5, col 48 to line 5, col 56 of module M: 4",
+        "|line 5, col 35 to line 5, col 44 of module M: 1",
+        "line 5, col 62 to line 5, col 80 of module M: 1",
+        "|line 5, col 62 to line 5, col 75 of module M: 1:4",
+        "||line 5, col 67 to line 5, col 74 of module M: 1:3",
+        "|||line 5, col 68 to line 5, col 68 of module M: 1",
+        "|||line 5, col 71 to line 5, col 73 of module M: 1",
+        "|line 5, col 79 to line 5, col 80 of module M: 1",
+      ],
+    ],
+  ])(
+    "sorts a set of records over %s that wasn't normalized when its conversion began, as SetOfRcdsValue#toSetEnum reads that before elements() normalizes the set",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "S \\cup T of a filter",
       "x' = [t \\in {u \\in (1..3) \\X {0} : u[1] > 1} \\cup {<<5, 0>>} |-> 0]",
       [
@@ -12963,6 +13078,160 @@ ASSUME TLCFP(a) = -887695703
     "compares the keys of the function K == %s for %s builds as TLC's toFcnRcd normalizes it",
     async (definition, next, expected) => {
       expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "0",
+      "LET g == [n \\in {F, {9}} |-> 1] IN PrintT(g)",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "({9} :> 1 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      "PrintT(<<[n \\in {F, {9}} |-> 1]>>)",
+      [
+        '"n"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "<<({9} :> 1 @@ {{}, {1}} :> 1)>>",
+      ],
+    ],
+    [
+      "0",
+      'LET g == [n \\in {F, {9}} |-> 1] IN PrintT("a") /\\ g # <<>> /\\ PrintT("b") /\\ PrintT(g)',
+      [
+        '"n"',
+        '"a"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        '"b"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "({9} :> 1 @@ {{}, {1}} :> 1)",
+      ],
+    ],
+    [
+      "0",
+      "Print([n \\in {F, {9}} |-> 1], TRUE)",
+      [
+        '"n"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "({9} :> 1 @@ {{}, {1}} :> 1)  TRUE",
+      ],
+    ],
+    [
+      "[n \\in {F, {9}} |-> 1]",
+      "PrintT(K)",
+      ["{}", "{1}", "{}", "{1}", '"n"', "{}", "{1}", "{}", "{1}", "({9} :> 1 @@ {{}, {1}} :> 1)"],
+    ],
+    ["0", 'ToString([n \\in {F, {9}} |-> 1]) # ""', ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}"]],
+  ])(
+    "sorts again the function K == %s for %s copies to print, as FcnRcdValue#deepCopy builds the copy unnormalized",
+    async (definition, next, expected) => {
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "F :> 1 @@ {9} :> 2",
+      "PrintT(K)",
+      ["{}", "{1}", "{}", "{1}", '"n"', "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ g[F] = 1 /\\ PrintT("b")',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"'],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ g[{9}] = 2 /\\ PrintT("b") /\\ DOMAIN g # {} /\\ PrintT("c") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"', '"c"', "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+  ])(
+    "compares the keys of the function K == %s for %s combines with @@ as TLC's first normalize sorts it",
+    async (definition, next, expected) => {
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it("prints in its written order a function that @@ combines once its lazy keys are sorted, as TLC's ToString prints an unnormalized function", async () => {
+    expect(await getPrintedFilterPasses("0", "PrintT(ToString(F :> 1 @@ {9} :> 2))")).toEqual([
+      '"n"',
+      "{}",
+      "{1}",
+      "{}",
+      "{1}",
+      '"({{}, {1}} :> 1 @@ {9} :> 2)"',
+    ]);
+  });
+
+  it.each([
+    ["{{s \\in SUBSET {1} : PrintT(s)}}", "y = y", ["{}", "{1}", '"c"']],
+    ["{{s \\in SUBSET {1} : PrintT(s)}}", "{y, {{2}}} # {}", ["{}", "{1}", '"c"']],
+    [
+      "[k \\in {{s \\in SUBSET {1} : PrintT(s)}} |-> 1]",
+      "{y, [k \\in {{2}} |-> 1]} # {}",
+      ["{}", "{1}", '"c"'],
+    ],
+    [
+      "{{s \\in SUBSET {1} : PrintT(s)}, {t \\in SUBSET {2} : PrintT(t)}}",
+      "y = y",
+      ["{}", "{2}", "{}", "{1}", "{}", "{1}", '"c"'],
+    ],
+  ])(
+    "compares the state value %s with %s on a later state without filtering again, as TLC's fingerPrint caches each lazy part",
+    async (stored, comparison, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = {}\nNext == (x = 0 /\\ x' = 1 /\\ y' = ${stored}) \\/ (x = 1 /\\ x' = 2 /\\ y' = y /\\ PrintT("c") /\\ ${comparison})\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["[{F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{F, {2}} -> {1, 2}] # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    ["LET G == {F} IN [y \\in G |-> 1] # [y \\in G |-> 2]", ['"n"', "{}", "{1}"]],
+    ["[{M, F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{M, {2}, F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{M, 1} -> {1, 2}] # {}", ['"n"']],
+  ])(
+    "compares the keys of the domain the functions of %s share, as TLC's FcnRcdValue#compareTo does",
+    async (next, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${next}\n====`,
+        config: "CONSTANT M = M\nINIT Init\nNEXT Next",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
     },
   );
 
