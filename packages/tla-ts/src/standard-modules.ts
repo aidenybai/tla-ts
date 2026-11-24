@@ -62,8 +62,10 @@ import {
   markNormalized,
   markStreamedSet,
   isSetValue,
+  setCostModel,
   toFiniteSet,
   getSortedUnion,
+  getTupleCostModel,
   getValueKey,
   getWrittenElements,
   isNormalizedSet,
@@ -486,7 +488,7 @@ const createSequencesOperators = (version: TlcVersion) =>
               ? getValue(args, 0, "\\o")
               : undefined;
         if (kept !== undefined && getFunctionClass(kept) === "tuple") return kept;
-        return createTuple([...left, ...right]);
+        return setCostModel(createTuple([...left, ...right]), getTupleCostModel(kept));
       }
       const right = getValue(args, 1, "\\o");
       if (typeof right !== "string") {

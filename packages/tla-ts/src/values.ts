@@ -1068,19 +1068,28 @@ export const toFunctionRecord = (value: FunctionValue | LazyFunctionValue) => {
   return toFiniteFunction(value);
 };
 
+// FcnRcdValue#toTuple and FcnRcdValue#toRcd charge a function and pass on its cost model only when its domain isn't an interval.
+const getConvertedCostModel = (value: FunctionValue) =>
+  value.costModel !== undefined &&
+  value.functionClass === undefined &&
+  getDomainInterval(value.domain) === undefined
+    ? value.costModel
+    : undefined;
+
 const chargeConversionFromFunction = (value: FunctionValue | LazyFunctionValue) => {
   if (value.kind !== "Function") return;
-  const costModel = value.costModel;
-  // FcnRcdValue#toTuple and FcnRcdValue#toRcd charge a function only when its domain isn't an interval.
-  if (
-    costModel === undefined ||
-    value.functionClass !== undefined ||
-    getDomainInterval(value.domain) !== undefined
-  ) {
-    return;
-  }
+  const costModel = getConvertedCostModel(value);
+  if (costModel === undefined) return;
   stopFirstAttempt();
   costModel.secondary[costModel.node] += value.range.length;
+};
+
+export const getTupleCostModel = (value: Value | undefined) => {
+  if (typeof value !== "object") return undefined;
+  if (value.kind === "LazyFunction") {
+    return isCountedLazyFunction(value) && value.costModel.node >= 0 ? value.costModel : undefined;
+  }
+  return value.kind === "Function" ? getConvertedCostModel(value) : undefined;
 };
 
 const toTlcFunction = (value: Value) => {
@@ -1806,7 +1815,7 @@ export const createRecord = (fields: [string, Value][]): FunctionValue =>
 export const createSortedRecord = (names: Value[], range: Value[]) =>
   setFunctionClass(createSortedFunction(names, range), "record");
 
-const setCostModel = (value: FunctionValue, costModel: ValueCostModel | undefined) => {
+export const setCostModel = (value: FunctionValue, costModel: ValueCostModel | undefined) => {
   if (costModel !== undefined) value.costModel = costModel;
   return value;
 };

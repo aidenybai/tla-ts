@@ -37,6 +37,7 @@ import {
   isEqualLikeTlc,
   isFunctionValue,
   normalizeDeeply,
+  setCostModel,
   toFiniteFunction,
   toFiniteSet,
   toFunctionRecord,
@@ -171,7 +172,7 @@ const convertLikeTlcEval = (value: Value): Value => {
     case "Function": {
       if (value.functionClass === undefined) return value;
       const record = toFunctionRecord(value);
-      return createSortedFunction(record.domain, record.range);
+      return setCostModel(createSortedFunction(record.domain, record.range), value.costModel);
     }
     case "ModelValue":
     case "MixedSet":
