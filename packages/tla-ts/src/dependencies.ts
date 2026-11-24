@@ -606,7 +606,6 @@ const collectReachedBodies = (
           const reach = isRecursive
             ? sharedReach
             : getDefinitionReach(getDefinitionExpressions(definition), inner ?? scope, isEffectful);
-          // Tool#getNextStates evaluates a LET definition at each use, so one that reaches an effect through another varies too.
           if ((reach & EFFECT_REACH) !== 0 && definition.kind === "Operator") {
             varyingBodies.add(definition.body);
           }
