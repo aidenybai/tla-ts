@@ -168,18 +168,43 @@ export class Rational {
     if (this.num === 0n) return other;
     if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num + other.num, 1n);
-    return Rational.of(this.num * other.den + other.num * this.den, this.den * other.den);
+    return this.linArithOp(other, false);
   }
 
   sub(other: Rational) {
     if (other.num === 0n) return this;
     if (this.den === 1n && other.den === 1n) return new Rational(this.num - other.num, 1n);
-    return Rational.of(this.num * other.den - other.num * this.den, this.den * other.den);
+    return this.linArithOp(other, true);
+  }
+
+  private linArithOp(other: Rational, isSub: boolean) {
+    const gcd = getGcd(this.den, other.den);
+    if (gcd === 1n) {
+      const first = this.num * other.den;
+      const second = other.num * this.den;
+      return new Rational(isSub ? first - second : first + second, this.den * other.den);
+    }
+    const thisScale = this.den / gcd;
+    const first = this.num * (other.den / gcd);
+    const second = other.num * thisScale;
+    const num = isSub ? first - second : first + second;
+    const divisor = getGcd(num, gcd);
+    const den = thisScale * other.den;
+    return divisor === 1n ? new Rational(num, den) : new Rational(num / divisor, den / divisor);
   }
 
   mul(other: Rational) {
     if (this.den === 1n && other.den === 1n) return new Rational(this.num * other.num, 1n);
-    return Rational.of(this.num * other.num, this.den * other.den);
+    return this.ratMul(other);
+  }
+
+  private ratMul(other: Rational) {
+    const denNumGcd = getGcd(this.den, other.num);
+    const numDenGcd = getGcd(this.num, other.den);
+    return new Rational(
+      (this.num / numDenGcd) * (other.num / denNumGcd),
+      (other.den / numDenGcd) * (this.den / denNumGcd),
+    );
   }
 
   div(other: Rational) {
