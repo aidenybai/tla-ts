@@ -241,6 +241,10 @@ export interface TypedCheck {
   // When the interpreter looks for a violation of a temporal property: as it searches too, only at
   // the end, or never.
   livenessCheck: "default" | "final" | "off";
+  reportInitialStates: (initialStates: TypedResult["initialStates"]) => void;
+  reportProgress:
+    | ((generated: number, distinct: number, queued: number, depth: number) => void)
+    | undefined;
 }
 
 export interface TypedResult {
@@ -6671,6 +6675,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStarts.data = new Int32Array(0);
   }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
+  check.reportInitialStates(initialStates);
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
@@ -6772,6 +6777,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     }
     outDegrees[Math.min(expansion.newStates, OUT_DEGREE_BUCKETS - 1)]++;
     if (isPathKept) pushFinds(finds, expansion.newStates);
+    if ((index & 63) === 63) {
+      check.reportProgress?.(
+        statistics.generated,
+        statistics.distinct,
+        statistics.distinct - index - 1,
+        statistics.depth,
+      );
+    }
   }
   const lasso = check.livenessCheck === "off" ? undefined : live?.findViolation();
   if (lasso === undefined) {

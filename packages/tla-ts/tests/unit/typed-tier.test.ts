@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { check, type CheckProgress } from "../../src";
+import type { SearchStatistics } from "../../src/check";
 import { getActualProbability } from "../../src/tlc/summary";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
@@ -344,6 +345,51 @@ describe("typed tier matches TLC", () => {
     const expected = [2, 4, 8, 16, 32, 64, 128, 256];
     expect(await getCounts(true)).toEqual(expected);
     expect(await getCounts(false)).toEqual(expected);
+  });
+
+  const checkCounter = async (next: string, isTyped: boolean) => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    const reported: (CheckProgress["kind"] | SearchStatistics)[] = [];
+    const result = await check({
+      source: `---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = ${next}\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      maxSetSize: isTyped ? undefined : INTERPRETED_SET_SIZE,
+      onProgress: (progress) =>
+        reported.push(progress.kind === "progress" ? progress.statistics : progress.kind),
+    });
+    clock.mockRestore();
+    return { status: result.status, reported };
+  };
+
+  it.each([true, false])(
+    "reports its progress every minute after the initial states when isTyped is %s, as TLC does",
+    async (isTyped) => {
+      const checked = await checkCounter("x + 1", isTyped);
+      const progress = checked.reported.filter((entry) => typeof entry !== "string");
+      expect(checked.reported.slice(0, 3)).toEqual([
+        "parsed",
+        "initial-states-started",
+        "initial-states-computed",
+      ]);
+      expect(progress.length).toBeGreaterThan(0);
+      progress.forEach((statistics) =>
+        expect([statistics.distinctStates, statistics.depth, statistics.queuedStates]).toEqual([
+          statistics.generatedStates,
+          statistics.generatedStates,
+          statistics.generatedStates < 1001 ? 1 : 0,
+        ]),
+      );
+    },
+  );
+
+  it("reports the initial states once when the interpreter checks again what the tier searched", async () => {
+    const checked = await checkCounter("x + 1 + 0 \\div (500 - x)", true);
+    expect([
+      checked.status,
+      checked.reported.filter((entry) => entry === "initial-states-computed").length,
+      checked.reported.some((entry) => typeof entry !== "string"),
+    ]).toEqual(["error", 1, true]);
   });
 
   it.each([

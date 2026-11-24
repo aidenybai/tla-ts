@@ -1314,6 +1314,8 @@ const searchStates = (
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  let isTypedInitialReported = false;
+  let typedProgressAt = Infinity;
   const typedChecks =
     !options.isContinued &&
     options.dump === undefined &&
@@ -1331,12 +1333,35 @@ const searchStates = (
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
+      reportInitialStates: (initialStates) => {
+        if (isTypedInitialReported) return;
+        isTypedInitialReported = true;
+        for (let count = 2; count < initialStates.generated; count *= 2) {
+          reportInitialStatesProgress(count, options.onProgress);
+        }
+        options.onProgress?.({ kind: "initial-states-computed", initialStates });
+        typedProgressAt = performance.now() + PERIODIC_START;
+      },
+      reportProgress:
+        options.onProgress &&
+        ((generatedStates, distinctStates, queuedStates, depth) => {
+          const now = performance.now();
+          if (now < typedProgressAt) return;
+          typedProgressAt = now + PROGRESS_INTERVAL;
+          options.onProgress?.({
+            kind: "progress",
+            statistics: {
+              generatedStates,
+              distinctStates,
+              queuedStates,
+              depth: Math.max(depth, 1),
+              coverage: undefined,
+            },
+          });
+        }),
     });
+  const onInitialProgress = isTypedInitialReported ? undefined : options.onProgress;
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
-    for (let count = 2; count < typed.initialStates.generated; count *= 2) {
-      reportInitialStatesProgress(count, options.onProgress);
-    }
-    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
     const statistics = {
       ...createResult("success"),
       generatedStates: typed.generatedStates,
@@ -1379,7 +1404,7 @@ const searchStates = (
     };
     try {
       const onInitialState = (state: Value[]) => {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        reportInitialStatesProgress(runtime.initialStates, onInitialProgress);
         if (overflowState) {
           runtime.generatedStates++;
           runtime.initialStates++;
@@ -1420,7 +1445,7 @@ const searchStates = (
       }
     } catch (error) {
       if (error instanceof TlaIllegalStateError) {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        reportInitialStatesProgress(runtime.initialStates, onInitialProgress);
         runtime.generatedStates++;
         runtime.initialStates++;
         const state = error.state.map((value) => value ?? createModelValue("null"));
@@ -1458,7 +1483,7 @@ const searchStates = (
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
-  options.onProgress?.({
+  onInitialProgress?.({
     kind: "initial-states-computed",
     initialStates: computedInitialStates,
   });
