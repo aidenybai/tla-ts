@@ -615,7 +615,8 @@ const searchStates = (
           callStack.isFrozen = true;
           callStack.fingerprint = fingerprint;
         }
-        if (!fingerprint) fingerprintReplayed(state, callStack, coverage);
+        const isViewFailed = viewTracing.callStack?.isFrozen === true;
+        if (!isViewFailed) fingerprintReplayed(state, callStack, coverage);
         throw error;
       }
     };

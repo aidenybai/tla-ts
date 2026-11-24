@@ -430,6 +430,29 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("reports the failure of a VIEW on a successor that holds Nat, as TLCStateMut#fingerPrint evaluates the VIEW on the deep-normalized state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nV == IF x[1] = 1 THEN 1 \\div 0 ELSE 0\nInit == x = <<0, 0>>\nNext == x' = <<1, Nat>>\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+      result.failure?.fingerprint,
+      formatCallStackLines(result),
+      result.failure?.exitCode,
+    ]).toEqual([
+      "The second argument of \\div is 0.",
+      ["<<0, 0>>"],
+      `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`,
+      undefined,
+      [],
+      255,
+    ]);
+  });
+
   it.each([
     [
       "<<1, {{1}, Nat}>>",
