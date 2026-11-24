@@ -1270,25 +1270,6 @@ const resolveDefinitions = (
   declarations: Declaration[] = [],
 ) => {
   const recursive = new Set<Binding>();
-  const declared = definitions
-    .filter(
-      (definition) =>
-        definition.isRecursive &&
-        declarations.every((declaration) => declaration.name !== definition.name),
-    )
-    .reduce<LocalName | undefined>((parent, definition) => {
-      if (lookupLocal(parent, definition.name)?.isPending) return parent;
-      const local: LocalName = {
-        name: definition.name,
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-        parent,
-        isPending: true,
-      };
-      recursive.add(local);
-      return local;
-    }, scope);
   const declaredLocals = new Map<Declaration, LocalName | undefined>();
   const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
     const binding: Binding = {
@@ -1351,7 +1332,7 @@ const resolveDefinitions = (
     return resolveDefinition(definition, current, inner, recursive)
       ? { ...local, params: getParamArities(definition) }
       : current;
-  }, declared);
+  }, scope);
   const resolvedScope = resolvePending(resolved, () => true);
   declaredLocals.forEach((local, declaration) => {
     const range = declaration.location.range;

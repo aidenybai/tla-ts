@@ -5863,6 +5863,39 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a proof's DEFINE of an operator that a RECURSIVE declaration and its definition name",
+      "RECURSIVE X(_)\nX(p) == p\nTHEOREM TRUE\n<1> DEFINE X == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 5, col 12 to line 5, col 17 of module M",
+          message: "Operator X already defined or declared.",
+        },
+        {
+          location: "line 5, col 12 to line 5, col 17 of module M",
+          message:
+            "Multiply-defined symbol 'X': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a proof step's definition of an operator that a RECURSIVE declaration and its definition name",
+      "RECURSIVE X(_)\nX(p) == p\nTHEOREM TRUE\n<1> X(q) == q\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 5, col 5 to line 5, col 13 of module M",
+          message: "Operator X already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 5, col 5 to line 5, col 13 of module M",
+          message:
+            "Multiple declarations or definitions for symbol X.  \nThis duplicates the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
