@@ -20,15 +20,20 @@ interface Declared {
 }
 
 interface Exported extends Declared {
-  node: FunctionNode | ts.FunctionTypeNode;
+  node: FunctionNode | ts.SignatureDeclaration;
   body: ts.ConciseBody;
   tags: Map<string, string>;
+  // The signature of a const's type that the model calls, where the type has call signatures of
+  // its own, as an overloaded or a dual function's does, and how the call reaches it.
+  signature?: { value: ts.Signature; note: string };
 }
 
 interface Parameter {
   node: ts.ParameterDeclaration;
   name: string;
   symbol: ts.Symbol | undefined;
+  // Its type, as the signature that the model calls instantiates it.
+  type: ts.Type;
 }
 
 // Why a type has no finite set of values.
@@ -523,6 +528,39 @@ export const frameModel = (
         : [],
     ),
   ]);
+  // The signature that a call of a const reaches, where the const's type has call signatures, as an
+  // overloaded function's type literal, or a named function type such as Order<A>, has: for a dual
+  // function, the data-first signature, which dual dispatches to by its arity or by its predicate,
+  // and otherwise the signature that takes the most parameters. Overloads are TypeScript's alone,
+  // so each call runs the one function the initializer gives, as Node runs it.
+  const getCalledSignature = (type: ts.TypeNode, initializer: ts.Expression) => {
+    const signatures = checker.getTypeFromTypeNode(type).getCallSignatures();
+    if (signatures.length === 0) return undefined;
+    const call = skipCasts(initializer);
+    const isDual =
+      ts.isCallExpression(call) &&
+      /(^|\.)dual$/.test(call.expression.getText()) &&
+      call.arguments.length === 2;
+    const arity =
+      isDual && ts.isNumericLiteral(call.arguments[0]) ? Number(call.arguments[0].text) : undefined;
+    const widest = signatures.reduce((found, signature) =>
+      signature.getParameters().length > found.getParameters().length ? signature : found,
+    );
+    const value =
+      arity === undefined
+        ? widest
+        : signatures.find((signature) => signature.getParameters().length === arity);
+    if (value === undefined) return undefined;
+    const shown = checker.signatureToString(value);
+    const note = !isDual
+      ? signatures.length === 1
+        ? `its type's signature ${shown}`
+        : `its signature ${shown}, of ${signatures.length}, which takes the most parameters`
+      : arity !== undefined
+        ? `its data-first signature ${shown}, which dual dispatches to by its arity, ${arity}`
+        : `its signature ${shown}, which takes the most parameters, and which dual dispatches to by its predicate`;
+    return { value, note };
+  };
   const exported = helpers.flatMap((declared): Exported[] => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
@@ -541,8 +579,24 @@ export const frameModel = (
     // module's function does, runs as a call of what the initializer gives.
     const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
     const type = ts.isVariableDeclaration(declaration) ? declaration.type : undefined;
-    return initializer !== undefined && type !== undefined && ts.isFunctionTypeNode(type)
-      ? [{ ...declared, node: type, body: initializer, tags: tags.get(statement) ?? new Map() }]
+    if (initializer === undefined || type === undefined) return [];
+    if (ts.isFunctionTypeNode(type)) {
+      return [
+        { ...declared, node: type, body: initializer, tags: tags.get(statement) ?? new Map() },
+      ];
+    }
+    const signature = getCalledSignature(type, initializer);
+    const called = signature?.value.getDeclaration();
+    return signature !== undefined && called !== undefined
+      ? [
+          {
+            ...declared,
+            node: called,
+            body: initializer,
+            tags: tags.get(statement) ?? new Map(),
+            signature,
+          },
+        ]
       : [];
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
@@ -881,8 +935,9 @@ export const frameModel = (
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
     checker.getTypeAtLocation(node.name);
   // The values that a parameter of an exported function ranges over, which TLC lists.
-  const getDomain = (node: ts.ParameterDeclaration) => {
-    const domain = findDomain(getType(node));
+  const getDomain = (parameter: Parameter) => {
+    const node = parameter.node;
+    const domain = findDomain(parameter.type);
     if (!isInfinite(domain)) return domain;
     const name = ts.isIdentifier(node.name) ? node.name.text : undefined;
     if (name === undefined) throw new TlaTypeScriptError(domain.message, node);
@@ -892,11 +947,22 @@ export const frameModel = (
     );
   };
   const getParameters = (definition: Exported): Parameter[] =>
-    definition.node.parameters.map((node) => ({
-      node,
-      name: node.name.getText(),
-      symbol: ts.isIdentifier(node.name) ? getSymbol(node.name) : undefined,
-    }));
+    definition.node.parameters.map((node, index) => {
+      const symbol = definition.signature?.value.getParameters()[index];
+      return {
+        node,
+        name: node.name.getText(),
+        symbol: ts.isIdentifier(node.name) ? getSymbol(node.name) : undefined,
+        type:
+          symbol === undefined
+            ? getType(node)
+            : checker.getTypeOfSymbolAtLocation(symbol, definition.declaration),
+      };
+    });
+  // The type that a call of an exported function returns.
+  const getReturnType = (definition: Exported) =>
+    definition.signature?.value.getReturnType() ??
+    checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
   // A leading `if (!set.has(parameter)) return;` chooses the parameter from that set, as
   // `\E parameter \in set` does, so TLC doesn't enumerate the parameter's whole type. The set may
   // use parameters that earlier guards chose, as in \E a \in A : \E b \in B(a).
@@ -977,14 +1043,14 @@ export const frameModel = (
   const readStateGuards = (definition: Exported, parameters: Parameter[]) =>
     new Map(
       [...readGuards(definition, parameters)].filter((entry) => {
-        const type = getType(entry[0].node);
+        const type = entry[0].type;
         return isInfinite(findDomain(type)) || !isExact(type);
       }),
     );
   // Whether an exported function is an action: one that changes state or returns nothing.
   const isStepExport = (definition: Exported) => {
     if (writesState(definition.body, new Set())) return true;
-    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    const returnType = getReturnType(definition);
     return (
       returnType === undefined ||
       (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
@@ -1043,7 +1109,7 @@ export const frameModel = (
     const parameters = getParameters(definition);
     const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
     const unlisted = parameters.find((parameter) => {
-      const domain = findDomain(getType(parameter.node));
+      const domain = findDomain(parameter.type);
       return !guarded.has(parameter) && isInfinite(domain);
     });
     // A call's argument lists, every combination of its parameters' values, which the model lists
@@ -1051,14 +1117,14 @@ export const frameModel = (
     const count = parameters
       .filter((parameter) => !guarded.has(parameter))
       .reduce((product, parameter) => {
-        const domain = findSizedDomain(getType(parameter.node), []);
+        const domain = findSizedDomain(parameter.type, []);
         return isUnlisted(domain) ? product : product * BigInt(domain.size);
       }, 1n);
     if (unlisted === undefined && count > BigInt(setBound)) {
       return `its parameters make ${count.toLocaleString("en-US")} argument lists, more than the ${setBound.toLocaleString("en-US")} it lists`;
     }
     if (unlisted !== undefined) {
-      const type = getType(unlisted.node);
+      const type = unlisted.type;
       const kind = getUnlistedKind(type);
       const domain = findDomain(type);
       const kinds = getMixedKinds(type);
@@ -1070,7 +1136,9 @@ export const frameModel = (
         : `its parameter ${unlisted.name} takes values it can't list: ${isInfinite(domain) ? domain.message : ""}`;
     }
     return definition.node.parameters.length === 0 &&
-      !ts.isFunctionTypeNode(definition.node) &&
+      (ts.isFunctionDeclaration(definition.node) ||
+        ts.isArrowFunction(definition.node) ||
+        ts.isFunctionExpression(definition.node)) &&
       isAlwaysThrowing(definition.node)
       ? "every call of it throws"
       : undefined;
@@ -1078,7 +1146,9 @@ export const frameModel = (
   const notes: string[] = [];
   const called = exported.filter((definition) => {
     const reason = getUncalledReason(definition);
-    if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}: ${reason}`);
+    const by = definition.signature === undefined ? "" : ` by ${definition.signature.note}`;
+    if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}${by}: ${reason}`);
+    else if (definition.signature !== undefined) notes.push(`tla-ts calls ${definition.name}${by}`);
     return reason === undefined;
   });
   const init: string[] = [];
@@ -1139,7 +1209,7 @@ export const frameModel = (
       return;
     }
     const domains = parameters.map((parameter) =>
-      chosen.has(parameter) ? GUARDED : getDomain(parameter.node),
+      chosen.has(parameter) ? GUARDED : getDomain(parameter),
     );
     const independent = parameters.flatMap((parameter, index) =>
       chosen.get(parameter) === true ? [] : [`${parameter.tla} \\in ${domains[index]}`],
@@ -1161,7 +1231,7 @@ export const frameModel = (
     // Fairness holds for each parameter value when every parameter has a finite type, with the
     // guards that chose parameters kept inside the action.
     const typeDomains = parameters.map((parameter, index) =>
-      chosen.has(parameter) ? findDomain(getType(parameter.node)) : domains[index],
+      chosen.has(parameter) ? findDomain(parameter.type) : domains[index],
     );
     const finite = typeDomains.flatMap((domain) => (isInfinite(domain) ? [] : [domain]));
     if (finite.length < typeDomains.length) {
@@ -1186,7 +1256,7 @@ export const frameModel = (
     predicates.push(
       `${definition.name} == ${quantify(
         "\\A",
-        parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`),
+        parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter)}`),
         "LET result == TRUE IN result = result",
       )}`,
     );
@@ -1217,7 +1287,7 @@ export const frameModel = (
     }
     const bounds = isQuantified
       ? declareParameters(definition).map(
-          (parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`,
+          (parameter) => `${parameter.tla} \\in ${getDomain(parameter)}`,
         )
       : [];
     const define = (body: string) => predicates.push(`${definition.name} == ${body}`);
@@ -1263,7 +1333,7 @@ export const frameModel = (
     const tag = getTag(definition);
     if (tag !== undefined) return translateProperty(definition, tag);
     if (isStepExport(definition)) return translateStep(definition);
-    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    const returnType = getReturnType(definition);
     if (
       definition.node.parameters.length > 0 ||
       returnType === undefined ||
@@ -1342,6 +1412,15 @@ export const frameModel = (
     variables: stateNames.map((name): StateVariable => ({ name })),
     notes,
     bindings,
+    // The signature that the model calls of each exported const whose type has call signatures,
+    // by the const's name.
+    signatures: new Map(
+      exported.flatMap((definition) =>
+        definition.signature === undefined
+          ? []
+          : [[definition.identifier.text, definition.node] as const],
+      ),
+    ),
     symmetric,
     // The state variable that the model's actions count on without end, whose search checks the
     // states within ENDLESS_STEPS steps and then stops.
