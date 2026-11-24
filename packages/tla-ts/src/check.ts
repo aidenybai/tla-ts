@@ -616,6 +616,8 @@ const searchStates = (
           callStack.isFrozen = true;
           callStack.fingerprint = fingerprint;
         }
+        // TLCStateMut#fingerPrint deep-normalizes the state before the VIEW, and a set fails to sort where its fingerprint would.
+        if (!fingerprint) fingerprintReplayed(state, callStack, coverage);
         throw error;
       }
     };

@@ -38,6 +38,14 @@ export const formatCallStackLines = (result: Awaited<ReturnType<typeof check>>) 
         : "";
     });
 
+export const formatFingerprintLines = (result: Awaited<ReturnType<typeof check>>) =>
+  result.failure?.fingerprint?.sources.map((source) => {
+    const range = source.location.range;
+    return range
+      ? `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+      : "";
+  });
+
 export const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>
   check({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,

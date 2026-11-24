@@ -337,6 +337,9 @@ const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key ===
 
 const SELF_COMPARED_FLAG = 1;
 
+export const isScalarValue = (value: Value) =>
+  typeof value !== "object" || value.kind === "ModelValue";
+
 const hasCompoundKeys = (domain: Value[]) => {
   if (domain.length === 0) return false;
   const last = domain[domain.length - 1];
@@ -1514,12 +1517,14 @@ const normalizeDeeplyWithin = (
     case "Set":
       value.isNormalized = true;
       for (let index = 0; index < value.elements.length; index++) {
-        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+        const element = value.elements[index];
+        if (!isScalarValue(element)) pending = normalizeDeeplyWithin(element, depth + 1, pending);
       }
       return pending;
     case "MixedSet":
       for (let index = 0; index < value.elements.length; index++) {
-        pending = normalizeDeeplyWithin(value.elements[index], depth + 1, pending);
+        const element = value.elements[index];
+        if (!isScalarValue(element)) pending = normalizeDeeplyWithin(element, depth + 1, pending);
       }
       toFiniteSet(value);
       return pending;
@@ -1527,8 +1532,10 @@ const normalizeDeeplyWithin = (
       // FcnRcdValue#deepNormalize normalizes its values but only sorts its domain.
       value.writtenKeys = undefined;
       for (let index = 0; index < value.domain.length; index++) {
-        markNormalized(value.domain[index]);
-        pending = normalizeDeeplyWithin(value.range[index], depth + 1, pending);
+        const key = value.domain[index];
+        const item = value.range[index];
+        if (!isScalarValue(key)) markNormalized(key);
+        if (!isScalarValue(item)) pending = normalizeDeeplyWithin(item, depth + 1, pending);
       }
       return pending;
     case "LazyFunction": {

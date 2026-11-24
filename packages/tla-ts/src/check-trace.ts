@@ -142,7 +142,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const isEqualState = (state: Value[], successor: Value[]) =>
     state.every((value, position) => {
       const error = getFingerprintError(value);
-      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC misses the step and reports a TLC bug(5).
+      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC misses the step and reports a TLC bug(5), or a NullPointerException after an initial state.
       if (error) throw error;
       return isSameValue(value, successor[position]);
     });

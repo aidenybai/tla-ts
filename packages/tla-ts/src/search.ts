@@ -128,7 +128,7 @@ import {
   hasLazyPart,
   isFunctionValue,
   isUpdatedElementOf,
-  markNormalized,
+  normalizeDeeply,
   setAliasedState,
   setAliasName,
   setStringOrder,
@@ -1459,7 +1459,7 @@ export const createSearch = (
     evaluate(expression, getContext(viewEnvironment, state, undefined));
   const getRepresentativeState = (state: Value[]) => {
     // TLC's TLCStateMut#fingerPrint deep-normalizes a state before it evaluates the view.
-    if (view !== undefined) state.forEach(markNormalized);
+    if (view !== undefined) state.forEach(normalizeDeeply);
     return symmetryGroup === undefined
       ? state
       : getRepresentative(state, symmetryGroup, getTlcOrder());

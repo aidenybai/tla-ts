@@ -10,7 +10,12 @@ import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
 import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
-import { checkModule, checkSteps, formatCallStackLines } from "./check-harness";
+import {
+  checkModule,
+  checkSteps,
+  formatCallStackLines,
+  formatFingerprintLines,
+} from "./check-harness";
 
 const getFailureSummary = (result: CheckResult) => [
   result.status,
@@ -414,15 +419,66 @@ describe("evaluation errors match TLC", () => {
       });
       expect([
         result.failure?.fingerprint?.reason ?? result.failure?.message,
-        result.failure?.fingerprint?.sources.map((source) => {
-          const range = source.location.range;
-          return range
-            ? `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
-            : "";
-        }) ?? [],
+        formatFingerprintLines(result) ?? [],
         formatCallStackLines(result) ?? [],
         result.failure?.exitCode,
       ]).toEqual([reason, sources, callStack, 75]);
+    },
+  );
+
+  it.each([
+    [
+      "<<1, {{1}, Nat}>>",
+      "Attempted to compare overridden value Nat with non-overridden value:\n{1}",
+      [
+        "line 7, col 27 to line 7, col 43 of module M",
+        "line 7, col 32 to line 7, col 41 of module M",
+      ],
+    ],
+    [
+      "<<1, {Nat, 1}>>",
+      "Attempted to compare integer 1 with non-integer:\nNat",
+      [
+        "line 7, col 27 to line 7, col 41 of module M",
+        "line 7, col 32 to line 7, col 39 of module M",
+      ],
+    ],
+  ])(
+    "fails on the successor %s, whose set can't be sorted, under a VIEW that leaves the set out, as TLCStateMut#fingerPrint deep-normalizes a state first",
+    async (value, reason, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences, Bags\nCONSTANT M1, M2\nVARIABLE x\nV == x[1]\nInit == x = <<0, 0>>\nNext == (x[1] = 0 /\\ x' = ${value}) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)\n====`,
+        config:
+          "CONSTANT M1 = M1\nCONSTANT M2 = M2\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V",
+      });
+      // Deviation from TLC: TLCTrace#printTrace can't compare the successor with the state it rebuilds, so TLC's second error is a NullPointerException.
+      expect([
+        result.failure?.message,
+        result.failure?.trace.map((step) => formatValue(step.state.x)),
+        result.failure?.traceFailure?.message,
+        result.failure?.fingerprint?.reason,
+        formatFingerprintLines(result),
+        result.failure?.exitCode,
+      ]).toEqual([
+        `${UNEXPECTED_EXCEPTION}${reason}`,
+        ["<<0, 0>>"],
+        `${UNEXPECTED_EXCEPTION}${reason}`,
+        reason,
+        sources,
+        75,
+      ]);
+    },
+  );
+
+  it.each(["", "\nVIEW V"])(
+    "fails on an initial state whose set can't be sorted, with the config tail %j, as TLCStateMut#fingerPrint deep-normalizes a state before its VIEW",
+    async (view) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nV == x[1]\nInit == x = <<0, {Nat, {1}}>>\nNext == x' = x\n====",
+        config: `INIT Init\nNEXT Next${view}`,
+      });
+      expect(result.failure?.message).toBe("Attempted to compare the set {1} with the value:\nNat");
     },
   );
 
