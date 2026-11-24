@@ -13198,6 +13198,77 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "one instance",
+      "x",
+      "LET L == INSTANCE C WITH v <- x IN L!Start /\\ y = 0",
+      "x' = (x + 1) % 3 /\\ y' = y",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 44 to line 5, col 59 of module M: 1",
+      ],
+    ],
+    [
+      "one instance with a parameter",
+      "v",
+      "LET L(w) == INSTANCE C WITH v <- w IN L(v)!Start /\\ L(y)!StartIn",
+      "LET L(w) == INSTANCE C WITH v <- w IN (L(v)!Inc /\\ L(y)!Stay) \\/ (L(y)!IncIn /\\ L(v)!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 7, col 10 to line 7, col 29 of module C: 0",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances",
+      "x",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y IN Lx!Start /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y IN (Lx!Inc /\\ Ly!Stay) \\/ (Ly!IncIn /\\ Lx!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances whose declaration a root variable names",
+      "v",
+      "LET Lx == INSTANCE C WITH v <- v  Ly == INSTANCE C WITH v <- y IN Lx!Start /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- v  Ly == INSTANCE C WITH v <- y IN (Lx!Inc /\\ Ly!Stay) \\/ (Ly!IncIn /\\ Lx!StayAll)",
+      [
+        "line 7, col 10 to line 7, col 29 of module C: 0",
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances whose substitutes differ in shape",
+      "x",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y + 0 IN Lx!Start /\\ y = 0 /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y + 0 IN (Lx!Inc /\\ y' = y /\\ Ly!Stay) \\/ (y' = y /\\ Lx!IncIn /\\ Ly!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 79 to line 5, col 109 of module M: 1",
+      ],
+    ],
+  ])(
+    "lists each definition of a LET instance once in the counts of the initial predicate for %s, as TLC's CostModelNode keys its children by SemanticNode",
+    async (_name, variable, init, next, lines) => {
+      const result = await getLetInstanceCoverage(variable, init, next);
+      expect(formatCoverage(result)?.[0]).toEqual(lines);
+    },
+  );
+
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
