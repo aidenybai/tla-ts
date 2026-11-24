@@ -915,7 +915,12 @@ const createLazyFunction = (
     source,
     boundTupleLengths,
     isApplicationObserved,
-    apply: (argument) => compute(argument, self),
+    apply: isApplicationObserved
+      ? (argument) => {
+          stopFirstAttempt();
+          return compute(argument, self);
+        }
+      : (argument) => compute(argument, self),
   };
   return costModel ? Object.assign(self, { costModel }) : self;
 };

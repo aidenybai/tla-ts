@@ -9791,6 +9791,51 @@ ASSUME TLCFP(a) = -887695703
     expect(await getNextCoverageLines(`x' = x /\\ ${body}`)).toEqual(rows);
   });
 
+  it.each([
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE {s \\in SUBSET {1} : s = {}} = {{}} IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 96 of module M: 1:1",
+        "|line 5, col 39 to line 5, col 96 of module M: 1",
+        "||line 5, col 42 to line 5, col 46 of module M: 1",
+        "||line 5, col 63 to line 5, col 96 of module M: 1",
+        "|||line 5, col 63 to line 5, col 89 of module M: 1:3",
+        "||||line 5, col 83 to line 5, col 88 of module M: 2",
+        "||||line 5, col 70 to line 5, col 79 of module M: 1",
+        "|||line 5, col 93 to line 5, col 96 of module M: 1",
+        "|line 5, col 31 to line 5, col 33 of module M: 1:2",
+        "line 5, col 101 to line 5, col 132 of module M: 1",
+        "|line 5, col 101 to line 5, col 105 of module M: 1",
+        "|line 5, col 109 to line 5, col 132 of module M: 1",
+        "||line 5, col 111 to line 5, col 130 of module M: 1:1",
+        "|||line 5, col 126 to line 5, col 129 of module M: 1",
+        "|||line 5, col 118 to line 5, col 120 of module M: 1:2",
+      ],
+    ],
+    [
+      "LET f[n \\in {1, 2}] == IF n = 0 THEN f[n] ELSE n IN <<<<1, 2>>, {s \\in SUBSET {1} : s = {}}>> = <<f, {{}}>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 66 of module M: 1:2",
+        "|line 5, col 42 to line 5, col 66 of module M: 2",
+        "|line 5, col 31 to line 5, col 36 of module M: 1",
+        "line 5, col 71 to line 5, col 125 of module M: 1",
+        "|line 5, col 71 to line 5, col 111 of module M: 1",
+        "||line 5, col 73 to line 5, col 80 of module M: 1",
+        "||line 5, col 83 to line 5, col 109 of module M: 1:3",
+        "|||line 5, col 103 to line 5, col 108 of module M: 2",
+        "|||line 5, col 90 to line 5, col 99 of module M: 1",
+        "|line 5, col 115 to line 5, col 125 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts a lazy function's body once when a comparison of %s reaches a filter",
+    async (body, rows) => {
+      expect(await getNextCoverageLines(`x' = x /\\ ${body}`)).toEqual(rows);
+    },
+  );
+
   it("charges each draw of a filter from a converted Cartesian product, as TLC's SetOfTuplesValue enumerates the SetEnumValue it keeps", async () => {
     expect(
       await getNextCoverageLines(

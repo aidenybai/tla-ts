@@ -384,6 +384,39 @@ describe("printing matches TLC", () => {
   );
 
   it.each([
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ G = {{}, {1}} IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      ["1", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ {} \\in G IN <<f>> = <<[n \\in {1} |-> TRUE]>>",
+      ["1", "{}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1, 2}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ (n = 2 => G = {{}, {1}}) IN <<f>> = <<[n \\in {1, 2} |-> TRUE]>>",
+      ["1", "2", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ G \\subseteq {{}, {1}} IN f = [n \\in {1} |-> TRUE]",
+      ["1", "{}", "{1}"],
+      undefined,
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE PrintT(n) /\\ <<G>> = <<{{}, {1}}>> IN <<f, 1>> = <<[n \\in {1} |-> TRUE], {}>>",
+      ["1", "{}", "{1}"],
+      "Attempted to check equality of integer 1 with non-integer:\n{}",
+    ],
+  ])(
+    "runs a lazy function's body once as TLC does when it reaches a filter in %s",
+    async (expression, printed, message) => {
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
     ["F \\in {{<<0, 1>>, <<1, 1>>}}", ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>"]],
     [
       "F \\in {{}, {<<0, 1>>}, {<<0, 1>>, <<1, 1>>}}",
