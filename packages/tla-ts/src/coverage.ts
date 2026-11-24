@@ -38,6 +38,7 @@ import {
   isElementOfSetLikeTlc,
   isReducibleSet,
   markStreamedSet,
+  someStreamedElement,
   type CostedSetValue,
   type IntervalValue,
   type SetOperationValue,
@@ -1413,6 +1414,18 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number) 
   }
   const node = set.cost?.node;
   if (node !== undefined) coverage.secondary[node] += size;
+};
+
+// EnumerableValue#isSubsetEq draws from elements() until an element isn't a member, or once past the end.
+export const isChargedSubset = (coverage: Coverage, set: Value, superset: Value) => {
+  const size = getKnownSize(set);
+  const draws = size === undefined ? undefined : createEnumerator(coverage, set, size, false);
+  const hasMissing = someStreamedElement(set, (element) => {
+    draws?.next();
+    return !coverage.isMember(element, superset);
+  });
+  if (!hasMissing) draws?.next();
+  return !hasMissing;
 };
 
 const chargeSetEnumeration = (coverage: Coverage, set: Value) => {

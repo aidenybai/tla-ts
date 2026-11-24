@@ -8851,6 +8851,133 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "an EXCEPT at the argument",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN [g EXCEPT ![1, 1] = 5][[i \\in {1, 2} |-> 1]] = 5",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 99 of module M: 1",
+        "|line 5, col 52 to line 5, col 95 of module M: 1",
+        "||line 5, col 52 to line 5, col 73 of module M: 1",
+        "||line 5, col 75 to line 5, col 94 of module M: 1:4",
+        "|||line 5, col 82 to line 5, col 87 of module M: 1:3",
+      ],
+    ],
+    [
+      "a newer EXCEPT under the argument",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> [z \\in {1} |-> a]] IN [[g EXCEPT ![1, 1] = [z \\in {1} |-> 5]] EXCEPT ![1, 1][1] = 6][[i \\in {1, 2} |-> 1]][1] = 6",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 63 of module M: 1",
+        "line 5, col 68 to line 5, col 158 of module M: 1",
+        "|line 5, col 68 to line 5, col 154 of module M: 1",
+        "||line 5, col 68 to line 5, col 151 of module M: 1",
+        "|||line 5, col 68 to line 5, col 129 of module M: 1",
+        "|||line 5, col 131 to line 5, col 150 of module M: 1:4",
+        "||||line 5, col 138 to line 5, col 143 of module M: 1",
+      ],
+    ],
+    [
+      "two EXCEPTs at the argument",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN [[g EXCEPT ![1, 1] = 5] EXCEPT ![1, 1] = 7][[i \\in {1, 2} |-> 1]] = 7",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 120 of module M: 1",
+        "|line 5, col 52 to line 5, col 116 of module M: 1",
+        "||line 5, col 52 to line 5, col 94 of module M: 1",
+        "||line 5, col 96 to line 5, col 115 of module M: 1:4",
+        "|||line 5, col 103 to line 5, col 108 of module M: 1:3",
+      ],
+    ],
+    [
+      "one parameter and a tuple key",
+      "x' = 0 /\\ LET g == [a \\in {<<1, 1>>} |-> a] IN [g EXCEPT ![<<1, 1>>] = 5][[i \\in {1, 2} |-> 1]] = 5",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 51 of module M: 1",
+        "line 5, col 56 to line 5, col 107 of module M: 1",
+        "|line 5, col 56 to line 5, col 103 of module M: 1",
+        "||line 5, col 56 to line 5, col 81 of module M: 1",
+        "||line 5, col 83 to line 5, col 102 of module M: 1:4",
+        "|||line 5, col 90 to line 5, col 95 of module M: 1:3",
+      ],
+    ],
+    [
+      "a bound argument",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN \\E k \\in {[i \\in {1, 2} |-> 1]} : [g EXCEPT ![1, 1] = 5][k] = 5",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 114 of module M: 1",
+        "|line 5, col 86 to line 5, col 114 of module M: 1",
+        "|line 5, col 61 to line 5, col 82 of module M: 1:2",
+        "||line 5, col 62 to line 5, col 81 of module M: 1:4",
+        "|||line 5, col 69 to line 5, col 74 of module M: 1:3",
+      ],
+    ],
+    [
+      "an EXCEPT path through the copy",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> [z \\in {1} |-> a]] IN [[g EXCEPT ![1, 1] = [z \\in {1} |-> 5]] EXCEPT ![[i \\in {1, 2} |-> 1]][1] = @[1] + 1][[j \\in {1, 2} |-> 1]][1] = 6",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 0",
+        "line 5, col 28 to line 5, col 63 of module M: 2",
+        "|line 5, col 46 to line 5, col 62 of module M: 1",
+        "|line 5, col 38 to line 5, col 40 of module M: 2",
+        "line 5, col 68 to line 5, col 181 of module M: 2",
+        "|line 5, col 68 to line 5, col 177 of module M: 2",
+        "||line 5, col 68 to line 5, col 174 of module M: 2",
+        "|||line 5, col 68 to line 5, col 152 of module M: 2",
+        "||||line 5, col 69 to line 5, col 106 of module M: 2",
+        "||||line 5, col 117 to line 5, col 136 of module M: 2:2",
+        "|||||line 5, col 124 to line 5, col 129 of module M: 2",
+        "||||line 5, col 144 to line 5, col 151 of module M: 2",
+      ],
+    ],
+  ])(
+    "compares the argument once with each EXCEPT of %s, as TLC's FcnLambdaValue#apply and #select do",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it("applies an EXCEPT under the argument without comparing the argument again, as TLC's FcnLambdaValue#apply does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = {}\nNext == x' = x /\\ y' = y /\\ LET g == [a, b \\in {1} |-> [z \\in {1} |-> a]] IN [[g EXCEPT ![1, 1] = [z \\in {1} |-> 5]] EXCEPT ![1, 1][1] = 6][[i \\in {1, 2} |-> IF PrintT(i) THEN 1 ELSE 0]][1] = 6\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["1", "2", "1", "2"]);
+  });
+
+  it("applies a lazy function past 10,000 EXCEPTs, as TLC's FcnLambdaValue#apply walks them in a loop", async () => {
+    const clauses = Array.from({ length: 10000 }, (_value, index) => `![1] = ${index + 1}`);
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = [[a \\in Nat |-> a] EXCEPT ${clauses.join(", ")}][2]\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      2,
+    ]);
+  });
+
+  it("converts a lazy function past 10,000 EXCEPTs to a tuple and a record, as TLC's FcnLambdaValue#toTuple and #toFcnRcd walk them in a loop", async () => {
+    const clauses = Array.from({ length: 10000 }, (_value, index) => `![1] = ${index + 1}`);
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET f == [a \\in {1} |-> [[z \\in 1..2 |-> z] EXCEPT ${clauses.join(", ")}]][1] IN PrintT(Len(f)) /\\ PrintT(f)\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["2", "<<10000, 2>>"]]);
+  });
+
+  it.each([
+    [
       "a tuple and a function",
       "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}] # {}",
       [
@@ -8898,6 +9025,276 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])(
     "sorts a set of records over %s that wasn't normalized when its conversion began, as SetOfRcdsValue#toSetEnum reads that before elements() normalizes the set",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a record set of two fields",
+      "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}, b : {1, 2}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 73 of module M: 1",
+        "|line 5, col 19 to line 5, col 68 of module M: 1:12",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:6",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "||line 5, col 58 to line 5, col 67 of module M: 1:7",
+        "|line 5, col 72 to line 5, col 73 of module M: 1",
+      ],
+    ],
+    [
+      "two fields written in reverse order",
+      "x' = 0 /\\ [b : {<<1, 2>>, [i \\in {1, 3} |-> i]}, a : {<<1, 2>>, [i \\in {1, 3} |-> i]}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 99 of module M: 1",
+        "|line 5, col 19 to line 5, col 94 of module M: 1:12",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:6",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "||line 5, col 62 to line 5, col 93 of module M: 1:7",
+        "|||line 5, col 63 to line 5, col 70 of module M: 1:6",
+        "|||line 5, col 73 to line 5, col 92 of module M: 1:2",
+        "||||line 5, col 91 to line 5, col 91 of module M: 2",
+        "||||line 5, col 80 to line 5, col 85 of module M: 1:3",
+        "|line 5, col 98 to line 5, col 99 of module M: 1",
+      ],
+    ],
+    [
+      "a record set whose second field has three values",
+      "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}, b : {1, 2, 3}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 76 of module M: 1",
+        "|line 5, col 19 to line 5, col 71 of module M: 1:18",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:10",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "||line 5, col 58 to line 5, col 70 of module M: 1:9",
+        "|line 5, col 75 to line 5, col 76 of module M: 1",
+      ],
+    ],
+    [
+      "a record set \\E draws from",
+      "x' = 0 /\\ \\E r \\in [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}, b : {1, 2}] : r.b = 2",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 87 of module M: 1",
+        "|line 5, col 81 to line 5, col 87 of module M: 2",
+        "|line 5, col 28 to line 5, col 77 of module M: 1:15",
+        "||line 5, col 33 to line 5, col 64 of module M: 1:3",
+        "|||line 5, col 34 to line 5, col 41 of module M: 1:6",
+        "|||line 5, col 44 to line 5, col 63 of module M: 1:2",
+        "||||line 5, col 62 to line 5, col 62 of module M: 2",
+        "||||line 5, col 51 to line 5, col 56 of module M: 1:3",
+        "||line 5, col 67 to line 5, col 76 of module M: 1:7",
+      ],
+    ],
+    [
+      "a product of two sets",
+      "x' = 0 /\\ {<<1, 2>>, [i \\in {1, 3} |-> i]} \\X {<<1, 2>>, [i \\in {1, 3} |-> i]} # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 91 of module M: 1",
+        "|line 5, col 19 to line 5, col 86 of module M: 1:12",
+        "||line 5, col 19 to line 5, col 50 of module M: 1:3",
+        "|||line 5, col 20 to line 5, col 27 of module M: 1:6",
+        "|||line 5, col 30 to line 5, col 49 of module M: 1:2",
+        "||||line 5, col 48 to line 5, col 48 of module M: 2",
+        "||||line 5, col 37 to line 5, col 42 of module M: 1:3",
+        "||line 5, col 55 to line 5, col 86 of module M: 1:7",
+        "|||line 5, col 56 to line 5, col 63 of module M: 1:6",
+        "|||line 5, col 66 to line 5, col 85 of module M: 1:2",
+        "||||line 5, col 84 to line 5, col 84 of module M: 2",
+        "||||line 5, col 73 to line 5, col 78 of module M: 1:3",
+        "|line 5, col 90 to line 5, col 91 of module M: 1",
+      ],
+    ],
+    [
+      "a product of three sets",
+      "x' = 0 /\\ {<<1, 2>>, [i \\in {1, 3} |-> i]} \\X {1, 2} \\X {<<1, 2>>, [i \\in {1, 3} |-> i]} # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 101 of module M: 1",
+        "|line 5, col 19 to line 5, col 96 of module M: 1:32",
+        "||line 5, col 19 to line 5, col 50 of module M: 1:3",
+        "|||line 5, col 20 to line 5, col 27 of module M: 1:12",
+        "|||line 5, col 30 to line 5, col 49 of module M: 1:2",
+        "||||line 5, col 48 to line 5, col 48 of module M: 2",
+        "||||line 5, col 37 to line 5, col 42 of module M: 1:3",
+        "||line 5, col 55 to line 5, col 60 of module M: 1:7",
+        "||line 5, col 65 to line 5, col 96 of module M: 1:13",
+        "|||line 5, col 66 to line 5, col 73 of module M: 1:10",
+        "|||line 5, col 76 to line 5, col 95 of module M: 1:2",
+        "||||line 5, col 94 to line 5, col 94 of module M: 2",
+        "||||line 5, col 83 to line 5, col 88 of module M: 1:3",
+        "|line 5, col 100 to line 5, col 101 of module M: 1",
+      ],
+    ],
+    [
+      "a set of functions",
+      "x' = 0 /\\ [{1, 2} -> {<<1, 2>>, [i \\in {1, 3} |-> i]}] # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 67 of module M: 1",
+        "|line 5, col 19 to line 5, col 62 of module M: 1:12",
+        "||line 5, col 20 to line 5, col 25 of module M: 1",
+        "||line 5, col 30 to line 5, col 61 of module M: 1:10",
+        "|||line 5, col 31 to line 5, col 38 of module M: 1:10",
+        "|||line 5, col 41 to line 5, col 60 of module M: 1:2",
+        "||||line 5, col 59 to line 5, col 59 of module M: 2",
+        "||||line 5, col 48 to line 5, col 53 of module M: 1:3",
+        "|line 5, col 66 to line 5, col 67 of module M: 1",
+      ],
+    ],
+  ])(
+    "sorts %s by binary insertion, as SetEnumValue#normalize sorts the elements toSetEnum collects with ValueVec#sort",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a set of records that holds",
+      "x' = 0 /\\ [a : {1, 2}, b : {3, 4}] \\subseteq [a : {1, 2}, b : {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 77 of module M: 1",
+        "|line 5, col 19 to line 5, col 42 of module M: 1:8",
+        "||line 5, col 20 to line 5, col 29 of module M: 1:3",
+        "||line 5, col 32 to line 5, col 41 of module M: 1:7",
+        "|line 5, col 54 to line 5, col 77 of module M: 1",
+      ],
+    ],
+    [
+      "a set of records that stops at a non-member",
+      "x' = 0 /\\ ~([a : {1, 2}, b : {3, 4}] \\subseteq [a : {1}, b : {3, 4}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 77 of module M: 1",
+        "|line 5, col 21 to line 5, col 76 of module M: 1",
+        "||line 5, col 21 to line 5, col 44 of module M: 1:6",
+        "|||line 5, col 22 to line 5, col 31 of module M: 1:2",
+        "|||line 5, col 34 to line 5, col 43 of module M: 1:5",
+        "||line 5, col 56 to line 5, col 76 of module M: 1",
+      ],
+    ],
+    [
+      "a product that stops at a non-member",
+      "x' = 0 /\\ ~({1, 2} \\X {3, 4} \\subseteq {1, 2} \\X {3})",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 61 of module M: 1",
+        "|line 5, col 21 to line 5, col 60 of module M: 1",
+        "||line 5, col 21 to line 5, col 36 of module M: 1:4",
+        "|||line 5, col 21 to line 5, col 26 of module M: 1:2",
+        "|||line 5, col 31 to line 5, col 36 of module M: 1:4",
+        "||line 5, col 48 to line 5, col 60 of module M: 1",
+      ],
+    ],
+    [
+      "a set of functions",
+      "x' = 0 /\\ [{1, 2} -> {3, 4}] \\subseteq [{1, 2} -> {3, 4}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 65 of module M: 1",
+        "|line 5, col 19 to line 5, col 36 of module M: 1:8",
+        "||line 5, col 20 to line 5, col 25 of module M: 1",
+        "||line 5, col 30 to line 5, col 35 of module M: 1:10",
+        "|line 5, col 48 to line 5, col 65 of module M: 1",
+      ],
+    ],
+    [
+      "records over unnormalized sets",
+      "x' = 0 /\\ ~([a : {<<1, 2>>, [i \\in {1, 3} |-> i]}, b : {1, 2}] \\subseteq [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}, b : {1}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 129 of module M: 1",
+        "|line 5, col 21 to line 5, col 128 of module M: 1",
+        "||line 5, col 21 to line 5, col 70 of module M: 1:4",
+        "|||line 5, col 26 to line 5, col 57 of module M: 1:2",
+        "||||line 5, col 27 to line 5, col 34 of module M: 1:2",
+        "||||line 5, col 37 to line 5, col 56 of module M: 1:2",
+        "|||||line 5, col 55 to line 5, col 55 of module M: 2",
+        "|||||line 5, col 44 to line 5, col 49 of module M: 1:3",
+        "|||line 5, col 60 to line 5, col 69 of module M: 1:4",
+        "||line 5, col 82 to line 5, col 128 of module M: 1",
+        "|||line 5, col 87 to line 5, col 118 of module M: 1",
+        "||||line 5, col 88 to line 5, col 95 of module M: 1",
+        "||||line 5, col 98 to line 5, col 117 of module M: 1:2",
+        "|||||line 5, col 116 to line 5, col 116 of module M: 2",
+        "|||||line 5, col 105 to line 5, col 110 of module M: 1:3",
+        "|||line 5, col 121 to line 5, col 127 of module M: 1",
+      ],
+    ],
+    [
+      "records over a filter that prints",
+      "x' = 0 /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN [a : {F, {1}}] \\subseteq [a : {{1}, F}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 57 of module M: 1:12",
+        "|line 5, col 48 to line 5, col 56 of module M: 6",
+        "|line 5, col 35 to line 5, col 44 of module M: 1",
+        "line 5, col 62 to line 5, col 100 of module M: 1",
+        "|line 5, col 62 to line 5, col 75 of module M: 1:2",
+        "||line 5, col 67 to line 5, col 74 of module M: 1:3",
+        "|||line 5, col 68 to line 5, col 68 of module M: 1",
+        "|||line 5, col 71 to line 5, col 73 of module M: 1",
+        "|line 5, col 87 to line 5, col 100 of module M: 1",
+      ],
+    ],
+    [
+      "functions over unnormalized sets",
+      "x' = 0 /\\ ~([{1, 2} -> {<<1, 2>>, [i \\in {1, 3} |-> i]}] \\subseteq [{1, 2} -> {<<1, 2>>}])",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 98 of module M: 1",
+        "|line 5, col 21 to line 5, col 97 of module M: 1",
+        "||line 5, col 21 to line 5, col 64 of module M: 1:4",
+        "|||line 5, col 22 to line 5, col 27 of module M: 1",
+        "|||line 5, col 32 to line 5, col 63 of module M: 1:6",
+        "||||line 5, col 33 to line 5, col 40 of module M: 1:2",
+        "||||line 5, col 43 to line 5, col 62 of module M: 1:2",
+        "|||||line 5, col 61 to line 5, col 61 of module M: 2",
+        "|||||line 5, col 50 to line 5, col 55 of module M: 1:3",
+        "||line 5, col 76 to line 5, col 97 of module M: 1",
+        "|||line 5, col 77 to line 5, col 82 of module M: 1",
+        "|||line 5, col 87 to line 5, col 96 of module M: 1",
+        "||||line 5, col 88 to line 5, col 95 of module M: 1:2",
+      ],
+    ],
+    [
+      "records over unnormalized sets on both sides",
+      "x' = 0 /\\ [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}] \\subseteq [a : {<<1, 2>>, [i \\in {1, 3} |-> i]}]",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 105 of module M: 1",
+        "|line 5, col 19 to line 5, col 56 of module M: 1:2",
+        "||line 5, col 24 to line 5, col 55 of module M: 1:3",
+        "|||line 5, col 25 to line 5, col 32 of module M: 1:2",
+        "|||line 5, col 35 to line 5, col 54 of module M: 1:2",
+        "||||line 5, col 53 to line 5, col 53 of module M: 2",
+        "||||line 5, col 42 to line 5, col 47 of module M: 1:3",
+        "|line 5, col 68 to line 5, col 105 of module M: 1",
+        "||line 5, col 73 to line 5, col 104 of module M: 1",
+        "|||line 5, col 74 to line 5, col 81 of module M: 1:2",
+        "|||line 5, col 84 to line 5, col 103 of module M: 1:2",
+        "||||line 5, col 102 to line 5, col 102 of module M: 2",
+        "||||line 5, col 91 to line 5, col 96 of module M: 1:3",
+      ],
+    ],
+  ])(
+    "charges \\subseteq on %s as EnumerableValue#isSubsetEq draws from elements() until an element is missing",
     async (_site, next, expected) => {
       expect(await getNextCoverageLines(next)).toEqual(expected);
     },
@@ -13078,6 +13475,39 @@ ASSUME TLCFP(a) = -887695703
     "compares the keys of the function K == %s for %s builds as TLC's toFcnRcd normalizes it",
     async (definition, next, expected) => {
       expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "a set of records under \\subseteq",
+      "[a : {F}, b : {1, 2}] \\subseteq [a : {{{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a product under \\subseteq",
+      "{F} \\X {1, 2} \\subseteq {{{}, {1}}} \\X {1, 2}",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of functions under \\subseteq",
+      "[{1, 2} -> {F, {1}}] \\subseteq [{1, 2} -> {{1}, F}]",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of records under \\in SUBSET",
+      "[a : {F, {1}}, b : {1, 2}] \\in SUBSET [a : {{1}, {{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of records that \\subseteq SUBSET tests",
+      "{[a : {F}, b : {1, 2}]} \\subseteq SUBSET [a : {{{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+  ])(
+    "tests each element of %s with F unconverted, as TLC's elements() draws a product it hasn't converted",
+    async (_site, next, expected) => {
+      expect(await getPrintedFilterPasses("0", next)).toEqual(expected);
     },
   );
 

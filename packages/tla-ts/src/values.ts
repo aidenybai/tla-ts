@@ -1343,6 +1343,10 @@ const sortLikeTlc = (elements: Value[]) => {
   return sorted;
 };
 
+// SetEnumValue#normalize binary-inserts each element of a product toSetEnum leaves unsorted, which sets what its comparisons convert.
+const createConvertedSet = (elements: Value[], isSorted: boolean) =>
+  createSortedSet(isSorted ? elements : sortLikeTlc(elements));
+
 const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
   const sets = setTrace.sets;
   if (sets === undefined) return method();
@@ -1494,10 +1498,7 @@ const normalizeDeeplyWithin = (
       return pending;
     case "LazyFunction": {
       if (value.enumerated) return normalizeDeeplyWithin(value.enumerated, depth + 1, pending);
-      const copies: LazyFunctionCopy[] = [];
-      for (let current = value; isLazyFunctionCopy(current); current = current.original) {
-        copies.push(current);
-      }
+      const copies = getLazyFunctionCopies(value);
       for (let index = copies.length - 1; index >= 0; index--) {
         const copy = copies[index];
         pending = normalizeDeeplyWithin(copy.newValue, depth + 1, pending);
@@ -2256,7 +2257,14 @@ const getUnboundedElements = (value: Value): Value[] => {
   }
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
-  const isSorted = value.kind === "FilteredSet" || isSortedLikeTlc(value);
+  return collectUnboundedSet(value, opened, value.kind === "FilteredSet" || isSortedLikeTlc(value));
+};
+
+const collectUnboundedSet = (
+  value: FunctionSetValue | RecordSetValue | ProductSetValue | FilteredSetValue,
+  opened: OpenedStream | undefined,
+  isSorted: boolean,
+) => {
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
@@ -2265,7 +2273,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
 };
@@ -2431,7 +2439,7 @@ const convertSet = (
     isSortingLiteral = isOuterSorting;
   }
   if (!isFramedAsOpened) sets?.pop();
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (lazy) lazy.enumerated = set;
   return set;
 };
@@ -3651,7 +3659,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     undefined,
     setTrace.sets ? openOperandStream(value, false) : undefined,
   );
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (!isRepeated) value.enumerated = set;
   return set.elements;
 };
@@ -3780,6 +3788,18 @@ const someElementOfStream = (
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
     return someSubset(getSubsetBase(value), visit, value.cost?.node);
+  }
+  if (
+    (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
+    !value.enumerated
+  ) {
+    return isSortedLikeTlc(value)
+      ? collectUnboundedSet(
+          value,
+          setTrace.sets ? openOperandStream(value, false) : undefined,
+          true,
+        ).some(visit)
+      : somePulledElement(openProductStream(value), visit);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
@@ -4561,32 +4581,27 @@ export const getLazyFunctionNode = (value: LazyFunctionValue) =>
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
-// FcnLambdaValue#apply and #select take the value of an EXCEPT that ends at the argument without
-// checking the domain, matching each EXCEPT from the newest until one does.
-const hasReplacedKey = (copy: LazyFunctionCopy, argument: Value) => {
-  for (
-    let current: LazyFunctionValue = copy;
-    isLazyFunctionCopy(current);
-    current = current.original
-  ) {
-    if (
-      isEqualLikeTlc(current.path[current.depth], argument) &&
-      current.depth === current.path.length - 1
-    ) {
-      return true;
-    }
+const getLazyFunctionCopies = (value: LazyFunctionValue) => {
+  const copies: LazyFunctionCopy[] = [];
+  for (let current = value; isLazyFunctionCopy(current); current = current.original) {
+    copies.push(current);
   }
-  return false;
+  return copies;
 };
 
 // FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
-const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
-  const previous = isLazyFunctionCopy(copy.original)
-    ? getCopiedValue(copy.original, key, value)
-    : value;
-  return isEqualLikeTlc(copy.path[copy.depth], key)
-    ? takeExcept(previous, copy.path, copy.depth + 1, copy.newValue)
-    : previous;
+const getCopiedRange = (copy: LazyFunctionCopy, domain: Value[]) => {
+  const copies = getLazyFunctionCopies(copy);
+  return domain.map((key) => {
+    let value = copy.applyBody(key);
+    for (let index = copies.length - 1; index >= 0; index--) {
+      const older = copies[index];
+      if (isEqualLikeTlc(older.path[older.depth], key)) {
+        value = takeExcept(value, older.path, older.depth + 1, older.newValue);
+      }
+    }
+    return value;
+  });
 };
 
 const describeNonFunction = (value: Value) => `Expected a function but found ${formatValue(value)}`;
@@ -4606,7 +4621,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     }
     const domain = getFunctionDomain(value.domain, false);
     const range = isLazyFunctionCopy(value)
-      ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
+      ? getCopiedRange(value, domain)
       : domain.map((key) => value.apply(key));
     value.enumerated = createConstructedFunction(value.domain, domain, range);
     finishConversion?.();
@@ -4862,6 +4877,67 @@ const checkLazyArgumentWith = (
   return argument;
 };
 
+const applyLazyBody = (
+  functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+) => body.apply(checkLazyArgumentWith(functionValue, argument, isMember));
+
+const selectLazyBody = (
+  functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+) => {
+  if (
+    functionValue.boundTupleLengths !== undefined &&
+    getSequenceElements(argument) === undefined
+  ) {
+    throw createArgumentListError(functionValue, argument);
+  }
+  return isElementOf(argument, functionValue.domain) ? body.apply(argument) : undefined;
+};
+
+const applyUncheckedBody = (
+  _functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+) => body.apply(argument);
+
+// FcnLambdaValue#apply and #select compare the argument once with each EXCEPT, newest first, and check the domain only when none ends at it.
+const applyExcepts = <Result extends Value | undefined>(
+  functionValue: LazyFunctionValue,
+  argument: Value,
+  isMember: typeof isElementOf,
+  evaluateBody: (
+    functionValue: LazyFunctionValue,
+    body: LazyFunctionValue,
+    argument: Value,
+    isMember: typeof isElementOf,
+  ) => Result,
+): Result | Value => {
+  let deeper: LazyFunctionCopy[] | undefined;
+  let current: LazyFunctionValue = functionValue;
+  while (isLazyFunctionCopy(current)) {
+    if (isEqualLikeTlc(current.path[current.depth], argument)) {
+      if (current.depth === current.path.length - 1) break;
+      if (deeper === undefined) deeper = [];
+      deeper.push(current);
+    }
+    current = current.original;
+  }
+  const below = isLazyFunctionCopy(current)
+    ? current.newValue
+    : evaluateBody(functionValue, current, argument, isMember);
+  if (deeper === undefined || below === undefined) return below;
+  let value: Value = below;
+  for (let index = deeper.length - 1; index >= 0; index--) {
+    const copy = deeper[index];
+    value = takeExcept(value, copy.path, copy.depth + 1, copy.newValue);
+  }
+  return value;
+};
+
 export const applyFunction = (
   functionValue: Value,
   argument: Value,
@@ -4871,8 +4947,8 @@ export const applyFunction = (
     if (functionValue.enumerated) {
       return applyFunction(functionValue.enumerated, argument, describeMissing);
     }
-    if (isLazyFunctionCopy(functionValue) && hasReplacedKey(functionValue, argument)) {
-      return functionValue.apply(argument);
+    if (isLazyFunctionCopy(functionValue)) {
+      return applyExcepts(functionValue, argument, isElementOf, applyLazyBody);
     }
     const tupleLengths = functionValue.boundTupleLengths;
     if (tupleLengths !== undefined) {
@@ -4907,10 +4983,10 @@ export const applyFunctionWith = (
   ) {
     return applyFunction(functionValue, argument, describeMissing);
   }
-  if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
-    return functionValue.apply(checkLazyArgumentWith(functionValue, argument, isMember));
+  if (isLazyFunctionCopy(functionValue)) {
+    return applyExcepts(functionValue, argument, isMember, applyLazyBody);
   }
-  return functionValue.apply(argument);
+  return functionValue.apply(checkLazyArgumentWith(functionValue, argument, isMember));
 };
 
 export const getDomainInterval = (domain: Value[]) =>
@@ -4945,18 +5021,11 @@ const copyLazyFunction = (
   depth: number,
   newValue: Value,
 ) => {
-  const argument = path[depth];
   // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so TLC counts none of the copy's evaluations of the body, not even the second one at a key whose EXCEPT goes deeper.
   const copy: LazyFunctionCopy = {
     kind: "LazyFunction",
     domain: functionValue.domain,
-    apply:
-      depth === path.length - 1
-        ? (key) => (isEqualLikeTlc(argument, key) ? newValue : functionValue.apply(key))
-        : (key) =>
-            isEqualLikeTlc(argument, key)
-              ? takeExcept(functionValue.apply(key), path, depth + 1, newValue)
-              : functionValue.apply(key),
+    apply: (key) => applyExcepts(copy, key, isElementOf, applyUncheckedBody),
     source: functionValue.source,
     boundTupleLengths: functionValue.boundTupleLengths,
     isApplicationObserved: functionValue.isApplicationObserved,
@@ -4989,16 +5058,9 @@ const selectPath = (value: Value, path: Value[], depth: number) => {
       selected.kind === "LazyFunction" &&
       selected.enumerated === undefined
     ) {
-      if (!isLazyFunctionCopy(selected) || !hasReplacedKey(selected, argument)) {
-        if (
-          selected.boundTupleLengths !== undefined &&
-          getSequenceElements(argument) === undefined
-        ) {
-          throw createArgumentListError(selected, argument);
-        }
-        if (!isElementOf(argument, selected.domain)) return undefined;
-      }
-      selected = selected.apply(argument);
+      const applied = applyExcepts(selected, argument, isElementOf, selectLazyBody);
+      if (applied === undefined) return undefined;
+      selected = applied;
       continue;
     }
     const finite = getExceptTarget(selected);
