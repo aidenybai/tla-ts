@@ -188,7 +188,6 @@ const runWorker = (start: StartMessage, parent: Port) => {
       fingerprintStates: [],
       breakAt: performance.now() + BREAK_INTERVAL,
     };
-    // TLC draws for a successor's checks as it generates the successor, and a worker checks the successors after it generates them all.
     environment.runtime.getCurrentState = () => {
       if (expansion.successors !== undefined) isDrawnAfterNext = true;
       return expansion.states[expansion.origin];
