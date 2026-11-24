@@ -227,7 +227,7 @@ describe("check with workers matches TLC", () => {
       expect([
         statistics.distinctStates >= 4000 && statistics.distinctStates <= 8000,
         statistics.generatedStates >= 4000 && statistics.generatedStates <= 8000,
-        statistics.queuedStates >= 0 && statistics.queuedStates <= 4000,
+        statistics.queuedStates >= 0 && statistics.queuedStates <= 4000 - 3,
         statistics.depth >= 1 && statistics.depth <= 2,
       ]).toEqual([true, true, true, true]);
     });

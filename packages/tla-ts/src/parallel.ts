@@ -331,7 +331,8 @@ const checkWithWorkers = async (
       statistics: {
         generatedStates: statistics.generatedStates + generated,
         distinctStates: statistics.distinctStates + added,
-        queuedStates: statistics.queuedStates + added - expanded,
+        // TLC reports progress while each worker expands a state that has left the queue.
+        queuedStates: Math.max(statistics.queuedStates + added - expanded - workerCount, 0),
         depth: added > 0 ? statistics.depth + 1 : statistics.depth,
         coverage: undefined,
       },
