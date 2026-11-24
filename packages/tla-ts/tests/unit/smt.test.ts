@@ -66,6 +66,12 @@ describe("decideSmt", () => {
     );
   });
 
+  it("answers unknown when the limit stops the model finder's analysis of a quantifier", () => {
+    const text = read("setext_test-1.smt");
+    for (let rlimit = 790; rlimit <= 835; rlimit++)
+      expect(decide(`(set-option :rlimit ${rlimit})\n${text}`)).toBe("unknown");
+  });
+
   it("proves a problem whose terms are nested thousands deep", () => {
     expect(decide(getDeepProblem(2500))).toBe("unsat");
   });

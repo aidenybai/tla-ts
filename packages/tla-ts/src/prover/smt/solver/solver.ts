@@ -5,6 +5,7 @@ import {
   SmtDefaultError,
   SmtMemoryOutError,
   type SmtParseError,
+  SmtTacticError,
   SmtUnsupportedError,
   toSmtMemoryOutError,
 } from "../../../errors";
@@ -242,6 +243,7 @@ export const decideSmt = (
       error instanceof SmtCanceledError ||
       error instanceof SmtMemoryOutError ||
       error instanceof SmtDefaultError ||
+      error instanceof SmtTacticError ||
       isStackOverflow(error)
     )
       return "unknown";
