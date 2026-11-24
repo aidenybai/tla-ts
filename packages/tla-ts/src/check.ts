@@ -1364,7 +1364,7 @@ const searchStates = (
               generatedStates,
               distinctStates,
               queuedStates,
-              depth: Math.max(depth, 1),
+              depth,
               coverage: undefined,
             },
           });

@@ -105,16 +105,15 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     let printCount = 0;
     const counts = new Map<string, number>();
     return {
-      onPrint: (text: string) => {
+      onPrint: (text) => {
         printCount++;
         if (printCount <= printedCount) return;
         printedCount = printCount;
         print(text);
       },
-      onProgress: (progress: CheckProgress) => {
+      onProgress: (progress) => {
         if (progress.kind === "progress") {
           const statistics = progress.statistics;
-          // A search that starts again counts from zero, while TLC's counts never go back.
           if (
             reportedStatistics &&
             (statistics.generatedStates < reportedStatistics.generatedStates ||

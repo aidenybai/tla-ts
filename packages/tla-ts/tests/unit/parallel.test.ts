@@ -18,7 +18,6 @@ const DIST = join(import.meta.dirname, "../../dist/index.js");
 
 const tlaTs: typeof import("../../src") = await import(DIST);
 
-// TLC's default set bound, given explicitly, keeps the search off the typed tier, so workers run it.
 const INTERPRETED_SET_SIZE = 1_000_000;
 
 const checkFixtureInParallel = (directory: string, name: string, workers: number) =>

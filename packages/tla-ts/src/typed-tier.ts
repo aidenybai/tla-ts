@@ -6366,7 +6366,6 @@ export const runTypedSearch = (
 ): TypedResult | undefined => {
   const runtime = environment.runtime;
   const warn = runtime.warn;
-  // The interpreter raises the warning again when it reruns the search.
   runtime.warn = deopt;
   const run = (plains: Plains): TypedResult => {
     try {
