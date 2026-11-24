@@ -1133,7 +1133,7 @@ export class BvRewriter extends PolyRewriter {
     return rewrite(this.mkConcatTerm(args), 2);
   }
 
-  private mkRepeat(count: number, arg: number): number | Rewrite {
+  private mkRepeat(count: number, arg: number) {
     if (count === 1) return arg;
     const args: number[] = [];
     for (let index = 0; index < count; index++) args.push(arg);
