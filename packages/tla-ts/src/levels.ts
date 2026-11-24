@@ -649,7 +649,6 @@ const getRecursiveSections = (
 
   // Generator#setOpDefNodeRecursionFields puts an instance's OpDefNodes, but not its theorems, in the recursive section open where the INSTANCE is written.
   const addInstanceSymbols = (definitions: Definition[]) => {
-    if (pendingCount === 0) return;
     const names = (pending[depth] ??= new Set());
     definitions.forEach((definition) =>
       sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 }),
@@ -690,7 +689,9 @@ const getRecursiveSections = (
         );
         return;
       }
-      if (unit.kind === "Instance") addInstanceSymbols(getInstanceSymbols(unit.instance));
+      if (unit.kind === "Instance" && pendingCount > 0) {
+        addInstanceSymbols(getInstanceSymbols(unit.instance));
+      }
       if (pendingCount === 0 && !hasRecursiveLet) return;
       if (unit.kind === "Assumption") walkExpression(unit.assumption.expression);
       else if (unit.kind === "Theorem" && unit.theorem.statement.kind !== "AssumeProve") {
