@@ -48,6 +48,16 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it("levels an EXCEPT with 60,000 updates in linear time", async () => {
+    expect(
+      (
+        await checkDefinition(
+          `[x EXCEPT ${Array.from({ length: 60_000 }, () => "![1] = 1").join(", ")}]`,
+        )
+      ).status,
+    ).toBe("success");
+  });
+
   it("leaves the updates after @ out of its level and parameters, as SANY does", async () => {
     expect((await checkDefinition("[x EXCEPT ![1] = @', ![2] = x']")).status).toBe("success");
     expect(
@@ -1047,6 +1057,91 @@ describe("level checking matches SANY", () => {
           message: messages[error[1]] ?? error[1],
         })),
       ),
+    );
+  });
+
+  describe("puts an instance's definitions in the recursive section open where the INSTANCE is written, like SANY", () => {
+    const late =
+      "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE v\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN TRUE ELSE R(n - 1)\nL(n) == TRUE\n====";
+    const early = "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE v\nL(n) == TRUE\n====";
+    const checkWith = (inner: string, body: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
+        loadModule: (name) =>
+          name === "N" ? inner : name === "P" ? "---- MODULE P ----\nH == TRUE\n====" : undefined,
+        config: "INIT Init\nNEXT Next",
+      });
+
+    it.each([
+      [
+        late,
+        "G == LET J == INSTANCE N WITH v <- x\n         RECURSIVE W(_)\n         W(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\n     IN (J!L(0))' /\\ W(1)",
+      ],
+      [
+        late,
+        "G == LET J == INSTANCE N WITH v <- x\n         RECURSIVE W(_)\n         W(k) == IF k = 0 THEN (J!L(0))' ELSE W(k - 1)\n     IN W(1)",
+      ],
+      [
+        late,
+        "G == LET RECURSIVE W(_)\n\n         W(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\n         J == INSTANCE N WITH v <- x\n     IN (J!L(0))' /\\ W(1)",
+      ],
+      [
+        "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE v\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN TRUE ELSE R(n - 1)\nL(n) == LET RECURSIVE Q(_) Q(k) == IF k = 0 THEN TRUE ELSE Q(k - 1) IN Q(n)\n====",
+        "G == LET J == INSTANCE N WITH v <- x\n         RECURSIVE W(_)\n         W(k) == IF k = 0 THEN (J!L(0))' ELSE W(k - 1)\n     IN W(1)",
+      ],
+    ])("keeps out a LET instance written outside it: %#", async (inner, body) => {
+      expect((await checkWith(inner, body)).status).toBe("success");
+    });
+
+    it.each([
+      [
+        "RECURSIVE W(_)\nJ == INSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (J!L(0))'",
+        "line 7, col 6 to line 7, col 14",
+      ],
+      [
+        "RECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (L(0))'",
+        "line 7, col 6 to line 7, col 12",
+      ],
+      [
+        "RECURSIVE W(_)\nP(p) == INSTANCE N WITH v <- p\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (P(x)!L(0))'",
+        "line 7, col 6 to line 7, col 17",
+      ],
+      [
+        "G == LET RECURSIVE W(_)\n         J == INSTANCE N WITH v <- x\n         W(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\n     IN (J!L(0))' /\\ W(1)",
+        "line 7, col 9 to line 7, col 17",
+      ],
+      [
+        "RECURSIVE W(_)\nLOCAL INSTANCE P\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        "line 7, col 6 to line 7, col 9",
+      ],
+    ])("raises the level of an instance written inside it: %#", async (body, location) => {
+      await expect(checkWith(early, body)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message:
+              "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    });
+
+    it.each([
+      {
+        inner: early,
+        body: "Inv == [](x + 1 > 0)\nRECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)",
+        sany: "line 4, col 8 to line 4, col 20: [] followed by action not of form [A]_v.",
+      },
+      {
+        inner: "---- MODULE N ----\nEXTENDS Naturals, P\nVARIABLE v\nL(n) == TRUE\n====",
+        body: "RECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        sany: "line 7, col 6 to line 7, col 9: Level error in applying operator '",
+      },
+    ])(
+      "keeps out a definition an unnamed INSTANCE shares with a parameter-free module, where SANY reports $sany",
+      async (row) => {
+        expect((await checkWith(row.inner, row.body)).status).toBe("success");
+      },
     );
   });
 

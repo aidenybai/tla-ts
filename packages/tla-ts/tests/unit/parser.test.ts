@@ -184,6 +184,15 @@ describe("parseModule reads operators like SANY", () => {
     },
   );
 
+  it.each([
+    ["<<>>_x", "fails on with an ArrayIndexOutOfBoundsException"],
+    ["<<x' = 1, 2>>_x", "reads as <<x' = 1>>_2"],
+  ])("rejects %s, which SANY %s", (action) => {
+    const parse = () => parseModule(`---- MODULE M ----\nVARIABLE x\nA == ${action}\n====`);
+    expect(parse).toThrow(TlaSyntaxError);
+    expect(parse).toThrow("Expected a single action inside <<A>>_v at line 3, column 6");
+  });
+
   it.each(["TRUE ⟹ FALSE", "x′"])(
     "rejects %j, which SANY's lexer has no token for",
     (expression) => {

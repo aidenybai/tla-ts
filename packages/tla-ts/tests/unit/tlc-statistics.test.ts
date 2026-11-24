@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
 import { simulate } from "../../src/simulate";
 import { MESSAGE_LEVEL } from "../../src/tlc/messages";
@@ -119,7 +119,6 @@ it.each([
     "\nINVARIANT Inv",
     ['<<"C", TRUE>>', '<<"C", TRUE>>'],
   ],
-  ['G(Op(_, _)) == Op("exit", TRUE)\nC == PrintT(<<"C", G(TLCSet)>>)', "", ['<<"C", TRUE>>']],
 ])(
   "evaluates %j as TLC's processConstantDefns does, in TLCState.Empty before the checker exists",
   async (definitions, properties, expected) => {
@@ -143,30 +142,182 @@ it("reads TLC.tla's level as 0 in Init, as TLC's TLCGetEval does", async () => {
   expect(printed).toEqual(['<<"I", 0>>']);
 });
 
-it.each([
+const TLCSET_FORMS = [
   [
-    'G(Op(_, _)) == Op("s:x", 2)\nC == PrintT(<<"C", G(TLCSet)>>)\nInv == C /\\ TLCGet("s:x") = 2',
-    '<<"C", TRUE>>',
+    "a literal key",
+    (key: string, value: string) => `D == PrintT(<<"D", TLCSet(${key}, ${value})>>)`,
   ],
   [
-    'D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet("s:x", 2)>>)\nInv == D /\\ TLCGet("s:x") = 2',
-    '<<"D", TRUE>>',
+    "a computed key",
+    (key: string, value: string) =>
+      `D == PrintT(<<"D", TLCSet(CHOOSE k \\in {${key}} : TRUE, ${value})>>)`,
   ],
-])(
-  "drops the named register %j writes as TLC starts, before any checker holds it",
-  async (definitions, expected) => {
+  [
+    "a parameter",
+    (key: string, value: string) =>
+      `Set(k) == TLCSet(k, ${value})\nD == PrintT(<<"D", Set(${key})>>)`,
+  ],
+  [
+    "a LET definition",
+    (key: string, value: string) => `D == LET k == ${key} IN PrintT(<<"D", TLCSet(k, ${value})>>)`,
+  ],
+  [
+    "an instance of TLC",
+    (key: string, value: string) =>
+      `S == INSTANCE TLC\nD == PrintT(<<"D", S!TLCSet(${key}, ${value})>>)`,
+  ],
+  [
+    "a LET instance of TLC",
+    (key: string, value: string) =>
+      `D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet(${key}, ${value})>>)`,
+  ],
+  [
+    "an operator argument",
+    (key: string, value: string) =>
+      `G(Op(_, _)) == Op(${key}, ${value})\nD == PrintT(<<"D", G(TLCSet)>>)`,
+  ],
+  [
+    "an instance's key",
+    (key: string, value: string) =>
+      `---- MODULE KM ----\nKey == ${key}\n====\nJ == INSTANCE KM\nD == PrintT(<<"D", TLCSet(J!Key, ${value})>>)`,
+  ],
+] as const;
+
+it.each(TLCSET_FORMS)(
+  "sets a numbered register through %s where the constant definition is used, once its write fails as TLC starts",
+  async (_form, getDefinition) => {
     const printed: string[] = [];
     const result = await check({
-      source: getStartupSource(definitions),
+      source: getStartupSource(`${getDefinition("1", "2")}\nInv == D /\\ TLCGet(1) = 2`),
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       onPrint: (text) => printed.push(text),
     });
-    expect([printed, result.failure?.message]).toEqual([
-      [expected],
-      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nTLCGet(s:x) was undefined.",
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+      "success",
+      2,
     ]);
   },
 );
+
+it.each(
+  TLCSET_FORMS.flatMap((form) =>
+    ['"exit"', '"pause"'].map((key) => [key, form[0], form[1]] as const),
+  ),
+)(
+  "evaluates a constant definition that sets %s to FALSE through %s only as TLC starts, since TLC drops no write there",
+  async (key, _form, getDefinition) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(`${getDefinition(key, "FALSE")}\nInv == D`),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+      onPause: () => printed.push("paused"),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>'],
+      "success",
+      2,
+    ]);
+  },
+);
+
+const getSplitSource = (next: string, invariant: string) =>
+  `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA(p) == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == ${next}\nInv == ${invariant}\n====`;
+
+it.each([
+  ["\\E p \\in {TLCSet(2, 5)} : x < 2 /\\ x' = x + 1", "x = 0 \\/ TLCGet(2) = 5", [], 3],
+  ["A(TLCSet(1, 5))", "TRUE", ['<<"A", TRUE>>', '<<"A", TRUE>>', '<<"A", TRUE>>'], 4],
+])(
+  "evaluates Next == %s at each state once the split's write to a numbered register fails, as TLC does",
+  async (next, invariant, expected, distinctStates) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSplitSource(next, invariant),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      expected,
+      "success",
+      distinctStates,
+    ]);
+  },
+);
+
+// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write and the exit before any checker exists, so TLC finds the register undefined or never stops.
+describe("TLCSet writes that TLC drops before any checker exists", () => {
+  it.each(TLCSET_FORMS)(
+    "sets a named register through %s where the constant definition is used, as for a numbered register",
+    async (_form, getDefinition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getStartupSource(`${getDefinition('"s:x"', "2")}\nInv == D /\\ TLCGet("s:x") = 2`),
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([
+        ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+        "success",
+        2,
+      ]);
+    },
+  );
+
+  it.each(TLCSET_FORMS)(
+    "stops checking through %s where the constant definition is used",
+    async (_form, getDefinition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getStartupSource(`${getDefinition('"exit"', "TRUE")}\nInv == D`),
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.distinctStates]).toEqual([
+        ['<<"D", TRUE>>'],
+        "success",
+        1,
+      ]);
+    },
+  );
+
+  it("sets a named register at each state where Next's split would write it, as for a numbered register", async () => {
+    const result = await check({
+      source: getSplitSource(
+        '\\E p \\in {TLCSet("s:q", 5)} : x < 2 /\\ x\' = x + 1',
+        'x = 0 \\/ TLCGet("s:q") = 5',
+      ),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("stops checking where Next's split would set the exit", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSplitSource('A(TLCSet("exit", TRUE))', "TRUE"),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"A", TRUE>>'],
+      "success",
+      2,
+    ]);
+  });
+
+  it('labels Next == A(TLCSet("exit", TRUE)) by its call, as for a numbered register', async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 7)\nInit == x = 0\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == A(TLCSet("exit", TRUE))\nInv == x < 1\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "A line 7, col 9 to line 7, col 31 of module M",
+    ]);
+  });
+});
 
 it.each([
   ['A(TLCGet("level"))', "A(1) line 6, col 9 to line 6, col 49 of module M"],
@@ -175,9 +326,10 @@ it.each([
     "A(2) line 6, col 9 to line 6, col 49 of module M",
   ],
   ['\\E q \\in {2} : A(q + TLCGet("level"))', "A(3) line 6, col 9 to line 6, col 49 of module M"],
-  ['A(TLCSet("exit", TRUE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
   ["A(TLCGet(1))", "A line 7, col 9 to line 7, col 20 of module M"],
   ["A(TLCSet(1, 5))", "A line 7, col 9 to line 7, col 23 of module M"],
+  ['A(TLCSet("exit", FALSE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
+  ['A(TLCSet("pause", FALSE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
   ["A(Trace)", "A line 7, col 9 to line 7, col 16 of module M"],
   ["LET D == FALSE /\\ x = 0 IN A(D)", "A line 7, col 36 to line 7, col 39 of module M"],
   ["A(x)", "A line 7, col 9 to line 7, col 12 of module M"],

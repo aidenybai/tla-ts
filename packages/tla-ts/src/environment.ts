@@ -321,9 +321,9 @@ export const createEnvironment = (
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const theorems = new Map<string, SourceRange>();
-  const unlinkedTheorems = new Map<string, () => void>();
+  const unlinkedDefinitions = new Map<string, () => void>();
   const getLinkedDefinition = (key: string) => {
-    unlinkedTheorems.get(key)?.();
+    unlinkedDefinitions.get(key)?.();
     return definitions.get(key);
   };
   const parameterized = new Map<string, boolean>();
@@ -449,7 +449,8 @@ export const createEnvironment = (
           ...new Set(
             [...linked.visible].flatMap((entry) =>
               entry[1].kind === "Theorem" ||
-              (linked.enclosing.has(entry[0]) && !linked.exported.has(entry[0]))
+              (linked.enclosing.has(entry[0]) && !linked.exported.has(entry[0])) ||
+              (builtinAliases.has(entry[1].key) && unlinkedDefinitions.has(entry[1].key))
                 ? []
                 : (getLinkedDefinition(entry[1].key) ?? []),
             ),
@@ -553,7 +554,7 @@ export const createEnvironment = (
     return symbols;
   };
 
-  const rejectModuleLiterals = (module: Module): Module => {
+  const rejectModuleLiterals = (module: Module): void => {
     rejectLiterals([
       ...module.definitions.flatMap(getDefinitionExpressions),
       ...module.assumptions.map((assumption) => assumption.expression),
@@ -563,9 +564,8 @@ export const createEnvironment = (
       ...getSubstitutions(module.instances),
     ]);
     module.modules.forEach(rejectModuleLiterals);
-    return module;
   };
-  rejectModuleLiterals(root);
+  const uncheckedModules = [root];
 
   const loadModule = (name: string, importer: string) => {
     const source =
@@ -585,7 +585,8 @@ export const createEnvironment = (
         true,
       );
     }
-    return rejectModuleLiterals(module);
+    uncheckedModules.push(module);
+    return module;
   };
 
   const linkTopLevel = (parsed: Module, isHidden = false) => {
@@ -647,6 +648,7 @@ export const createEnvironment = (
     if (linking.length === 0 && semanticErrors.length > 0) {
       throw createSanyError(semanticErrors, false, undefined, warnings);
     }
+    if (linking.length === 0) uncheckedModules.splice(0).forEach(rejectModuleLiterals);
     return { linked, closure };
   };
 
@@ -952,6 +954,15 @@ export const createEnvironment = (
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
     };
+    const addAliasCopy = (key: string) => {
+      const copy = createName(`${key}@${module.name}`);
+      parameterized.set(copy, !isParameterFree);
+      unlinkedDefinitions.set(copy, () => {
+        unlinkedDefinitions.delete(copy);
+        instantiation.getQualifiedKey(key, copy);
+      });
+      return copy;
+    };
     return getInstanceSymbols(instance, linked.exported, declarations, (symbol, name) => {
       const key = symbol.key;
       if (
@@ -960,8 +971,8 @@ export const createEnvironment = (
       ) {
         const theoremKey = createName(key);
         parameterized.set(theoremKey, !isParameterFree);
-        unlinkedTheorems.set(theoremKey, () => {
-          unlinkedTheorems.delete(theoremKey);
+        unlinkedDefinitions.set(theoremKey, () => {
+          unlinkedDefinitions.delete(theoremKey);
           if (instance.name === undefined) instantiation.getKey(key, theoremKey);
           else instantiation.getQualifiedKey(key, theoremKey);
           setInstanceNames(theoremKey, name);
@@ -976,7 +987,9 @@ export const createEnvironment = (
                 ...substitutes,
                 module: instance.module,
               })
-            : instantiation.getQualifiedKey(key);
+            : builtinAliases.has(key)
+              ? addAliasCopy(key)
+              : instantiation.getQualifiedKey(key);
       if (copy !== key) setInstanceNames(copy, name);
       if (
         unresolvedBodyKeys.has(key) &&
@@ -1097,21 +1110,24 @@ export const createEnvironment = (
   ) => {
     const location = instance.location;
     const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
-    const ownParams = createArgumentParams(symbol.arity, symbol.params);
-    const alias = {
-      ...createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
-      head: instance.head,
-    };
-    standardAliasBodies.add(alias.body);
-    definitions.set(key, alias);
-    if (copy) {
-      instanceCopies.set(alias, {
-        ...copy,
-        source: createLocalAlias(key, symbol.key, ownParams, ownParams, location),
-      });
-    }
     builtinAliases.set(key, symbol.key);
     instanceNames.set(key, name);
+    unlinkedDefinitions.set(key, () => {
+      unlinkedDefinitions.delete(key);
+      const ownParams = createArgumentParams(symbol.arity, symbol.params);
+      const alias = {
+        ...createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
+        head: instance.head,
+      };
+      standardAliasBodies.add(alias.body);
+      definitions.set(key, alias);
+      if (copy) {
+        instanceCopies.set(alias, {
+          ...copy,
+          source: createLocalAlias(key, symbol.key, ownParams, ownParams, location),
+        });
+      }
+    });
     return key;
   };
 
@@ -1566,7 +1582,7 @@ export const createEnvironment = (
     };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
-      linkTheorem: getLinkedDefinition,
+      linkSymbol: getLinkedDefinition,
       getInstance: (instance) => {
         locallyInstantiated.add(instance.module);
         const nested = getLetModule(instance);
@@ -1928,6 +1944,16 @@ export const createEnvironment = (
         },
         instanceChecks.splice(firstCheck),
         warnings,
+        (instance) => {
+          const instancee = checkedModules.get(instance.module);
+          // Deviation from SANY: Generator#generateInstance shares a parameter-free module's OpDefNode (newOdn = odn), so an INSTANCE in a recursive section raises its level everywhere.
+          return [...(instanced.get(instance) ?? [])].flatMap((entry) =>
+            entry[1].kind === "Definition" &&
+            (instance.isLocal || entry[1].key !== instancee?.exported.get(entry[0])?.key)
+              ? (getLinkedDefinition(entry[1].key) ?? [])
+              : [],
+          );
+        },
       ),
     );
     if (!scope.isHidden) linkOrder.push(linked);

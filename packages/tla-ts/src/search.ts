@@ -1136,10 +1136,10 @@ export const createTraceSpecWriter =
       states,
       loopStart,
       modelValues: getModelValues(),
+      // TLC's Defns holds only the root's names and the Java overrides of every loaded module.
       isDefined: (name) =>
-        [...environment.constants.keys(), ...environment.definitions.keys()].some(
-          (key) => getKeyName(key) === name,
-        ),
+        environment.rootKeys.has(name) ||
+        [...environment.builtins.keys()].some((key) => getKeyName(key) === name),
     });
 
 export const prepareSearch = (options: CheckOptions) => {

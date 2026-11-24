@@ -160,6 +160,39 @@ describe("trace exploration spec", () => {
     },
   );
 
+  const checkModelValue = (header: string, value: string) =>
+    check({
+      source: `---- MODULE M ----\n${header}CONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x < 2\n====\n`,
+      config: `CONSTANT C = ${value}\nINIT Init\nNEXT Next\nINVARIANT Inv\n`,
+      loadModule: (name) => (name === "N" ? "---- MODULE N ----\nFoo == 1\n====\n" : undefined),
+      writeFile: () => {},
+      traceSpec: { module: "M_TTrace", traceFile: "M_TTrace.bin" },
+    });
+
+  it.each([
+    ["m", "nothing defines it", "EXTENDS Naturals\n"],
+    ["ToJson", "no module loads Json", "EXTENDS Naturals\n"],
+    ["Foo", "only an instance's J!Foo defines it", "EXTENDS Naturals\nJ == INSTANCE N\n"],
+  ])(
+    "declares the model value %s where %s, as TLC finds no definition of that name",
+    async (value, _description, header) => {
+      expect((await checkModelValue(header, value)).traceSpec).toContain(`\nCONSTANTS ${value}\n`);
+    },
+  );
+
+  it.each([
+    ["Len", "the root extends Sequences", "EXTENDS Naturals, Sequences\n"],
+    ["Len", "a named instance loads Sequences", "EXTENDS Naturals\nI == INSTANCE Sequences\n"],
+    ["Len", "only _TLCTrace loads Sequences", "EXTENDS Naturals\n"],
+    ["Trace", "only _TLCTrace loads TLCExt", "EXTENDS Naturals\n"],
+    ["Cardinality", "only _TLCTrace loads FiniteSets", "EXTENDS Naturals\n"],
+  ])(
+    "declares no model value %s where %s, as TLC finds a definition of that name",
+    async (value, _description, header) => {
+      expect((await checkModelValue(header, value)).traceSpec).not.toContain("_TEConstants");
+    },
+  );
+
   it("writes no binary trace without a file for it", async () => {
     const result = await checkFixture("Safety", "te_out");
     expect(result.written.size).toBe(0);

@@ -613,7 +613,8 @@ export const generateInstance = (
             substituteBody(generation, substs, symbol.body, instanceeModule, location),
           );
     generation.currentModule.definitions.push(node);
-    setRecursionFields(generation, node);
+    // Deviation from SANY: Generator#generateInstance shares a parameter-free module's OpDefNode (newOdn = odn), so an INSTANCE in a recursive section raises its level everywhere.
+    if (node !== symbol) setRecursionFields(generation, node);
   });
   getHashtableValues(instanceeContext.table).forEach((symbol) => {
     if (symbol.kind !== "ThmOrAssumpDef" || symbol.isLocal) return;

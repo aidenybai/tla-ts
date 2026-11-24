@@ -2972,4 +2972,54 @@ EXTENDS Absent
       ]),
     );
   });
+
+  describe("raises the definitions an INSTANCE in a recursive section creates", () => {
+    const getSectionReport = (inner: string, body: string) =>
+      getReport({
+        M: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
+        N: inner,
+        P: "---- MODULE P ----\nH == TRUE\n====",
+      });
+
+    it.each([
+      {
+        inner: "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE v\nL(n) == TRUE\n====",
+        body: "Inv == [](x + 1 > 0)\nRECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)",
+        sany: "line 4, col 8 to line 4, col 20: [] followed by action not of form [A]_v.",
+      },
+      {
+        inner: "---- MODULE N ----\nEXTENDS Naturals, P\nVARIABLE v\nL(n) == TRUE\n====",
+        body: "RECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        sany: "line 7, col 6 to line 7, col 9: Level error in applying operator '",
+      },
+    ])(
+      "but not one an unnamed INSTANCE shares with a parameter-free module, where SANY reports $sany",
+      (row) => {
+        expect(getSectionReport(row.inner, row.body)).toEqual({ text: "", isFailed: false });
+      },
+    );
+
+    it("including a LOCAL INSTANCE's copy of a parameter-free module's definition", () => {
+      expect(
+        getSectionReport(
+          "---- MODULE N ----\nEXTENDS Naturals\nVARIABLE v\nL(n) == TRUE\n====",
+          "RECURSIVE W(_)\nLOCAL INSTANCE P\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        ),
+      ).toEqual({
+        text: joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 1",
+          "",
+          "line 7, col 6 to line 7, col 9 of module M",
+          "",
+          "Level error in applying operator ':",
+          "The level of argument 1 exceeds the maximum level allowed by the operator.",
+          "",
+          "",
+        ]),
+        isFailed: true,
+      });
+    });
+  });
 });

@@ -14,7 +14,7 @@ import {
   TlaSyntaxError,
 } from "../../src";
 import type { CheckResult, OutputLine } from "../../src/check";
-import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { createSanyError, UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
 import {
@@ -2581,19 +2581,60 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(['"D"', '"D"', '"D"']);
   });
 
-  // TLCSet's deviation in tlc/tlc-operators.ts makes D state-level, so the NullPointerException that TLC swallows at TLCSet's bound of 0, printing "A", is a config error.
-  it("rejects a substitute that sets a numbered register as TLC starts, where TLC swallows the NullPointerException", async () => {
-    await expect(
-      check({
-        source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
-        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
-      }),
-    ).rejects.toThrow(
-      new TlaConfigError(
-        "The configuration file substitutes constant N with non-constant D - specifically: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: ",
-      ),
-    );
+  it("swallows the NullPointerException of a substitute that sets a numbered register as TLC starts", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([['"A"'], "success", 2]);
   });
+
+  it.each([
+    ["TLCSet", "D == TLCSet(1, 5)"],
+    ["an instance of TLC", "S == INSTANCE TLC\nD == S!TLCSet(1, 5)"],
+    ["an instance of a module that extends TLC", "J == INSTANCE T21\nD == J!TLCSet(1, 5)"],
+  ])(
+    "evaluates a substitute that sets a numbered register through %s where N is used, once TLC swallows its NullPointerException at startup",
+    async (_form, definition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(`${definition}\nASSUME N /\\ PrintT(TLCGet(1))`),
+        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+        loadModule: (name) =>
+          name === "T21" ? "---- MODULE T21 ----\nEXTENDS TLC\n====" : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status]).toEqual([["5"], "success"]);
+    },
+  );
+
+  it.each([
+    [
+      "a constant definition",
+      'C == PrintT("C") /\\ TLCSet(1, 1)\nASSUME C /\\ C',
+      "CONSTANT N = 1",
+      ['"C"', '"C"', '"C"'],
+    ],
+    [
+      "a substitute",
+      'D == PrintT("D") /\\ TLCSet(1, 2)\nASSUME N /\\ N /\\ PrintT(TLCGet(1))',
+      "CONSTANT N <- D",
+      ['"D"', '"D"', '"D"', '"D"', "2"],
+    ],
+  ])(
+    "evaluates %s that sets a numbered register as TLC starts and again where it is used, since the write fails at startup",
+    async (_definition, definitions, constants, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: getSubstituteSource(definitions),
+        config: `INIT Init\nNEXT Next\n${constants}`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
 
   it("fails at a reference to N whose substitute failed as TLC started", async () => {
     const printed: string[] = [];
@@ -17163,7 +17204,7 @@ describe("rejecting literals matches TLC", () => {
 
   it.each([
     ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0"],
-    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
+    ["an assumption", "EXTENDS Naturals\nVARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
     ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648"],
     [
       "an unused nested module",
@@ -17180,6 +17221,22 @@ describe("rejecting literals matches TLC", () => {
       `TLC can't handle a number this big.\n${literal}`,
     );
   });
+
+  it.each([
+    ["1.5 + y", "line 4, col 12 to line 4, col 12"],
+    ["99999999999999999999 + y", "line 4, col 29 to line 4, col 29"],
+  ])(
+    "reports SANY's semantic error in X == %s before its literal, as TLC does",
+    async (body, location) => {
+      await expect(
+        checkLiterals(`EXTENDS Naturals\nVARIABLE x\nX == ${body}\nInit == x = 0`),
+      ).rejects.toThrow(
+        createSanyError([
+          { location: `${location} of module M`, message: "Unknown operator: `y'." },
+        ]),
+      );
+    },
+  );
 
   it("reads based numerals", async () => {
     const result = await checkLiterals(
