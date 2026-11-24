@@ -144,6 +144,13 @@ export class TlaEvaluationError extends TlaError {
   }
 }
 
+export class TlaStoppedAttemptError extends TlaError {
+  constructor() {
+    super("");
+    this.name = "TlaStoppedAttemptError";
+  }
+}
+
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 

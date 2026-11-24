@@ -134,6 +134,7 @@ import {
   markStreamedSet,
   normalizeDeeply,
   setTrace,
+  stopFirstAttempt,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
 
@@ -2781,17 +2782,33 @@ export const getLazyFilter = (
         node,
       );
     if (!coverage || node < 0) {
-      return isTestObserved || (hasEffects && hasObservedPass(base))
+      if (isTestObserved) {
+        return {
+          kind: "FilteredSet",
+          base,
+          test: (element, isMember) => {
+            stopFirstAttempt();
+            return test(element, isMember);
+          },
+          isPassObserved: true,
+          source,
+          rebind,
+        };
+      }
+      return hasEffects && hasObservedPass(base)
         ? { kind: "FilteredSet", base, test, isPassObserved: true, source, rebind }
         : { kind: "FilteredSet", base, test, source, rebind };
     }
     return {
       kind: "FilteredSet",
       base,
-      test: (element, isMember) =>
-        runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      test: (element, isMember) => {
+        stopFirstAttempt();
+        return runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember));
+      },
       isPassObserved: true,
       startPass: (isMaterialized) => {
+        stopFirstAttempt();
         const draws = createFilterBaseEnumerator(coverage, base, isMaterialized);
         return {
           test: (element) => {

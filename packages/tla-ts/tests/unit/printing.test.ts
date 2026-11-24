@@ -337,6 +337,55 @@ describe("printing matches TLC", () => {
   );
 
   it.each([
+    [
+      "<<G \\cap Nat>> = <<{1}>>",
+      ["{}"],
+      "Attempted to check if the value:\n{}\nis an element of Nat.",
+    ],
+    [
+      "<<[G -> Nat]>> = <<{}>>",
+      ["{}", "{}", "{1}"],
+      "Attempted to enumerate a set of the form [D -> R],but the range R:\nNat\ncannot be enumerated.",
+    ],
+    [
+      "<<G \\X Nat>> = <<{}>>",
+      ["{}", "{}"],
+      "Attempted to enumerate a set of the form s1 \\X s2 ... \\X sn,\nbut can't enumerate s1:\nNat",
+    ],
+    [
+      "<<[a : G, b : Nat]>> = <<{}>>",
+      ["{}", "{}"],
+      "Attempted to enumerate a set of the form [l1 : v1, ..., ln : vn],\nbut can't enumerate the value of the `b' field:\nNat",
+    ],
+    [
+      "{1, 2} = (G \\X {2})",
+      ["{}", "{}", "{1}"],
+      "Attempted to check equality of integer 1 with non-integer:\n<<{}, 2>>",
+    ],
+    [
+      "<<G \\cup {7}>> = <<{1}>>",
+      ["{}", "{1}"],
+      "Attempted to compare the set {} with the value:\n7",
+    ],
+    [
+      "LET f[n \\in {1}] == IF n = 0 THEN f[n] ELSE <<G \\cap Nat>> = <<{1}>> IN <<f>> = <<[n \\in {1} |-> FALSE]>>",
+      ["{}"],
+      "Attempted to check if the value:\n{}\nis an element of Nat.",
+    ],
+  ])(
+    "runs a filter's predicate as TLC does when %s fails",
+    async (expression, printed, message) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
+        config: "",
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
+  it.each([
     ["F \\in {{<<0, 1>>, <<1, 1>>}}", ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>"]],
     [
       "F \\in {{}, {<<0, 1>>}, {<<0, 1>>, <<1, 1>>}}",

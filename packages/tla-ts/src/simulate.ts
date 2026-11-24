@@ -56,7 +56,7 @@ import {
   type CounterExampleLoop,
 } from "./tlc/tlcext-operators";
 import {
-  computeLikeTlcOnFailure,
+  computeOnFailure,
   createModelValue,
   createRecord,
   formatErrorState,
@@ -140,7 +140,7 @@ const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) 
   for (let position = 0; position < order.length; position++) {
     const index = order[position];
     // Deviation from TLC: TLCState#equals fails on values it can't compare, so TLC's simulation reports that failure in place of the violation, or hangs.
-    if (!computeLikeTlcOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
+    if (!computeOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
       return false;
     }
   }
