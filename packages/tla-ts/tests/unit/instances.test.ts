@@ -10,6 +10,7 @@ import {
   TlaSyntaxError,
 } from "../../src";
 import { createSanyError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { simulate } from "../../src/simulate";
 import { checkFixture, formatCallStackLines, getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
@@ -1306,6 +1307,218 @@ describe("INSTANCE matches TLC", () => {
         75,
         callStack,
       ]);
+    },
+  );
+});
+
+const NEXT_KINDS = [
+  {
+    kind: "disjunction",
+    next: "Next == Step \\/ (Loop /\\ x = K /\\ x' = 0) \\/ (Loop /\\ x > 1 /\\ x' = x - 1)",
+    counts: "3:6",
+    generated: [26, 47],
+  },
+  {
+    kind: "conjunction",
+    next: "Next == x <= K /\\ (Loop \\/ x < K) /\\ x' = (IF x < K THEN x + 1 ELSE 0)",
+    counts: "3:7",
+    generated: [34, 57],
+  },
+];
+
+interface ActionShape {
+  lines: string;
+  names: string[];
+  specification: string;
+  next: string;
+}
+
+const checkActionShape = async (shape: ActionShape) => {
+  const variable = shape.names[2];
+  const source = `---- MODULE Outer ----\nEXTENDS Naturals, TLC\n${shape.lines}\nInv == ${variable} < 2\nProp == <>[](${variable} = 3)\nASSUME PrintT({<<a.name, a.location.beginLine, a.location.beginColumn, a.location.endLine, a.location.endColumn, a.location.module>> : a \\in TLCGet("spec").actions})\n====`;
+  const loadModule = (name: string) =>
+    name === "Inner"
+      ? `---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANTS K, Loop\nVARIABLE x\nInit == x = 0\nStep == x < K /\\ x' = x + 1\n${shape.next}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====`
+      : name === "Lib"
+        ? "---- MODULE Lib ----\nEXTENDS Naturals\nBump(v, k) == v < k /\\ v' = v + 1\nReset(v, k, b) == b /\\ v = k /\\ v' = 0\nCycle(v, k) == v' = IF v < k THEN v + 1 ELSE 0\n===="
+        : undefined;
+  const getConfig = (loop: string, property: string) =>
+    `SPECIFICATION ${shape.specification}\nCONSTANTS\n${shape.names[0]} = 3\n${shape.names[1]} = ${loop}\n${property}`;
+  const printed: string[] = [];
+  const violated = await check({
+    source,
+    config: getConfig("TRUE", "INVARIANT Inv"),
+    loadModule,
+    onPrint: (text) => printed.push(text),
+  });
+  const deadlocked = await check({
+    source,
+    config: getConfig("FALSE", ""),
+    loadModule,
+    onPrint: () => {},
+  });
+  const lasso = await check({
+    source,
+    config: getConfig("TRUE", "PROPERTY Prop"),
+    loadModule,
+    onPrint: () => {},
+  });
+  const covered = await check({
+    source,
+    config: getConfig("TRUE", ""),
+    coverage: 1,
+    loadModule,
+    onPrint: () => {},
+  });
+  const generated = [
+    { seed: 7n, traceCount: 3n, traceDepth: 6 },
+    { seed: 11n, traceCount: 4n, traceDepth: 8 },
+  ].map((run) => {
+    let states = 0;
+    simulate({
+      source,
+      config: getConfig("TRUE", ""),
+      loadModule,
+      seed: run.seed,
+      traceCount: run.traceCount,
+      traceDepth: run.traceDepth,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onPrint: () => {},
+      onSimulation: (output) => {
+        if (output.kind === "summary") states = output.statistics.generatedStates;
+      },
+    });
+    return states;
+  });
+  return {
+    violated: violated.violation?.trace.map((step) => step.label),
+    deadlocked: deadlocked.violation?.trace.map((step) => step.label),
+    lasso: [
+      ...(lasso.violation?.trace.map((step) => step.label) ?? []),
+      lasso.violation?.loopLabel,
+    ],
+    printed,
+    coverage: covered.coverage?.relations
+      .filter((relation) => relation.kind === "next")
+      .map((relation) => `${relation.label} ${relation.distinct}:${relation.generated}`),
+    generated,
+  };
+};
+
+describe("the actions of a specification through an instance match TLC", () => {
+  it.each(
+    [
+      {
+        shape: "an unnamed instance with implicit substitutions",
+        lines: "CONSTANTS K, Loop\nVARIABLE x\nINSTANCE Inner",
+        names: ["K", "Loop", "x"],
+        specification: "Spec",
+        label: "Action line 5, col 1 to line 5, col 14 of module Outer",
+        printed: '{<<"UnnamedAction", 5, 1, 5, 14, "Outer">>}',
+      },
+      {
+        shape: "an unnamed instance with explicit substitutions",
+        lines: "CONSTANTS N, B\nVARIABLE y\nINSTANCE Inner WITH K <- N, x <- y, Loop <- B",
+        names: ["N", "B", "y"],
+        specification: "Spec",
+        label: "Action line 5, col 1 to line 5, col 45 of module Outer",
+        printed: '{<<"UnnamedAction", 5, 1, 5, 45, "Outer">>}',
+      },
+      {
+        shape: "a LET instance",
+        lines: "CONSTANTS K, Loop\nVARIABLE x\nOSpec == LET J == INSTANCE Inner IN J!Spec",
+        names: ["K", "Loop", "x"],
+        specification: "OSpec",
+        label: "Action line 5, col 14 to line 5, col 32 of module Outer",
+        printed: '{<<"UnnamedAction", 5, 14, 5, 32, "Outer">>}',
+      },
+      {
+        shape: "a named instance",
+        lines: "CONSTANTS K, Loop\nVARIABLE x\nI == INSTANCE Inner\nOSpec == I!Spec",
+        names: ["K", "Loop", "x"],
+        specification: "OSpec",
+        label: "Action line 5, col 1 to line 5, col 19 of module Outer",
+        printed: '{<<"UnnamedAction", 5, 1, 5, 19, "Outer">>}',
+      },
+    ].flatMap((row) => NEXT_KINDS.map((kind) => ({ ...row, ...kind }))),
+  )(
+    "takes the next-state relation of a specification from $shape as one action at the instance, as TLC's Tool#getActions takes a SubstInNode with substitutions (Next as a $kind)",
+    async (row) => {
+      expect(await checkActionShape(row)).toEqual({
+        violated: [undefined, row.label, row.label],
+        deadlocked: [undefined, row.label, row.label, row.label],
+        lasso: [undefined, row.label, row.label, row.label, row.label],
+        printed: [row.printed],
+        coverage: [`${row.label} ${row.counts}`],
+        generated: row.generated,
+      });
+    },
+  );
+
+  it.each(NEXT_KINDS)(
+    "names the action of a specification in the root module by the instance's Next it takes, as TLC's Tool#getActions names the OpDefNode of its call (Next as a $kind)",
+    async (kind) => {
+      const label = "Next line 5, col 1 to line 5, col 14 of module Outer";
+      expect(
+        await checkActionShape({
+          lines:
+            "CONSTANTS K, Loop\nVARIABLE x\nINSTANCE Inner\nOSpec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+          names: ["K", "Loop", "x"],
+          specification: "OSpec",
+          next: kind.next,
+        }),
+      ).toEqual({
+        violated: [undefined, label, label],
+        deadlocked: [undefined, label, label, label],
+        lasso: [undefined, label, label, label, label],
+        printed: ['{<<"Next", 5, 1, 5, 14, "Outer">>}'],
+        coverage: [`${label} ${kind.counts}`],
+        generated: kind.generated,
+      });
+    },
+  );
+
+  it.each([
+    {
+      ...NEXT_KINDS[0],
+      definition: "ONext == Bump(x, K) \\/ Reset(x, K, Loop)",
+      step: "Bump line 7, col 10 to line 7, col 19 of module Outer",
+      back: "Reset line 7, col 24 to line 7, col 40 of module Outer",
+      printed: '{<<"Bump", 7, 10, 7, 19, "Outer">>, <<"Reset", 7, 24, 7, 40, "Outer">>}',
+      coverage: [
+        "Bump line 3, col 1 to line 3, col 10 of module Lib (7 10 7 19) 3:3",
+        "Reset line 4, col 1 to line 4, col 14 of module Lib (7 24 7 40) 0:1",
+      ],
+      generated: [19, 33],
+    },
+    {
+      ...NEXT_KINDS[1],
+      definition: "ONext == (Loop \\/ x < K) /\\ Cycle(x, K)",
+      step: "ONext line 7, col 10 to line 7, col 39 of module Outer",
+      back: "ONext line 7, col 10 to line 7, col 39 of module Outer",
+      printed: '{<<"ONext", 7, 10, 7, 39, "Outer">>}',
+      coverage: ["ONext line 7, col 1 to line 7, col 5 of module Outer 3:7"],
+    },
+  ])(
+    "splits the next-state relation through an instance of a module that declares nothing, as TLC's Tool#getActions enters a SubstInNode without substitutions (Next as a $kind)",
+    async (row) => {
+      expect(
+        await checkActionShape({
+          lines: `CONSTANTS K, Loop\nVARIABLE x\nINSTANCE Lib\nOInit == x = 0\n${row.definition}\nOSpec == OInit /\\ [][ONext]_x /\\ WF_x(ONext)`,
+          names: ["K", "Loop", "x"],
+          specification: "OSpec",
+          next: row.next,
+        }),
+      ).toEqual({
+        violated: [undefined, row.step, row.step],
+        deadlocked: [undefined, row.step, row.step, row.step],
+        lasso: [undefined, row.step, row.step, row.step, row.back],
+        printed: [row.printed],
+        coverage: row.coverage,
+        generated: row.generated,
+      });
     },
   );
 });
