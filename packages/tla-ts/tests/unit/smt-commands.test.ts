@@ -6414,6 +6414,38 @@ describe("smt.random_seed, as Z3 5.3.2 reads it into every smt kernel", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 295)", "((x 25171)", " (z (- 29993)))"]);
   });
+
+  it("seeds the kernel of the optimizer", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        "(assert (or (< (ite (= (+ -3 2) (+ 0 2)) y (ite (<= 2 -2) y -3)) (+ (+ w -3) (+ w y))) (<= (+ -2 (ite (not q) w w)) (+ (+ -2 -2) 0))))",
+        "(assert (or (= (ite (< 3 (+ w -3)) (ite (<= -3 z) -3 z) x) (ite (= -1 (ite (not q) z 3)) (ite (< w x) -1 2) (ite (not q) y -1))) (= (+ (+ 0 3) 1) (ite (= w (ite (< -2 x) w w)) x (ite (not p) 0 z)))))",
+        "(assert (or (<= 3 (+ (ite (<= 1 y) 0 1) (+ x 1))) (<= (ite (< 0 (ite (< -2 1) w x)) -3 3) (+ (ite p 2 -2) 2))))",
+        "(assert (or (not q) (= x (ite (= (ite (< 1 z) -2 -3) z) (+ y 0) (+ x 0)))))",
+        "(minimize (+ x y))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 4334)"]);
+  });
+
+  it("seeds the kernel of qsat", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        "(assert (forall ((a Int)) (or q (<= (+ x 1) (ite (< x z) x z)))))",
+        "(assert (or (< (+ (+ x y) 3) (+ (+ 0 x) (+ -1 3))) (<= (+ (ite (<= 0 w) 1 -2) (+ -1 2)) (+ y (+ -2 1)))))",
+        "(assert (or (= (+ -1 z) (+ (+ 3 -1) (+ 0 2))) (< (+ (+ x z) (+ w 3)) 1)))",
+        "(assert (or (= -2 (ite (not p) -2 (ite q -2 1))) (< (+ -2 x) (ite (< (ite (< x y) x w) (+ 2 3)) -3 (ite (not p) z 3)))))",
+        "(assert (or (<= -1 -1) (<= (ite (< (+ -2 z) (+ 3 2)) x 0) -2)))",
+        "(check-sat-using qsat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 2821)"]);
+  });
 });
 
 describe("smt.arith.propagate_eqs, as Z3 5.3.2 reads it into every smt kernel", () => {
@@ -6454,6 +6486,43 @@ describe("smt.arith.propagate_eqs, as Z3 5.3.2 reads it into every smt kernel", 
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 3126)"]);
+  });
+
+  it("stops the kernel of unit-subsume-simplify propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or (= (+ (+ y 0) (+ 0 1)) (+ (+ y w) (+ z -1))) (<= (+ (ite (= 1 -2) -3 -3) (+ 2 y)) (ite (<= (+ x 0) (ite (= 2 -1) -1 2)) 1 (ite (< z z) -1 w)))))",
+        "(assert (or p (<= w (ite (= (+ z w) (ite (<= z -3) 2 -3)) (+ z x) 1))))",
+        "(assert (or (< -1 -3) (< (ite (= 1 2) (+ z -1) (ite (not p) 1 -2)) (+ (ite (<= y 3) 2 0) (+ 0 -3)))))",
+        "(assert (or (= (+ (ite (< x x) x 2) (+ w -1)) (ite (= (+ 1 z) (+ -3 y)) (ite p -3 y) -3)) (< 3 3)))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (let ((a!1 (ite (<= (+ x 0) (ite (= 2 (- 1)) (- 1) 2)) 1 (ite (< z z) (- 1) w))))",
+      "  (let ((a!2 (<= (+ (ite (= 1 (- 2)) (- 3) (- 3)) 2 y) a!1)))",
+      "    (or (= (+ y 0 0 1) (+ y w z (- 1))) a!2)))",
+      "  (let ((a!1 (ite (= (+ z w) (ite (<= z (- 3)) 2 (- 3))) (+ z x) 1)))",
+      "    (or p (<= w a!1)))",
+      "  (let ((a!1 (< (ite (= 1 2) (+ z (- 1)) (ite (not p) 1 (- 2)))",
+      "                (+ (ite (<= y 3) 2 0) 0 (- 3)))))",
+      "    (or (< (- 1) (- 3)) a!1))",
+      "  (let ((a!1 (= (+ (ite (< x x) x 2) w (- 1))",
+      "                (ite (= (+ 1 z) (+ (- 3) y)) (ite p (- 3) y) (- 3)))))",
+      "    (or a!1 (< 3 3)))",
+      "  :precision precise :depth 0)",
+      ")",
+      "(:rlimit 1205)",
+    ]);
   });
 });
 
