@@ -141,9 +141,15 @@ const except = (record: Value, changes: Record<string, (inner: Value) => Value>)
       );
 };
 
-const heapGet = (heap: Value, index: number) => {
+// The record at each index of a heap, which reads each page's records once.
+const createHeapReader = (heap: Value) => {
   const pages = getList(get(heap, "pages"));
-  return getList(pages[Math.floor((index - 1) / PAGE_SIZE)])[(index - 1) % PAGE_SIZE];
+  const pageRecords: Value[][] = [];
+  return (index: number) => {
+    const page = Math.floor((index - 1) / PAGE_SIZE);
+    pageRecords[page] ??= getList(pages[page]);
+    return pageRecords[page][(index - 1) % PAGE_SIZE];
+  };
 };
 
 // A heap of records, whose each page is the page of the heap before that a canonicalization made,
@@ -360,33 +366,37 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
 const getIndex = (key: Value) =>
   getList(get(key, "value")).reduce<number>((total, unit) => total * 10 + Number(unit) - 48, 0);
 
+const KEY_TYPES = ["string", "symbol"];
+
 // The descriptors of an object's properties in OwnKeysOf's order: index keys ascending, then the
 // string keys and the symbol keys in the order they were added.
 const getDescriptors = (object: Value) => {
   const props = toFiniteFunction(get(object, "props"));
-  const buckets = props.domain
-    .map((bucket, position) => ({ bucket, position }))
-    .filter((entry) => entry.bucket !== NAMED_BUCKET)
-    .sort((left, right) => Number(left.bucket) - Number(right.bucket));
-  const indexed = buckets.flatMap((entry) => {
-    const bucket = toFiniteFunction(props.range[entry.position]);
-    return bucket.domain
+  const buckets: { bucket: Value; position: number }[] = [];
+  let named: Value | undefined;
+  for (let position = 0; position < props.domain.length; position++) {
+    const bucket = props.domain[position];
+    if (bucket === NAMED_BUCKET) named = props.range[position];
+    else buckets.push({ bucket, position });
+  }
+  buckets.sort((left, right) => Number(left.bucket) - Number(right.bucket));
+  const descriptors: Value[] = [];
+  for (let index = 0; index < buckets.length; index++) {
+    const bucket = toFiniteFunction(props.range[buckets[index].position]);
+    bucket.domain
       .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
       .sort((left, right) => left.index - right.index)
-      .map((pair) => pair.descriptor);
-  });
+      .forEach((pair) => descriptors.push(pair.descriptor));
+  }
   const keys = getList(get(object, "keys"));
-  const named = props.domain.includes(NAMED_BUCKET)
-    ? applyFunction(props, NAMED_BUCKET)
-    : undefined;
-  const byType = (type: string) =>
-    keys
-      .filter((key) => getString(key, "type") === type)
-      .map((key) => {
-        if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
-        return applyFunction(named, key);
-      });
-  return [...indexed, ...byType("string"), ...byType("symbol")];
+  for (const type of KEY_TYPES) {
+    for (let index = 0; index < keys.length; index++) {
+      if (getString(keys[index], "type") !== type) continue;
+      if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
+      descriptors.push(applyFunction(named, keys[index]));
+    }
+  }
+  return descriptors;
 };
 
 const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
@@ -479,27 +489,37 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const pages = getList(get(objs, "pages"));
   const initialPages = getList(get(initialObjs, "pages"));
+  const getObject = createHeapReader(objs);
+  const getInitialObject = createHeapReader(initialObjs);
+  const getEnvironment = createHeapReader(envs);
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
     if (valuesEqual(pages[position], page)) return;
     const high = Math.min((position + 1) * PAGE_SIZE, realm.objects);
     for (let id = position * PAGE_SIZE + 1; id <= high; id++) {
-      if (!valuesEqual(heapGet(objs, id), heapGet(initialObjs, id))) changed.push(id);
+      if (!valuesEqual(getObject(id), getInitialObject(id))) changed.push(id);
     }
   });
-  // The nodes that each walked record refers to, by its node: an object by its id, and an
-  // environment by its number negated.
-  const references = new Map<number, number[]>();
-  const collect = (node: number, refs: number[], add: () => void) => {
-    const start = refs.length;
-    add();
-    references.set(node, refs.slice(start));
+  // The nodes that each walked record refers to, an object by its id and an environment by its
+  // number negated: from where edgeStarts has a node, its count and then the nodes.
+  const edges: number[] = [];
+  const edgeStarts = new Map<number, number>();
+  const collect = (node: number, refs: number[], start: number) => {
+    edgeStarts.set(node, edges.length);
+    edges.push(refs.length - start);
+    for (let index = start; index < refs.length; index++) edges.push(refs[index]);
   };
   const queue: number[] = [];
   for (let environment = 1; environment <= realm.environments; environment++) {
-    collect(-environment, queue, () => environmentRefs(heapGet(envs, environment), realm, queue));
+    const start = queue.length;
+    environmentRefs(getEnvironment(environment), realm, queue);
+    collect(-environment, queue, start);
   }
-  changed.forEach((id) => collect(id, queue, () => objectRefs(heapGet(objs, id), realm, queue)));
+  for (const id of changed) {
+    const start = queue.length;
+    objectRefs(getObject(id), realm, queue);
+    collect(id, queue, start);
+  }
   const templates = toFiniteFunction(get(state, "templates"));
   templates.domain
     .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
@@ -523,15 +543,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     for (let head = 0; head < walked.length; head++) {
       const node = walked[head];
       if (numbers.has(node)) continue;
+      const start = walked.length;
       if (node > 0) {
         objectCount++;
         numbers.set(node, realm.objects + objectCount);
-        collect(node, walked, () => objectRefs(heapGet(objs, node), realm, walked));
+        objectRefs(getObject(node), realm, walked);
       } else {
         environmentCount++;
         numbers.set(node, realm.environments + environmentCount);
-        collect(node, walked, () => environmentRefs(heapGet(envs, -node), realm, walked));
+        environmentRefs(getEnvironment(-node), realm, walked);
       }
+      collect(node, walked, start);
       order.push(node);
     }
   };
@@ -551,7 +573,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     order
       .filter((node) => node > 0)
       .forEach((node) => {
-        const object = heapGet(objs, node);
+        const object = getObject(node);
         if (getString(object, "class") !== "weakMap") return;
         const data = toFiniteFunction(get(get(object, "slots"), "weakMapData"));
         data.domain
@@ -746,31 +768,37 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     node > 0
       ? node <= realm.objects || numbers.get(node) === node
       : -node <= realm.environments || numbers.get(node) === -node;
+  const isEveryEdgeUnmoved = (node: number) => {
+    const start = edgeStarts.get(node);
+    if (start === undefined) return false;
+    for (let index = start + 1; index <= start + edges[start]; index++) {
+      if (!isUnmoved(edges[index])) return false;
+    }
+    return true;
+  };
   // A record renamed, or as it is where renaming would give it back.
   const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) =>
     isIncremental &&
     isCanonical(record) &&
     (node < 0 || !WEAK_CLASSES.has(getString(record, "class"))) &&
-    references.get(node)?.every(isUnmoved) === true
+    isEveryEdgeUnmoved(node)
       ? record
       : markCanonical(renameRecord(record));
   const changedSet = new Set(changed);
   const objects = [
     ...Array.from({ length: realm.objects }, (_, index) => {
-      const record = heapGet(objs, index + 1);
+      const record = getObject(index + 1);
       return changedSet.has(index + 1) ? rename(index + 1, record, renameObject) : record;
     }),
-    ...order
-      .filter((node) => node > 0)
-      .map((node) => rename(node, heapGet(objs, node), renameObject)),
+    ...order.filter((node) => node > 0).map((node) => rename(node, getObject(node), renameObject)),
   ];
   const environments = [
     ...Array.from({ length: realm.environments }, (_, index) =>
-      rename(-(index + 1), heapGet(envs, index + 1), renameEnvironmentRecord),
+      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord),
     ),
     ...order
       .filter((node) => node < 0)
-      .map((node) => rename(node, heapGet(envs, -node), renameEnvironmentRecord)),
+      .map((node) => rename(node, getEnvironment(-node), renameEnvironmentRecord)),
   ];
   return except(state, {
     objs: () => createHeap(objects, objs, isIncremental),
