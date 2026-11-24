@@ -373,8 +373,7 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
         : compareLikeTlc(left, right);
     }
   } else if (hasCompoundKeys(leftDomain)) {
-    const length = leftDomain.length;
-    for (let index = 0; index < length; index++) {
+    for (let index = 0; index < leftDomain.length; index++) {
       const key = leftDomain[index];
       if (
         typeof key !== "object" ||
