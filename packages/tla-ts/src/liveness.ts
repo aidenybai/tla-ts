@@ -52,7 +52,7 @@ import {
   getSubstitutedOccurrence,
   mapChildren,
   substitutionFrames,
-  withSubstitutionFrames,
+  withBoundFrames,
 } from "./instances";
 import { getArity, getKeyName } from "./resolve";
 import {
@@ -135,10 +135,7 @@ export const withExpandedSubstitutions = (
     if (owner) lets.set(bound, owner);
     return bound;
   }, expression);
-  const framed = withSubstitutionFrames(wrapped, frames);
-  const wrappedOwner = lets.get(wrapped);
-  if (wrappedOwner) lets.set(framed, wrappedOwner);
-  return framed;
+  return withBoundFrames(wrapped, frames, environment.boundSubstitutions);
 };
 
 export const createTautologyError = () =>

@@ -66,6 +66,17 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   return copy;
 };
 
+export const withBoundFrames = (
+  expression: Expression,
+  frames: Expression[],
+  boundSubstitutions: BoundSubstitutions,
+) => {
+  const framed = withSubstitutionFrames(expression, frames);
+  const owner = boundSubstitutions.lets.get(expression);
+  if (owner) boundSubstitutions.lets.set(framed, owner);
+  return framed;
+};
+
 // SANY selects into the instanced body, so a substitute's copy keeps the marks of the parameter it replaces, not its own.
 const withReplacedFrames = (replacement: Expression, expression: Expression) =>
   addFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
@@ -1143,11 +1154,10 @@ export const createInstantiation = (instantiation: Instantiation) => {
       definition.name,
       () => {
         const operator = getOperatorDefinition(definition);
-        const body = withSubstitutionFrames(operator.body, [frame]);
-        const lets = instantiation.boundSubstitutions.lets;
-        const owner = lets.get(operator.body);
-        if (owner) lets.set(body, owner);
-        return { ...operator, body };
+        return {
+          ...operator,
+          body: withBoundFrames(operator.body, [frame], instantiation.boundSubstitutions),
+        };
       },
       reservedKey,
     );

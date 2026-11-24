@@ -578,17 +578,21 @@ export const buildCoverage = (
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
-        getHashtableOrder(expression.definitions).forEach((definition) => {
-          if (definition.name === SELECTION_NAME || isSubstitutionDefinition(definition)) return;
-          walkDefinition({ definition, scope: inner });
-        });
+        if (!environment.boundSubstitutions.lets.has(expression)) {
+          getHashtableOrder(expression.definitions).forEach((definition) => {
+            if (definition.name === SELECTION_NAME) return;
+            walkDefinition({ definition, scope: inner });
+          });
+        }
         walk(expression.body, inner);
         return;
       }
       case "Identifier": {
         if (syntheticIdentifiers.has(expression)) return;
         const resolved = resolve(expression, expression.name, locals);
-        const isSubstituted = resolved && isSubstitutionDefinition(resolved.definition);
+        const isSubstituted =
+          environment.boundSubstitutions.references.has(expression) ||
+          (resolved && isSubstitutionDefinition(resolved.definition));
         enter(
           expression,
           (isSubstituted && getSubstitutedRange(expression)) || range,

@@ -13708,6 +13708,87 @@ ASSUME TLCFP(a) = -887695703
       expect(formatCoverage(result)?.at(-2)).toEqual(lines);
     },
   );
+
+  it.each([
+    [
+      "c <- x + k, Op <- F",
+      "x' = L(0)!E6",
+      [
+        "line 7, col 63 to line 7, col 74 of module M: 3",
+        "|line 7, col 68 to line 7, col 74 of module M: 3",
+        "||line 7, col 45 to line 7, col 49 of module M: 3",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 9",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' = L(0)!E3 - 1",
+      [
+        "line 7, col 63 to line 7, col 78 of module M: 3",
+        "|line 7, col 68 to line 7, col 78 of module M: 3",
+        "||line 7, col 68 to line 7, col 74 of module M: 3",
+        "|||line 7, col 45 to line 7, col 49 of module M: 3",
+        "|||line 6, col 7 to line 6, col 15 of module Pure: 3",
+        "||||line 6, col 7 to line 6, col 11 of module Pure: 9",
+        "|||||line 6, col 10 to line 6, col 10 of module Pure: 3",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- LAMBDA a : a + k",
+      "x' = L(1)!E6",
+      [
+        "line 7, col 78 to line 7, col 89 of module M: 2",
+        "|line 7, col 83 to line 7, col 89 of module M: 2",
+        "||line 7, col 45 to line 7, col 49 of module M: 2",
+        "||line 8, col 7 to line 8, col 11 of module Pure: 8",
+        "|||line 8, col 10 to line 8, col 10 of module Pure: 2",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' \\in L(0)!E14",
+      [
+        "line 7, col 63 to line 7, col 77 of module M: 6",
+        "|line 7, col 70 to line 7, col 77 of module M: 3",
+        "||line 7, col 45 to line 7, col 49 of module M: 3",
+        "||line 9, col 8 to line 9, col 29 of module Pure: 3:9",
+        "|||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "|||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+      ],
+    ],
+    [
+      "c <- x + k, Op <- F",
+      "x' \\in L(0)!E14 \\cup L(1)!E14",
+      [
+        "line 7, col 63 to line 7, col 91 of module M: 9",
+        "|line 7, col 70 to line 7, col 91 of module M: 3",
+        "||line 7, col 70 to line 7, col 77 of module M: 3",
+        "|||line 9, col 8 to line 9, col 29 of module Pure: 3",
+        "||||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "||||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+        "||line 7, col 84 to line 7, col 91 of module M: 3",
+        "|||line 7, col 45 to line 7, col 49 of module M: 6",
+        "|||line 9, col 8 to line 9, col 29 of module Pure: 3:9",
+        "||||line 9, col 9 to line 9, col 13 of module Pure: 6",
+        "||||line 9, col 23 to line 9, col 28 of module Pure: 3:9",
+      ],
+    ],
+  ])(
+    "reports no node for the binding of a LET instance's parameter-dependent substitute with %s in %s, as TLC's cost model counts the substitute only at the instance",
+    async (substitutes, next, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF(a) == a + 1\nPad == 0\nInit == x = 0\nNext == LET L(k) == INSTANCE Pure WITH ${substitutes} IN ${next}\nBound == x < 3\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure"
+            ? "---- MODULE Pure ----\nEXTENDS Naturals\nCONSTANT c, Op(_)\nH(K(_)) == K(c)\nE11 == H(Op)\nE3 == Op(c) + 1\nE5 == c + 2\nE6 == Op(c)\nE14 == {c + i : i \\in {1, 2}}\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-2)).toEqual(lines);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

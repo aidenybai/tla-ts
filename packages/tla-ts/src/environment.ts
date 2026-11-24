@@ -55,8 +55,8 @@ import {
   mentionsName,
   renameLocals,
   substitutedExpressions,
+  withBoundFrames,
   withInstanceParams,
-  withSubstitutionFrames,
   type BoundSubstitutions,
   type Substitution,
 } from "./instances";
@@ -1340,7 +1340,7 @@ export const createEnvironment = (
                   operator.params.slice(override.prefix),
                   location,
                 ).body
-              : withSubstitutionFrames(operator.body, frame ? [frame] : []),
+              : withBoundFrames(operator.body, frame ? [frame] : [], boundSubstitutions),
             theoremRange: theorems.has(key) ? getInstanceRange(instance) : undefined,
           };
         }
