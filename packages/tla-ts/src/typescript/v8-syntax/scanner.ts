@@ -331,6 +331,7 @@ export const isValidIdentifier = (
 };
 
 const KEYWORDS = new Map<string, number>([
+  ["accessor", TOKEN.Accessor],
   ["async", TOKEN.Async],
   ["await", TOKEN.Await],
   ["break", TOKEN.Break],

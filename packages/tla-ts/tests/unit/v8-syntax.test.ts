@@ -353,6 +353,7 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       },
       { name: "a template's bad escape", source: "`\\u{`;", accepted: "tag`\\u{`;" },
       { name: "two numeric separators", source: "1__0;", accepted: "1_0;" },
+      { name: "accessor after an expression", source: "a accessor;", accepted: "a;\naccessor;" },
     ]);
   });
 
