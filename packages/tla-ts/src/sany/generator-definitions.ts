@@ -613,7 +613,7 @@ export const generateInstance = (
             substituteBody(generation, substs, symbol.body, instanceeModule, location),
           );
     generation.currentModule.definitions.push(node);
-    // Deviation from SANY: Generator#generateInstance reuses the OpDefNode (newOdn = odn) of a definition from a parameter-free module, so SANY raises that shared definition's level everywhere when the INSTANCE is in a recursive section.
+    // Deviation from SANY: Generator#generateInstance shares a parameter-free module's OpDefNode (newOdn = odn), so an INSTANCE in a recursive section raises its level everywhere.
     if (node !== symbol) setRecursionFields(generation, node);
   });
   getHashtableValues(instanceeContext.table).forEach((symbol) => {

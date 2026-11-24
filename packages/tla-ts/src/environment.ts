@@ -1946,7 +1946,7 @@ export const createEnvironment = (
         warnings,
         (instance) => {
           const instancee = checkedModules.get(instance.module);
-          // Deviation from SANY: Generator#generateInstance reuses the OpDefNode (newOdn = odn) of a definition from a parameter-free module, so SANY raises that shared definition's level everywhere when the INSTANCE is in a recursive section.
+          // Deviation from SANY: Generator#generateInstance shares a parameter-free module's OpDefNode (newOdn = odn), so an INSTANCE in a recursive section raises its level everywhere.
           return [...(instanced.get(instance) ?? [])].flatMap((entry) =>
             entry[1].kind === "Definition" &&
             (instance.isLocal || entry[1].key !== instancee?.exported.get(entry[0])?.key)

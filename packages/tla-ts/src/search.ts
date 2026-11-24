@@ -1136,7 +1136,7 @@ export const createTraceSpecWriter =
       states,
       loopStart,
       modelValues: getModelValues(),
-      // TraceExplorationSpec#generate looks a model value up in Defns, which holds the root's names and the Java overrides of every module the spec or _TLCTrace loads.
+      // TLC's Defns holds only the root's names and the Java overrides of every loaded module.
       isDefined: (name) =>
         environment.rootKeys.has(name) ||
         [...environment.builtins.keys()].some((key) => getKeyName(key) === name),

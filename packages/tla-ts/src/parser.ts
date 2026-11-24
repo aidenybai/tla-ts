@@ -1224,7 +1224,7 @@ const parse = (
       isAt(">>") || isAt(">>_") ? [] : parseSeparated(() => parseExpression()),
     );
     if (accept(">>_")) {
-      // Deviation from SANY: TLAplusParser takes any number of expressions before >>_, so Generator#processAction reads <<A, B>>_v as <<A>>_B and fails on <<>>_v with an ArrayIndexOutOfBoundsException.
+      // Deviation from SANY: Generator#processAction reads <<A, B>>_v as <<A>>_B and throws on <<>>_v.
       if (elements.length !== 1)
         throw createError("Expected a single action inside <<A>>_v", start);
       return {

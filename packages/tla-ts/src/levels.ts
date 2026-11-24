@@ -647,14 +647,6 @@ const getRecursiveSections = (
     sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 });
   };
 
-  // Generator#setOpDefNodeRecursionFields puts an instance's OpDefNodes, but not its theorems, in the recursive section open where the INSTANCE is written.
-  const addInstanceSymbols = (definitions: Definition[]) => {
-    const names = (pending[depth] ??= new Set());
-    definitions.forEach((definition) =>
-      sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 }),
-    );
-  };
-
   const declareRecursive = (definitions: Definition[], location: SourceLocation) => {
     if (pendingCount === 0) sections.push({ location, members: [] });
     const names = (pending[depth] ??= new Set());
@@ -690,7 +682,11 @@ const getRecursiveSections = (
         return;
       }
       if (unit.kind === "Instance" && pendingCount > 0) {
-        addInstanceSymbols(getInstanceSymbols(unit.instance));
+        // SANY puts the definitions an INSTANCE creates, but not its theorems, in the recursive section open where it is written.
+        const isRechecked = (pending[depth] ??= new Set()).size > 0;
+        getInstanceSymbols(unit.instance).forEach((definition) =>
+          sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked }),
+        );
       }
       if (pendingCount === 0 && !hasRecursiveLet) return;
       if (unit.kind === "Assumption") walkExpression(unit.assumption.expression);

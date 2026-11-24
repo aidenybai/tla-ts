@@ -245,7 +245,7 @@ it.each([
   },
 );
 
-// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write and the exit before any checker exists, as TLC evaluates a constant definition or splits Next, so TLC finds the register undefined or never stops, where tla-ts acts as TLC does for a numbered register.
+// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write and the exit before any checker exists, so TLC finds the register undefined or never stops.
 describe("TLCSet writes that TLC drops before any checker exists", () => {
   it.each(TLCSET_FORMS)(
     "sets a named register through %s where the constant definition is used, as for a numbered register",
