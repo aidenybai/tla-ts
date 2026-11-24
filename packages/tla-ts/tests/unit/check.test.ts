@@ -13179,6 +13179,32 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["{{s \\in SUBSET {1} : PrintT(s)}}", "y = y", ["{}", "{1}", '"c"']],
+    ["{{s \\in SUBSET {1} : PrintT(s)}}", "{y, {{2}}} # {}", ["{}", "{1}", '"c"']],
+    [
+      "[k \\in {{s \\in SUBSET {1} : PrintT(s)}} |-> 1]",
+      "{y, [k \\in {{2}} |-> 1]} # {}",
+      ["{}", "{1}", '"c"'],
+    ],
+    [
+      "{{s \\in SUBSET {1} : PrintT(s)}, {t \\in SUBSET {2} : PrintT(t)}}",
+      "y = y",
+      ["{}", "{2}", "{}", "{1}", "{}", "{1}", '"c"'],
+    ],
+  ])(
+    "compares the state value %s with %s on a later state without filtering again, as TLC's fingerPrint caches each lazy part",
+    async (stored, comparison, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = {}\nNext == (x = 0 /\\ x' = 1 /\\ y' = ${stored}) \\/ (x = 1 /\\ x' = 2 /\\ y' = y /\\ PrintT("c") /\\ ${comparison})\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",

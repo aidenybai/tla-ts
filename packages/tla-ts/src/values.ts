@@ -5219,7 +5219,11 @@ export const getValueHash = (value: Value): number => {
   if (value.kind === "Set" || value.kind === "Function") {
     // TLC sorts a set in place as it fingerprints it, also a union that inherited its hash, so every lookup marks it.
     if (value.kind === "Set" && !value.isNormalized) value.isNormalized = true;
-    if (value.hash === 0) value.hash = computeValueHash(value);
+    if (value.hash === 0) {
+      value.hash = computeValueHash(value);
+      // TLC's fingerPrint converts and caches every lazy part, so a fingerprinted value compares with itself without effect.
+      if (value.hash !== UNFINGERPRINTABLE_HASH) value.walkFlags |= SELF_COMPARED_FLAG;
+    }
     return value.hash;
   }
   if (value.kind === "ModelValue") return value.hash;
