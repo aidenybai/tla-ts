@@ -294,6 +294,43 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A const whose type has call signatures, as a dual function's overloads and a named function
+  // type give it, runs as one function, which the model calls by one signature: a dual's
+  // data-first one, which dual dispatches to by its arity, and a named type's own.
+  describe("calls a dual or a named function type's const by the signature it notes", () => {
+    const getModel = (last: number) =>
+      `type Bit = 0 | 1;\ninterface Compare<A> {\n  (self: A, that: A): -1 | 0 | 1;\n}\nconst dual = <F>(arity: number, body: (self: Bit, that: Bit) => number): F =>\n  ((...args: Bit[]) => (args.length >= arity ? body(args[0], args[1]) : (self: Bit) => body(self, args[0]))) as F;\nexport const add: {\n  (that: Bit): (self: Bit) => number;\n  (self: Bit, that: Bit): number;\n} = dual(2, (self: Bit, that: Bit) => {\n  if (self === 1 && that === ${last}) throw new Error("add " + self + that);\n  return self + that;\n});\nconst compare = (self: Bit, that: Bit): -1 | 0 | 1 => (self < that ? -1 : self > that ? 1 : 0);\nexport const Order: Compare<Bit> = compare;\n`;
+    const NOTES = [
+      "tla-ts calls add by its data-first signature (self: Bit, that: Bit): number, which dual dispatches to by its arity, 2",
+      "tla-ts calls Order by its type's signature (self: Bit, that: Bit): 0 | 1 | -1",
+    ];
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dual.ts"), getModel(2));
+      expect(runNode(directory, "dual.ts").status).toBe(0);
+      const result = runCli(directory, ["dual.ts"]);
+      expect(result.status).toBe(0);
+      NOTES.forEach((note) => expect(result.stdout).toContain(note));
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dual.ts"), getModel(1));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { add } from "./dual.ts"; add(1, 1);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: add 11");
+      const result = runCli(directory, ["dual.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(NOTES[0]);
+      expect(result.stdout).toContain('the second argument was:\n"add 11"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.

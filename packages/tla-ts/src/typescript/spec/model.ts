@@ -342,7 +342,7 @@ export const compileModelToEscore = (
       parameters: string[];
       types: (ts.TypeNode | undefined)[];
       tags: Map<string, string>;
-      node: ts.FunctionLikeDeclaration | ts.FunctionTypeNode;
+      node: ts.FunctionLikeDeclaration | ts.SignatureDeclaration;
     }
   >();
   // A function that a declaration's initializer gives, through parentheses and casts.
@@ -400,14 +400,17 @@ export const compileModelToEscore = (
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        // A const whose type names a function that its initializer gives from elsewhere.
+        // A const whose type names a function that its initializer gives from elsewhere, or whose
+        // type has the call signature that the frame calls.
         const fn =
           getFunction(declaration.initializer) ??
           (declaration.initializer !== undefined &&
           declaration.type !== undefined &&
           ts.isFunctionTypeNode(declaration.type)
             ? declaration.type
-            : undefined);
+            : ts.isIdentifier(declaration.name)
+              ? today.signatures.get(declaration.name.text)
+              : undefined);
         if (
           fn !== undefined &&
           ts.isIdentifier(declaration.name) &&
@@ -767,9 +770,7 @@ export const compileModelToEscore = (
   const getGuard = (action: string, parameter: string) => {
     const definition = exported.get(action);
     const body =
-      definition === undefined || ts.isFunctionTypeNode(definition.node)
-        ? undefined
-        : definition.node.body;
+      definition === undefined || !("body" in definition.node) ? undefined : definition.node.body;
     const statement =
       body !== undefined && ts.isBlock(body)
         ? body.statements.find(
