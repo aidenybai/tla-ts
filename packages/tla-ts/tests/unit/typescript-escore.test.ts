@@ -986,6 +986,48 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // SplitFrom collects the substrings in chunks, so sizes and limits around a chunk pin where split
+  // stops, and the calls pin that it converts the limit before the separator.
+  describe("splits a string into substrings across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [1, 63, 64, 65, 129]) {
+        const source = Array.from({ length: size }, (_, index) => (index * 37) % 101).join("--");
+        for (const limit of [size - 1, size, size + 1, 2 ** 32 - 1]) {
+          const calls: string[] = [];
+          const separator = { toString: () => { calls.push("separator"); return "--"; } };
+          const count = { valueOf: () => { calls.push("limit"); return limit; } };
+          const parts = source.split(separator as unknown as string, count as unknown as number);
+          let hash = 0;
+          for (const part of parts) hash = (hash * 31 + Number(part) + 1) % 1000003;
+          text += [size, limit, calls.join(","), parts.length, hash].join(":") + ";";
+        }
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "1:0:limit,separator:0:0;1:1:limit,separator:1:1;1:2:limit,separator:1:1;1:4294967295:limit,separator:1:1;",
+      "63:62:limit,separator:62:604679;63:63:limit,separator:63:745068;63:64:limit,separator:63:745068;63:4294967295:limit,separator:63:745068;",
+      "64:63:limit,separator:63:745068;64:64:limit,separator:64:97048;64:65:limit,separator:64:97048;64:4294967295:limit,separator:64:97048;",
+      "65:64:limit,separator:64:97048;65:65:limit,separator:65:8525;65:66:limit,separator:65:8525;65:4294967295:limit,separator:65:8525;",
+      "129:128:limit,separator:128:444689;129:129:limit,separator:129:785411;129:130:limit,separator:129:785411;129:4294967295:limit,separator:129:785411;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace(
+        "129:129:limit,separator:129:785411",
+        "129:129:limit,separator:128:785411",
+      );
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

@@ -420,11 +420,13 @@ StringSplit(s, units, separator, limit) ==
             LET count == IF NumLess(n, NumFromInt(Len(units))) THEN NumToSmallInt(n) ELSE Len(units) IN
             CreateArrayFromList(sep.s, [i \in 1..count |-> Str(<<units[i]>>)])
        [] units = <<>> -> CreateArrayFromList(sep.s, <<Str(units)>>)
-       [] OTHER -> CreateArrayFromList(sep.s, SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), <<>>))
+       [] OTHER -> CreateArrayFromList(sep.s, ChunkValues(SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), NoChunks)))
+\* The substrings from i, after those so far, in chunks, so that splitting into n substrings copies
+\* each a few times rather than n.
 SplitFrom(units, sep, lim, i, j, acc) ==
-  IF j = -1 THEN Append(acc, Str(SubSeq(units, i + 1, Len(units))))
-  ELSE LET substrings == Append(acc, Str(SubSeq(units, i + 1, j))) IN
-       IF NumEqual(NumFromInt(Len(substrings)), lim) THEN substrings
+  IF j = -1 THEN ChunkAppend(acc, Str(SubSeq(units, i + 1, Len(units))))
+  ELSE LET substrings == ChunkAppend(acc, Str(SubSeq(units, i + 1, j))) IN
+       IF NumEqual(NumFromInt(ChunkLen(substrings)), lim) THEN substrings
        ELSE SplitFrom(units, sep, lim, j + Len(sep), StringIndexOf(units, sep, j + Len(sep)), substrings)
 
 \* CreateHTML (§B.2.2.2.1) for the HTML method m, after ToString of the this value.
