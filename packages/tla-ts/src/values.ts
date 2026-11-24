@@ -334,6 +334,15 @@ const forgetOwnWrittenOrder = (value: Value) => {
 
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
 
+const SELF_COMPARED_FLAG = 1;
+
+// A sorted domain holds its untyped model values first, and its other keys compare only with keys of their own kind, so its last key shows whether any key is a set or a function.
+const hasCompoundKeys = (domain: Value[]) => {
+  if (domain.length === 0) return false;
+  const last = domain[domain.length - 1];
+  return typeof last === "object" && last.kind !== "ModelValue";
+};
+
 const isRecordMismatch = (left: Value[], right: Value[]) =>
   left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);
 
@@ -363,6 +372,19 @@ const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
       return isModelValue(leftKey) === isModelValue(rightKey)
         ? keyComparison
         : compareLikeTlc(left, right);
+    }
+  } else if (hasCompoundKeys(leftDomain)) {
+    const length = leftDomain.length;
+    for (let index = 0; index < length; index++) {
+      const key = leftDomain[index];
+      if (
+        typeof key !== "object" ||
+        ((key.kind === "Function" || key.kind === "Set") &&
+          (key.walkFlags & SELF_COMPARED_FLAG) !== 0)
+      ) {
+        continue;
+      }
+      compareWithItself(key, false);
     }
   }
   const leftRange = left.range;
@@ -612,8 +634,6 @@ const describeAnyComparison = (other: Value) =>
 const compareAny = (other: Value): never => {
   throw new TlaModuleError(getAttemptMessage(describeAnyComparison, other));
 };
-
-const SELF_COMPARED_FLAG = 1;
 
 const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);

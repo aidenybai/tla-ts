@@ -13205,6 +13205,26 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["[{F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{F, {2}} -> {1, 2}] # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    ["LET G == {F} IN [y \\in G |-> 1] # [y \\in G |-> 2]", ['"n"', "{}", "{1}"]],
+    ["[{M, F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{M, {2}, F} -> {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["[{M, 1} -> {1, 2}] # {}", ['"n"']],
+  ])(
+    "compares the keys of the domain the functions of %s share, as TLC's FcnRcdValue#compareTo does",
+    async (next, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT M\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${next}\n====`,
+        config: "CONSTANT M = M\nINIT Init\nNEXT Next",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
