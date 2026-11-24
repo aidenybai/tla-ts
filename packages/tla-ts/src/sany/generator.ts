@@ -518,7 +518,7 @@ export const generateSanySpecification = (
           );
         }
       });
-      currentModule.topLevel.push(...extendee.topLevel);
+      extendee.topLevel.forEach((definition) => currentModule.topLevel.push(definition));
     });
 
     ast.units.forEach((unit) => {
@@ -568,7 +568,9 @@ export const generateSanySpecification = (
             [...contexts, createContext()],
             generation.recursion,
           );
-          currentModule.opDefsInRecursiveSection.push(...inner.opDefsInRecursiveSection);
+          inner.opDefsInRecursiveSection.forEach((definition) =>
+            currentModule.opDefsInRecursiveSection.push(definition),
+          );
           const binding = resolveModule(generation, inner.name);
           if (binding === undefined) addToContext(getTopContext(contexts), inner);
           else if (binding !== inner) {
