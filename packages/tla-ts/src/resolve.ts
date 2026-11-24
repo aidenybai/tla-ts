@@ -92,6 +92,7 @@ interface Unit {
   location: SourceLocation;
   self: Definition | undefined;
   bindings: ModuleBindings;
+  recursive: Set<Binding>;
   errors: SanyError[];
   warnings: SanyError[];
   hasLabelScope: boolean;
@@ -1268,8 +1269,8 @@ const resolveDefinitions = (
   unit: Unit,
   instances: Instance[] = [],
   declarations: Declaration[] = [],
+  recursive = new Set<Binding>(),
 ) => {
-  const recursive = new Set<Binding>();
   const declaredLocals = new Map<Declaration, LocalName | undefined>();
   const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
     const binding: Binding = {
@@ -2687,7 +2688,7 @@ const resolveStep = (
           (current, definition) =>
             definition.kind === "Instance"
               ? resolveLocalInstance(definition, current, stepUnit)
-              : resolveDefinitions([definition], current, unit),
+              : resolveDefinitions([definition], current, unit, [], [], unit.recursive),
           scope,
         ),
         body.kind,
@@ -2818,6 +2819,21 @@ export interface NestedRecursion {
   closed: number;
 }
 
+const getStepDefinitions = (proof: Proof | undefined): Definition[] =>
+  proof?.kind === "Steps"
+    ? proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [] : [definition],
+            )
+          : []),
+        ...getStepDefinitions(step.proof),
+      ])
+    : [];
+
+const getProofDefinitions = (module: Module) =>
+  module.theorems.flatMap((theorem) => getStepDefinitions(theorem.proof));
+
 export const getRecursiveDefinitions = (
   module: Module,
   declarations: Declaration[],
@@ -2825,7 +2841,7 @@ export const getRecursiveDefinitions = (
 ) => {
   const names = new Set(declarations.map((declaration) => declaration.name));
   return Map.groupBy(
-    definitions.filter(
+    [...definitions, ...getProofDefinitions(module)].filter(
       (definition) => names.has(definition.name) && !isTheoremDefinition(module, definition),
     ),
     (definition) => definition.name,
@@ -3153,6 +3169,7 @@ export const resolveSubstitutions = (
         },
         keys: () => imported.keys(),
       },
+      recursive: new Set(),
       errors: report.errors,
       warnings: report.warnings,
       hasLabelScope: false,
@@ -3251,6 +3268,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         location,
         self,
         bindings,
+        recursive,
         errors,
         warnings,
         hasLabelScope,
@@ -3448,7 +3466,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     }),
     recursion: {
       location: module.location,
-      definitions: [...module.definitions, ...nestedDefinitions].filter((definition) =>
+      definitions: [
+        ...module.definitions,
+        ...getProofDefinitions(module),
+        ...nestedDefinitions,
+      ].filter((definition) =>
         isSameRange(outerBindings.get(definition.name)?.range, definition.location.range),
       ),
       declarations: endCount.declarations

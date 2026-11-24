@@ -5896,6 +5896,65 @@ describe("name resolution matches SANY", () => {
         },
       ],
     ],
+    [
+      "a proof's DEFINE of an operator that only a RECURSIVE declaration names, with another arity",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1> DEFINE X == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 12 to line 4, col 17 of module M",
+          message: "Definition of X has different arity than its RECURSIVE declaration.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a module definition of an operator that a nested proof step's definition completed for a RECURSIVE declaration",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1>1. TRUE\n  <2> X(a) == a\n  <2>2. QED\n    OBVIOUS\n<1>2. QED\n  OBVIOUS\nX(p) == p",
+      [
+        {
+          location: "line 3, col 1 to line 9, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 10, col 1 to line 10, col 9 of module M",
+          message: "Operator X already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 10, col 1 to line 10, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol X.  \nThis duplicates the one at line 5, col 7 to line 5, col 15 of module M.",
+        },
+      ],
+    ],
+    [
+      "a proof's DEFINE of a function that a RECURSIVE declaration with parameters names",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1> DEFINE X[a \\in {1}] == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 12 to line 4, col 28 of module M",
+          message: "Function X has operator arguments in its RECURSIVE declaration.",
+        },
+        {
+          location: "line 7, col 1 to line 7, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 2, col 11 to line 2, col 14 of module M",
+          message: "Symbol X declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
