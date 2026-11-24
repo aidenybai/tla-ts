@@ -114,7 +114,7 @@ import {
   MISSING_INIT_174,
   withHeadline,
 } from "./tlc/messages";
-import { createTlcOrder, type SymbolTable } from "./tlc/order";
+import { createTlcOrder, type SharedContexts } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import { writeTraceSpec } from "./tlc/trace-spec";
@@ -157,8 +157,8 @@ export interface CliSettings {
 export interface CheckBase {
   environment: EnvironmentBase;
   strings: readonly string[];
-  // The contexts of the base's modules, by name, which TLC's orders read.
-  contexts: ReadonlyMap<string, SymbolTable>;
+  // The contexts of the base's modules, which TLC's orders read.
+  contexts: SharedContexts;
   // The strings that the base's values hold, whose order those values keep.
   valueStrings: ReadonlySet<string>;
 }
@@ -1146,11 +1146,7 @@ export const createCheckBase = (
     environment: { link, facts, startupValues, startup },
     strings: getRankedStrings(),
     valueStrings: getValueStrings(startupValues),
-    contexts: new Map(
-      [...created.order.getModuleContexts()].filter(
-        (entry) => entry[0] !== "" && entry[0] !== ownModule,
-      ),
-    ),
+    contexts: created.order.getSharedContexts(ownModule),
   };
 };
 

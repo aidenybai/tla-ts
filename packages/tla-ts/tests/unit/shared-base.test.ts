@@ -70,7 +70,12 @@ const getBaseState = (base: CheckBase) => {
     ids: environment.facts.ids.size,
     startupValues: [...environment.startupValues],
     strings: [...base.strings],
-    contexts: [...base.contexts].map((entry) => [entry[0], entry[1].inserted.length]),
+    contexts: [...base.contexts.tables].map((entry) => [entry[0], entry[1].inserted.length]),
+    starts: [...base.contexts.starts].map((entry) => [
+      entry[0],
+      entry[1].table.inserted.length,
+      entry[1].table.enumerate().map((item) => item.key),
+    ]),
   };
 };
 
