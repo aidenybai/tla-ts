@@ -153,10 +153,10 @@ describe("the reference counts of declarations", () => {
   it("keeps a floating-point declaration until its last application is deleted", () => {
     const manager = new AstManager(new ResourceLimit(Infinity));
     const sort = manager.mkFpSort(3, 4);
-    const x = manager.mkApp(manager.mkFuncDecl("x", [], sort), [], sort);
-    manager.incRef(x);
+    const float = manager.mkApp(manager.mkFuncDecl("x", [], sort), [], sort);
+    manager.incRef(float);
     const numAsts = manager.getNumAsts();
-    const toReal = mkFpaApp(manager, OP_FPA_TO_REAL, [x]);
+    const toReal = mkFpaApp(manager, OP_FPA_TO_REAL, [float]);
     manager.incRef(toReal);
     const decl = manager.decls[toReal];
     manager.incDeclRef(decl);
