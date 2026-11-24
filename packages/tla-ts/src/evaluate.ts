@@ -46,6 +46,7 @@ import {
   getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
+  isChargedSubset,
   runAtCoverageNode,
   runInCoverageFrames,
   type ChargedEnumerator,
@@ -2396,11 +2397,15 @@ const compileApply = (
       const rightValue = right(context);
       if (
         typeof leftValue !== "object" ||
-        leftValue.kind !== "Set" ||
+        (leftValue.kind !== "Set" &&
+          leftValue.kind !== "RecordSet" &&
+          leftValue.kind !== "ProductSet" &&
+          leftValue.kind !== "FunctionSet") ||
         getValueNode(coverage, leftValue) === undefined
       ) {
         return subset(leftValue, rightValue);
       }
+      if (leftValue.kind !== "Set") return isChargedSubset(coverage, leftValue, rightValue);
       const missing = leftValue.elements.findIndex(
         (element) => !coverage.isMember(element, rightValue),
       );
