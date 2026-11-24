@@ -702,7 +702,8 @@ export const runSmtlibScript = (
       for (const init of state.tacticInits) init();
       return checkWithStrategy(tactic, getGoal(state.isSolverProducingModels));
     } catch (error) {
-      if (!(error instanceof SmtUnsupportedError)) throw error;
+      // Z3's qffd never runs the smt kernel, so the kernel's answer can't stand in for it.
+      if (!(error instanceof SmtUnsupportedError) || strategy === "qffd") throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
       );
@@ -1746,31 +1747,56 @@ export const runSmtlibScript = (
         const deadline = Date.now() + options.timeLimitMs;
         state.manager.limit.restart(deadline);
         state.manager.limit.push(settings.rlimit);
-        try {
-          const checked = checkSatUsing(tactic, goal);
-          const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
-          setCheck(checked.status, {
-            isFromTactic: true,
-            model: checked.model,
-            core:
-              builder.isTrackingDependencies || !hasNames()
-                ? getDependencyValues(checked.core)
-                : undefined,
-            reasonUnknown,
-          });
-          print(
-            checked.isConversionCanceled
-              ? `(error "tactic failed: ${reasonUnknown}")`
-              : getVerdict(checked.status),
-          );
-        } finally {
-          goal.release();
-          destroyTactics(destructors);
-          state.manager.limit.pop();
-        }
+        const hasProof = (() => {
+          try {
+            const checked = checkSatUsing(tactic, goal);
+            const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
+            setCheck(checked.status, {
+              isFromTactic: true,
+              model: checked.model,
+              core:
+                builder.isTrackingDependencies || !hasNames()
+                  ? getDependencyValues(checked.core)
+                  : undefined,
+              reasonUnknown,
+            });
+            print(
+              checked.isConversionCanceled
+                ? `(error "tactic failed: ${reasonUnknown}")`
+                : getVerdict(checked.status),
+            );
+            return checked.hasProof;
+          } finally {
+            goal.release();
+            destroyTactics(destructors);
+            state.manager.limit.pop();
+          }
+        })();
         validateCheck(list.end);
-        if (state.check?.status === L_TRUE && state.check.model !== undefined)
-          validateCheckModel(list.end);
+        const check = state.check;
+        if (settings.isProducingUnsatCores && params.get("print_unsat_core") === true) {
+          const core = check?.status === L_FALSE ? check.core : [];
+          if (core === undefined)
+            throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
+          print(
+            `(unsat-core${core.map((value) => ` ${formatWithoutDeclarations(value)}`).join("")})`,
+          );
+        }
+        if (
+          settings.isProducingModels &&
+          check?.model !== undefined &&
+          params.get("print_model") === true
+        )
+          print(`(model \n${printModel(state.manager, getPrintEnvironment(), check.model, 2)})`);
+        if (check?.status === L_TRUE && check.model !== undefined) validateCheckModel(list.end);
+        if (
+          (settings.isProducingProofs || state.isProofsEnabled === true) &&
+          hasProof &&
+          params.get("print_proof") === true
+        )
+          throw new SmtUnsupportedError("the proof of check-sat-using");
+        if (params.get("print_statistics") === true)
+          throw new SmtUnsupportedError("the statistics of a tactic");
       },
     ],
     [
@@ -2103,6 +2129,8 @@ export const runSmtlibScript = (
             state.manager.limit.pop();
           }
         })();
+        if (params.get("print_statistics") === true)
+          throw new SmtUnsupportedError("the statistics of a tactic");
         // apply_tactic_cmd releases the result goals and then the input goal.
         if (goals === undefined) {
           input.release();
@@ -2138,9 +2166,11 @@ export const runSmtlibScript = (
             );
           if (
             params.get("print_model_converter") === true &&
-            input.converters.some(
-              (entry) => !("definitions" in entry) || entry.definitions.length > 0,
-            )
+            ((input.model !== undefined &&
+              (input.model.constInterps.size > 0 || input.model.funcInterps.size > 0)) ||
+              input.converters.some(
+                (entry) => !("definitions" in entry) || entry.definitions.length > 0,
+              ))
           )
             throw new SmtUnsupportedError("printing a model converter");
           if (params.get("print_benchmark") !== true) return;

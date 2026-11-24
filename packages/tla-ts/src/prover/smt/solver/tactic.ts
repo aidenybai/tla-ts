@@ -477,7 +477,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
 };
 
 // extract_clauses_and_dependencies: each form's clause gets the negations of its dependencies.
-const extractClauses = (manager: AstManager, goal: Goal) => {
+export const extractClauses = (manager: AstManager, goal: Goal) => {
   const assumptions: number[] = [];
   const clauses = new RefVector(manager);
   for (const [index, form] of goal.forms.items.entries()) {
@@ -492,7 +492,7 @@ const extractClauses = (manager: AstManager, goal: Goal) => {
   return { clauses, assumptions };
 };
 
-const mkCoreDependency = (core: number[]) =>
+export const mkCoreDependency = (core: readonly number[]) =>
   core.reduce<Dependency | undefined>(
     (dependency, value) => joinDependencies(dependency, mkDependencyLeaf(value)),
     undefined,
@@ -1862,16 +1862,20 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       // inc_sat_solver makes the euf solver for a global sat.euf even when using-params turns it off.
       build: (environment, params) => {
         if (environment.parameters.get("sat.euf") === "true" || params.get("euf") === true)
           checkSmtNumerals(environment.parameters);
-        return (goal) =>
-          createFdTactic(
+        const isParallel = environment.parameters.get("parallel.enable") === "true";
+        return (goal) => {
+          if (isParallel) throw new SmtUnsupportedError("the parallel qffd tactic");
+          return createFdTactic(
             environment.manager,
             getSatTacticParams(environment, params),
             environment.parameters,
           )(goal);
+        };
       },
     },
   ],
@@ -2637,6 +2641,7 @@ interface TacticCheck {
   core: Dependency | undefined;
   reasonUnknown: string | undefined;
   isConversionCanceled: boolean;
+  hasProof: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
@@ -2737,6 +2742,7 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
     model: undefined,
     core: undefined,
     isConversionCanceled: false,
+    hasProof: Array.isArray(goals) && goals.length > 0 && goals[0].forms.size > 0,
   };
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };

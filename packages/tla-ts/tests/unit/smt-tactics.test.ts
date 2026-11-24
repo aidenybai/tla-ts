@@ -1891,9 +1891,83 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
       ]),
     ).toEqual(["(goals\n(goal\n  (not (<= x 3))\n  :precision precise :depth 2)\n)"]);
   });
+
+  it("has no printer for the model a SAT solver leaves as the model converter", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(apply qffd :print_model_converter true)",
+        "(apply sat :print_model_converter true)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+    ]);
+    expect(() =>
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(apply sat :print_model_converter true)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
+  it("prints the core and then the model before get-model compacts it, as :print_unsat_core and :print_model ask", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (=> Int Int))",
+        "(assert (= (select x 0) 1))",
+        "(check-sat-using smt :print_model true :print_unsat_core true)",
+        "(get-model)",
+        "(declare-const y Int)",
+        "(assert (! (> y 2) :named a1))",
+        "(assert (! (< y 1) :named a2))",
+        "(check-sat-using smt :print_model true :print_unsat_core true)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(unsat-core)",
+      "(model \n  (define-fun x () (=> Int Int)\n    (_ as-array k!0))\n  (define-fun k!0 ((x!0 Int)) Int\n    (ite (= x!0 0) 1\n      1))\n)",
+      "(\n  (define-fun x () (=> Int Int)\n    ((as const (=> Int Int)) 1))\n)",
+      "unsat",
+      "(unsat-core a1 a2)",
+    ]);
+  });
+
+  it("has no proof or statistics to print for :print_proof and :print_statistics", () => {
+    const lines = ["(declare-const y Int)", "(assert (> y 2))", "(assert (< y 1))"];
+    expect(() =>
+      run([
+        "(set-option :produce-proofs true)",
+        ...lines,
+        "(check-sat-using smt :print_proof true)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+    expect(() => run([...lines, "(check-sat-using smt :print_statistics true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+    expect(() => run([...lines, "(apply simplify :print_statistics true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+  });
+
+  it("has a proof for :print_proof only where the tactic leaves a goal with a formula", () => {
+    const lines = [
+      "(set-option :produce-proofs true)",
+      "(declare-const x Int)",
+      "(assert (> x 0))",
+    ];
+    expect(run([...lines, "(check-sat-using fail :print_proof true)"])).toEqual(["unknown"]);
+    expect(() => run([...lines, "(check-sat-using skip :print_proof true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+  });
+
   it("puts the completion back after fm's model converter, so get-value evaluates each term afresh", () => {
     expect(
       run([
@@ -2462,6 +2536,79 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("gives up as solver2tactic does, leaving the depth, the reason and the model of the SAT solver", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (or p (> x y)))",
+        "(assert (=> p (= x (+ y 1))))",
+        "(apply qffd)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or p (not (<= x y)))\n  (or (not p) (= x (+ 1 y)))\n  :precision precise :depth 0)\n)",
+      "unknown",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun <= (Int Int) Bool)\n(declare-fun = (Int Int) Bool)\n)")',
+      "(\n  (define-fun p () Bool\n    false)\n  (define-fun y () Int\n    0)\n  (define-fun x () Int\n    0)\n)",
+    ]);
+  });
+
+  it("has no port of the parallel tactic that qffd becomes under parallel.enable", () => {
+    expect(() =>
+      run([
+        "(set-option :parallel.enable true)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat-using qffd)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
+
+  it("answers for the parallel qffd of QF_FD with the smt kernel only once the solver is incremental", () => {
+    const lines = [
+      "(set-option :parallel.enable true)",
+      "(set-logic QF_FD)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+    ];
+    expect(() => run([...lines, "(assert (> x y))", "(check-sat)"])).toThrow(SmtUnsupportedError);
+    expect(
+      run([...lines, "(push)", "(assert (> x y))", "(check-sat)", "(get-info :rlimit)"]),
+    ).toEqual(["sat", "(:rlimit 106)"]);
+  });
+
+  it("checks the named assertions as assumptions and keeps the goal it gives up on", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(push)",
+        "(assert (! p :named n1))",
+        "(assert (! (or q (> x 0)) :named n2))",
+        "(apply qffd)",
+        "(pop)",
+        "(assert (! p :named n1))",
+        "(assert (! q :named n2))",
+        "(assert (! (not p) :named n3))",
+        "(check-sat-using qffd)",
+        "(get-info :rlimit)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  p\n  (or q (> x 0))\n  :precision precise :depth 0)\n)",
+      "unsat",
+      "(:rlimit 264)",
+      "(n1 n3)",
+    ]);
+  });
+
   it("converts the model of its SAT solver within the limit of the tactic", () => {
     expect(
       run([
@@ -2871,13 +3018,14 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
   });
 
   it("numbers the declarations without the one Z3 makes as it starts the smt solver", () => {
-    const getModel = (options: string[]) =>
+    const getModel = (options: string[], scopes: string[] = []) =>
       run([
         ...options,
         "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
         "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
         "(declare-const e0 C)",
         "(declare-const e1 D)",
+        ...scopes,
         "(check-sat)",
         "(get-model)",
       ]);
@@ -2894,9 +3042,9 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ];
     expect(getModel(["(set-logic QF_FD)"])).toEqual(getExpected("k5", "d2"));
     expect(getModel(["(set-logic QF_DT)"])).toEqual(getExpected("k1", "d5"));
-    expect(getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"])).toEqual(
-      getExpected("k1", "d5"),
-    );
+    expect(
+      getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"], ["(push)"]),
+    ).toEqual(getExpected("k1", "d5"));
   });
 
   it("keeps the 1-bit zero Z3 makes as it starts the smt solver", () => {
