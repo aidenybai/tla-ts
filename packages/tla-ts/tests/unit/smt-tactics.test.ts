@@ -2462,6 +2462,55 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("gives up as solver2tactic does, leaving the depth, the reason and the model of the SAT solver", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (or p (> x y)))",
+        "(assert (=> p (= x (+ y 1))))",
+        "(apply qffd)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or p (not (<= x y)))\n  (or (not p) (= x (+ 1 y)))\n  :precision precise :depth 0)\n)",
+      "unknown",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun <= (Int Int) Bool)\n(declare-fun = (Int Int) Bool)\n)")',
+      "(\n  (define-fun p () Bool\n    false)\n  (define-fun y () Int\n    0)\n  (define-fun x () Int\n    0)\n)",
+    ]);
+  });
+
+  it("checks the named assertions as assumptions and keeps the goal it gives up on", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(push)",
+        "(assert (! p :named n1))",
+        "(assert (! (or q (> x 0)) :named n2))",
+        "(apply qffd)",
+        "(pop)",
+        "(assert (! p :named n1))",
+        "(assert (! q :named n2))",
+        "(assert (! (not p) :named n3))",
+        "(check-sat-using qffd)",
+        "(get-info :rlimit)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  p\n  (or q (> x 0))\n  :precision precise :depth 0)\n)",
+      "unsat",
+      "(:rlimit 264)",
+      "(n1 n3)",
+    ]);
+  });
+
   it("converts the model of its SAT solver within the limit of the tactic", () => {
     expect(
       run([

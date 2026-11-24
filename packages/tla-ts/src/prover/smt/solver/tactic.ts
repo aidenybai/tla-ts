@@ -477,7 +477,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
 };
 
 // extract_clauses_and_dependencies: each form's clause gets the negations of its dependencies.
-const extractClauses = (manager: AstManager, goal: Goal) => {
+export const extractClauses = (manager: AstManager, goal: Goal) => {
   const assumptions: number[] = [];
   const clauses = new RefVector(manager);
   for (const [index, form] of goal.forms.items.entries()) {
@@ -492,7 +492,7 @@ const extractClauses = (manager: AstManager, goal: Goal) => {
   return { clauses, assumptions };
 };
 
-const mkCoreDependency = (core: number[]) =>
+export const mkCoreDependency = (core: readonly number[]) =>
   core.reduce<Dependency | undefined>(
     (dependency, value) => joinDependencies(dependency, mkDependencyLeaf(value)),
     undefined,
@@ -1862,6 +1862,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       // inc_sat_solver makes the euf solver for a global sat.euf even when using-params turns it off.
       build: (environment, params) => {
         if (environment.parameters.get("sat.euf") === "true" || params.get("euf") === true)

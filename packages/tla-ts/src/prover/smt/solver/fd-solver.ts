@@ -35,7 +35,13 @@ import type { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import { applyDefinitions, getRewriterOptions, getSatParams } from "./tactic";
+import {
+  applyDefinitions,
+  extractClauses,
+  getRewriterOptions,
+  getSatParams,
+  mkCoreDependency,
+} from "./tactic";
 import { UINT_MAX } from "./sat/clause";
 import type { SatParams } from "./sat/config";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -626,9 +632,8 @@ export class FdSolver {
   }
 
   getConverters(): Goal["converters"] {
-    const definitions = retainDefinitions(this.manager, this.converter);
     return [
-      ...(definitions.length > 0 ? [{ definitions, refs: 1 }] : []),
+      { definitions: retainDefinitions(this.manager, this.converter), refs: 1 },
       ...this.solver.getConverters(),
     ];
   }
@@ -730,24 +735,37 @@ export class FdSolver {
 export const createFdTactic =
   (manager: AstManager, params: SatParams, parameters: ReadonlyMap<string, string>) =>
   (goal: Goal) => {
+    const extracted = extractClauses(manager, goal);
     const solver = new FdSolver(manager, params, parameters, false);
     try {
-      for (const form of goal.forms.items) solver.assertExpr(form);
-      const result = solver.check();
-      goal.reset();
+      for (const clause of extracted.clauses.items) solver.assertExpr(clause);
+      const result = solver.check(extracted.assumptions);
       if (result === L_TRUE) {
-        const model = solver.getModel();
-        model?.incRef();
-        if (model !== undefined) goal.model = model;
-      } else if (result === L_FALSE) goal.assert(manager.falseExpr);
-      else {
+        if (goal.isModelsEnabled) {
+          const model = solver.getModel();
+          model?.incRef();
+          if (model !== undefined) goal.model = model;
+        }
+        goal.reset();
+      } else if (result === L_FALSE) {
+        goal.reset();
+        goal.assert(
+          manager.falseExpr,
+          goal.isCoresEnabled ? mkCoreDependency(solver.getUnsatCore()) : undefined,
+        );
+      } else {
         if (!manager.limit.inc()) throw new SmtTacticError("canceled");
-        for (const form of solver.getAssertions()) goal.assert(form);
-        goal.converters = [...goal.converters, ...solver.getConverters()];
+        if (!goal.isCoresEnabled) {
+          const converters = solver.getConverters();
+          goal.reset();
+          goal.converters = [...goal.converters, ...converters];
+          for (const form of solver.getAssertions()) goal.assert(form);
+        }
+        goal.reasonUnknown = solver.reasonUnknown;
       }
-      goal.depth++;
       return [goal];
     } finally {
+      extracted.clauses.reset();
       solver.release();
     }
   };
