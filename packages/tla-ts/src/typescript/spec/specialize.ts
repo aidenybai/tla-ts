@@ -3,6 +3,21 @@ import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
 import { getLocals, type Locals } from "./locals";
+import {
+  apply,
+  boundIn,
+  defineOperator,
+  functionOf,
+  ifThen,
+  letIn,
+  num,
+  onLine,
+  printCodeDefinition,
+  string,
+  subscript,
+  tuple,
+  withInnerLines,
+} from "./code-tree";
 import { getPatches, getSourceString } from "./units";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
@@ -3593,25 +3608,79 @@ export const specialize = (
     { name: "Program", arity: 1, text: `Program(s) == ${program}` },
   );
   const sources = files.map((file) => getSourceString(file.sourceFile.text));
+  // The position in its file of the unit at an offset of the source text that t gives, which TLA+
+  // reads as t[2] + (offset - 1), as - binds tighter than +.
+  const getSourcePosition = (offset: string) =>
+    apply("+", [subscript("t", [num(2)]), apply("-", [offset, num(1)])]);
   return {
     definitions: [
-      ...sources.map((source, index) => ({
-        name: `SourceText${index + 1}`,
+      ...sources.map((source, position) => ({
+        name: `SourceText${position + 1}`,
         arity: 0,
-        text: `SourceText${index + 1} == ${source.text}`,
+        text: printCodeDefinition(
+          defineOperator(`SourceText${position + 1}`, [], string(source.value)),
+        ),
       })),
       {
         name: "SourcePatches",
         arity: 0,
-        text: `SourcePatches == <<${sources.map((source) => getPatches(source.patches)).join(", ")}>>`,
+        text: printCodeDefinition(
+          defineOperator(
+            "SourcePatches",
+            [],
+            tuple(sources.map((source) => getPatches(source.patches))),
+          ),
+        ),
       },
       {
         name: "SourceUnits",
         arity: 1,
-        text: `SourceUnits(t) ==
-  LET u == StringUnits(SubSeq(<<${sources.map((_, index) => `SourceText${index + 1}`).join(", ")}>>[t[1]], t[2], t[3]))
-      p == SourcePatches[t[1]]
-  IN [i \\in DOMAIN u |-> IF t[2] + i - 1 \\in DOMAIN p THEN p[t[2] + i - 1] ELSE u[i]]`,
+        text: printCodeDefinition(
+          defineOperator(
+            "SourceUnits",
+            ["t"],
+            onLine(
+              withInnerLines(
+                letIn(
+                  [
+                    defineOperator(
+                      "u",
+                      [],
+                      apply("StringUnits", [
+                        apply("SubSeq", [
+                          subscript(
+                            tuple(sources.map((_, position) => `SourceText${position + 1}`)),
+                            [subscript("t", [num(1)])],
+                          ),
+                          subscript("t", [num(2)]),
+                          subscript("t", [num(3)]),
+                        ]),
+                      ]),
+                    ),
+                    onLine(
+                      defineOperator(
+                        "p",
+                        [],
+                        subscript("SourcePatches", [subscript("t", [num(1)])]),
+                      ),
+                      6,
+                    ),
+                  ],
+                  functionOf(
+                    [boundIn("i", apply("DOMAIN", ["u"]))],
+                    ifThen(
+                      apply("\\in", [getSourcePosition("i"), apply("DOMAIN", ["p"])]),
+                      subscript("p", [getSourcePosition("i")]),
+                      subscript("u", ["i"]),
+                    ),
+                  ),
+                ),
+                2,
+              ),
+              2,
+            ),
+          ),
+        ),
       },
       ...definitions,
     ],

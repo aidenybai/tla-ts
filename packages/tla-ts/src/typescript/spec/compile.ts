@@ -16,7 +16,16 @@ import {
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
-import { getPatchedUnits, getTlaString } from "./units";
+import {
+  apply,
+  defineOperator,
+  num,
+  printCodeDefinition,
+  printCodeExpression,
+  string,
+  tuple,
+} from "./code-tree";
+import { getPatchedUnits, isTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
@@ -91,11 +100,9 @@ const MOST_CODE_CHARACTERS = 55_000_000;
 // and with each literal sequence of numbers, such as a name's code units, a definition of its own,
 // so that a check reads each one once. A sequence of the code units of characters that a TLA+
 // string can hold is that string's units.
-const getStringUnits = (sequence: string) => {
-  const text = getTlaString(
-    (sequence.match(/\d+/g) ?? []).map((unit) => String.fromCharCode(Number(unit))).join(""),
-  );
-  return text === undefined ? undefined : `StringUnits(${text})`;
+const getStringUnits = (units: readonly number[]) => {
+  const text = units.map((unit) => String.fromCharCode(unit)).join("");
+  return isTlaString(text) ? apply("StringUnits", [string(text)]) : undefined;
 };
 
 // A long sequence of code units as runs of consecutive code points, the first of each and the code
@@ -104,38 +111,51 @@ const getStringUnits = (sequence: string) => {
 // holds. Each run's code points are all below 65536 or all from there, so that each takes one code
 // unit or two; a surrogate pair is one code point and a lone surrogate one code unit, which the
 // runs encode back to the units they came from.
-const getUnitRuns = (sequence: string) => {
-  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+const getUnitRuns = (units: readonly number[]) => {
   if (units.length < 4096 || units.some((unit) => unit > 0xffff)) return undefined;
   const starts: number[] = [];
   const ends: number[] = [];
-  let index = 0;
+  let position = 0;
   let previous = -2;
-  while (index < units.length) {
-    const unit = units[index];
-    const next = units[index + 1];
+  while (position < units.length) {
+    const unit = units[position];
+    const next = units[position + 1];
     const isPair = unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
     const codePoint = isPair ? (unit - 0xd800) * 1024 + (next - 0xdc00) + 0x10000 : unit;
-    index += isPair ? 2 : 1;
-    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = index;
+    position += isPair ? 2 : 1;
+    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = position;
     else {
       starts.push(codePoint);
-      ends.push(index);
+      ends.push(position);
     }
     previous = codePoint;
   }
   return starts.length * 16 > units.length
     ? undefined
-    : `CodeUnitsOfRuns(<<${starts.join(", ")}>>, <<${ends.join(", ")}>>)`;
+    : apply("CodeUnitsOfRuns", [tuple(starts.map(num)), tuple(ends.map(num))]);
 };
 
 // A long sequence of code units as its text's source string and the units that the string holds as
 // "?" (see getPatchedUnits), where that's shorter than the sequence.
-const getLongUnits = (sequence: string) => {
-  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+const getLongUnits = (units: readonly number[], sequence: string) => {
   if (units.length < 4096) return undefined;
   const patched = getPatchedUnits(units.map((unit) => String.fromCharCode(unit)).join(""));
-  return patched.length < sequence.length ? patched : undefined;
+  return printCodeExpression(patched).length < sequence.length ? patched : undefined;
+};
+
+// The units of a literal sequence of numbers, as the definition of its own that reads them.
+const getUnitsDefinition = (unitsName: string, sequence: string) => {
+  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+  return printCodeDefinition(
+    defineOperator(
+      unitsName,
+      [],
+      getStringUnits(units) ??
+        getUnitRuns(units) ??
+        getLongUnits(units, sequence) ??
+        tuple(units.map(num)),
+    ),
+  );
 };
 
 const compact = (definitions: readonly CodeDefinition[]) => {
@@ -177,7 +197,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? getLongUnits(entry[0]) ?? entry[0]}`,
+      text: getUnitsDefinition(entry[1], entry[0]),
     })),
     ...kept,
   ];

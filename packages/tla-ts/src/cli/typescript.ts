@@ -23,6 +23,7 @@ import type { TlcVersion } from "../tlc/version";
 import { parseModule } from "../parser";
 import { printModule } from "../printer";
 import { foldNames } from "../typescript/spec/library";
+import { printCodeExpression } from "../typescript/spec/code-tree";
 import { getPatchedUnits } from "../typescript/spec/units";
 import type { ProgramFile } from "../typescript/spec/specialize";
 
@@ -248,7 +249,7 @@ const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string 
   // A line's units as its string's, where that's shorter than their tuple, as it is for most lines.
   const getLineUnits = (line: string) => {
     const units = getUnits(line);
-    const patched = getPatchedUnits(line);
+    const patched = printCodeExpression(getPatchedUnits(line));
     return patched.length < units.length ? patched : units;
   };
   const getFunction = (pairs: string[]) =>
