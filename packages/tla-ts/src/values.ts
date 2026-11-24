@@ -298,11 +298,16 @@ const getWrittenKeys = (functionValue: FunctionValue) =>
     ? undefined
     : functionValue.writtenKeys) ?? functionValue.domain;
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
-  getWrittenKeys(functionValue).map((key) => [
-    key,
-    functionValue.range[functionValue.domain.indexOf(key)],
-  ]);
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
+  const keys = getWrittenKeys(functionValue);
+  const domain = functionValue.domain;
+  const range = functionValue.range;
+  const pairs = new Array<[Value, Value]>(keys.length);
+  for (let index = 0; index < keys.length; index++) {
+    pairs[index] = [keys[index], range[keys === domain ? index : domain.indexOf(keys[index])]];
+  }
+  return pairs;
+};
 
 export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
   functionValue.domain.every((key) => typeof key === "number")
@@ -1754,26 +1759,36 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
-const createSortedWrittenFunction = (pairs: [Value, Value][]) => {
-  const functionValue = createFunction(pairs);
-  const isWrittenSorted =
-    functionValue.domain.length !== pairs.length ||
-    pairs.every((pair, index) => pair[0] === functionValue.domain[index]);
-  return isWrittenSorted
-    ? functionValue
-    : setWrittenOrder(
-        functionValue,
-        pairs.map((pair) => pair[0]),
-      );
+const getPairKeys = (pairs: [Value, Value][]) => {
+  const keys = new Array<Value>(pairs.length);
+  for (let index = 0; index < pairs.length; index++) keys[index] = pairs[index][0];
+  return keys;
 };
 
-const sortWrittenPairsLikeTlc = (pairs: [Value, Value][]) =>
-  sortLikeFcnRcdValue(
-    pairs.map((pair) => pair[0]),
-    pairs.map((pair) => pair[1]),
-  );
+const createSortedWrittenFunction = (pairs: [Value, Value][]) => {
+  const functionValue = createFunction(pairs);
+  const domain = functionValue.domain;
+  if (domain.length !== pairs.length) return functionValue;
+  for (let index = 0; index < pairs.length; index++) {
+    if (pairs[index][0] !== domain[index])
+      return setWrittenOrder(functionValue, getPairKeys(pairs));
+  }
+  return functionValue;
+};
 
-// TLC's CombineFcn builds the function unnormalized, and tla-ts runs the FcnRcdValue#sort of its first normalize here when a key's comparison shows.
+const getPairRange = (pairs: [Value, Value][]) => {
+  const range = new Array<Value>(pairs.length);
+  for (let index = 0; index < pairs.length; index++) range[index] = pairs[index][1];
+  return range;
+};
+
+export const createSortedPairsFunction = (pairs: [Value, Value][]) =>
+  createSortedFunction(getPairKeys(pairs), getPairRange(pairs));
+
+const sortWrittenPairsLikeTlc = (pairs: [Value, Value][]) =>
+  sortLikeFcnRcdValue(getPairKeys(pairs), getPairRange(pairs));
+
+// TLC's CombineFcn and Bags build the function unnormalized, and tla-ts runs the FcnRcdValue#sort of its first normalize here when a key's comparison shows.
 export const createWrittenFunction = (pairs: [Value, Value][]) =>
   computeLikeTlcOnFailure(createSortedWrittenFunction, sortWrittenPairsLikeTlc, pairs, undefined);
 

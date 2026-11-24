@@ -12,10 +12,12 @@ import { TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
-  createFunction,
   createSortedFunction,
+  createSortedPairsFunction,
+  createWrittenFunction,
   formatValue,
   getDomain,
+  getWrittenPairs,
   isEnumerable,
   isEqualLikeTlc,
   isFunctionValue,
@@ -98,14 +100,13 @@ const addCounts = (left: Value, right: Value, createError: () => TlaModuleError)
 
 // Deviation from TLC: Bags#BagDiff subtracts counts as Java ints that wrap, where tla-ts reports the overflow as - does.
 const subtractCounts = (
-  functionValue: FunctionValue,
-  index: number,
+  pair: [Value, Value],
   other: FunctionValue,
   createLeftError: () => TlaModuleError,
   createRightError: () => TlaModuleError,
 ) => {
-  const count = toCount(functionValue.range[index], createLeftError);
-  const removed = findCount(other, functionValue.domain[index]);
+  const count = toCount(pair[1], createLeftError);
+  const removed = findCount(other, pair[0]);
   if (removed === undefined) return count;
   const difference = count - toCount(removed, createRightError);
   if (isOutOfRange(difference)) throw createOverflowError(`${count}-${removed}`);
@@ -124,9 +125,6 @@ const addToBag = (
   if (existing) existing[1] = addCounts(existing[1], count, createError);
   else pairs.push([key, count]);
 };
-
-const getPairs = (functionValue: FunctionValue) =>
-  functionValue.domain.map((key, index): [Value, Value] => [key, functionValue.range[index]]);
 
 const EMPTY_BAG = createSortedFunction([], []);
 
@@ -154,13 +152,14 @@ export const BAGS_OPERATORS: Builtin[] = [
     const functions = [0, 1].map((index) => toFunction(getValue(args, index, "(+)")));
     const left = getAddedBag(args, functions, 0);
     const right = getAddedBag(args, functions, 1);
-    const pairs = getPairs(left);
+    const pairs = getWrittenPairs(left);
+    const rightPairs = getWrittenPairs(right);
     const createError = () =>
       createModuleArgumentError("second", "(+)", "bag", getValue(args, 1, "(+)"));
-    right.domain.forEach((key, index) =>
-      addToBag(pairs, key, right.range[index], createError, left.domain.length),
-    );
-    return createFunction(pairs);
+    for (let index = 0; index < rightPairs.length; index++) {
+      addToBag(pairs, rightPairs[index][0], rightPairs[index][1], createError, left.domain.length);
+    }
+    return createWrittenFunction(pairs);
   }),
   defineOperator("\\ominus", 2, (args) => {
     const leftValue = getValue(args, 0, "(-)");
@@ -171,12 +170,20 @@ export const BAGS_OPERATORS: Builtin[] = [
     if (!right) throw createModuleArgumentError("second", "(-)", "bag", rightValue);
     const createLeftError = () => createModuleArgumentError("first", "(-)", "bag", leftValue);
     const createRightError = () => createModuleArgumentError("second", "(-)", "bag", rightValue);
-    return createFunction(
-      left.domain.flatMap((key, index): [Value, Value][] => {
-        const count = subtractCounts(left, index, right, createLeftError, createRightError);
-        return count > 0 ? [[key, count]] : [];
-      }),
-    );
+    const leftPairs = getWrittenPairs(left);
+    const pairs: [Value, Value][] = [];
+    for (let index = 0; index < leftPairs.length; index++) {
+      const pair = leftPairs[index];
+      const count = subtractCounts(pair, right, createLeftError, createRightError);
+      if (count > 0) {
+        pair[1] = count;
+        pairs.push(pair);
+      }
+    }
+    // Bags#BagDiff builds the difference normalized when the first bag is.
+    return left.writtenKeys === undefined
+      ? createSortedPairsFunction(pairs)
+      : createWrittenFunction(pairs);
   }),
   defineOperator("BagUnion", 1, (args) => {
     const set = getValue(args, 0, "BagUnion");
@@ -193,14 +200,14 @@ export const BAGS_OPERATORS: Builtin[] = [
       if (!functionValue) throw createUnionError();
       return functionValue;
     };
-    const pairs = getPairs(getBag(elements[0]));
-    elements.slice(1).forEach((element) => {
-      const functionValue = getBag(element);
-      functionValue.domain.forEach((key, index) =>
-        addToBag(pairs, key, functionValue.range[index], createUnionError),
-      );
-    });
-    return createFunction(pairs);
+    const pairs = getWrittenPairs(getBag(elements[0]));
+    for (let index = 1; index < elements.length; index++) {
+      const bagPairs = getWrittenPairs(getBag(elements[index]));
+      for (let pairIndex = 0; pairIndex < bagPairs.length; pairIndex++) {
+        addToBag(pairs, bagPairs[pairIndex][0], bagPairs[pairIndex][1], createUnionError);
+      }
+    }
+    return createWrittenFunction(pairs);
   }),
   defineOperator("\\sqsubseteq", 2, (args) => {
     const leftValue = getValue(args, 0, "\\sqsubseteq");
@@ -228,10 +235,11 @@ export const BAGS_OPERATORS: Builtin[] = [
     }
     const pairs: [Value, Value][] = [];
     const createError = () => createModuleArgumentError("second", "BagOfAll", "bag", value);
-    functionValue.domain.forEach((key, index) =>
-      addToBag(pairs, operator.call([key]), functionValue.range[index], createError),
-    );
-    return createFunction(pairs);
+    const writtenPairs = getWrittenPairs(functionValue);
+    for (let index = 0; index < writtenPairs.length; index++) {
+      addToBag(pairs, operator.call([writtenPairs[index][0]]), writtenPairs[index][1], createError);
+    }
+    return createWrittenFunction(pairs);
   }),
   defineOperator("BagToSet", 1, (args) => getDomain(getFunction(args, 0, "BagToSet"))),
   defineOperator("SetToBag", 1, (args) => {
