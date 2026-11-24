@@ -1044,6 +1044,26 @@ describe("the floating-point conversions round as Z3 does", () => {
     },
   );
 
+  it("runs out of memory where the step that does spends the limit", () => {
+    const check = (rlimit: number) =>
+      run([
+        `(set-option :rlimit ${rlimit})`,
+        "(declare-const x Int)",
+        "(declare-const z Real)",
+        "(assert (= z (to_real x)))",
+        "(assert (fp.isInfinite ((_ to_fp 31 8) RNE z)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]);
+    expect(check(70)).toEqual([
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+      "(:rlimit 81)",
+    ]);
+    expect(check(71)).toEqual(['(error "out of memory")']);
+  });
+
   it("leaves the infinity test of an integer conversion to a 34-bit exponent", () => {
     expect(
       run([

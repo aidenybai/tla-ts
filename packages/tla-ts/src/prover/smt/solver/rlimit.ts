@@ -9,6 +9,7 @@ export class ResourceLimit {
   private limits: number[] = [];
   private profiler: GCProfiler | null = null;
   maxHeapSize = 0;
+  private tableBytes = 0;
 
   constructor(
     private deadline: number,
@@ -55,6 +56,7 @@ export class ResourceLimit {
     child.deadline = this.deadline;
     child.signal = this.signal;
     child.maxHeapSize = this.maxHeapSize;
+    child.tableBytes = this.tableBytes;
   }
 
   popChild(child: ResourceLimit) {
@@ -72,10 +74,15 @@ export class ResourceLimit {
     if (!this.inc()) throw new SmtCanceledError();
   }
 
+  allocate(bytes: number) {
+    this.tableBytes += bytes;
+    if (this.maxHeapSize > 0 && this.isHeapNearlyFull()) throw new SmtMemoryOutError();
+  }
+
   private isHeapNearlyFull() {
     if (v8 === undefined) return false;
     const statistics = v8.getHeapStatistics();
-    if (this.maxHeapSize > 0) return statistics.used_heap_size > this.maxHeapSize;
+    if (this.maxHeapSize > 0) return statistics.used_heap_size + this.tableBytes > this.maxHeapSize;
     const threshold = HEAP_FRACTION * (statistics.used_heap_size + statistics.total_available_size);
     if (statistics.used_heap_size <= threshold) {
       this.release();

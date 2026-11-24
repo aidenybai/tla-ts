@@ -4019,6 +4019,61 @@ describe("memory_max_size, as Z3 5.3.2 runs out of memory", () => {
       ]),
     ).toEqual(["sat"]);
   });
+
+  describe("bv_decl_plugin's tables, which hold a pointer per width up to the widest", () => {
+    const check = (memory: number, command: string) =>
+      run([`(set-option :memory_max_size ${memory})`, command, '(echo "after")']);
+
+    it("counts bv2nat's table, but no sort table for a numeral", () => {
+      expect(check(2300, "(simplify (bv2nat (_ bv5 204324848)))")).toEqual(["5", "after"]);
+      expect(check(2300, "(simplify (bv2nat (_ bv5 204324849)))")).toEqual([
+        '(error "out of memory")',
+      ]);
+    });
+
+    it("counts the sort table that (_ BitVec n) grows", () => {
+      expect(check(2300, "(declare-const x (_ BitVec 204324848))")).toEqual(["after"]);
+      expect(check(2300, "(declare-const x (_ BitVec 204324849))")).toEqual([
+        '(error "out of memory")',
+      ]);
+    });
+
+    it("counts bit2bool's table of a table per width", () => {
+      expect(check(2550, "(simplify ((_ bit2bool 0) (_ bv5 136216565)))")).toEqual([
+        "true",
+        "after",
+      ]);
+      expect(check(2550, "(simplify ((_ bit2bool 0) (_ bv5 136216566)))")).toEqual([
+        '(error "out of memory")',
+      ]);
+    });
+
+    it.each([
+      ["(bvneg (_ bv5 W) (_ bv5 W))", "column 52: declared arity mismatches supplied arity"],
+      ["(bvadd (_ bv5 W) (_ bv5 W) #x0)", "column 56: declared sorts do not match supplied sorts"],
+      [
+        "(bvule (_ bv5 W) #x0)",
+        "column 38: Argument #x0 at position 1 has sort (_ BitVec 4) it does not match declaration (declare-fun bvule ((_ BitVec W) (_ BitVec W)) Bool)",
+      ],
+      ["(bv2nat (_ bv5 W) (_ bv5 W))", "column 53: expecting one argument to ubv_to_int"],
+      ["((_ int2bv W) 1 2)", "column 35: expecting one argument to int_to_bv"],
+    ])("grows the table before it rejects %s", (term, error) => {
+      const simplify = (width: string) => check(2300, `(simplify ${term.replaceAll("W", width)})`);
+      expect(simplify("204324848")).toEqual([
+        `(error "line 2 ${error.replaceAll("W", "204324848")}")`,
+        "after",
+      ]);
+      expect(simplify("204324849")).toEqual(['(error "out of memory")']);
+    });
+
+    // Deviation from Z3: it prints (error "line 1 column 36: Overflow encountered when expanding vector").
+    it("answers past 459730911 slots, where Z3's vector overflows its 32-bit byte count", () => {
+      expect(run(["(simplify (bv2nat (_ bv5 459730911)))", '(echo "after")'])).toEqual([
+        "5",
+        "after",
+      ]);
+    });
+  });
 });
 
 describe("the time limit, which Z3's timer applies at the next resource count", () => {

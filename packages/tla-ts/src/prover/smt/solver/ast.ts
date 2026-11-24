@@ -774,6 +774,9 @@ export class AstManager {
   charBits = 18;
   isSeqUsed = false;
   isReUsed = false;
+  private bvSortCapacity = 0;
+  private bvDeclCapacities = new Map<number, number>();
+  private bit2boolWidths = new Set<number>();
 
   constructor(readonly limit: ResourceLimit) {
     for (const builtin of BUILTIN_DECLS)
@@ -1193,6 +1196,35 @@ export class AstManager {
   }
 
   mkBvSort(width: number) {
+    if (width >= this.bvSortCapacity)
+      this.bvSortCapacity = this.growBvTable(this.bvSortCapacity, width + 1);
+    return this.internBvSort(width);
+  }
+
+  // Z3's get_bv_sort keeps a width in its table only below 4096.
+  getBvSort(width: number) {
+    return width < 4096 ? this.mkBvSort(width) : this.internBvSort(width);
+  }
+
+  // Z3's ptr_vector grows from 2 by half, and memory_max_size counts its 8-byte slots.
+  private growBvTable(capacity: number, size: number) {
+    let grown = capacity;
+    // Deviation from Z3: past 459730911 slots its vector's 32-bit byte count overflows, and it throws.
+    while (grown < size) grown = grown === 0 ? 2 : Math.floor((3 * grown + 1) / 2);
+    this.limit.allocate(8 * (grown - capacity));
+    return grown;
+  }
+
+  reserveBvDeclTable(op: number, width: number) {
+    if (UNCACHED_BV_OPS.has(op) || op === OP_CARRY || op === OP_XOR3) return;
+    const capacity = this.bvDeclCapacities.get(op) ?? 0;
+    if (width >= capacity) this.bvDeclCapacities.set(op, this.growBvTable(capacity, width + 1));
+    if (op !== OP_BIT2BOOL || this.bit2boolWidths.has(width)) return;
+    this.growBvTable(0, width);
+    this.bit2boolWidths.add(width);
+  }
+
+  private internBvSort(width: number) {
     const existing = this.bvSorts.get(width);
     if (existing !== undefined) return existing;
     const sort = this.addSort(
@@ -1750,6 +1782,10 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.bvDecls.get(key);
     if (existing !== undefined) return existing;
+    this.reserveBvDeclTable(
+      op,
+      this.sortWidths[op === OP_INT2BV || op === OP_MKBV ? range : domain[0]],
+    );
     const decl = this.addDecl(
       name,
       FAMILY_BV,
@@ -1766,7 +1802,7 @@ export class AstManager {
 
   mkBvNumeral(value: bigint, width: number) {
     const normalized = BigInt.asUintN(width, value);
-    const sort = this.mkBvSort(width);
+    const sort = this.getBvSort(width);
     const key = `b${width}:${normalized.toString(16)}`;
     const existing = this.table.get(key);
     if (existing !== undefined) return this.revive(existing);
