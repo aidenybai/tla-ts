@@ -17,15 +17,15 @@ describe("compiles JSX as the calls that TypeScript emits for it", () => {
     expect(checked.failure).toBeUndefined();
   });
 
-  // A script's check reports what it throws as the error of its Init.
+  // A script's check fails with what it throws, as its Init's failure.
   it.each([
     ["classic.tsx", "b()[total |3]|text", "b()[total 3]| text"],
     ["project/factory.tsx", "group()[a(href)[text]]", "jsx:group()"],
   ])("rejects another outcome of %s than %s", async (name, expected, wrong) => {
     const fixture = getFixture(name);
     const checked = await compileAndCheck(fixture.source.replace(expected, wrong), fixture.path);
-    expect(checked.error).toContain("seen ");
-    expect(checked.error).toContain(expected);
+    expect(checked.failure).toContain("seen ");
+    expect(checked.failure).toContain(expected);
   });
 
   // Skipped as Node can't load these: TypeScript writes their imports as ./runtime/jsx-runtime and

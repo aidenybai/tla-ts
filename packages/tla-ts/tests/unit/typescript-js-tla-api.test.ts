@@ -10,9 +10,11 @@ import { createLibrary, readJsTlaFiles } from "../../src/typescript/spec/library
 import { recordHostRealm } from "../../src/typescript/spec/realm";
 
 // What a compile and a check of a file give: the check's status, the violated name, the trace's
-// states and actions, and a failure's message, or the named error that either throws.
+// states and actions, a failure's message, and how many states the check found, or the named error
+// that either throws.
 interface Outcome {
   status?: string;
+  distinctStates?: number;
   name?: string;
   trace?: Record<string, string>[];
   actions?: string[];
@@ -104,6 +106,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
           ),
           actions: result.violation?.trace.slice(1).map((step) => step.label?.split(" ")[0]),
           message: result.failure?.message,
+          distinctStates: result.distinctStates,
           regions: spec.regions,
         },
       });
@@ -205,7 +208,7 @@ describe("compile and check a script as Node runs it", () => {
         "Error: 2,4,6",
       );
       const outcome = await getOutcome(getSource("2,4,7"), "sorted.ts");
-      expect(outcome.error?.isTlaError).toBe(true);
+      expect(outcome).toMatchObject({ status: "error", distinctStates: 0 });
       expect(getFailure(outcome)).toContain('"2,4,6"');
     });
 
@@ -691,6 +694,28 @@ describe("compile on JS.tla from a recorded realm as from Node's", () => {
       const recorded = await getOutcome(source, "entries.ts", true);
       expect(recorded).toEqual(await getOutcome(source, "entries.ts"));
       expect(getFailure(recorded)).toContain('[\\"b2\\",\\"a1\\"]');
+    });
+  });
+
+  // A script's spec keeps the state that the script ends in, as the CLI's does, so a check finds
+  // one state rather than none.
+  describe("count the state that a script ends in, as the CLI does", () => {
+    const getSource = (expected: number) =>
+      `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with the CLI's compile", async () => {
+      const outcome = await getOutcome(getSource(0), "ends.js", true);
+      expect(outcome).toMatchObject({ status: "success", distinctStates: 1 });
+      expect(outcome.distinctStates).toBe(
+        (await getOutcome(getSource(0), "ends.js")).distinctStates,
+      );
+    });
+
+    it("finds no state in a script that throws", async () => {
+      expect(runNode({ "ends.js": getSource(1) }, "ends.js").stderr).toContain(
+        "RangeError: kind 0",
+      );
+      expect(await getOutcome(getSource(1), "ends.js", true)).toMatchObject({ distinctStates: 0 });
     });
   });
 
