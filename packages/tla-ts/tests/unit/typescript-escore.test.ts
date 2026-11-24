@@ -1177,6 +1177,45 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // JSONEvaluateMembers evaluates an object's members by index into chunks and maps each key to its
+  // last member's record in halves, so sizes around a chunk and repeated keys pin the reviver's
+  // calls, their order, and the source each one sees.
+  describe("parses a JSON object's members across chunks, reviving each key's last member", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const members = Array.from({ length: size }, (_, index) => \`"k\${(index * 37) % 50}":\${index % 3 === 0 ? \`[\${index}]\` : index}\`);
+        const calls: string[] = [];
+        const parsed = JSON.parse(\`{\${members.join(",")}}\`, (key, value, context?: { source?: string }) => {
+          calls.push(\`\${key}=\${context?.source ?? typeof value}\`);
+          return typeof value === "number" ? value + 1 : value;
+        });
+        text += [size, Object.keys(parsed).length, getHash(JSON.stringify(parsed)), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:3938:1:151225;1:1:490178:3:764143;63:50:392656:67:131654;",
+      "64:50:919176:68:575278;65:50:636994:68:608573;129:50:816072:67:412439;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:50:816072:67:412439", "129:50:816072:67:412438");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

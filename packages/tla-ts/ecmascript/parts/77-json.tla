@@ -124,19 +124,26 @@ JSONEvaluate(s, tree) ==
          IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-             members == JSONEvaluateMembers(o.s, Val(o), tree.members, <<>>)
+             members == JSONEvaluateMembers(o.s, Val(o), tree.members, 1, NoChunks)
          IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
 \* The items from k, after the values and the records of those evaluated so far, in chunks.
 JSONEvaluateItems(s, items, k, values, records) ==
   IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
   ELSE LET r == JSONEvaluate(s, items[k]) IN
        JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
-JSONEvaluateMembers(s, o, members, entries) ==
-  IF members = <<>> THEN [s |-> s, entries |-> entries]
-  ELSE LET key == Str(Head(members)[1])
-           r == JSONEvaluate(s, Head(members)[2])
+\* The members from k, after the keys and the records of those evaluated so far, in chunks.
+JSONEvaluateMembers(s, o, members, k, pairs) ==
+  IF k > Len(members) THEN [s |-> s, entries |-> JSONEntries(ChunkValues(pairs))]
+  ELSE LET key == Str(members[k][1])
+           r == JSONEvaluate(s, members[k][2])
            c == CreateDataProperty(r.s, o, key, r.v)
-       IN JSONEvaluateMembers(c.s, o, Tail(members), (key :> r.record) @@ entries)
+       IN JSONEvaluateMembers(c.s, o, members, k + 1, ChunkAppend(pairs, <<key, r.record>>))
+\* The function from each key to the record of its last pair, as joining (key :> record) @@ entries
+\* from the first pair to the last would make it, joined in halves.
+JSONEntries(pairs) ==
+  CASE pairs = <<>> -> <<>>
+    [] Len(pairs) = 1 -> pairs[1][1] :> pairs[1][2]
+    [] OTHER -> JSONEntries(SubSeq(pairs, Len(pairs) \div 2 + 1, Len(pairs))) @@ JSONEntries(SubSeq(pairs, 1, Len(pairs) \div 2))
 
 \* InternalizeJSONProperty (§25.5.1.3), with the parse record of the value or Absent.
 InternalizeJSONProperty(s, holder, name, reviver, record) ==
