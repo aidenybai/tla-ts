@@ -950,6 +950,42 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // ReadThrough reads an array's elements into chunks and SetElements writes them by index, so the
+  // sizes around a chunk pin what toReversed, toSpliced, with, sort and push read and write.
+  describe("reads and writes an array's elements across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const values = Array.from({ length: size }, (_, index) => (index * 37) % 101);
+        const reversed = values.toReversed();
+        const spliced = values.toSpliced(size >> 1, 2, -1, -2, -3);
+        const replaced = size === 0 ? [] : values.with(size - 1, -9);
+        const sorted = [...values, undefined].sort((left, right) => (left as number) - (right as number));
+        const pushed = [...values];
+        pushed.push(...values.slice(0, 5));
+        let hash = 0;
+        for (const list of [reversed, spliced, replaced, sorted, pushed]) {
+          for (const value of list) hash = (hash * 31 + (value === undefined ? 7 : (value as number) + 50)) % 1000003;
+        }
+        text += [size, reversed.length, spliced.length, sorted.length, pushed.length, hash].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:3:1:0:507348;1:1:3:2:2:962946;63:63:64:64:68:688589;64:64:65:65:69:172146;65:65:66:66:70:13726;129:129:130:130:134:539989;";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:129:130:130:134:539989", "129:129:130:130:134:539988");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

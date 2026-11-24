@@ -497,7 +497,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, <<>>) IN
+         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, NoChunks) IN
          IF IsAbrupt(values) THEN values ELSE FillArray(values.s, Val(a), Val(values))
     \* Array.prototype.toSorted (§23.1.3.34).
     [] m = "toSorted" ->
@@ -517,8 +517,8 @@ ArrayMethod(s, o, len, m, args) ==
          LET newLen == NumAdd(NumSub(len, Val(sc)), NumFromInt(Len(items))) IN
          IF NumLess(MaxSafeInteger, newLen) THEN ThrowTypeError(sc.s) ELSE
          LET a == ArrayCreateLength(sc.s, newLen) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, start, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, start, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o items \o Val(after))
     \* Array.prototype.unshift (§23.1.3.37).
     [] m = "unshift" ->
@@ -533,24 +533,26 @@ ArrayMethod(s, o, len, m, args) ==
          LET i == IF NumLess(Val(r).value, PosZero) THEN NumAdd(len, Val(r).value) ELSE Val(r).value IN
          IF NumLess(i, PosZero) \/ ~NumLess(i, len) THEN ThrowError(r.s, "RangeError") ELSE
          LET a == ArrayCreateLength(r.s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, i, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, i, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o <<Arg(args, 2)>> \o Val(after))
 
 \* The result of indexOf and lastIndexOf from their search.
 SearchResult(r) == IF IsAbrupt(r) THEN r ELSE Ok(r.s, IF Val(r).stop THEN Val(r).st.found ELSE IntV(-1))
 
 \* The Set of each value to the indices from k up (Array.prototype.push, splice, sort, unshift).
-SetElements(s, o, values, k) ==
-  IF values = <<>> THEN Ok(s, o)
-  ELSE LET w == Set(s, o, Index(k), Head(values), TRUE) IN
-       IF IsAbrupt(w) THEN w ELSE SetElements(w.s, o, Tail(values), NumAdd(k, OneNum))
+SetElements(s, o, values, k) == SetValuesFrom(s, o, values, 1, k)
+\* The Set of the values from the i-th, by index rather than by Tail, which copies the rest.
+SetValuesFrom(s, o, values, i, k) ==
+  IF i > Len(values) THEN Ok(s, o)
+  ELSE LET w == Set(s, o, Index(k), values[i], TRUE) IN
+       IF IsAbrupt(w) THEN w ELSE SetValuesFrom(w.s, o, values, i + 1, NumAdd(k, OneNum))
 
-\* The Get of count indices from k, stepping by dir, appended to acc.
+\* The Get of count indices from k, stepping by dir, after the values in acc, in chunks.
 ReadThrough(s, o, k, count, dir, acc) ==
-  IF ~NumLess(PosZero, count) THEN Ok(s, acc)
+  IF ~NumLess(PosZero, count) THEN Ok(s, ChunkValues(acc))
   ELSE LET v == Get(s, o, Index(k)) IN
-       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, Append(acc, Val(v)))
+       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, ChunkAppend(acc, Val(v)))
 
 \* More than 64 indices fill in halves, so that thousands of them nest log n deep rather than n.
 FillFrom(s, o, k, final, value) ==
@@ -648,7 +650,7 @@ ReverseFrom(s, o, len, lower, middle) ==
 
 \* SortIndexedProperties (§23.1.3.30.1) with CompareArrayElements, skipping holes when skipHoles.
 SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
-  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
+  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, NoChunks)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
   IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)
