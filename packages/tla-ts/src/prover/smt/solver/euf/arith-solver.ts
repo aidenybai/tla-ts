@@ -218,7 +218,7 @@ export class ArithSolver extends ArithAxioms {
       ? this.oneVar
       : value.isZero()
         ? this.zeroVar
-        : this.value2var.get(value.toString());
+        : this.value2var.get(value.getKey());
     if (thVar === undefined) return;
     if (this.solver.getExternal(column) < 0) return;
     this.addEq(this.registerVar(thVar), column, explanation, true);
@@ -566,7 +566,7 @@ export class ArithSolver extends ArithAxioms {
         inserted.push(thVar);
         return thVar;
       }
-      const key = `${this.isIntVar(thVar)}:${this.getIvalue(thVar)}`;
+      const key = `${this.isIntVar(thVar)}:${this.getIvalue(thVar).getKey()}`;
       const other = byValue.get(key);
       if (other !== undefined) return other;
       byValue.set(key, thVar);

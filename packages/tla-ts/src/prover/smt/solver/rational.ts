@@ -268,4 +268,11 @@ export class Rational {
   toString() {
     return this.den === 1n ? `${this.num}` : `${this.num}/${this.den}`;
   }
+
+  // V8 prints a bigint in hex in linear time, but in decimal in superlinear time.
+  getKey() {
+    return this.den === 1n
+      ? this.num.toString(16)
+      : `${this.num.toString(16)}/${this.den.toString(16)}`;
+  }
 }

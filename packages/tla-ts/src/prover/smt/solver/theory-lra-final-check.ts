@@ -137,7 +137,8 @@ export abstract class TheoryLraFinalCheck extends TheoryLraModel {
       ? this.oneVar
       : value.isZero()
         ? this.zeroVar
-        : (this.value2var.get(`true:${value}`) ?? this.value2var.get(`false:${value}`));
+        : (this.value2var.get(`true:${value.getKey()}`) ??
+          this.value2var.get(`false:${value.getKey()}`));
     if (thVar === undefined || this.solver.getExternal(column) < 0) return;
     this.addEq(this.registerVar(thVar), column, explanation, true);
   }

@@ -35,7 +35,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
     for (let thVar = 0; thVar < this.getNumVars(); thVar++) {
       if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
-      const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
+      const key = `${this.isIntVar(thVar)}:${solver.getValue(column).getKey()}`;
       const other = byValue.get(key);
       if (other === undefined) {
         byValue.set(key, thVar);
@@ -69,7 +69,7 @@ export abstract class TheoryLraModel extends TheoryLraPropagate {
       const thVar = (index + start) % numVars;
       if (!this.isRelevantAndShared(this.getEnode(thVar))) continue;
       const column = this.registerVar(thVar);
-      const key = `${this.isIntVar(thVar)}:${solver.getValue(column)}`;
+      const key = `${this.isIntVar(thVar)}:${solver.getValue(column).getKey()}`;
       const other = this.nla?.isUsingNraModel
         ? representatives.find(
             (representative) =>

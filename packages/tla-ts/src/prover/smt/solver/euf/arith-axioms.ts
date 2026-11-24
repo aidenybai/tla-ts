@@ -372,7 +372,7 @@ export abstract class ArithAxioms extends ArithInternalize {
       ? solver.getExternal(this.getZero(isInt))
       : bound.equals(Rational.one)
         ? solver.getExternal(this.getOne(isInt))
-        : this.value2var.get(bound.toString());
+        : this.value2var.get(bound.getKey());
     if (other === undefined) return;
     const otherNode = this.var2enodeOf(other);
     if (manager.sorts[node.owner] !== manager.sorts[otherNode.owner]) return;

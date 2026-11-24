@@ -418,7 +418,7 @@ export class LarSolver {
     if (!this.isFixed(column)) return NULL_LPVAR;
     const bound = this.getLowerBound(column);
     if (!bound.y.isZero()) return NULL_LPVAR;
-    const key = bound.x.toString();
+    const key = bound.x.getKey();
     const table = this.isInt(column) ? this.fixedVarTableInt : this.fixedVarTableReal;
     const other = table.get(key);
     if (other === undefined) {
@@ -429,7 +429,7 @@ export class LarSolver {
   }
 
   findInFixedTables(value: Rational, isInt: boolean) {
-    return (isInt ? this.fixedVarTableInt : this.fixedVarTableReal).get(value.toString());
+    return (isInt ? this.fixedVarTableInt : this.fixedVarTableReal).get(value.getKey());
   }
 
   updateColumnTypeAndBound(column: number, inputKind: ConstraintKind, rhs: Impq, dep: Dependency) {
@@ -653,10 +653,10 @@ export class LarSolver {
     const core = this.core;
     let delta = getBoundsDelta(core, this.getColumnCount());
     const pairs = new Map<string, Impq>();
-    for (const value of core.x) pairs.set(value.toString(), value);
+    for (const value of core.x) pairs.set(value.getKey(), value);
     for (;;) {
       const singles = new Set<string>();
-      for (const value of pairs.values()) singles.add(value.x.add(delta.mul(value.y)).toString());
+      for (const value of pairs.values()) singles.add(value.x.add(delta.mul(value.y)).getKey());
       if (singles.size === pairs.size) break;
       delta = delta.div(Rational.of(2n));
     }
