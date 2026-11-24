@@ -152,4 +152,33 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       },
     ]);
   });
+
+  describe("control flow", () => {
+    checkCases([
+      { name: "a break outside a loop", source: "break;", accepted: "while (1) break;" },
+      {
+        name: "a continue outside a loop",
+        source: "continue;",
+        accepted: "while (1) continue;",
+      },
+      {
+        name: "a continue to a block's label",
+        source: "a: {\n  continue a;\n}",
+        accepted: "a: while (1) {\n  continue a;\n}",
+      },
+      { name: "a break to no label", source: "break b;", accepted: "b: break b;" },
+      { name: "a label twice", source: "a: a: ;", accepted: "a: b: ;" },
+      {
+        name: "two default clauses",
+        source: "switch (1) {\n  default:\n  default:\n}",
+        accepted: "switch (1) {\n  case 1:\n  default:\n}",
+      },
+      {
+        name: "a return in a static block",
+        source: "class C {\n  static {\n    return;\n  }\n}",
+        accepted: "class C {\n  x;\n  static {\n    return;\n  }\n}",
+      },
+      { name: "a return in a script", source: "return;", accepted: "function f() { return; }" },
+    ]);
+  });
 });
