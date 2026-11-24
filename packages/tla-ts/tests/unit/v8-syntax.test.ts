@@ -303,4 +303,56 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
       { name: "a new of an import call", source: 'new import("x");', accepted: 'import("x");' },
     ]);
   });
+
+  describe("expressions", () => {
+    checkCases([
+      {
+        name: "an assignment to a number, but not to a call, which V8 throws for as it runs",
+        source: "1 = 2;",
+        accepted: "f() = 2;",
+      },
+      { name: "a prefix increment of a postfix one", source: "++a++;", accepted: "++a;" },
+      {
+        name: "__proto__ twice",
+        source: "({ __proto__: 1, __proto__: 2 });",
+        accepted: '({ __proto__: 1, ["__proto__"]: 2 });',
+      },
+      {
+        name: "a shorthand property's initializer",
+        source: "({ a = 1 });",
+        accepted: "({ a = 1 } = {});",
+      },
+      { name: "an assignment to an optional chain", source: "a?.b = 1;", accepted: "a.b = 1;" },
+      {
+        name: "a tagged template on an optional chain",
+        source: "a?.b`c`;",
+        accepted: "a.b`c`;",
+      },
+      { name: "?? beside ||", source: "a ?? b || c;", accepted: "(a ?? b) || c;" },
+      {
+        name: "a for-of declaration's initializer",
+        source: "for (let x = 1 of y);",
+        accepted: "for (var x = 1 in y);",
+      },
+      {
+        name: "a for-of of async",
+        source: "for (async of x);",
+        accepted: "for ((async) of x);",
+      },
+      { name: "a for-of of let", source: "for (let of x);", accepted: "for ((let) of x);" },
+      {
+        name: "new.target outside a function",
+        source: "new.target;",
+        accepted: "function f() { new.target; }",
+      },
+      { name: "a unary operator before **", source: "-1 ** 2;", accepted: "(-1) ** 2;" },
+      {
+        name: "a rest element before another",
+        source: "[...a, b] = c;",
+        accepted: "[b, ...a] = c;",
+      },
+      { name: "a template's bad escape", source: "`\\u{`;", accepted: "tag`\\u{`;" },
+      { name: "two numeric separators", source: "1__0;", accepted: "1_0;" },
+    ]);
+  });
 });
