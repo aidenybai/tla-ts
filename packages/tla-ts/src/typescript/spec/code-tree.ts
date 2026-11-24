@@ -1388,26 +1388,26 @@ export const layOutModule = (name: string, parts: readonly (string | OperatorDef
     tree.definition.isRecursive = recursive.has(tree.definition.name);
   });
   // The texts of the tokens in order: the trees' and the text's, merged by line.
-  const parsed: string[] = [];
-  const strings: string[] = [];
+  const parsed = new Set<string>();
+  const strings = new Set<string>();
   let position = 0;
   let stringPosition = 0;
   const addTokens = (end: number) => {
     const slice = tokens.slice(position, end);
     position = end;
-    for (const parsedText of getParsedTexts(slice)) parsed.push(parsedText);
-    for (const token of slice) if (token.kind === "String") strings.push(token.text);
+    for (const parsedText of getParsedTexts(slice)) parsed.add(parsedText);
+    for (const token of slice) if (token.kind === "String") strings.add(token.text);
   };
   for (const tree of trees) {
     let end = position;
     while (end < tokens.length && tokens[end].line < tree.line) end++;
     addTokens(end);
-    for (let index = tree.start; index < tree.end; index++) parsed.push(layout.texts[index]);
+    for (let index = tree.start; index < tree.end; index++) parsed.add(layout.texts[index]);
     while (
       stringPosition < layout.stringTokens.length &&
       layout.stringTokens[stringPosition] < tree.end
     ) {
-      strings.push(layout.stringValues[stringPosition]);
+      strings.add(layout.stringValues[stringPosition]);
       stringPosition += 1;
     }
   }
@@ -1427,7 +1427,7 @@ export const layOutModule = (name: string, parts: readonly (string | OperatorDef
         getUnitLine,
       ),
     },
-    texts: { parsed: [...new Set(parsed)], strings: [...new Set(strings)] },
+    texts: { parsed: [...parsed], strings: [...strings] },
     getText: () => {
       let tree = 0;
       return parts
