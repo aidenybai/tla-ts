@@ -1,5 +1,4 @@
-import { getHeapStatistics } from "node:v8";
-import { parentPort, Worker, workerData } from "node:worker_threads";
+import { parentPort, resourceLimits, Worker, workerData } from "node:worker_threads";
 import { getErrorExitCode, TlaHeapLimitError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { CHECK_STACK_MB } from "../worker";
@@ -74,7 +73,7 @@ const checkGroup = (argv: string[], group: SharedGroup) =>
       workerData: { sharedGroup: group },
       resourceLimits: {
         stackSizeMb: CHECK_STACK_MB,
-        maxOldGenerationSizeMb: Math.floor(getHeapStatistics().heap_size_limit / 2 ** 20),
+        maxOldGenerationSizeMb: resourceLimits.maxOldGenerationSizeMb,
       },
     })
       .on("message", (message: GroupReport) => {
@@ -103,7 +102,7 @@ export const SHARED_PROGRAM_BUDGET = 20_000_000;
 // alone, each of which shows what a run of it alone shows.
 export const checkSharedGroups = async (argv: string[], pathCount: number) => {
   const exitCodes: number[] = [];
-  const heapMb = Math.floor(getHeapStatistics().heap_size_limit / 2 ** 20);
+  const heapMb = resourceLimits.maxOldGenerationSizeMb ?? 0;
   const checkFrom = async (first: number, count: number): Promise<void> => {
     if (first >= pathCount) return;
     const size = Math.min(count, pathCount - first);

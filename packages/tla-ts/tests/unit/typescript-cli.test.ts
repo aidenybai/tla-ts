@@ -1484,6 +1484,19 @@ describe("the CLI with TypeScript files", () => {
       120_000,
     );
 
+    // Each group checks in a worker of its own, whose heap is the one a run of a file alone has.
+    it("shows each file's check with the heap of a run of one file", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      const getHeaps = (output: string) =>
+        [...output.matchAll(/ with (\d+)MB heap /g)].map((match) => match[1]);
+      const heap = getHeaps(runCli(directory, ["first.ts"]).stdout)[0];
+      expect(heap).toBeDefined();
+      expect(getHeaps(runCli(directory, ["-shared", "first.ts", "second.ts"]).stdout)).toEqual([
+        heap,
+        heap,
+      ]);
+    }, 120_000);
+
     it("checks each file alone without it, as Node runs it alone", () => {
       const directory = writeModules(copyFixtures("passing"));
       expect(runNode(directory, "alone.mjs").status).toBe(0);
