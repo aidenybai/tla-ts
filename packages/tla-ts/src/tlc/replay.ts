@@ -1,4 +1,4 @@
-import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
+import { getChildren, isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
 import {
   formatRange,
@@ -19,6 +19,7 @@ import {
   getCoverageNode,
   getEnteredFrames,
   getLetDefinition,
+  getSubstitutionNode,
   hideFrames,
   restoreFrames,
   runAtCoverageNode,
@@ -596,6 +597,21 @@ const visitAt = (
   }
 };
 
+const getEnteredReplacement = (expression: Expression, replacement: Expression) => {
+  if (expression.kind === "Identifier") {
+    return replacement.kind === "Identifier" && expression.name === replacement.name
+      ? replacement
+      : expression;
+  }
+  const children = getChildren(expression);
+  const replaced = getChildren(replacement);
+  if (children.length !== replaced.length) return undefined;
+  for (let index = 0; index < children.length; index++) {
+    if (children[index] !== replaced[index]) return undefined;
+  }
+  return replacement;
+};
+
 const visitFramed = (
   replay: Replay,
   expression: Expression,
@@ -605,6 +621,18 @@ const visitFramed = (
   node: number,
 ): boolean =>
   withFrame(replay, expression, () => {
+    const coverage = replay.coverage;
+    const substitution =
+      coverage && !replay.isInit && coverage.substitutionNodes.size !== 0
+        ? substitutedExpressions.get(expression)
+        : undefined;
+    const entered = substitution && getEnteredReplacement(expression, substitution.replacement);
+    const substitutionNode =
+      coverage && substitution && entered ? getSubstitutionNode(coverage, substitution, true) : -1;
+    // Tool#getNextStatesAppl enters the expression of a substitution's LazyValue at the LazyValue's cost model.
+    if (entered && substitutionNode !== -1 && substitutionNode !== node) {
+      return visitApplication(replay, entered, items, scope, partial, substitutionNode);
+    }
     switch (expression.kind) {
       case "Let": {
         const context = getContext(replay, scope, partial);

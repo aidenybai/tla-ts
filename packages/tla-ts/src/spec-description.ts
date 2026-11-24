@@ -45,7 +45,7 @@ import {
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
-import { untracedExpressions } from "./resolve";
+import { getKeyName, untracedExpressions } from "./resolve";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -713,10 +713,17 @@ const describeSpecification = (
         expression.kind === "Identifier" || expression.kind === "Apply"
           ? instanceActions.get(expression.writtenKey ?? "")
           : undefined;
+      const predicate = getActionPredicate(called.body);
       description.inits.push({
-        ...createConjunct(called.name, called.body, calledScope),
+        ...createConjunct(getKeyName(called.name), called.body, calledScope),
         ...(name === undefined
-          ? getDefinitionRanges(letDefinition)
+          ? substitutionFrame || predicate === called.body
+            ? getDefinitionRanges(letDefinition)
+            : {
+                ...getDefinitionRanges(letDefinition),
+                location: predicate.location,
+                body: predicate.location.range,
+              }
           : substitutionFrame
             ? written
               ? { name: written.name, head: written.head, body: written.body }
@@ -896,16 +903,27 @@ export const getSpecDescription = (
       });
     });
   }
-  const init =
-    config.init === undefined
-      ? undefined
-      : resolveGlobalOperator(getRootKey(config.init, environment), environment);
-  if (init?.kind === "Closure") description.inits.push(createAction(config.init ?? "", init.body));
+  const initKey = config.init === undefined ? undefined : getRootKey(config.init, environment);
+  const init = initKey === undefined ? undefined : resolveGlobalOperator(initKey, environment);
+  if (init?.kind === "Closure") {
+    description.inits.push({
+      ...createAction(config.init ?? "", init.body),
+      ...instanceActions.get(initKey ?? ""),
+    });
+  }
+  const nextKey = config.next === undefined ? undefined : getRootKey(config.next, environment);
   const nextOperator =
-    config.next === undefined
-      ? undefined
-      : resolveGlobalOperator(getRootKey(config.next, environment), environment);
-  if (nextOperator?.kind === "Closure") {
+    nextKey === undefined ? undefined : resolveGlobalOperator(nextKey, environment);
+  const nextInstance = instanceActions.get(nextKey ?? "");
+  if (nextOperator?.kind === "Closure" && nextInstance) {
+    description.actions.push({
+      ...nextInstance,
+      parameters: [],
+      context: [],
+      expression: nextOperator.body,
+      scope: nextOperator.scope,
+    });
+  } else if (nextOperator?.kind === "Closure") {
     getActions(
       nextOperator.body,
       nextOperator.scope,
