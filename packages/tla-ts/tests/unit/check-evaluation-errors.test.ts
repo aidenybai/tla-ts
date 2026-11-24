@@ -383,6 +383,50 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      "x[3]",
+      "x' = x",
+      "Attempted to access index 3 of tuple\n<<0, 0>>\nwhich is out of bounds.",
+      ["line 6, col 13 to line 6, col 20 of module M"],
+      [],
+    ],
+    [
+      "IF x[1] = 1 THEN x[3] ELSE 0",
+      "x' = <<1, 0>>",
+      "Attempted to access index 3 of tuple\n<<1, 0>>\nwhich is out of bounds.",
+      ["line 7, col 14 to line 7, col 21 of module M"],
+      [],
+    ],
+    [
+      "<<1, 2>>[x[1] + 3]",
+      "x' = x",
+      "Attempted to access index 3 of tuple\n<<1, 2>>\nwhich is out of bounds.",
+      [],
+      ["Line 6, column 9 to line 6, column 20 in M"],
+    ],
+  ])(
+    "fails to fingerprint a state whose VIEW %s fails on a value the replay of %s built, as TLC's VIEW applies the state's values",
+    async (view, next, reason, sources, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences, Bags\nCONSTANT M1, M2\nVARIABLE x\nV == ${view}\nInit == x = <<0, 0>>\nNext == ${next}\n====`,
+        config:
+          "CONSTANT M1 = M1\nCONSTANT M2 = M2\nINIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nVIEW V",
+      });
+      expect([
+        result.failure?.fingerprint?.reason ?? result.failure?.message,
+        result.failure?.fingerprint?.sources.map((source) => {
+          const range = source.location.range;
+          return range
+            ? `line ${range.start.line}, col ${range.start.column} to line ${range.end.line}, col ${range.end.column} of module ${range.module}`
+            : "";
+        }) ?? [],
+        formatCallStackLines(result) ?? [],
+        result.failure?.exitCode,
+      ]).toEqual([reason, sources, callStack, 75]);
+    },
+  );
+
+  it.each([
     ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in {1, 2} |-> <<1, 2>>[k + 1]]", ["FunctionConstruction", "Tuple"]],

@@ -247,6 +247,7 @@ export interface Environment {
 export interface CallStack {
   expressions: Expression[];
   isFrozen: boolean;
+  isSourcing: boolean;
   sources: WeakMap<ObjectValue, Expression>;
   values: WeakMap<Expression, Value>;
   failures: WeakMap<Error, Expression>;
@@ -1834,7 +1835,12 @@ const traceEvaluator =
         if (node !== undefined) coverage.values.set(value, node);
       }
       callStack.values.set(expression, value);
-      if (typeof value === "object" && value.kind !== "FilteredSet" && isSourced(expression)) {
+      if (
+        callStack.isSourcing &&
+        typeof value === "object" &&
+        value.kind !== "FilteredSet" &&
+        isSourced(expression)
+      ) {
         callStack.sources.set(value, expression);
       }
       return value;
@@ -1918,7 +1924,21 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   callStack: {
     expressions: [],
     isFrozen: false,
+    isSourcing: true,
     sources: new WeakMap(),
+    values: new WeakMap(),
+    failures: new WeakMap(),
+  },
+});
+
+// TLCStateMut#fingerPrint evaluates the VIEW with TLC's Tool rather than its CallStackTool, so only the state's values have sources.
+export const createViewTracingEnvironment = (tracing: Environment): Environment => ({
+  ...createTracingEnvironment(tracing),
+  callStack: {
+    expressions: [],
+    isFrozen: false,
+    isSourcing: false,
+    sources: tracing.callStack?.sources ?? new WeakMap(),
     values: new WeakMap(),
     failures: new WeakMap(),
   },

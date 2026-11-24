@@ -879,7 +879,7 @@ export interface Search {
     isTool: boolean,
   ) => GraphState;
   spec: Specification;
-  getFingerprintState: (state: Value[]) => Value[];
+  getFingerprintState: (state: Value[], viewEnvironment?: Environment) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
@@ -1455,8 +1455,8 @@ export const createSearch = (
       .sort((left, right) => getTlcPosition(left) - getTlcPosition(right));
     return tlcOrder;
   };
-  const getViewValue = (expression: Expression, state: Value[]) =>
-    evaluate(expression, getContext(environment, state, undefined));
+  const getViewValue = (expression: Expression, state: Value[], viewEnvironment = environment) =>
+    evaluate(expression, getContext(viewEnvironment, state, undefined));
   const getRepresentativeState = (state: Value[]) => {
     // TLC's TLCStateMut#fingerPrint deep-normalizes a state before it evaluates the view.
     if (view !== undefined) state.forEach(markNormalized);
@@ -1464,12 +1464,12 @@ export const createSearch = (
       ? state
       : getRepresentative(state, symmetryGroup, getTlcOrder());
   };
-  const getTlcStateFingerprint = (state: Value[]) => {
+  const getTlcStateFingerprint = (state: Value[], viewEnvironment = environment) => {
     const representative = getRepresentativeState(state);
     return getTlcFingerprint(
       view === undefined
         ? getTlcOrder().map((index) => representative[index])
-        : [getViewValue(view.expression, representative)],
+        : [getViewValue(view.expression, representative, viewEnvironment)],
     );
   };
   const findFailedInitialPredicate = (state: Value[]) =>
@@ -1720,14 +1720,18 @@ export const createSearch = (
     getTlcOrder,
     getStoredFingerprints: (states, fingerprintStates) => {
       if (view !== undefined || isFingerprintedLikeTlc) {
-        return BigInt64Array.from(states, getTlcStateFingerprint);
+        return BigInt64Array.from(states, (state) => getTlcStateFingerprint(state));
       }
       return getTlcFingerprints(fingerprintStates, getTlcOrder());
     },
-    getFingerprintState: (state) => {
-      if (isFingerprintedLikeTlc) return [String(getTlcStateFingerprint(state))];
+    getFingerprintState: (state, viewEnvironment) => {
+      if (isFingerprintedLikeTlc) {
+        return [String(getTlcStateFingerprint(state, viewEnvironment))];
+      }
       const representative = getRepresentativeState(state);
-      return view === undefined ? representative : [getViewValue(view.expression, representative)];
+      return view === undefined
+        ? representative
+        : [getViewValue(view.expression, representative, viewEnvironment)];
     },
     findViolatedInvariant: (state, parent) => {
       const violated =

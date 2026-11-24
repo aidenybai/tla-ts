@@ -22,10 +22,11 @@ import {
   formatRange,
 } from "./errors";
 import {
+  createViewTracingEnvironment,
   describeRange,
   getDefinition,
   getRootKey,
-  type CallStack,
+  type Environment,
   type FingerprintFailure,
   type State,
 } from "./evaluate";
@@ -600,10 +601,26 @@ const searchStates = (
   const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
     throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
   };
-  const createReplayedStates = () => {
+  const createReplayedStates = (tracing: Environment) => {
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
-    return (state: Value[], callStack: CallStack | undefined) => {
-      fingerprintReplayed(getFingerprintState(state), callStack, coverage);
+    const callStack = tracing.callStack;
+    const viewTracing = createViewTracingEnvironment(tracing);
+    // TLC reports a FingerprintException from the VIEW of a state that DoInitFunctor or Worker fingerprints with an empty call stack.
+    const getReplayedFingerprintState = (state: Value[]) => {
+      try {
+        return getFingerprintState(state, viewTracing);
+      } catch (error) {
+        const fingerprint = viewTracing.callStack?.fingerprint;
+        if (callStack && fingerprint) {
+          callStack.expressions.length = 0;
+          callStack.isFrozen = true;
+          callStack.fingerprint = fingerprint;
+        }
+        throw error;
+      }
+    };
+    return (state: Value[]) => {
+      fingerprintReplayed(getReplayedFingerprintState(state), callStack, coverage);
       const fingerprintState = getFingerprintState(state);
       const hash = getStateHash(fingerprintState);
       const isSeen =
@@ -619,8 +636,8 @@ const searchStates = (
   const replayInit = () => {
     let replayedCount = 0;
     const deferred: unknown[] = [];
-    const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
+      const addReplayed = createReplayedStates(tracing);
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
         reportInitialStatesProgress(replayedCount, (progress) =>
           output.getCapturedLines()?.push(progress),
@@ -630,7 +647,7 @@ const searchStates = (
         if (deferred.length > 0) return;
         try {
           const addFingerprint = () => {
-            if (!addReplayed(state, tracing.callStack)) return;
+            if (!addReplayed(state)) return;
             runtime.queueSize++;
             liveness?.addInitialState(states.length, state, tracing);
           };
@@ -660,10 +677,10 @@ const searchStates = (
     getReplayFailure(environment, (tracing) => {
       const state = states[index];
       const source = stateWriter && getGraphState(state, depths[index]);
-      const addReplayed = createReplayedStates();
+      const addReplayed = createReplayedStates(tracing);
       replaySuccessors(coverage ? coverageActions : nextActions, state, tracing, (next, action) => {
         const addFingerprint = () => {
-          const isUnseen = addReplayed(next, tracing.callStack);
+          const isUnseen = addReplayed(next);
           if (source) {
             stateWriter?.writeSuccessor(
               source,
