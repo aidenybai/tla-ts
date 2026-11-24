@@ -1,4 +1,5 @@
 import type { Library } from "./library";
+import { printCodeExpression } from "./code-tree";
 import { getNumber } from "./specialize";
 
 // What the host's Intl gives of a locale tag: its canonical form and the services that support it
@@ -136,7 +137,7 @@ const getHostProperty = (
             ? "True"
             : "False"
           : typeof value === "number"
-            ? `Num(${getNumber(value)})`
+            ? `Num(${printCodeExpression(getNumber(value))})`
             : typeof value === "string"
               ? `Str(N(${JSON.stringify(value)}))`
               : undefined;

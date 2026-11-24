@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import { printCodeExpression } from "./code-tree";
 import { getNumber } from "./specialize";
 
 // The methods LMethod runs, which change the receiver where they're in MUTATORS. ESCore's step
@@ -774,7 +775,10 @@ export const getNativeFunctions = (
       return compileExpression(node.expression, scope);
     }
     if (ts.isNumericLiteral(node)) {
-      return { text: getConstant(`Num(${getNumber(Number(node.text))})`), isFresh: false };
+      return {
+        text: getConstant(`Num(${printCodeExpression(getNumber(Number(node.text)))})`),
+        isFresh: false,
+      };
     }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       return { text: getConstant(`Str(${getUnits(node.text)})`), isFresh: false };

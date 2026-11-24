@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Definition } from "../../src/ast";
 import { parseModule } from "../../src/parser";
 import {
+  afterBlankLine,
   apply,
   boundIn,
   defineOperator,
@@ -88,6 +89,12 @@ describe("the syntax trees of a program's code", () => {
       ),
     ).toBe("((1 :> 10) @@ ((2 :> 20) @@ (3 :> 30)))");
     expect(printCodeExpression(getPatches([]))).toBe("<<>>");
+  });
+
+  it("prints a line of nothing but spaces before a node", () => {
+    expect(
+      printCodeDefinition(defineOperator("Declarations", ["s"], onLine(afterBlankLine("s", 2), 2))),
+    ).toBe("Declarations(s) ==\n  \n  s");
   });
 
   it("prints the lines that a definition's nodes start", () => {

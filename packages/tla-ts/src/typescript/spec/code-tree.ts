@@ -4,6 +4,7 @@ import type {
   Expression,
   OperatorDefinition,
   SourceLocation,
+  SourceRange,
 } from "../../ast";
 import { TlaUnsupportedError } from "../../errors";
 import { INFIX_OPERATORS } from "../../parser";
@@ -20,11 +21,14 @@ class Placement implements SourceLocation {
   readonly indent: number;
   readonly isParenthesized: boolean;
   readonly innerIndent: number;
+  // The spaces of a line of nothing else before the node's, or -1 where it has none.
+  readonly blankIndent: number;
 
-  constructor(indent: number, isParenthesized: boolean, innerIndent: number) {
+  constructor(indent: number, isParenthesized: boolean, innerIndent: number, blankIndent: number) {
     this.indent = indent;
     this.isParenthesized = isParenthesized;
     this.innerIndent = innerIndent;
+    this.blankIndent = blankIndent;
   }
 }
 
@@ -32,31 +36,44 @@ class Placement implements SourceLocation {
 const NO_GAP = -2;
 const SPACE = -1;
 
-const INLINE = new Placement(SPACE, false, SPACE);
+const INLINE = new Placement(SPACE, false, SPACE, -1);
 
 const getPlacement = (location: SourceLocation) =>
   location instanceof Placement ? location : INLINE;
 
-// A node placed where placement says, but for what it leaves undefined, which stays as it was.
+// A copy of a node, placed where placement says, but for what it leaves undefined, which stays as
+// the node's.
 const place = <Node extends { location: SourceLocation }>(
   node: Node,
-  placement: { indent?: number; isParenthesized?: boolean; innerIndent?: number },
-) => {
+  placement: {
+    indent?: number;
+    isParenthesized?: boolean;
+    innerIndent?: number;
+    blankIndent?: number;
+  },
+): Node => {
   const current = getPlacement(node.location);
-  node.location = new Placement(
-    placement.indent ?? current.indent,
-    placement.isParenthesized ?? current.isParenthesized,
-    placement.innerIndent ?? current.innerIndent,
-  );
-  return node;
+  return {
+    ...node,
+    location: new Placement(
+      placement.indent ?? current.indent,
+      placement.isParenthesized ?? current.isParenthesized,
+      placement.innerIndent ?? current.innerIndent,
+      placement.blankIndent ?? current.blankIndent,
+    ),
+  };
 };
+
+// A node whose line comes after a line of nothing but spaces.
+export const afterBlankLine = (operand: Operand, blankIndent: number) =>
+  place(toExpression(operand), { blankIndent });
 
 // A node that starts a line of its own at an indent.
 export const onLine = <Node extends { location: SourceLocation }>(node: Node, indent: number) =>
   place(node, { indent });
 
-export const parenthesized = (expression: Expression) =>
-  place(expression, { isParenthesized: true });
+export const parenthesized = (operand: Operand) =>
+  place(toExpression(operand), { isParenthesized: true });
 
 // A LET whose IN, or a CASE each of whose [], starts a line of its own at an indent.
 export const withInnerLines = (expression: Expression, indent: number) =>
@@ -76,9 +93,9 @@ export const dot = (record: Operand, field: string): Expression => ({
 });
 
 // An operand of a builder: an expression, or a name, or a path of fields of a name, as "r.s" is.
-type Operand = Expression | string;
+export type Operand = Expression | string;
 
-const toExpression = (operand: Operand): Expression => {
+export const toExpression = (operand: Operand): Expression => {
   if (typeof operand !== "string") return operand;
   const fields = operand.split(".");
   return fields.slice(1).reduce<Expression>((record, field) => dot(record, field), ref(fields[0]));
@@ -147,6 +164,68 @@ export const functionOf = (bounds: Bound[], body: Operand): Expression => ({
   location: INLINE,
 });
 
+export const setOf = (elements: readonly Operand[]): Expression => ({
+  kind: "SetEnumeration",
+  elements: elements.map(toExpression),
+  location: INLINE,
+});
+
+export const recordOf = (fields: readonly (readonly [string, Operand])[]): Expression => ({
+  kind: "Record",
+  fields: fields.map((field) => ({
+    name: field[0],
+    value: toExpression(field[1]),
+    location: INLINE,
+  })),
+  location: INLINE,
+});
+
+// The range of a part of an EXCEPT, which the layout gives it.
+const UNPLACED_RANGE: SourceRange = {
+  module: "",
+  start: { line: 0, column: 0 },
+  end: { line: 0, column: 0 },
+};
+
+// A step of an EXCEPT's path: a field's name, or the arguments of an index.
+export const pathTo = (step: string | readonly Operand[]): ExceptPathStep =>
+  typeof step === "string"
+    ? { kind: "Field", name: step }
+    : { kind: "Index", args: step.map(toExpression), tupleRange: UNPLACED_RANGE };
+
+export const except = (
+  value: Operand,
+  updates: readonly (readonly [readonly ExceptPathStep[], Operand])[],
+): Expression => ({
+  kind: "Except",
+  function: toExpression(value),
+  updates: updates.map((update) => ({
+    path: [...update[0]],
+    value: toExpression(update[1]),
+    range: UNPLACED_RANGE,
+  })),
+  location: INLINE,
+});
+
+export const exceptAt = (): Expression => ({ kind: "ExceptAt", location: INLINE });
+
+export const caseOf = (
+  arms: readonly (readonly [Operand, Operand])[],
+  other?: Operand,
+): Expression => ({
+  kind: "Case",
+  arms: arms.map((arm) => ({ condition: toExpression(arm[0]), body: toExpression(arm[1]) })),
+  other: other === undefined ? undefined : toExpression(other),
+  location: INLINE,
+});
+
+export const exists = (bounds: Bound[], body: Operand): Expression => ({
+  kind: "Exists",
+  bounds,
+  body: toExpression(body),
+  location: INLINE,
+});
+
 export const defineOperator = (
   operatorName: string,
   params: readonly string[],
@@ -164,6 +243,8 @@ export const defineOperator = (
 // Where the tokens of a printed tree go: each with the gap before it.
 interface TokenWriter {
   write: (text: string, gap: number) => void;
+  // Ends a line of nothing but spaces.
+  writeBlankLine: (indent: number) => void;
 }
 
 const PREFIX_WORDS = new Set(["DOMAIN", "SUBSET", "UNION", "ENABLED", "UNCHANGED"]);
@@ -172,6 +253,7 @@ const PREFIX_WORDS = new Set(["DOMAIN", "SUBSET", "UNION", "ENABLED", "UNCHANGED
 const writeExpression = (expression: Expression, gap: number, writer: TokenWriter): void => {
   const placement = getPlacement(expression.location);
   const start = placement.indent === SPACE ? gap : placement.indent;
+  if (placement.blankIndent >= 0) writer.writeBlankLine(placement.blankIndent);
   if (placement.isParenthesized) {
     writer.write("(", start);
     writeTokens(expression, NO_GAP, writer);
@@ -421,6 +503,9 @@ const writeDefinition = (definition: OperatorDefinition, gap: number, writer: To
 const createTextWriter = () => {
   const parts: string[] = [];
   const writer: TokenWriter = {
+    writeBlankLine: (indent) => {
+      parts.push(`\n${" ".repeat(indent)}`);
+    },
     write: (text, gap) => {
       if (gap === SPACE) parts.push(" ");
       else if (gap >= 0) parts.push(`\n${" ".repeat(gap)}`);

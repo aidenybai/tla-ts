@@ -835,7 +835,7 @@ const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostR
     ...[...text.matchAll(/(["'`])((?:(?!\1)[^\\\n]){1,100})\1/g)].map((match) => match[2]),
     "[object Object]",
   ]);
-  return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${getNumber(parseDate(string))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
+  return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${printCodeExpression(getNumber(parseDate(string)))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
 };
 
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
