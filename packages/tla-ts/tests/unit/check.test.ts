@@ -9970,6 +9970,23 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a set literal holding a tuple and a function",
+      "({{<<1, 2>>, [i \\in {1, 2} |-> i + 1]}} \\X {1, 2}) # {}",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 73 of module M: 1",
+        "|line 5, col 20 to line 5, col 67 of module M: 1:6",
+        "||line 5, col 20 to line 5, col 57 of module M: 1:2",
+        "|||line 5, col 21 to line 5, col 56 of module M: 1",
+        "||||line 5, col 22 to line 5, col 29 of module M: 1:2",
+        "||||line 5, col 32 to line 5, col 55 of module M: 1:2",
+        "|||||line 5, col 50 to line 5, col 54 of module M: 2",
+        "|||||line 5, col 39 to line 5, col 44 of module M: 1:3",
+        "||line 5, col 62 to line 5, col 67 of module M: 1:4",
+        "|line 5, col 72 to line 5, col 73 of module M: 1",
+      ],
+    ],
+    [
       "a union of a tuple and a function",
       "LET S == {<<1, 2>>} \\cup {[i \\in {1, 2} |-> i + 1]} IN Cardinality(S) = 2 /\\ (S \\X {1}) # {}",
       [
@@ -12832,6 +12849,9 @@ ASSUME TLCFP(a) = -887695703
     ["0", "({F, {9}} \\X {1}) # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
     ["0", "[{1} -> {F, {9}}] # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
     ["0", "[a : {s \\in {F, {9}} : TRUE}] # {}", ['"n"', "{}", "{1}"]],
+    ["0", "({F} \\X {1, 2}) # {}", ['"n"', "{}", "{1}"]],
+    ["0", "[a : {F}, b : {1, 2}] # {}", ['"n"', "{}", "{1}"]],
+    ["0", "(SUBSET {F}) \\X {1, 2} # {}", ['"n"', "{}", "{1}"]],
   ])(
     "sorts the set it converts from K == %s for %s only when TLC reads its sets as unnormalized",
     async (definition, next, expected) => {

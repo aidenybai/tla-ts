@@ -2120,30 +2120,54 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
   }
 };
 
-const hasMixedComponent = (value: Value): boolean => {
+const hasLazyPart = (value: Value, depth: number): boolean => {
+  if (typeof value !== "object") return false;
+  if (depth === MAXIMUM_MARK_DEPTH) return true;
+  switch (value.kind) {
+    case "ModelValue":
+    case "Interval":
+      return false;
+    case "Set":
+      return hasLazyParts(value.elements, depth + 1);
+    case "Function":
+      return hasLazyParts(value.domain, depth + 1) || hasLazyParts(value.range, depth + 1);
+    default:
+      return true;
+  }
+};
+
+const hasLazyParts = (values: Value[], depth: number) => {
+  for (let index = 0; index < values.length; index++) {
+    if (hasLazyPart(values[index], depth)) return true;
+  }
+  return false;
+};
+
+const hasLazyElements = (value: Value): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
+    case "Set":
+      return hasLazyParts(value.elements, 0);
     case "MixedSet":
       return true;
     case "FilteredSet":
     case "Subset":
     case "Union":
-      return hasMixedComponent(value.base);
+      return hasLazyElements(value.base);
     case "SetOperation":
-      return hasMixedComponent(value.left) || hasMixedComponent(value.right);
+      return hasLazyElements(value.left) || hasLazyElements(value.right);
     case "FunctionSet":
-      return hasMixedComponent(value.domain) || hasMixedComponent(value.range);
+      return hasLazyElements(value.domain) || hasLazyElements(value.range);
     case "RecordSet":
-      return value.sets.some(hasMixedComponent);
+      return value.sets.some(hasLazyElements);
     case "ProductSet":
-      return value.factors.some(hasMixedComponent);
+      return value.factors.some(hasLazyElements);
     default:
       return false;
   }
 };
 
-// Only a lazy element makes TLC's sort observable, and a set literal keeps its lazy elements in a MixedSet.
-const isSortedLikeTlc = (value: Value) => !hasMixedComponent(value) || isNormalizedLikeTlc(value);
+const isSortedLikeTlc = (value: Value) => isNormalizedLikeTlc(value) || !hasLazyElements(value);
 
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
