@@ -45,6 +45,7 @@ import {
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevelBound, getSanyLevel } from "./liveness";
+import { untracedExpressions } from "./resolve";
 import { EMPTY_STATE } from "./runtime";
 import {
   createRecord,
@@ -439,8 +440,10 @@ const getActions = (
   const theorem = called && getAssumeProveBody(called.body);
   // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
   if (theorem) throw createRelationError(theorem);
-  if (instanceAction)
+  // SymbolNodeValueLookupProvider#lookup finds an override on the body under an instance's SubstInNode, so where a generated alias stands for the copy, TLC takes the override, not the instance.
+  if (instanceAction && !(called && untracedExpressions.has(called.body))) {
     return getInstanceActions(instanceAction, expression, scope, called, environment, context);
+  }
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {
@@ -484,10 +487,14 @@ const getActions = (
     : environment.definitions.get(operatorName);
   const callAction = (): SpecAction[] => [
     {
-      name:
-        namedDefinition && namedDefinition !== calledDefinition ? namedDefinition.name : calledName,
+      ...(instanceAction ?? {
+        name:
+          namedDefinition && namedDefinition !== calledDefinition
+            ? namedDefinition.name
+            : calledName,
+        ...getDefinitionRanges(namedDefinition ?? calledDefinition),
+      }),
       location: expression.location,
-      ...getDefinitionRanges(namedDefinition ?? calledDefinition),
       parameters: [],
       context,
       expression,
@@ -496,6 +503,13 @@ const getActions = (
   ];
   if (isConstantDefinition(called, expression, scope, environment)) return callAction();
   if (!hasConstantArguments(args, scope, environment)) return callAction();
+  // Tool#getActionsAppl doesn't enter a call whose lookup finds a Java override.
+  if (
+    untracedExpressions.has(called.body) &&
+    resolveClosure(called.body, called.scope, environment) === undefined
+  ) {
+    return callAction();
+  }
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
@@ -615,6 +629,7 @@ const describeSpecification = (
   if (called && isArgumentFree) {
     const calledScope = getCallScope(called, expression, scope, environment);
     if (
+      !untracedExpressions.has(called.body) &&
       getLevelBound(called.body, calledScope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {

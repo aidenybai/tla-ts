@@ -13867,6 +13867,87 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const OVERRIDDEN_INSTANCES = new Map([
+    [
+      "T11",
+      "---- MODULE T11 ----\nEXTENDS Naturals\nVARIABLE x\nIni == x = 0\nStp(u) == u < 2 /\\ u' = u + 1\nInc(k) == x < 2 /\\ x' = x + k\nNx == x < 2 /\\ x' = x + 1\n====",
+    ],
+    ["T15", "---- MODULE T15 ----\nEXTENDS Naturals\nVARIABLE x\nK == INSTANCE T11\n===="],
+    [
+      "T16",
+      "---- MODULE T16 ----\nEXTENDS Naturals, TLC\nCONSTANT k\nVARIABLE y\nSt == y' = y + k\n====",
+    ],
+  ]);
+
+  it.each([
+    [
+      "Next == L!Inc(1) \\/ L!Stp(x)",
+      "INIT Init\nNEXT Next\nCONSTANT Inc <- [T11] MInc\nStp <- [T11] MStp",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MInc line 6, col 1 to line 6, col 7 of module M: 2:2",
+        "L!Stp line 9, col 1 to line 9, col 1 of module M (13 21 13 28): 0:2",
+      ],
+    ],
+    [
+      "Next == L!Nx",
+      "INIT Init\nNEXT Next\nCONSTANT Nx <- [T11] MOr",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MOr line 8, col 1 to line 8, col 3 of module M (8 9 8 27): 1:2",
+        "MOr line 8, col 1 to line 8, col 3 of module M (8 34 8 52): 1:1",
+      ],
+    ],
+    [
+      "Next == L2!K!Nx",
+      "INIT Init\nNEXT Next\nCONSTANT Nx <- [T11] MNx",
+      [
+        "Init line 12, col 1 to line 12, col 4 of module M: 1:1",
+        "MNx line 7, col 1 to line 7, col 3 of module M: 2:2",
+      ],
+    ],
+    [
+      "Spec == L!Ini /\\ [][L!Nx]_x",
+      "SPECIFICATION Spec\nCONSTANT Ini <- [T11] MIni\nNx <- [T11] MNx",
+      [
+        "MIni line 4, col 1 to line 4, col 4 of module M: 1:1",
+        "MNx line 7, col 1 to line 7, col 3 of module M: 2:2",
+      ],
+    ],
+    [
+      "Spec == LET J == INSTANCE T11 IN J!Ini /\\ [][J!Nx]_x",
+      "SPECIFICATION Spec\nCONSTANT Ini <- [T11] MIni",
+      [
+        "MIni line 4, col 1 to line 4, col 4 of module M: 1:1",
+        "J!Nx line 13, col 13 to line 13, col 13 of module M: 2:2",
+      ],
+    ],
+    [
+      'Start == x = 0 /\\ FALSE\nNext == I(1)!St \\/ I(1)!Print("a", FALSE)',
+      "INIT Start\nNEXT Next",
+      [
+        "Start line 13, col 1 to line 13, col 5 of module M: 0:1",
+        "I!St line 11, col 1 to line 11, col 4 of module M: 0:0",
+        "I!Print line 11, col 1 to line 11, col 4 of module M (14 20 14 41): 0:0",
+      ],
+    ],
+  ])(
+    "names the actions of %j as TLC does, whose lookup finds an override under an instance's SubstInNode",
+    async (definition, config, relations) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nMIni == x = 0 /\\ TRUE\nMStp(u) == u < 2 /\\ u' = u + 1 /\\ TRUE\nMInc(k) == x < 2 /\\ x' = x + k /\\ TRUE\nMNx == x < 2 /\\ x' = x + 1 /\\ TRUE\nMOr == (x < 2 /\\ x' = x + 1) \\/ (x < 1 /\\ x' = x + 2)\nL == INSTANCE T11\nL2 == INSTANCE T15\nI(j) == INSTANCE T16 WITH k <- j, y <- x\nInit == x = 0\n${definition}\n====`,
+        config: `${config}\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `${relation.label}: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(relations);
+    },
+  );
+
   it.each([
     [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",
