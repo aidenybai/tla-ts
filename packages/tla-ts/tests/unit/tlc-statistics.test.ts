@@ -200,6 +200,28 @@ it.each(TLCSET_FORMS)(
   },
 );
 
+it.each(
+  TLCSET_FORMS.flatMap((form) =>
+    ['"exit"', '"pause"'].map((key) => [key, form[0], form[1]] as const),
+  ),
+)(
+  "evaluates a constant definition that sets %s to FALSE through %s only as TLC starts, since TLC drops no write there",
+  async (key, _form, getDefinition) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(`${getDefinition(key, "FALSE")}\nInv == D`),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+      onPause: () => printed.push("paused"),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>'],
+      "success",
+      2,
+    ]);
+  },
+);
+
 const getSplitSource = (next: string, invariant: string) =>
   `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA(p) == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == ${next}\nInv == ${invariant}\n====`;
 
@@ -306,6 +328,8 @@ it.each([
   ['\\E q \\in {2} : A(q + TLCGet("level"))', "A(3) line 6, col 9 to line 6, col 49 of module M"],
   ["A(TLCGet(1))", "A line 7, col 9 to line 7, col 20 of module M"],
   ["A(TLCSet(1, 5))", "A line 7, col 9 to line 7, col 23 of module M"],
+  ['A(TLCSet("exit", FALSE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
+  ['A(TLCSet("pause", FALSE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
   ["A(Trace)", "A line 7, col 9 to line 7, col 16 of module M"],
   ["LET D == FALSE /\\ x = 0 IN A(D)", "A line 7, col 36 to line 7, col 39 of module M"],
   ["A(x)", "A line 7, col 9 to line 7, col 12 of module M"],

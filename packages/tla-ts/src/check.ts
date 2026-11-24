@@ -396,6 +396,7 @@ const searchStates = (
   const captureOutput = output.captureOutput;
   const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
+  specification.environment.runtime.pause = options.onPause ?? (() => {});
   reportStartup(specification, config, options.onProgress);
   output.captureMessages(specification.environment.runtime, options.errorCodes);
   const coverage =
@@ -407,7 +408,6 @@ const searchStates = (
     : specification.environment;
   const runtime = environment.runtime;
   const is174 = runtime.version === "1.7.4";
-  runtime.pause = options.onPause ?? (() => {});
   let description: SpecDescription | undefined;
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));

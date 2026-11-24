@@ -130,26 +130,25 @@ export const setTlcValue = (
     runtime.registers.set(key, value);
     return;
   }
-  // Deviation from TLC: TLCGetSet#TLCSet drops a named register's, the exit's or the pause's write before any checker exists, which keeps the value of a constant definition or of a split of Next without the write, so here it fails as a numbered register's does and the definition or action is evaluated again where it is used.
-  if (
-    isSplit &&
-    (key === "exit" ||
-      key === "pause" ||
-      (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)))
-  ) {
-    throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-  }
+  // Deviation from TLC: TLCGetSet#TLCSet drops the exit, the pause and a named register's write before any checker exists, so each fails here as a numbered register's does.
   if (key === "exit") {
-    if (value === true) runtime.isStopped = true;
+    if (value !== true) return;
+    if (isSplit)
+      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+    runtime.isStopped = true;
     return;
   }
   if (key === "pause") {
     if (value !== true || !runtime.pause) return;
+    if (isSplit)
+      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
     runtime.printPrompt("Press enter to resume model checking.");
     runtime.pause();
     return;
   }
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
+    if (isSplit)
+      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
     runtime.namedRegisters.set(key, value);
     return;
   }

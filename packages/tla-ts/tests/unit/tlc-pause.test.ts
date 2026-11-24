@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { simulate } from "../../src/simulate";
 
 it('prints TLC\'s message and pauses on TLCSet("pause", TRUE)', async () => {
   const printed: string[] = [];
@@ -36,4 +37,22 @@ it.each([
     ["Press enter to resume model checking.", "Press enter to resume model checking."],
     [1, 2],
   ]);
+});
+
+it("evaluates a constant definition that pauses only as a simulation starts, since TLC's Simulator never pauses", () => {
+  const printed: string[] = [];
+  simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE y\nInit == y = 0\nNext == y\' = (y + 1) % 2\nD == PrintT(<<"D", TLCSet("pause", TRUE)>>)\nInv == D\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onPrint: (text) => printed.push(text),
+    onSimulation: () => {},
+  });
+  expect(printed).toEqual(['<<"D", TRUE>>']);
 });
