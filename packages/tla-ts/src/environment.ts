@@ -1928,6 +1928,10 @@ export const createEnvironment = (
         },
         instanceChecks.splice(firstCheck),
         warnings,
+        (instance) =>
+          [...(instanced.get(instance) ?? [])].flatMap((entry) =>
+            entry[1].kind === "Definition" ? (getLinkedDefinition(entry[1].key) ?? []) : [],
+          ),
       ),
     );
     if (!scope.isHidden) linkOrder.push(linked);

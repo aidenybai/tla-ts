@@ -21,6 +21,7 @@ import {
   forEachChild,
   frameSubstitutions,
   getSubstitutedOccurrence,
+  isCalledCopy,
   substitutionFrames,
 } from "./instances";
 import { parenthesizedRanges } from "./parser";
@@ -31,6 +32,7 @@ import {
   getKeyName,
   getPatternNames,
   isBefore,
+  isInstantiated,
   SELECTION_NAME,
   type SelectedDefinition,
 } from "./resolve";
@@ -573,6 +575,7 @@ const getRecursiveSections = (
   base: Scope,
   root: ModuleUnit[] | LetExpression,
   hasRecursiveLet = true,
+  getInstanceSymbols = (_instance: Instance): Definition[] => [],
 ) => {
   const sections: RecursiveSection[] = [];
   const pending: Set<string>[] = [];
@@ -615,12 +618,13 @@ const getRecursiveSections = (
     frames.push(expression);
     scopes.push(undefined);
     depth++;
-    if (expression.recursive) walkUnits(getLetUnits(expression));
-    else {
-      for (let index = 0; index < expression.definitions.length; index++) {
-        walkDefinition(expression.definitions[index]);
-      }
-    }
+    walkUnits(getLetUnits(expression), (instance) =>
+      expression.definitions.filter(
+        (definition) =>
+          definition.name.startsWith(`${instance.name}!`) &&
+          (definition.kind === "Function" || definition.theoremRange === undefined),
+      ),
+    );
     depth--;
     walkExpression(expression.body);
     frames.pop();
@@ -643,6 +647,15 @@ const getRecursiveSections = (
     sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 });
   };
 
+  // Generator#setOpDefNodeRecursionFields puts an instance's OpDefNodes, but not its theorems, in the recursive section open where the INSTANCE is written.
+  const addInstanceSymbols = (definitions: Definition[]) => {
+    if (pendingCount === 0) return;
+    const names = (pending[depth] ??= new Set());
+    definitions.forEach((definition) =>
+      sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 }),
+    );
+  };
+
   const declareRecursive = (definitions: Definition[], location: SourceLocation) => {
     if (pendingCount === 0) sections.push({ location, members: [] });
     const names = (pending[depth] ??= new Set());
@@ -656,7 +669,10 @@ const getRecursiveSections = (
     );
   };
 
-  const walkUnits = (units: ModuleUnit[]) => {
+  const walkUnits = (
+    units: ModuleUnit[],
+    getInstanceSymbols: (instance: Instance) => Definition[],
+  ) => {
     const recursiveDefinitions = new Map<string, Definition[]>();
     units.forEach((unit) => {
       if (unit.kind !== "Definition" || !unit.definition.isRecursive) return;
@@ -674,6 +690,7 @@ const getRecursiveSections = (
         );
         return;
       }
+      if (unit.kind === "Instance") addInstanceSymbols(getInstanceSymbols(unit.instance));
       if (pendingCount === 0 && !hasRecursiveLet) return;
       if (unit.kind === "Assumption") walkExpression(unit.assumption.expression);
       else if (unit.kind === "Theorem" && unit.theorem.statement.kind !== "AssumeProve") {
@@ -682,7 +699,7 @@ const getRecursiveSections = (
     });
   };
 
-  if (Array.isArray(root)) walkUnits(root);
+  if (Array.isArray(root)) walkUnits(root, getInstanceSymbols);
   else walkExpression(root);
   return sections;
 };
@@ -697,9 +714,20 @@ const getLetUnits = (expression: LetExpression) =>
         location: declaration.location,
       } satisfies ModuleUnit,
     })),
-    ...expression.definitions.map((definition) => ({
-      location: definition.location,
-      unit: { kind: "Definition", definition } satisfies ModuleUnit,
+    ...expression.definitions
+      .filter(
+        (definition) =>
+          !isInstantiated(definition) &&
+          !isCalledCopy(definition) &&
+          !("isLetSubstitute" in definition),
+      )
+      .map((definition) => ({
+        location: definition.location,
+        unit: { kind: "Definition", definition } satisfies ModuleUnit,
+      })),
+    ...(expression.instances ?? []).map((instance) => ({
+      location: instance.location,
+      unit: { kind: "Instance", instance } satisfies ModuleUnit,
     })),
   ]
     .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
@@ -2477,6 +2505,7 @@ export const checkModuleLevels = (
   context: LevelContext,
   instances: InstanceLevelCheck[],
   warnings: SanyError[],
+  getInstanceSymbols: (instance: Instance) => Definition[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
   const proofs = createProofChecker(analyzer, context.instances, module.name);
@@ -2490,7 +2519,12 @@ export const checkModuleLevels = (
     })),
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
-  const sections = getRecursiveSections(new Map(), module.units, module.hasRecursiveLet);
+  const sections = getRecursiveSections(
+    new Map(),
+    module.units,
+    module.hasRecursiveLet,
+    getInstanceSymbols,
+  );
   sections.forEach((section) =>
     section.members.forEach((member) =>
       context.recursiveSections.set(member.definition, section.members),
