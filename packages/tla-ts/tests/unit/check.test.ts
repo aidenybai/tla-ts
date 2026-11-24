@@ -2581,19 +2581,60 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(['"D"', '"D"', '"D"']);
   });
 
-  // TLCSet's deviation in tlc/tlc-operators.ts makes D state-level, so the NullPointerException that TLC swallows at TLCSet's bound of 0, printing "A", is a config error.
-  it("rejects a substitute that sets a numbered register as TLC starts, where TLC swallows the NullPointerException", async () => {
-    await expect(
-      check({
-        source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
-        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
-      }),
-    ).rejects.toThrow(
-      new TlaConfigError(
-        "The configuration file substitutes constant N with non-constant D - specifically: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: ",
-      ),
-    );
+  it("swallows the NullPointerException of a substitute that sets a numbered register as TLC starts", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getSubstituteSource('D == TLCSet(1, 2)\nASSUME PrintT("A")'),
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([['"A"'], "success", 2]);
   });
+
+  it.each([
+    ["TLCSet", "D == TLCSet(1, 5)"],
+    ["an instance of TLC", "S == INSTANCE TLC\nD == S!TLCSet(1, 5)"],
+    ["an instance of a module that extends TLC", "J == INSTANCE T21\nD == J!TLCSet(1, 5)"],
+  ])(
+    "evaluates a substitute that sets a numbered register through %s where N is used, once TLC swallows its NullPointerException at startup",
+    async (_form, definition) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: getSubstituteSource(`${definition}\nASSUME N /\\ PrintT(TLCGet(1))`),
+        config: "INIT Init\nNEXT Next\nCONSTANT N <- D",
+        loadModule: (name) =>
+          name === "T21" ? "---- MODULE T21 ----\nEXTENDS TLC\n====" : undefined,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status]).toEqual([["5"], "success"]);
+    },
+  );
+
+  it.each([
+    [
+      "a constant definition",
+      'C == PrintT("C") /\\ TLCSet(1, 1)\nASSUME C /\\ C',
+      "CONSTANT N = 1",
+      ['"C"', '"C"', '"C"'],
+    ],
+    [
+      "a substitute",
+      'D == PrintT("D") /\\ TLCSet(1, 2)\nASSUME N /\\ N /\\ PrintT(TLCGet(1))',
+      "CONSTANT N <- D",
+      ['"D"', '"D"', '"D"', '"D"', "2"],
+    ],
+  ])(
+    "evaluates %s that sets a numbered register as TLC starts and again where it is used, since the write fails at startup",
+    async (_definition, definitions, constants, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: getSubstituteSource(definitions),
+        config: `INIT Init\nNEXT Next\n${constants}`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
 
   it("fails at a reference to N whose substitute failed as TLC started", async () => {
     const printed: string[] = [];

@@ -119,7 +119,6 @@ it.each([
     "\nINVARIANT Inv",
     ['<<"C", TRUE>>', '<<"C", TRUE>>'],
   ],
-  ['G(Op(_, _)) == Op("exit", TRUE)\nC == PrintT(<<"C", G(TLCSet)>>)', "", ['<<"C", TRUE>>']],
 ])(
   "evaluates %j as TLC's processConstantDefns does, in TLCState.Empty before the checker exists",
   async (definitions, properties, expected) => {
@@ -143,27 +142,96 @@ it("reads TLC.tla's level as 0 in Init, as TLC's TLCGetEval does", async () => {
   expect(printed).toEqual(['<<"I", 0>>']);
 });
 
-it.each([
+const TLCSET_FORMS = [
   [
-    'G(Op(_, _)) == Op("s:x", 2)\nC == PrintT(<<"C", G(TLCSet)>>)\nInv == C /\\ TLCGet("s:x") = 2',
-    '<<"C", TRUE>>',
+    "a literal key",
+    (key: string, value: string) => `D == PrintT(<<"D", TLCSet(${key}, ${value})>>)`,
   ],
   [
-    'D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet("s:x", 2)>>)\nInv == D /\\ TLCGet("s:x") = 2',
-    '<<"D", TRUE>>',
+    "a computed key",
+    (key: string, value: string) =>
+      `D == PrintT(<<"D", TLCSet(CHOOSE k \\in {${key}} : TRUE, ${value})>>)`,
   ],
-])(
-  "drops the named register %j writes as TLC starts, before any checker holds it",
-  async (definitions, expected) => {
+  [
+    "a parameter",
+    (key: string, value: string) =>
+      `Set(k) == TLCSet(k, ${value})\nD == PrintT(<<"D", Set(${key})>>)`,
+  ],
+  [
+    "a LET definition",
+    (key: string, value: string) => `D == LET k == ${key} IN PrintT(<<"D", TLCSet(k, ${value})>>)`,
+  ],
+  [
+    "an instance of TLC",
+    (key: string, value: string) =>
+      `S == INSTANCE TLC\nD == PrintT(<<"D", S!TLCSet(${key}, ${value})>>)`,
+  ],
+  [
+    "a LET instance of TLC",
+    (key: string, value: string) =>
+      `D == LET K == INSTANCE TLC IN PrintT(<<"D", K!TLCSet(${key}, ${value})>>)`,
+  ],
+  [
+    "an operator argument",
+    (key: string, value: string) =>
+      `G(Op(_, _)) == Op(${key}, ${value})\nD == PrintT(<<"D", G(TLCSet)>>)`,
+  ],
+  [
+    "an instance's key",
+    (key: string, value: string) =>
+      `---- MODULE KM ----\nKey == ${key}\n====\nJ == INSTANCE KM\nD == PrintT(<<"D", TLCSet(J!Key, ${value})>>)`,
+  ],
+] as const;
+
+it.each(TLCSET_FORMS)(
+  "sets a numbered register through %s where the constant definition is used, once its write fails as TLC starts",
+  async (_form, getDefinition) => {
     const printed: string[] = [];
     const result = await check({
-      source: getStartupSource(definitions),
+      source: getStartupSource(`${getDefinition("1", "2")}\nInv == D /\\ TLCGet(1) = 2`),
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       onPrint: (text) => printed.push(text),
     });
-    expect([printed, result.failure?.message]).toEqual([
-      [expected],
-      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nTLCGet(s:x) was undefined.",
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+      "success",
+      2,
+    ]);
+  },
+);
+
+// Deviation from TLC: TLCGetSet#TLCSet drops a named register's write as TLC starts, so TLC prints <<"D", TRUE>> once and fails with "TLCGet(s:x) was undefined.", where tla-ts acts as TLC does for a numbered register.
+it.each(TLCSET_FORMS)(
+  "sets a named register through %s where the constant definition is used, as for a numbered register",
+  async (_form, getDefinition) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(`${getDefinition('"s:x"', "2")}\nInv == D /\\ TLCGet("s:x") = 2`),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>', '<<"D", TRUE>>'],
+      "success",
+      2,
+    ]);
+  },
+);
+
+// Deviation from TLC: TLCGetSet#TLCSet drops the exit as TLC starts, so TLC prints <<"D", TRUE>> there and checks both states.
+it.each(TLCSET_FORMS)(
+  "stops checking through %s where the constant definition is used",
+  async (_form, getDefinition) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: getStartupSource(`${getDefinition('"exit"', "TRUE")}\nInv == D`),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.status, result.distinctStates]).toEqual([
+      ['<<"D", TRUE>>'],
+      "success",
+      1,
     ]);
   },
 );

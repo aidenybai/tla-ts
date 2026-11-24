@@ -130,6 +130,15 @@ export const setTlcValue = (
     runtime.registers.set(key, value);
     return;
   }
+  // Deviation from TLC: TLCGetSet#TLCSet drops a named register's, the exit's or the pause's write before any checker exists, which keeps a constant definition's startup value without the write, so here it fails as a numbered register's does and SpecProcessor#processConstantDefns leaves the definition to be evaluated where it is used.
+  if (
+    runtime.isStartup &&
+    (key === "exit" ||
+      key === "pause" ||
+      (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)))
+  ) {
+    throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+  }
   if (key === "exit") {
     if (value === true && !isSplit) runtime.isStopped = true;
     return;
