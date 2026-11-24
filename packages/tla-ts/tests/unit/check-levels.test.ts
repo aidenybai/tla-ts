@@ -1057,7 +1057,8 @@ describe("level checking matches SANY", () => {
     const checkWith = (inner: string, body: string) =>
       check({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
-        loadModule: (name) => (name === "N" ? inner : undefined),
+        loadModule: (name) =>
+          name === "N" ? inner : name === "P" ? "---- MODULE P ----\nH == TRUE\n====" : undefined,
         config: "INIT Init\nNEXT Next",
       });
 
@@ -1099,6 +1100,10 @@ describe("level checking matches SANY", () => {
         "G == LET RECURSIVE W(_)\n         J == INSTANCE N WITH v <- x\n         W(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\n     IN (J!L(0))' /\\ W(1)",
         "line 7, col 9 to line 7, col 17",
       ],
+      [
+        "RECURSIVE W(_)\nLOCAL INSTANCE P\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        "line 7, col 6 to line 7, col 9",
+      ],
     ])("raises the level of an instance written inside it: %#", async (body, location) => {
       await expect(checkWith(early, body)).rejects.toThrow(
         createSanyError([
@@ -1110,6 +1115,24 @@ describe("level checking matches SANY", () => {
         ]),
       );
     });
+
+    it.each([
+      {
+        inner: early,
+        body: "Inv == [](x + 1 > 0)\nRECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)",
+        sany: "line 4, col 8 to line 4, col 20: [] followed by action not of form [A]_v.",
+      },
+      {
+        inner: "---- MODULE N ----\nEXTENDS Naturals, P\nVARIABLE v\nL(n) == TRUE\n====",
+        body: "RECURSIVE W(_)\nINSTANCE N WITH v <- x\nW(k) == IF k = 0 THEN x' = x ELSE W(k - 1)\nG == (H)'",
+        sany: "line 7, col 6 to line 7, col 9: Level error in applying operator '",
+      },
+    ])(
+      "keeps out a definition an unnamed INSTANCE shares with a parameter-free module, where SANY reports $sany",
+      async (row) => {
+        expect((await checkWith(row.inner, row.body)).status).toBe("success");
+      },
+    );
   });
 
   it.each([

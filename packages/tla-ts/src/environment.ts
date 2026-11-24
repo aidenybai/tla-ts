@@ -1928,10 +1928,16 @@ export const createEnvironment = (
         },
         instanceChecks.splice(firstCheck),
         warnings,
-        (instance) =>
-          [...(instanced.get(instance) ?? [])].flatMap((entry) =>
-            entry[1].kind === "Definition" ? (getLinkedDefinition(entry[1].key) ?? []) : [],
-          ),
+        (instance) => {
+          const instancee = checkedModules.get(instance.module);
+          // Deviation from SANY: Generator#generateInstance reuses the OpDefNode (newOdn = odn) of a definition from a parameter-free module, so SANY raises that shared definition's level everywhere when the INSTANCE is in a recursive section.
+          return [...(instanced.get(instance) ?? [])].flatMap((entry) =>
+            entry[1].kind === "Definition" &&
+            (instance.isLocal || entry[1].key !== instancee?.exported.get(entry[0])?.key)
+              ? (getLinkedDefinition(entry[1].key) ?? [])
+              : [],
+          );
+        },
       ),
     );
     if (!scope.isHidden) linkOrder.push(linked);
