@@ -996,6 +996,377 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // SplitFrom collects the substrings in chunks, so sizes and limits around a chunk pin where split
+  // stops, and the calls pin that it converts the limit before the separator.
+  describe("splits a string into substrings across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [1, 63, 64, 65, 129]) {
+        const source = Array.from({ length: size }, (_, index) => (index * 37) % 101).join("--");
+        for (const limit of [size - 1, size, size + 1, 2 ** 32 - 1]) {
+          const calls: string[] = [];
+          const separator = { toString: () => { calls.push("separator"); return "--"; } };
+          const count = { valueOf: () => { calls.push("limit"); return limit; } };
+          const parts = source.split(separator as unknown as string, count as unknown as number);
+          let hash = 0;
+          for (const part of parts) hash = (hash * 31 + Number(part) + 1) % 1000003;
+          text += [size, limit, calls.join(","), parts.length, hash].join(":") + ";";
+        }
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "1:0:limit,separator:0:0;1:1:limit,separator:1:1;1:2:limit,separator:1:1;1:4294967295:limit,separator:1:1;",
+      "63:62:limit,separator:62:604679;63:63:limit,separator:63:745068;63:64:limit,separator:63:745068;63:4294967295:limit,separator:63:745068;",
+      "64:63:limit,separator:63:745068;64:64:limit,separator:64:97048;64:65:limit,separator:64:97048;64:4294967295:limit,separator:64:97048;",
+      "65:64:limit,separator:64:97048;65:65:limit,separator:65:8525;65:66:limit,separator:65:8525;65:4294967295:limit,separator:65:8525;",
+      "129:128:limit,separator:128:444689;129:129:limit,separator:129:785411;129:130:limit,separator:129:785411;129:4294967295:limit,separator:129:785411;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace(
+        "129:129:limit,separator:129:785411",
+        "129:129:limit,separator:128:785411",
+      );
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // ListFromArrayLike reads an array-like into chunks, so sizes around a chunk and a proxy that logs
+  // its gets pin what apply, Reflect.apply, Reflect.construct and a proxy's ownKeys read, in order.
+  describe("reads an array-like's elements into a list across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (values: unknown[]) => {
+        let hash = 0;
+        for (const value of String(values).split("")) hash = (hash * 31 + value.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const gets: string[] = [];
+        const arrayLike = new Proxy({} as Record<string, number>, {
+          get: (_, key) => {
+            gets.push(String(key));
+            return key === "length" ? size : (Number(key) * 37) % 101;
+          },
+        });
+        const applied = function (...values: number[]) {
+          return getHash(values);
+        }.apply(null, arrayLike as unknown as number[]);
+        const reflected = Reflect.apply((...values: number[]) => getHash(values), null, arrayLike);
+        const constructed = Reflect.construct(function (this: { hash: number }, ...values: number[]) {
+          this.hash = getHash(values);
+        }, arrayLike) as { hash: number };
+        const keys = Reflect.ownKeys(
+          new Proxy({}, { ownKeys: () => Array.from({ length: size }, (_, index) => \`k\${(index * 37) % 1000}\`) }),
+        );
+        text += [size, gets.length, getHash(gets), applied, reflected, constructed.hash, keys.length, getHash(keys)].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:3:203473:0:0:0:0:0;1:6:232754:48:48:48:1:3365;63:192:602842:675116:675116:675116:63:414857;",
+      "64:195:338231:785952:785952:785952:64:938576;65:198:750854:269739:269739:269739:65:290487;",
+      "129:390:367503:795648:795648:795648:129:141019;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:390:367503", "129:390:367504");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // A TypedArray's join builds its parts in halves and its toLocaleString in chunks, so sizes around
+  // a chunk, a logging separator and a toLocaleString that throws partway pin their calls and order.
+  describe("joins a typed array's elements across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const calls: string[] = [];
+      const original = Number.prototype.toLocaleString;
+      Number.prototype.toLocaleString = function (this: number, ...args: unknown[]) {
+        calls.push(\`\${this}/\${args.length}\`);
+        if (calls.length === 400) throw new Error(\`at \${this}\`);
+        return \`<\${this}>\`;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const values = Int16Array.from({ length: size }, (_, index) => ((index * 7919) % 2001) - 1000);
+        const separator = { toString: () => { calls.push("separator"); return "; "; } };
+        const joined = values.join(separator as unknown as string);
+        const local = values.toLocaleString();
+        text += [size, joined.length, getHash(joined), local.length, getHash(local), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      try {
+        Int16Array.from({ length: 129 }, (_, index) => index).toLocaleString();
+      } catch (error) {
+        text += \`\${(error as Error).message}:\${calls.length}\`;
+      }
+      Number.prototype.toLocaleString = original;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:0:0:0:1:167319;1:5:65739:7:99075:3:99678;63:336:817088:400:599327:67:198855;",
+      "64:342:260352:407:213189:132:710292;65:348:227341:414:549646:198:961919;",
+      "129:692:512630:822:449920:328:683678;at 71:400",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:692:512630", "129:692:512631");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // String.fromCharCode and String.fromCodePoint read their arguments by index into chunks, so sizes
+  // around a chunk and a RangeError partway pin which arguments they convert, in order.
+  describe("makes a string from thousands of code units and code points across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const calls: number[] = [];
+        const getCode = (index: number, code: number) => ({ valueOf: () => (calls.push(index), code) });
+        const units = String.fromCharCode(
+          ...(Array.from({ length: size }, (_, index) => getCode(index, 65 + ((index * 7919) % 70000))) as unknown as number[]),
+        );
+        const points = String.fromCodePoint(
+          ...(Array.from({ length: size }, (_, index) => getCode(index, (index * 7919) % 0x110000)) as unknown as number[]),
+        );
+        text += [size, units.length, getHash(units), points.length, getHash(points), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      const calls: number[] = [];
+      try {
+        String.fromCodePoint(
+          ...(Array.from({ length: 129 }, (_, index) => ({ valueOf: () => (calls.push(index), index === 70 ? -1 : index) })) as unknown as number[]),
+        );
+      } catch (error) {
+        text += \`\${(error as Error).name}:\${calls.length}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:0:0:0:0:0;1:1:65:1:0:2:47540;63:63:865908:117:835321:126:785769;",
+      "64:64:852032:119:524887:128:363083;65:65:429795:121:199675:130:283046;",
+      "129:129:687348:249:933119:258:436396;RangeError:71",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("RangeError:71", "RangeError:72");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // JSONEvaluateMembers evaluates an object's members by index into chunks and maps each key to its
+  // last member's record in halves, so sizes around a chunk and repeated keys pin the reviver's
+  // calls, their order, and the source each one sees.
+  describe("parses a JSON object's members across chunks, reviving each key's last member", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const members = Array.from({ length: size }, (_, index) => \`"k\${(index * 37) % 50}":\${index % 3 === 0 ? \`[\${index}]\` : index}\`);
+        const calls: string[] = [];
+        const parsed = JSON.parse(\`{\${members.join(",")}}\`, (key, value, context?: { source?: string }) => {
+          calls.push(\`\${key}=\${context?.source ?? typeof value}\`);
+          return typeof value === "number" ? value + 1 : value;
+        });
+        text += [size, Object.keys(parsed).length, getHash(JSON.stringify(parsed)), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:3938:1:151225;1:1:490178:3:764143;63:50:392656:67:131654;",
+      "64:50:919176:68:575278;65:50:636994:68:608573;129:50:816072:67:412439;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:50:816072:67:412439", "129:50:816072:67:412438");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // AddIndexProps makes the buckets of 100 index properties that a new array or arguments object
+  // reaches at once, so sizes around a bucket, a store into a later bucket and a push pin the
+  // properties, their order and their attributes.
+  describe("gives a new array and an arguments object their elements across buckets", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const describe = (array: ArrayLike<unknown>) => {
+        const last = Object.getOwnPropertyDescriptor(array, String(array.length - 1));
+        const flags = last === undefined ? "-" : [last.writable, last.enumerable, last.configurable].join("");
+        return [array.length, getHash(Object.getOwnPropertyNames(array).join()), getHash(JSON.stringify(Array.from(array))), flags].join(":");
+      };
+      for (const size of [0, 1, 99, 100, 101, 250]) {
+        const values = Array.from({ length: size }, (_, index) => (index * 37) % 101);
+        const split = values.join(",").split(",");
+        split[150] = "x";
+        split.push("y");
+        const getArguments = function (..._: number[]) {
+          return arguments;
+        };
+        const keys = Object.keys(Object.fromEntries(values.map((value, index) => [\`k\${value}-\${index}\`, value])));
+        text += [describe(split), describe(values.toReversed()), describe(values.toSpliced(50, 3, -1)), describe(getArguments(...values)), getHash(keys.join())].join("|") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "152:920023:832376:truetruetrue|0:594058:2914:-|1:154394:755832:truetruetrue|0:661962:2914:-|0;",
+      "152:920023:148775:truetruetrue|1:154394:89032:truetruetrue|2:170131:929460:truetruetrue|1:972304:89032:truetruetrue|235199;",
+      "152:907340:542115:truetruetrue|99:306507:813980:truetruetrue|97:183960:418936:truetruetrue|99:197699:573284:truetruetrue|741050;",
+      "152:157383:900218:truetruetrue|100:822622:729363:truetruetrue|98:972751:75028:truetruetrue|100:205765:242502:truetruetrue|686246;",
+      "152:155249:500665:truetruetrue|101:416298:428706:truetruetrue|99:306507:746289:truetruetrue|101:173438:949256:truetruetrue|195358;",
+      "251:96220:590072:truetruetrue|250:299485:766427:truetruetrue|248:827650:302748:truetruetrue|250:489248:420040:truetruetrue|947575;",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("250:489248:420040", "250:489248:420041");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // JSON.parse makes the parse records that a reviver reads only where the reviver is callable, so
+  // revivers that are missing, plain objects, functions and proxies pin the result and the calls.
+  describe("parses JSON with and without a callable reviver", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const document = { a: [1, 2.5, { b: "c", d: [true, null] }], e: { f: -0, a: 3 }, g: Array.from({ length: 130 }, (_, index) => index % 7) };
+      const source = JSON.stringify(document).replace('"a":3', '"a":3,"a":4');
+      const calls: string[] = [];
+      const revive = (key: string, value: unknown, context?: { source?: string }) => {
+        calls.push(\`\${key}=\${context?.source ?? typeof value}\`);
+        return typeof value === "number" ? value * 2 : value;
+      };
+      const revivers: unknown[] = [undefined, {}, revive, new Proxy(revive, {}), new Proxy({}, {})];
+      for (const reviver of revivers) {
+        const parsed = JSON.parse(source, reviver as never);
+        text += [getHash(JSON.stringify(parsed)), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "546821:0:0;546821:0:0;267604:143:567419;267604:286:465905;546821:286:465905;";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("267604:143:567419", "267604:143:567418");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // A store replaces each byte page it reaches once, and fill, reverse, sort, slice, toSorted and
+  // toReversed store their elements' bytes at once, so stores across pages, unaligned DataView
+  // stores, and a buffer that shrinks before the stores pin the bytes.
+  describe("stores a typed array's elements across byte pages", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (bytes: Uint8Array) => {
+        let hash = 0;
+        for (const byte of bytes) hash = (hash * 31 + byte) % 1000003;
+        return hash;
+      };
+      const buffer = new ArrayBuffer(1100);
+      const view = new DataView(buffer);
+      const words = new Int32Array(buffer, 12, 270);
+      words.fill(-123456789, 3, 200);
+      for (let index = 0; index < 270; index += 7) words[index] = index * 1000003;
+      view.setFloat64(253, Math.PI, true);
+      view.setUint16(511, 0xabcd);
+      text += getHash(new Uint8Array(buffer)) + ";";
+      words.reverse();
+      text += getHash(new Uint8Array(buffer)) + ";";
+      new Float64Array(buffer, 520, 70).set([1.5, -2.25, NaN], 60);
+      new Int16Array(buffer, 8, 500).sort();
+      text += getHash(new Uint8Array(buffer)) + ";";
+      const bytes = Uint8Array.from({ length: 300 }, (_, index) => (index * 7919) % 256);
+      text += [getHash(bytes.toSorted()), getHash(bytes.toReversed()), getHash(bytes.slice(5, 290)), getHash(new Uint8Array(new Float32Array(bytes).buffer))].join(":") + ";";
+      const resizable = new ArrayBuffer(600, { maxByteLength: 600 });
+      const shrinking = new Uint16Array(resizable);
+      shrinking.set(Array.from({ length: 300 }, (_, index) => (index * 7919) % 65536));
+      shrinking.sort((left, right) => {
+        if (resizable.byteLength === 600) resizable.resize(300);
+        return left - right;
+      });
+      text += [shrinking.length, getHash(new Uint8Array(resizable))].join(":") + ";";
+      resizable.resize(600);
+      shrinking.fill({ valueOf: () => (resizable.resize(260), 9) } as unknown as number, 2);
+      text += [shrinking.length, getHash(new Uint8Array(resizable))].join(":");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "387505;518159;639084;69618:666030:429389:288694;150:655352;130:120016";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("150:655352", "150:655353");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

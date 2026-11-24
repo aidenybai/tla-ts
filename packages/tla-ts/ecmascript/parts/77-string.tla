@@ -78,8 +78,8 @@ ThisStringValue(s, v) ==
 StringBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> StringConstructor(s, args, nt)
     [] m \in {"toString", "valueOf"} -> ThisStringValue(s, this)
-    [] m = "fromCharCode" -> StringFromCharCode(s, args, <<>>)
-    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, <<>>)
+    [] m = "fromCharCode" -> StringFromCharCode(s, args, 1, NoChunks)
+    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, 1, NoChunks)
     [] m = "raw" -> StringRaw(s, Arg(args, 1), Rest(args, 2))
     [] m \in {"match", "matchAll", "replace", "replaceAll", "search", "split"} ->
          LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)
@@ -97,20 +97,22 @@ StringConstructor(s, args, nt) ==
      ELSE LET p == GetPrototypeFromConstructor(str.s, nt, "StringPrototype") IN
           IF IsAbrupt(p) THEN p ELSE StringCreate(p.s, Val(str), Val(p))
 
-\* String.fromCharCode (§22.1.2.1).
-StringFromCharCode(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n
-       ELSE StringFromCharCode(n.s, Tail(args), Append(acc, NumToUint16(Val(n).value)))
+\* String.fromCharCode (§22.1.2.1), from the kth argument, with the code units so far in chunks, so
+\* that n arguments copy each code unit a few times rather than n.
+StringFromCharCode(s, args, k, units) ==
+  IF k > Len(args) THEN Ok(s, Str(ChunkValues(units)))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n
+       ELSE StringFromCharCode(n.s, args, k + 1, ChunkAppend(units, NumToUint16(Val(n).value)))
 
-\* String.fromCodePoint (§22.1.2.2).
-StringFromCodePoint(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n ELSE
+\* String.fromCodePoint (§22.1.2.2), from the kth argument, with each code point's units so far in
+\* chunks.
+StringFromCodePoint(s, args, k, parts) ==
+  IF k > Len(args) THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n ELSE
        LET x == Val(n).value IN
        IF ~NumIsFinite(x) \/ ~NumIsIntegral(x) THEN ThrowError(n.s, "RangeError")
        ELSE IF NumLess(x, PosZero) \/ NumLess(NumFromInt(1114111), x) THEN ThrowError(n.s, "RangeError")
-       ELSE StringFromCodePoint(n.s, Tail(args), acc \o UTF16EncodeCodePoint(NumToSmallInt(x)))
+       ELSE StringFromCodePoint(n.s, args, k + 1, ChunkAppend(parts, UTF16EncodeCodePoint(NumToSmallInt(x))))
 
 \* String.raw (§22.1.2.4).
 StringRaw(s, template, substitutions) ==
@@ -420,11 +422,13 @@ StringSplit(s, units, separator, limit) ==
             LET count == IF NumLess(n, NumFromInt(Len(units))) THEN NumToSmallInt(n) ELSE Len(units) IN
             CreateArrayFromList(sep.s, [i \in 1..count |-> Str(<<units[i]>>)])
        [] units = <<>> -> CreateArrayFromList(sep.s, <<Str(units)>>)
-       [] OTHER -> CreateArrayFromList(sep.s, SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), <<>>))
+       [] OTHER -> CreateArrayFromList(sep.s, ChunkValues(SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), NoChunks)))
+\* The substrings from i, after those so far, in chunks, so that splitting into n substrings copies
+\* each a few times rather than n.
 SplitFrom(units, sep, lim, i, j, acc) ==
-  IF j = -1 THEN Append(acc, Str(SubSeq(units, i + 1, Len(units))))
-  ELSE LET substrings == Append(acc, Str(SubSeq(units, i + 1, j))) IN
-       IF NumEqual(NumFromInt(Len(substrings)), lim) THEN substrings
+  IF j = -1 THEN ChunkAppend(acc, Str(SubSeq(units, i + 1, Len(units))))
+  ELSE LET substrings == ChunkAppend(acc, Str(SubSeq(units, i + 1, j))) IN
+       IF NumEqual(NumFromInt(ChunkLen(substrings)), lim) THEN substrings
        ELSE SplitFrom(units, sep, lim, j + Len(sep), StringIndexOf(units, sep, j + Len(sep)), substrings)
 
 \* CreateHTML (§B.2.2.2.1) for the HTML method m, after ToString of the this value.
