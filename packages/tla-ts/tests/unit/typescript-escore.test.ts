@@ -870,6 +870,52 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // JSON.parse reads a string's units, an array's items and an object's members into chunks, and
+  // evaluates the items by index, so the sizes around a chunk and a reviver that logs its calls pin
+  // what it reads and the order in which it evaluates and revives them.
+  describe("parses JSON arrays, strings and objects across chunks, reviving in order", () => {
+    const getSource = (expected: string) => `
+      const quote = String.fromCharCode(34);
+      const slash = String.fromCharCode(92);
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const items = Array.from({ length: size }, (_, index) =>
+          index % 3 === 0 ? quote + "s" + index + slash + "n" + slash + "u0041" + quote : String(index * 7),
+        );
+        const array = JSON.parse("[" + items.join(", ") + "]") as unknown[];
+        const value = ("ab" + slash + quote).repeat(size) + slash + "u00e9" + "c".repeat(size);
+        const string = JSON.parse(quote + value + quote) as string;
+        const members = Array.from({ length: size }, (_, index) => quote + "k" + (index % 50) + quote + ": " + index);
+        const last = array.at(-1);
+        const object = JSON.parse("{" + members.join(",") + "}") as Record<string, number>;
+        text += [size, array.length, typeof last === "string" ? last.length + "/" + last.charCodeAt(last.length - 2) : String(last), string.length, string.charCodeAt(size * 3), Object.keys(object).length, object.k0].join(":") + ";";
+      }
+      let hash = 0;
+      let calls = 0;
+      const records = Array.from({ length: 70 }, (_, index) => "{" + quote + "a" + quote + ": " + index + ", " + quote + "b" + quote + ": [" + index + "]}");
+      JSON.parse("[" + records.join(",") + "]", (key, value) => {
+        calls += 1;
+        hash = (hash * 31 + key.length * 101 + (typeof value === "number" ? value : 7)) % 1000003;
+        return value;
+      });
+      text += calls + ":" + hash;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:undefined:1:233:0:;1:1:4/10:5:233:1:0;63:63:434:253:233:50:50;64:64:5/10:257:233:50:50;65:65:448:261:233:50:50;129:129:896:517:233:50:100;281:4386";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("281:4386", "281:4387");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

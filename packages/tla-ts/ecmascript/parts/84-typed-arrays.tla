@@ -443,28 +443,15 @@ SortElements(s, values, comparator) ==
            left == SortElements(s, SubSeq(values, 1, half), comparator)
        IN IF IsAbrupt(left) THEN left ELSE
           LET right == SortElements(left.s, SubSeq(values, half + 1, Len(values)), comparator) IN
-          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, <<>>, <<>>)
-\* The merge of left from i and right from j, after the values merged so far: the full chunks of
-\* MergeChunk values, then chunk. A step copies its chunk rather than every value merged so far,
-\* so that a merge of n values copies about n * MergeChunk + (n \div MergeChunk)^2 values, not n^2.
-MergeChunk == 64
-MergeElements(s, left, right, comparator, i, j, chunks, chunk) ==
+          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, NoChunks)
+\* The merge of left from i and right from j, after the values merged so far, in chunks.
+MergeElements(s, left, right, comparator, i, j, merged) ==
   IF i > Len(left) \/ j > Len(right)
-  THEN Ok(s, ConcatChunks(chunks, 1, Len(chunks)) \o chunk \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
+  THEN Ok(s, ChunkValues(merged) \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
   ELSE LET c == CompareTypedArrayElements(s, left[i], right[j], comparator) IN
        IF IsAbrupt(c) THEN c
-       ELSE LET isRight == NumLess(PosZero, Val(c))
-                next == Append(chunk, IF isRight THEN right[j] ELSE left[i])
-                ni == IF isRight THEN i ELSE i + 1
-                nj == IF isRight THEN j + 1 ELSE j
-            IN IF Len(next) = MergeChunk THEN MergeElements(c.s, left, right, comparator, ni, nj, Append(chunks, next), <<>>)
-               ELSE MergeElements(c.s, left, right, comparator, ni, nj, chunks, next)
-\* The values of the chunks from first to last, in order, joined in halves.
-ConcatChunks(chunks, first, last) ==
-  IF first > last THEN <<>>
-  ELSE IF first = last THEN chunks[first]
-  ELSE LET middle == (first + last) \div 2
-       IN ConcatChunks(chunks, first, middle) \o ConcatChunks(chunks, middle + 1, last)
+       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, right, comparator, i, j + 1, ChunkAppend(merged, right[j]))
+       ELSE MergeElements(c.s, left, right, comparator, i + 1, j, ChunkAppend(merged, left[i]))
 
 \* The %TypedArray%.prototype methods (§23.2.3) that start with ValidateTypedArray, on ta of
 \* length len.

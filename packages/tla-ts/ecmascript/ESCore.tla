@@ -43,6 +43,9 @@ RECURSIVE Remove(_, _)
 RECURSIVE Concat(_)
 RECURSIVE FoldLeftSeq(_)
 RECURSIVE Repeat(_, _)
+RECURSIVE ChunkAppend(_, _)
+RECURSIVE ChunkValues(_)
+RECURSIVE ChunkLen(_)
 RECURSIVE HeapGet(_, _)
 RECURSIVE HeapSet(_, _, _)
 RECURSIVE HeapAppend(_, _)
@@ -691,7 +694,7 @@ RECURSIVE JSONDigitsEnd(_, _)
 RECURSIVE JSONObject(_, _, _)
 RECURSIVE JSONArray(_, _, _)
 RECURSIVE JSONEvaluate(_, _)
-RECURSIVE JSONEvaluateItems(_, _, _, _)
+RECURSIVE JSONEvaluateItems(_, _, _, _, _)
 RECURSIVE JSONEvaluateMembers(_, _, _, _)
 RECURSIVE InternalizeJSONProperty(_, _, _, _, _)
 RECURSIVE InternalizeJSONElements(_, _, _, _, _, _)
@@ -1350,8 +1353,7 @@ RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
-RECURSIVE MergeElements(_, _, _, _, _, _, _, _)
-RECURSIVE ConcatChunks(_, _, _)
+RECURSIVE MergeElements(_, _, _, _, _, _, _)
 RECURSIVE TypedArrayMethod(_, _, _, _, _)
 RECURSIVE TypedArrayBuiltin(_, _, _, _, _, _)
 RECURSIVE ValidateUint8Array(_, _, _)
@@ -2031,6 +2033,8 @@ SymUnscopables == Sym(13)
 SymAsyncDispose == Sym(14)
 SymDispose == Sym(15)
 MapSeq(seq, F(_)) == [i \in DOMAIN seq |-> F(seq[i])]
+ChunkSize == 64
+NoChunks == [chunks |-> <<>>, chunk |-> <<>>]
 HeapPageSize == 256
 BigIntZero == BigIntOf(FALSE, <<>>)
 EmptyDesc ==
@@ -5318,7 +5322,6 @@ BlockPageSize == 256
 DataViewGetters ==
   {"getInt8", "getUint8", "getInt16", "getUint16", "getInt32", "getUint32", "getBigInt64", "getBigUint64",
    "getFloat16", "getFloat32", "getFloat64"}
-MergeChunk == 64
 Base64Alphabets == (N("base64") :> "base64") @@ (N("base64url") :> "base64url")
 LastChunkHandlings ==
   (N("loose") :> "loose") @@ (N("strict") :> "strict") @@ (N("stop-before-partial") :> "stop-before-partial")
@@ -5683,6 +5686,14 @@ FoldLeftSeq(seqs) ==
     [] Len(seqs) = 1 -> seqs[1]
     [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
+\* A sequence built a value at a time: its full chunks of ChunkSize values, then the chunk being
+\* filled. Adding a value copies that chunk, and the list of chunks once a chunk fills, rather than
+\* every value so far, so that building n values copies about n * ChunkSize + (n \div ChunkSize)^2.
+ChunkAppend(c, x) ==
+  IF Len(c.chunk) = ChunkSize - 1 THEN [chunks |-> Append(c.chunks, Append(c.chunk, x)), chunk |-> <<>>]
+  ELSE [chunks |-> c.chunks, chunk |-> Append(c.chunk, x)]
+ChunkValues(c) == FoldLeftSeq(c.chunks) \o c.chunk
+ChunkLen(c) == Len(c.chunks) * ChunkSize + Len(c.chunk)
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
 HeapGet(h, i) == h.pages[(i - 1) \div HeapPageSize + 1][((i - 1) % HeapPageSize) + 1]
@@ -9820,10 +9831,10 @@ JSONValue(units, i) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
   CASE c = 34 ->
-         LET r == JSONString(units, i + 1, <<>>) IN
+         LET r == JSONString(units, i + 1, NoChunks) IN
          IF r.ok THEN JSONPrimitive(units, Str(r.units), i, r.i) ELSE r
-    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), <<>>)
-    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), <<>>)
+    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), NoChunks)
+    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), NoChunks)
     [] c = 45 \/ IsDigit(c) ->
          LET end == JSONNumberEnd(units, i) IN
          IF end = 0 THEN JSONFail ELSE JSONPrimitive(units, Num(StrToNum(SubSeq(units, i, end - 1))), i, end)
@@ -9831,23 +9842,24 @@ JSONValue(units, i) ==
     [] JSONHas(units, i, N("false")) -> JSONPrimitive(units, False, i, i + 5)
     [] JSONHas(units, i, N("null")) -> JSONPrimitive(units, Null, i, i + 4)
     [] OTHER -> JSONFail
-\* A string's code units after its opening quote at i - 1, with the index after its closing quote.
+\* A string's code units after its opening quote at i - 1, with the index after its closing quote,
+\* after those read so far, in chunks.
 JSONString(units, i, acc) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
-  CASE c = 34 -> [ok |-> TRUE, units |-> acc, i |-> i + 1]
+  CASE c = 34 -> [ok |-> TRUE, units |-> ChunkValues(acc), i |-> i + 1]
     [] c < 32 -> JSONFail
     [] c = 92 /\ i < Len(units) ->
          LET e == units[i + 1]
              escaped == CASE e \in {34, 47, 92} -> e [] e = 98 -> 8 [] e = 102 -> 12 [] e = 110 -> 10
                           [] e = 114 -> 13 [] e = 116 -> 9 [] OTHER -> -1
-         IN IF escaped >= 0 THEN JSONString(units, i + 2, Append(acc, escaped))
+         IN IF escaped >= 0 THEN JSONString(units, i + 2, ChunkAppend(acc, escaped))
             ELSE IF e = 117 /\ i + 5 <= Len(units) /\ \A k \in i + 2..i + 5 : IsHexDigit(units[k])
-            THEN JSONString(units, i + 6, Append(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
+            THEN JSONString(units, i + 6, ChunkAppend(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
                                                        NumDigitValue(units[i + 4])) * 16 + NumDigitValue(units[i + 5])))
             ELSE JSONFail
     [] c = 92 -> JSONFail
-    [] OTHER -> JSONString(units, i + 1, Append(acc, c))
+    [] OTHER -> JSONString(units, i + 1, ChunkAppend(acc, c))
 IsHexDigit(c) == IsDigit(c) \/ (c >= 65 /\ c <= 70) \/ (c >= 97 /\ c <= 102)
 \* The index after the number at i, or 0 when it isn't one.
 JSONNumberEnd(units, i) ==
@@ -9859,24 +9871,24 @@ JSONNumberEnd(units, i) ==
       exponentSign == IF At(fraction + 1, {43, 45}) THEN fraction + 2 ELSE fraction + 1
   IN IF fraction = 0 \/ ~At(fraction, {69, 101}) THEN fraction ELSE Digits(exponentSign)
 JSONDigitsEnd(units, i) == IF i <= Len(units) /\ IsDigit(units[i]) THEN JSONDigitsEnd(units, i + 1) ELSE i
-\* The members of an object after its opening brace, from index i.
+\* The members of an object after its opening brace, from index i, after those read so far, in chunks.
 JSONObject(units, i, members) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> members], i + 1)
-  ELSE LET j == IF members = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> ChunkValues(members)], i + 1)
+  ELSE LET j == IF ChunkLen(members) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 \/ j > Len(units) \/ units[j] # 34 THEN JSONFail ELSE
-  LET key == JSONString(units, j + 1, <<>>) IN IF ~key.ok THEN key ELSE
+  LET key == JSONString(units, j + 1, NoChunks) IN IF ~key.ok THEN key ELSE
   LET colon == JSONWhitespace(units, key.i) IN
   IF colon > Len(units) \/ units[colon] # 58 THEN JSONFail ELSE
   LET value == JSONValue(units, JSONWhitespace(units, colon + 1)) IN IF ~value.ok THEN value
-  ELSE JSONObject(units, value.i, Append(members, <<key.units, value.node>>))
-\* The elements of an array after its opening bracket, from index i.
+  ELSE JSONObject(units, value.i, ChunkAppend(members, <<key.units, value.node>>))
+\* The elements of an array after its opening bracket, from index i, after those read so far, in chunks.
 JSONArray(units, i, items) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> items], i + 1)
-  ELSE LET j == IF items = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> ChunkValues(items)], i + 1)
+  ELSE LET j == IF ChunkLen(items) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 THEN JSONFail ELSE
-  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, Append(items, value.node))
+  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, ChunkAppend(items, value.node))
 \* Evaluates a parse tree to [s, v, record], with the JSON Parse Record (§25.5.1.2) that
 \* CreateJSONParseRecord would make for it: [value, source, elements, entries], where entries maps
 \* each key to the record of its last member.
@@ -9885,17 +9897,18 @@ JSONEvaluate(s, tree) ==
          [s |-> s, v |-> tree.value,
           record |-> [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]]
     [] tree.type = "array" ->
-         LET items == JSONEvaluateItems(s, tree.items, <<>>, <<>>)
+         LET items == JSONEvaluateItems(s, tree.items, 1, NoChunks, NoChunks)
              a == CreateArrayFromList(items.s, items.values)
          IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
              members == JSONEvaluateMembers(o.s, Val(o), tree.members, <<>>)
          IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
-JSONEvaluateItems(s, items, values, records) ==
-  IF items = <<>> THEN [s |-> s, values |-> values, records |-> records]
-  ELSE LET r == JSONEvaluate(s, Head(items)) IN
-       JSONEvaluateItems(r.s, Tail(items), Append(values, r.v), Append(records, r.record))
+\* The items from k, after the values and the records of those evaluated so far, in chunks.
+JSONEvaluateItems(s, items, k, values, records) ==
+  IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
+  ELSE LET r == JSONEvaluate(s, items[k]) IN
+       JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
 JSONEvaluateMembers(s, o, members, entries) ==
   IF members = <<>> THEN [s |-> s, entries |-> entries]
   ELSE LET key == Str(Head(members)[1])
@@ -15853,27 +15866,15 @@ SortElements(s, values, comparator) ==
            left == SortElements(s, SubSeq(values, 1, half), comparator)
        IN IF IsAbrupt(left) THEN left ELSE
           LET right == SortElements(left.s, SubSeq(values, half + 1, Len(values)), comparator) IN
-          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, <<>>, <<>>)
-\* The merge of left from i and right from j, after the values merged so far: the full chunks of
-\* MergeChunk values, then chunk. A step copies its chunk rather than every value merged so far,
-\* so that a merge of n values copies about n * MergeChunk + (n \div MergeChunk)^2 values, not n^2.
-MergeElements(s, left, right, comparator, i, j, chunks, chunk) ==
+          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, NoChunks)
+\* The merge of left from i and right from j, after the values merged so far, in chunks.
+MergeElements(s, left, right, comparator, i, j, merged) ==
   IF i > Len(left) \/ j > Len(right)
-  THEN Ok(s, ConcatChunks(chunks, 1, Len(chunks)) \o chunk \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
+  THEN Ok(s, ChunkValues(merged) \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
   ELSE LET c == CompareTypedArrayElements(s, left[i], right[j], comparator) IN
        IF IsAbrupt(c) THEN c
-       ELSE LET isRight == NumLess(PosZero, Val(c))
-                next == Append(chunk, IF isRight THEN right[j] ELSE left[i])
-                ni == IF isRight THEN i ELSE i + 1
-                nj == IF isRight THEN j + 1 ELSE j
-            IN IF Len(next) = MergeChunk THEN MergeElements(c.s, left, right, comparator, ni, nj, Append(chunks, next), <<>>)
-               ELSE MergeElements(c.s, left, right, comparator, ni, nj, chunks, next)
-\* The values of the chunks from first to last, in order, joined in halves.
-ConcatChunks(chunks, first, last) ==
-  IF first > last THEN <<>>
-  ELSE IF first = last THEN chunks[first]
-  ELSE LET middle == (first + last) \div 2
-       IN ConcatChunks(chunks, first, middle) \o ConcatChunks(chunks, middle + 1, last)
+       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, right, comparator, i, j + 1, ChunkAppend(merged, right[j]))
+       ELSE MergeElements(c.s, left, right, comparator, i + 1, j, ChunkAppend(merged, left[i]))
 \* The %TypedArray%.prototype methods (§23.2.3) that start with ValidateTypedArray, on ta of
 \* length len.
 TypedArrayMethod(s, ta, len, m, args) ==
