@@ -272,7 +272,7 @@ export class ArithSolver extends ArithAxioms {
     const constraint = isTrue ? bound.constraintTrue : bound.constraintFalse;
     if (solver.constraintIsRedundant(constraint)) return;
     solver.activate(constraint);
-    if (solver.status === LP_INFEASIBLE) return;
+    if (solver.status === LP_INFEASIBLE || !solver.settings.isPropagatingEqs) return;
     const kind = this.boundToConstraintKind(bound.isInt, bound.isLower, isTrue);
     const value = getBoundValue(bound, isTrue);
     if (value.y.isZero()) this.propagateEqs(bound.column, constraint, kind, bound, value.x);
@@ -875,6 +875,7 @@ export class ArithSolver extends ArithAxioms {
       this.s.setPhaseLiteral(lit);
     }
     for (const lemma of nla.lemmas) this.falseCaseOfCheckNla(lemma);
+    if (!this.solver.settings.isPropagatingEqs) return;
     for (const equality of nla.fixedEqualities)
       this.addEquality(equality.lpVar, equality.value, equality.explanation);
     for (const equality of nla.equalities)

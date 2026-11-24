@@ -6416,6 +6416,47 @@ describe("smt.random_seed, as Z3 5.3.2 reads it into every smt kernel", () => {
   });
 });
 
+describe("smt.arith.propagate_eqs, as Z3 5.3.2 reads it into every smt kernel", () => {
+  it("stops the arithmetic solver of sat.euf propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or (or (< z 3) (< w (ite (= w z) z -2))) (not q) (= (+ y 3) y)))",
+        "(assert (or (< (+ y 5) 4)))",
+        "(assert (or (= x w) (< w y) (= (+ w 3) (+ -2 (+ z y)))))",
+        "(assert (or (= (+ (+ y x) w) (+ (+ w 0) (+ x y))) (or (not p) (< (+ y y) w)) (and (= (ite (= -3 y) z z) 2) (<= -3 (+ z w)))))",
+        "(check-sat-using sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 449)"]);
+  });
+
+  it("stops the smt kernel of sat.euf's mbqi propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(set-option :produce-models true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (forall ((z Int)) (or (>= (f z) (- x -2)) (<= (- (f y) (- 3 x)) y))))",
+        "(assert (forall ((z Int)) (or (>= (+ (- z -1) (f z)) -1) (< (- (- -2 y) (f 3)) (+ (+ -2 y) x)))))",
+        "(assert (or (< (f x) (f 4)) (<= (- (- x y) y) (+ -1 (f 0)))))",
+        "(assert (or (< (- 2 (- x x)) (+ 1 (- y x))) (>= (+ x x) (+ x (+ y x)))))",
+        "(check-sat-using (using-params sat :euf true))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 3126)"]);
+  });
+});
+
 describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => {
   it("prints the model uncompressed until get-value compresses it", () => {
     expect(

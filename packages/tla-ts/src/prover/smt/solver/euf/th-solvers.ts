@@ -33,7 +33,13 @@ export const mkThSolver = (parameters: ReadonlyMap<string, string>) => {
   return (ctx: EufSolver, family: number): ThSolver | null => {
     if (family === -1) return new QSolver(ctx, parameters);
     if (family === FAMILY_ARITH)
-      return new ArithSolver(ctx, family, getHammerPeriod(parameters), config.randomSeed);
+      return new ArithSolver(
+        ctx,
+        family,
+        getHammerPeriod(parameters),
+        config.isArithPropagatingEqs,
+        config.randomSeed,
+      );
     if (family === FAMILY_ARRAY) return new ArraySolver(ctx, family);
     if (family === FAMILY_BV) return new BvSolver(ctx, family);
     if (family === FAMILY_DATATYPE) return new DtSolver(ctx, family);
