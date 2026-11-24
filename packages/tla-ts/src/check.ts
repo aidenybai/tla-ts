@@ -945,10 +945,11 @@ const searchStates = (
       }
     });
     const action = found.result.action;
+    const actionName = action?.name ?? error.action;
     const traceFailure = found.result.failed && getTraceFailure(found.result.failed, found.lines);
     const message = getIncompleteSuccessorMessage(
       error.variables,
-      error.action,
+      actionName,
       nextActions.length,
       options.version,
     );
@@ -968,7 +969,7 @@ const searchStates = (
                   error.state,
                   trace.length + 1,
                   {
-                    action: error.action,
+                    action: actionName,
                     label: action && getActionLabel(action, options.version),
                     output: found.lines,
                   },

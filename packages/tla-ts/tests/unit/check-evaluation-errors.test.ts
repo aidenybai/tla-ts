@@ -2877,6 +2877,50 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "Stp \\/ (LET q == x' = 1 IN q)",
+      "q",
+      "variable is not defined: y",
+      "q line 7, col 26 to line 7, col 31 of module M",
+    ],
+    [
+      "Stp \\/ (LET q == x' = 1 \\/ y' = 1 IN q)",
+      "q",
+      "variable is not defined: y",
+      "q line 7, col 26 to line 7, col 31 of module M",
+    ],
+    [
+      "Stp \\/ (LET q == LET r == x' = 1 IN r IN q)",
+      "r",
+      "variable is not defined: y",
+      "r line 7, col 35 to line 7, col 40 of module M",
+    ],
+    [
+      "LetP(TRUE)",
+      "q",
+      "variables are not defined: x, y",
+      "q line 5, col 33 to line 5, col 33 of module M",
+    ],
+  ])(
+    "names the incomplete action of Next == %s by TLC's split action",
+    async (next, name, missing, label) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nStp == x < 2 /\\ x' = x + 1 /\\ y' = y\nLetP(p) == LET q == p IN Stp \\/ q\nInit == x = 0 /\\ y = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.failure?.message,
+        result.failure?.trace.map((step) => step.label),
+        result.generatedStates,
+      ]).toEqual([
+        `Successor state is not completely specified by action ${name} of the next-state relation. The following ${missing}.\n`,
+        [undefined, label],
+        3,
+      ]);
+    },
+  );
+
   it("stops at a successor the next-state relation leaves incomplete under -continue", async () => {
     const result = await check({
       source: "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1\n====",
