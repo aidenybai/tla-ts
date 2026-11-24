@@ -1152,18 +1152,38 @@ const evaluateAtStartup = (
   environment.startupValues[definitionId] = value;
 };
 
+// The id of a substitute that a walk of the startup modules evaluates, as it does where it has no
+// value yet or its evaluation shows output again, or undefined where the walk skips it.
+const getPendingSubstitute = (substitute: StartupSubstitute, environment: Environment) => {
+  const definitionId = environment.facts.ids.get(substitute.definition);
+  return definitionId !== undefined &&
+    (environment.startupValues[definitionId] === undefined ||
+      isReevaluationShown(substitute.definition, environment))
+    ? definitionId
+    : undefined;
+};
+
+// The id of a definition that a walk of the startup modules evaluates, as it does where a check
+// evaluates it as it starts and it has no value yet, or it overrides one and its evaluation shows
+// output again, or undefined where the walk skips it.
+const getPendingDefinition = (entry: StartupDefinition, environment: Environment) => {
+  const definition = entry.definition;
+  if (definition.kind === "Operator" && definition.params.length > 0) return undefined;
+  if (!isEvaluatedAtStartup(definition, environment)) return undefined;
+  const definitionId = environment.facts.ids.get(definition);
+  return definitionId !== undefined &&
+    (environment.startupValues[definitionId] === undefined ||
+      (entry.isOverride && isReevaluationShown(definition, environment)))
+    ? definitionId
+    : undefined;
+};
+
 export const evaluateStartupDefinitions = (modules: StartupModule[], environment: Environment) =>
   modules.forEach((module) => {
     module.substitutes.forEach((substitute) => {
-      const definition = substitute.definition;
-      const definitionId = environment.facts.ids.get(definition);
+      const definitionId = getPendingSubstitute(substitute, environment);
       if (definitionId === undefined) return;
-      if (
-        environment.startupValues[definitionId] !== undefined &&
-        !isReevaluationShown(definition, environment)
-      ) {
-        return;
-      }
+      const definition = substitute.definition;
       try {
         evaluateAtStartup(definition, definitionId, environment);
       } catch (error) {
@@ -1177,17 +1197,9 @@ export const evaluateStartupDefinitions = (modules: StartupModule[], environment
       }
     });
     module.definitions.forEach((entry) => {
+      const definitionId = getPendingDefinition(entry, environment);
+      if (definitionId === undefined) return;
       const definition = entry.definition;
-      if (definition.kind === "Operator" && definition.params.length > 0) return;
-      if (!isEvaluatedAtStartup(definition, environment)) return;
-      const definitionId = environment.facts.ids.get(definition);
-      if (
-        definitionId === undefined ||
-        (environment.startupValues[definitionId] !== undefined &&
-          !(entry.isOverride && isReevaluationShown(definition, environment)))
-      ) {
-        return;
-      }
       try {
         evaluateAtStartup(definition, definitionId, environment);
       } catch (error) {
@@ -1195,6 +1207,19 @@ export const evaluateStartupDefinitions = (modules: StartupModule[], environment
         if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
       }
     });
+  });
+
+// The parts of the startup modules that a later walk of them evaluates, where the walk starts with
+// the values these hold: those that a walk evaluates again once these evaluated.
+export const getPendingStartup = (modules: readonly StartupModule[], environment: Environment) =>
+  modules.flatMap((module) => {
+    const substitutes = module.substitutes.filter(
+      (substitute) => getPendingSubstitute(substitute, environment) !== undefined,
+    );
+    const definitions = module.definitions.filter(
+      (entry) => getPendingDefinition(entry, environment) !== undefined,
+    );
+    return substitutes.length + definitions.length === 0 ? [] : [{ substitutes, definitions }];
   });
 
 const isStateWithin = (state: State | undefined, cached: State | undefined) => {

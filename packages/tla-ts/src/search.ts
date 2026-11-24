@@ -57,6 +57,7 @@ import {
   describeRange,
   evaluate,
   evaluateStartupDefinitions,
+  getPendingStartup,
   getStartupValue,
   expectBoolean,
   expectBooleanBody,
@@ -1143,7 +1144,14 @@ export const createCheckBase = (
   }
   const startupValues = environment.startupValues.slice(0, facts.definitions.length);
   return {
-    environment: { link, facts, startupValues, startup },
+    // A file's check walks the startup of the base's modules again, which evaluates only what the
+    // base's walk left pending.
+    environment: {
+      link,
+      facts,
+      startupValues,
+      startup: { ...startup, modules: getPendingStartup(startup.modules, environment) },
+    },
     strings: getRankedStrings(),
     valueStrings: getValueStrings(startupValues),
     contexts: created.order.getSharedContexts(ownModule),
