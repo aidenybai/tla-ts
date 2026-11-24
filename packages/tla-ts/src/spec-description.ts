@@ -232,7 +232,7 @@ const isConstantDefinition = (
   environment: Environment,
 ) => {
   const definition = getCalledDefinition(expression, scope, environment);
-  return definition?.body === closure.body && isConstantValue(definition, environment);
+  return definition?.body === closure.body && getLookupValue(definition, environment) !== undefined;
 };
 
 const getThunk = (expression: Expression, scope: Scope | undefined) => {
@@ -601,7 +601,13 @@ const describeSpecification = (
           scope: thunk.scope,
         }
       : resolveClosure(expression, scope, environment);
-  if (called && isConstantDefinition(called, expression, scope, environment)) return;
+  if (
+    called &&
+    getArguments(expression).length === 0 &&
+    isConstantDefinition(called, expression, scope, environment)
+  ) {
+    return;
+  }
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
@@ -695,7 +701,13 @@ const describeProperty = (
     return;
   }
   const called = resolveClosure(expression, scope, environment);
-  if (called && isConstantDefinition(called, expression, scope, environment)) return;
+  if (
+    called &&
+    getArguments(expression).length === 0 &&
+    isConstantDefinition(called, expression, scope, environment)
+  ) {
+    return;
+  }
   if (
     called &&
     called.params.length === getArguments(expression).length &&

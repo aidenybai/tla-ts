@@ -25,6 +25,7 @@ import {
   compileArgumentScope,
   evaluate,
   forEachBinding,
+  getBodyLiteral,
   getCalledBody,
   getLazyFunction,
   toKeepLazyContext,
@@ -775,6 +776,9 @@ const compileCall = (
     ? undefined
     : resolveGlobalOperator(name, environment);
   if (global?.kind === "Builtin") return guard;
+  if (global?.kind === "Closure" && getBodyLiteral(global.body, environment) !== undefined) {
+    return guard;
+  }
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
     const actionName = environment.instanceNames.get(name) ?? global.name;
@@ -809,7 +813,7 @@ const compileCall = (
   return (run, scope, partial, action, isFixed, onComplete) => {
     const context = getContext(run, scope, partial);
     const operator = resolveApplyOperator(expression, context);
-    if (operator?.kind !== "Closure") {
+    if (operator?.kind !== "Closure" || getBodyLiteral(operator.body, environment) !== undefined) {
       guard(run, scope, partial, action, isFixed, onComplete);
       return;
     }
@@ -836,6 +840,8 @@ const compileIdentifier = (
   const actionName =
     definition && (environment.instanceNames.get(expression.name) ?? definition.name);
   const called = definition && getCalledBody(expression, definition.body, environment);
+  const hasLiteralBody =
+    definition !== undefined && getBodyLiteral(definition.body, environment) !== undefined;
   const variableIndex =
     isInit && !isLocallyResolved(expression)
       ? environment.variableIndex.get(expression.name)
@@ -870,7 +876,8 @@ const compileIdentifier = (
     if (
       binding ||
       !definition ||
-      (expression.location.range && getStartupValue(definition, environment) !== undefined)
+      (expression.location.range &&
+        (hasLiteralBody || getStartupValue(definition, environment) !== undefined))
     ) {
       if (!binding && variableIndex !== undefined && partial[variableIndex] === undefined) {
         throw createUnassignedConjunctError(run, expression, variableIndex);

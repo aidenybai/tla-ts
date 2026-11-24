@@ -13168,6 +13168,65 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const getLiteralMessage = (location: string) =>
+    `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 1.\n${location}`;
+
+  it.each([
+    [
+      "an instanced definition an instanced action calls",
+      "L!NxK",
+      "",
+      getLiteralMessage("line 8, col 15 to line 8, col 15 of module T"),
+    ],
+    [
+      "an instanced definition with a parameter",
+      "L!NxLit",
+      "",
+      getLiteralMessage("line 9, col 17 to line 9, col 22 of module T"),
+    ],
+    [
+      "an instanced definition the next-state relation calls",
+      "L!Stp \\/ L!K",
+      "",
+      getLiteralMessage("line 7, col 18 to line 7, col 20 of module M"),
+    ],
+    [
+      "a definition with a parameter",
+      "L!Stp \\/ Lit(1)",
+      "",
+      getLiteralMessage("line 7, col 18 to line 7, col 23 of module M"),
+    ],
+    [
+      "a LET definition with a parameter",
+      "LET LF(a) == 1 IN L!Stp \\/ LF(1)",
+      "",
+      getLiteralMessage("line 7, col 36 to line 7, col 40 of module M"),
+    ],
+    [
+      "an instanced definition under ENABLED",
+      "L!Stp",
+      "INVARIANT Inv",
+      "Evaluating invariant Inv failed.\nIn computing ENABLED, TLC expected a boolean expression,\nbut instead found 1.\nline 8, col 15 to line 8, col 15 of module T",
+    ],
+  ])(
+    "evaluates a call of %s with a literal body at the call, as TLC's lookup gives the literal",
+    async (_name, next, invariant, message) => {
+      const getFailure = async (coverage: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH N <- 2, v <- x\nLit(a) == 1\nInit == x = 0\nNext == ${next}\nInv == ENABLED L!NxK\n====`,
+            config: `INIT Init\nNEXT Next\n${invariant}`,
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nK == 1\nLit(a) == 1\nStp == v < 2 /\\ v' = v + 1\nNxK == Stp \\/ K\nNxLit == Stp \\/ Lit(1)\n===="
+                : undefined,
+          })
+        ).failure?.message;
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([message, message]);
+    },
+  );
+
   it.each([
     [
       "LET I2 == Init IN I2",

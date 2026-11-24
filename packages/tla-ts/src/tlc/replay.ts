@@ -30,6 +30,7 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getArgumentTuple,
+  getBodyLiteral,
   getChargedBounds,
   getContextElements,
   getLazyFunction,
@@ -700,7 +701,11 @@ const visitDefined = (
     );
   }
   const operator = resolveApplyOperator(expression, context);
-  if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+  if (
+    operator?.kind === "Closure" &&
+    operator.params.length === expression.args.length &&
+    getBodyLiteral(operator.body, replay.environment) === undefined
+  ) {
     const bound = runAt(replay, node, () =>
       bindOperatorArguments(operator, expression.args, context),
     );
