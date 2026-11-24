@@ -2295,7 +2295,16 @@ const compileApply = (
       }
       const cached = tlcEvalValues.get(expression);
       if (cached !== undefined) return cached;
-      const value = global.evaluate(getLazyArguments(args, context), undefined);
+      // TLCEval#tlcEvalConst evaluates with EvalControl.Clear, so an application around it keeps nothing lazy.
+      const value = global.evaluate(
+        getLazyArguments(args, {
+          environment: context.environment,
+          scope: context.scope,
+          state: context.state,
+          next: context.next,
+        }),
+        undefined,
+      );
       tlcEvalValues.set(expression, value);
       return value;
     };

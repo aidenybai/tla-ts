@@ -2383,6 +2383,33 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    ["TLCEval([a |-> [n \\in {1, 2} |-> PrintT(n)]]).a[1]", ["1", "2"], undefined],
+    ["\\A i \\in {1} : TLCEval([a |-> [n \\in {1, 2} |-> PrintT(n)]]).a[1]", ["1"], undefined],
+    ["LET g == TLCEval(<<[n \\in {1, 2} |-> PrintT(n)]>>) IN g[1][1]", ["1", "2"], undefined],
+    [
+      'TLCEval(<<[n \\in {3, 1, 2} |-> n]>>)[1]["s"] = 1',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+    [
+      'TLCEval([a |-> [n \\in {3, 1, 2} |-> n]]).a["s"] = 1',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"s"',
+    ],
+  ])(
+    "builds the functions of a constant TLCEval argument that %s applies, as TLC clears KeepLazy",
+    async (expression, printed, message) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nASSUME ${expression}\n====`,
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      expect([prints, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
   it("evaluates a constant TLCEval argument once for every state", async () => {
     const prints: string[] = [];
     const result = await check({
