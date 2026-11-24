@@ -4,7 +4,11 @@ const BARRETT_DIVISOR = 1n << 851840n;
 
 // V8 divides huge bigints of equal digit count by Burnikel-Ziegler, at times twenty times slower than Barrett on a dividend one digit longer.
 const getQuotient = (dividend: bigint, divisor: bigint) =>
-  divisor < BARRETT_DIVISOR ? dividend / divisor : ((dividend << 64n) / divisor) >> 64n;
+  divisor < BARRETT_DIVISOR
+    ? dividend / divisor
+    : dividend < 0n
+      ? -(((-dividend << 64n) / divisor) >> 64n)
+      : ((dividend << 64n) / divisor) >> 64n;
 
 export const getGcd = (first: bigint, second: bigint) => {
   let left = first < 0n ? -first : first;
