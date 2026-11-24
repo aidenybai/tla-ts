@@ -1269,7 +1269,8 @@ export const createEnvironment = (
       instanceArguments: subexpressionRecords.instanceArguments,
       instanceOperators: subexpressionRecords.instanceOperators,
       getDefinition: getLinkedDefinition,
-      getOuterDefinition: () => undefined,
+      getOuterDefinition: (key) =>
+        substitutionDefinitions.find((definition) => definition.name === key),
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {

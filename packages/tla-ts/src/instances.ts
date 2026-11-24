@@ -514,7 +514,7 @@ const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
   (expression.kind === "Tuple" && expression.elements.every(isVariableAlias));
 
-const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
+const isBoundOnce = (replacement: Expression, instantiation: Instantiation): boolean => {
   if (replacement.kind !== "Identifier") {
     return (
       !isVariableAlias(replacement) &&
@@ -524,8 +524,15 @@ const isBoundOnce = (replacement: Expression, instantiation: Instantiation) => {
       replacement.kind !== "String"
     );
   }
-  if (isLocallyResolved(replacement)) return false;
   const definition = instantiation.getOuterDefinition(replacement.name);
+  if (isLocallyResolved(replacement)) {
+    return (
+      definition !== undefined &&
+      "isLetSubstitute" in definition &&
+      definition.params.length === 0 &&
+      isBoundOnce(definition.body, instantiation)
+    );
+  }
   // Spec#lookup gives a constant the configuration substitutes its substitute's OpDefNode, which Tool#evalImplSubstInKind binds as a cachable LazyValue.
   return (
     instantiation.isSubstitutedConstant(replacement.name) ||

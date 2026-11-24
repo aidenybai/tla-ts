@@ -32,6 +32,25 @@ const SHADOWED_MODULES = new Map([
   ["Universe", "---- MODULE Universe ----\nCONSTANT Nat\n===="],
 ]);
 
+const PRINTED_INSTANCE_MODULES = new Map([
+  [
+    "Pure4",
+    "---- MODULE Pure4 ----\nEXTENDS Naturals\nCONSTANT c\nA == c + 1\nB == A + c\nA2(n) == c + n\nB2(n) == A2(n) + c\nE2 == c + c\n====",
+  ],
+  [
+    "Pure3",
+    "---- MODULE Pure3 ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nGrd == c >= 0\nAct == v' = v + 1 /\\ Grd /\\ c >= 0\n====",
+  ],
+]);
+
+const PRINTED_INSTANCE = 'LET L == INSTANCE Pure4 WITH c <- IF PrintT(<<"c">>) THEN x ELSE 0 IN';
+
+const PRINTED_PARAMETERIZED_INSTANCE =
+  'LET L(k) == INSTANCE Pure4 WITH c <- IF PrintT(<<"c", k>>) THEN x + k ELSE 0 IN';
+
+const PRINTED_ACTION_INSTANCE =
+  'LET L == INSTANCE Pure3 WITH c <- IF PrintT(<<"c">>) THEN 1 ELSE 0, v <- x IN';
+
 const checkTheorem = (definitions: string, config: string) =>
   check({
     source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE x\nI == INSTANCE Inner WITH k <- c\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
@@ -106,6 +125,47 @@ describe("INSTANCE matches TLC", () => {
     expect(result.generatedStates).toBe(3);
     expect(prints).toEqual([1, 2, 2, 1, 3, 3, 2].map((value) => `<<"eval", ${value}>>  ${value}`));
   });
+
+  it.each([
+    ["L!B in Next", `${PRINTED_INSTANCE} x' = x + 1 /\\ L!B > 0`, "TRUE", 2],
+    ["L(0)!B in Next", `${PRINTED_PARAMETERIZED_INSTANCE} x' = x + 1 /\\ L(0)!B > 0`, "TRUE", 2],
+    ["L!E2 in Next", `${PRINTED_INSTANCE} x' = x + 1 /\\ L!E2 >= 0`, "TRUE", 2],
+    ["L!B twice in Next", `${PRINTED_INSTANCE} x' = x + 1 /\\ L!B > 0 /\\ L!B > 0`, "TRUE", 4],
+    [
+      "L(0)!B + L(1)!A in Next",
+      `${PRINTED_PARAMETERIZED_INSTANCE} x' = x + 1 /\\ L(0)!B + L(1)!A > 0`,
+      "TRUE",
+      4,
+    ],
+    ["L!Act in Next", `${PRINTED_ACTION_INSTANCE} L!Act`, "TRUE", 4],
+    [
+      "L(0)!B2(1) in an invariant",
+      "x' = x + 1",
+      `${PRINTED_PARAMETERIZED_INSTANCE} L(0)!B2(1) > 0`,
+      3,
+    ],
+    ["L!A + L!A in an invariant", "x' = x + 1", `${PRINTED_INSTANCE} L!A + L!A > 0`, 3],
+    ["L!A + L!B in an invariant", "x' = x + 1", `${PRINTED_INSTANCE} L!A + L!B > 0`, 6],
+    ["ENABLED L!Act in an invariant", "x' = x + 1", `${PRINTED_ACTION_INSTANCE} ENABLED L!Act`, 6],
+    [
+      "L!Grd /\\ ENABLED L!Act in an invariant",
+      "x' = x + 1",
+      `${PRINTED_ACTION_INSTANCE} L!Grd /\\ ENABLED L!Act`,
+      9,
+    ],
+  ])(
+    "evaluates a LET instance's substitute once per entry into an instanced definition for %s, as TLC's SubstInNode binds it",
+    async (_name, next, inv, count) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nBound == x < 2\nInv == ${inv}\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound\nINVARIANT Inv",
+        loadModule: (name) => PRINTED_INSTANCE_MODULES.get(name),
+        onPrint: (text) => prints.push(text),
+      });
+      expect([result.status, result.generatedStates, prints.length]).toEqual(["success", 3, count]);
+    },
+  );
 
   it("evaluates each definition a named instance of a parameter-free module copies at startup, as SANY gives each its own OpDefNode", async () => {
     const prints: string[] = [];

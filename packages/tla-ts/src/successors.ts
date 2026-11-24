@@ -32,6 +32,7 @@ import {
   getContextElements,
   getEntryEvaluator,
   getMissingArgumentDescriber,
+  getObservedSubstitutes,
   getReevaluatedDefinitions,
   getStartupValue,
   getSubstituteClosure,
@@ -1241,7 +1242,10 @@ const compileAction = (
       // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use. Both bind an instance's substitutions with getVal(..., false), which caches nothing.
       const cached = environment.boundSubstitutions.lets.has(expression)
         ? reevaluated
-        : { impure: new Set<Definition>(), streamed: reevaluated.streamed };
+        : {
+            impure: getObservedSubstitutes(expression.definitions, environment),
+            streamed: reevaluated.streamed,
+          };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
