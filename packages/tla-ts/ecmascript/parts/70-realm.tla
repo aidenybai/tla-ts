@@ -124,17 +124,41 @@ EnterRealm(s, id) ==
   IF id = s.realmId THEN s
   ELSE [s EXCEPT !.realmId = id, !.realm = s.realms[id].intrinsics, !.globalEnv = s.realms[id].globalEnv]
 
-\* CreateRealm (§9.3.1), SetRealmGlobalObject, and SetDefaultGlobalBindings (§9.3.3) together, for
-\* $262.createRealm: allocates a realm's intrinsics and environments after the state's, and
-\* returns the realm's $262.
-CreateRealm(s) ==
+\* CreateRealm (§9.3.1), SetRealmGlobalObject, and SetDefaultGlobalBindings (§9.3.3) together:
+\* allocates a realm's intrinsics and environments after the state's, and gives its properties ps,
+\* in a state whose current realm it is.
+NewRealm(s, ps) ==
   LET offset == s.objs.size
       id == Len(s.realms) + 1
       intrinsics == [name \in DOMAIN IntrinsicIndex |-> offset + IntrinsicIndex[name]]
       s0 == HoldEnvs([s EXCEPT !.objs = HeapAppendFrom(@, IntrinsicObjects(offset, id), 1),
                                !.envs = HeapAppendFrom(@, GlobalEnvironments(offset, s.envs.size), 1),
                                !.realms = Append(@, [intrinsics |-> intrinsics, globalEnv |-> s.envs.size + 3])])
-  IN Ok(EnterRealm(AddRealmProperties(EnterRealm(s0, id), RealmProperties), s.realmId), Obj(intrinsics["Host262"]))
+  IN AddRealmProperties(EnterRealm(s0, id), ps)
+
+\* $262.createRealm: a new realm, and its $262.
+CreateRealm(s) ==
+  LET r == NewRealm(s, RealmProperties) IN Ok(EnterRealm(r, s.realmId), Intrinsic(r, "Host262"))
+
+\* test262's INTERPRETING.md gives $262.createRealm as "a function which creates a new ECMAScript
+\* Realm, defines this API on the new realm's global object, and returns the $262 property of the
+\* new realm's global object". A host whose new contexts have no $262 on their globals, as
+\* Node's vm, gives the new realm's global instead: a realm of the properties of a new context,
+\* with the host's own globals of one.
+CreateRealmGlobal(s) ==
+  LET r == HostContextGlobal(NewRealm(s, ContextPropertyList))
+  IN IF IsAbrupt(r) THEN r ELSE Ok(EnterRealm(r.s, s.realmId), Intrinsic(r.s, "GlobalObject"))
+\* The properties of a new context's realm.
+ContextPropertyList == RealmProperties
+\* The host's own globals of a new context, which it defines on the current realm's global.
+HostContextGlobal(s) == Ok(s, Empty)
+\* The $262 of a host whose new contexts have no $262, on its global: an object whose createRealm
+\* gives a new realm's global (CreateRealmGlobal).
+DefineContextHost262(s) ==
+  LET host == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      f == CreateBuiltinFunction(host.s, <<"Global", "createRealmGlobal">>, 0, N("createRealm"), Empty)
+      m == CreateMethodProperty(f.s, Val(host), SV("createRealm"), Val(f))
+  IN IF IsAbrupt(m) THEN m ELSE CreateMethodProperty(m.s, Intrinsic(s, "GlobalObject"), SV("$262"), Val(host))
 
 \* The realm the host starts with. Its environments are the first three.
 InitialState ==

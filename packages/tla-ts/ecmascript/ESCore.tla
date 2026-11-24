@@ -43,6 +43,9 @@ RECURSIVE Remove(_, _)
 RECURSIVE Concat(_)
 RECURSIVE FoldLeftSeq(_)
 RECURSIVE Repeat(_, _)
+RECURSIVE ChunkAppend(_, _)
+RECURSIVE ChunkValues(_)
+RECURSIVE ChunkLen(_)
 RECURSIVE HeapGet(_, _)
 RECURSIVE HeapSet(_, _, _)
 RECURSIVE HeapAppend(_, _)
@@ -629,7 +632,11 @@ RECURSIVE AddRealmProperty(_, _)
 RECURSIVE AddRealmProperties(_, _)
 RECURSIVE GlobalEnvironments(_, _)
 RECURSIVE EnterRealm(_, _)
+RECURSIVE NewRealm(_, _)
 RECURSIVE CreateRealm(_)
+RECURSIVE CreateRealmGlobal(_)
+RECURSIVE HostContextGlobal(_)
+RECURSIVE DefineContextHost262(_)
 RECURSIVE ScriptContext(_)
 RECURSIVE Arg(_, _)
 RECURSIVE Rest(_, _)
@@ -691,7 +698,7 @@ RECURSIVE JSONDigitsEnd(_, _)
 RECURSIVE JSONObject(_, _, _)
 RECURSIVE JSONArray(_, _, _)
 RECURSIVE JSONEvaluate(_, _)
-RECURSIVE JSONEvaluateItems(_, _, _, _)
+RECURSIVE JSONEvaluateItems(_, _, _, _, _)
 RECURSIVE JSONEvaluateMembers(_, _, _, _)
 RECURSIVE InternalizeJSONProperty(_, _, _, _, _)
 RECURSIVE InternalizeJSONElements(_, _, _, _, _, _)
@@ -779,11 +786,13 @@ RECURSIVE IsConcatSpreadable(_, _)
 RECURSIVE ArrayMethod(_, _, _, _, _)
 RECURSIVE SearchResult(_)
 RECURSIVE SetElements(_, _, _, _)
+RECURSIVE SetValuesFrom(_, _, _, _, _)
 RECURSIVE ReadThrough(_, _, _, _, _, _)
 RECURSIVE FillFrom(_, _, _, _, _)
 RECURSIVE IncludesFrom(_, _, _, _, _)
 RECURSIVE LocaleArguments(_)
-RECURSIVE JoinFrom(_, _, _, _, _, _, _)
+RECURSIVE JoinFrom(_, _, _, _, _)
+RECURSIVE JoinParts(_, _, _, _, _, _, _)
 RECURSIVE FindViaPredicate(_, _, _, _, _, _)
 RECURSIVE FindFrom(_, _, _, _, _, _, _)
 RECURSIVE FlattenIntoArray(_, _, _, _, _, _, _, _)
@@ -1350,7 +1359,7 @@ RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
-RECURSIVE MergeElements(_, _, _, _, _)
+RECURSIVE MergeElements(_, _, _, _, _, _, _)
 RECURSIVE TypedArrayMethod(_, _, _, _, _)
 RECURSIVE TypedArrayBuiltin(_, _, _, _, _, _)
 RECURSIVE ValidateUint8Array(_, _, _)
@@ -2030,6 +2039,8 @@ SymUnscopables == Sym(13)
 SymAsyncDispose == Sym(14)
 SymDispose == Sym(15)
 MapSeq(seq, F(_)) == [i \in DOMAIN seq |-> F(seq[i])]
+ChunkSize == 64
+NoChunks == [chunks |-> <<>>, chunk |-> <<>>]
 HeapPageSize == 256
 BigIntZero == BigIntOf(FALSE, <<>>)
 EmptyDesc ==
@@ -3338,6 +3349,7 @@ IntlProperties ==
      M("IntlDurationFormatPrototype", SV("formatToParts"), "Intl", "DurationFormat.formatToParts", 1),
      V("IntlDurationFormatPrototype", SymToStringTag, SV("Intl.DurationFormat"), FALSE, FALSE, TRUE) >>
 RealmProperties == CoreProperties \o LibraryProperties \o MathNumberProperties \o JSONProperties \o StringProperties \o ArrayProperties \o ProxyProperties \o ReflectProperties \o ObjectProperties \o CollectionProperties \o DisposableProperties \o IteratorHelperProperties \o ShadowRealmProperties \o SymbolErrorProperties \o DateProperties \o RegExpProperties \o AtomicsProperties \o ArrayBufferProperties \o SharedArrayBufferProperties \o DataViewProperties \o TypedArrayProperties \o Uint8ArrayProperties \o GeneratorProperties \o PromiseProperties \o ModuleProperties \o TemporalTypesProperties \o TemporalProperties \o IntlProperties
+ContextPropertyList == RealmProperties
 InitialState ==
   LET s0 == [objs |-> HeapOf(IntrinsicObjects(0, 1)),
              envs |-> HeapOf(GlobalEnvironments(0, 0)),
@@ -5681,6 +5693,14 @@ FoldLeftSeq(seqs) ==
     [] Len(seqs) = 1 -> seqs[1]
     [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
+\* A sequence built a value at a time: its full chunks of ChunkSize values, then the chunk being
+\* filled. Adding a value copies that chunk, and the list of chunks once a chunk fills, rather than
+\* every value so far, so that building n values copies about n * ChunkSize + (n \div ChunkSize)^2.
+ChunkAppend(c, x) ==
+  IF Len(c.chunk) = ChunkSize - 1 THEN [chunks |-> Append(c.chunks, Append(c.chunk, x)), chunk |-> <<>>]
+  ELSE [chunks |-> c.chunks, chunk |-> Append(c.chunk, x)]
+ChunkValues(c) == FoldLeftSeq(c.chunks) \o c.chunk
+ChunkLen(c) == Len(c.chunks) * ChunkSize + Len(c.chunk)
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
 HeapGet(h, i) == h.pages[(i - 1) \div HeapPageSize + 1][((i - 1) % HeapPageSize) + 1]
@@ -9394,17 +9414,38 @@ GlobalEnvironments(offset, envOffset) ==
 EnterRealm(s, id) ==
   IF id = s.realmId THEN s
   ELSE [s EXCEPT !.realmId = id, !.realm = s.realms[id].intrinsics, !.globalEnv = s.realms[id].globalEnv]
-\* CreateRealm (§9.3.1), SetRealmGlobalObject, and SetDefaultGlobalBindings (§9.3.3) together, for
-\* $262.createRealm: allocates a realm's intrinsics and environments after the state's, and
-\* returns the realm's $262.
-CreateRealm(s) ==
+\* CreateRealm (§9.3.1), SetRealmGlobalObject, and SetDefaultGlobalBindings (§9.3.3) together:
+\* allocates a realm's intrinsics and environments after the state's, and gives its properties ps,
+\* in a state whose current realm it is.
+NewRealm(s, ps) ==
   LET offset == s.objs.size
       id == Len(s.realms) + 1
       intrinsics == [name \in DOMAIN IntrinsicIndex |-> offset + IntrinsicIndex[name]]
       s0 == HoldEnvs([s EXCEPT !.objs = HeapAppendFrom(@, IntrinsicObjects(offset, id), 1),
                                !.envs = HeapAppendFrom(@, GlobalEnvironments(offset, s.envs.size), 1),
                                !.realms = Append(@, [intrinsics |-> intrinsics, globalEnv |-> s.envs.size + 3])])
-  IN Ok(EnterRealm(AddRealmProperties(EnterRealm(s0, id), RealmProperties), s.realmId), Obj(intrinsics["Host262"]))
+  IN AddRealmProperties(EnterRealm(s0, id), ps)
+\* $262.createRealm: a new realm, and its $262.
+CreateRealm(s) ==
+  LET r == NewRealm(s, RealmProperties) IN Ok(EnterRealm(r, s.realmId), Intrinsic(r, "Host262"))
+\* test262's INTERPRETING.md gives $262.createRealm as "a function which creates a new ECMAScript
+\* Realm, defines this API on the new realm's global object, and returns the $262 property of the
+\* new realm's global object". A host whose new contexts have no $262 on their globals, as
+\* Node's vm, gives the new realm's global instead: a realm of the properties of a new context,
+\* with the host's own globals of one.
+CreateRealmGlobal(s) ==
+  LET r == HostContextGlobal(NewRealm(s, ContextPropertyList))
+  IN IF IsAbrupt(r) THEN r ELSE Ok(EnterRealm(r.s, s.realmId), Intrinsic(r.s, "GlobalObject"))
+\* The properties of a new context's realm.
+\* The host's own globals of a new context, which it defines on the current realm's global.
+HostContextGlobal(s) == Ok(s, Empty)
+\* The $262 of a host whose new contexts have no $262, on its global: an object whose createRealm
+\* gives a new realm's global (CreateRealmGlobal).
+DefineContextHost262(s) ==
+  LET host == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      f == CreateBuiltinFunction(host.s, <<"Global", "createRealmGlobal">>, 0, N("createRealm"), Empty)
+      m == CreateMethodProperty(f.s, Val(host), SV("createRealm"), Val(f))
+  IN IF IsAbrupt(m) THEN m ELSE CreateMethodProperty(m.s, Intrinsic(s, "GlobalObject"), SV("$262"), Val(host))
 \* The realm the host starts with. Its environments are the first three.
 \* The context that script code of the current realm runs in, outside any private environment.
 ScriptContext(s) == Context(s.globalEnv, s.globalEnv, NoPrivateEnvironment, Null)
@@ -9515,6 +9556,7 @@ GlobalBuiltin(s, f, m, this, args, nt) ==
     [] m = "evalScript" -> EvalScript(s, Arg(args, 1))
     [] m = "eval" -> PerformEval(s, ScriptContext(s), Arg(args, 1), FALSE, FALSE)
     [] m = "createRealm" -> CreateRealm(s)
+    [] m = "createRealmGlobal" -> CreateRealmGlobal(s)
     [] OTHER -> Unsupported(s, N("Unsupported: $262 host function"))
 IteratorBuiltin(s, f, m, this, args, nt) == Ok(s, this)
 ForInIteratorBuiltin(s, f, m, this, args, nt) == ForInIteratorNext(s, this)
@@ -9818,10 +9860,10 @@ JSONValue(units, i) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
   CASE c = 34 ->
-         LET r == JSONString(units, i + 1, <<>>) IN
+         LET r == JSONString(units, i + 1, NoChunks) IN
          IF r.ok THEN JSONPrimitive(units, Str(r.units), i, r.i) ELSE r
-    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), <<>>)
-    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), <<>>)
+    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), NoChunks)
+    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), NoChunks)
     [] c = 45 \/ IsDigit(c) ->
          LET end == JSONNumberEnd(units, i) IN
          IF end = 0 THEN JSONFail ELSE JSONPrimitive(units, Num(StrToNum(SubSeq(units, i, end - 1))), i, end)
@@ -9829,23 +9871,24 @@ JSONValue(units, i) ==
     [] JSONHas(units, i, N("false")) -> JSONPrimitive(units, False, i, i + 5)
     [] JSONHas(units, i, N("null")) -> JSONPrimitive(units, Null, i, i + 4)
     [] OTHER -> JSONFail
-\* A string's code units after its opening quote at i - 1, with the index after its closing quote.
+\* A string's code units after its opening quote at i - 1, with the index after its closing quote,
+\* after those read so far, in chunks.
 JSONString(units, i, acc) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
-  CASE c = 34 -> [ok |-> TRUE, units |-> acc, i |-> i + 1]
+  CASE c = 34 -> [ok |-> TRUE, units |-> ChunkValues(acc), i |-> i + 1]
     [] c < 32 -> JSONFail
     [] c = 92 /\ i < Len(units) ->
          LET e == units[i + 1]
              escaped == CASE e \in {34, 47, 92} -> e [] e = 98 -> 8 [] e = 102 -> 12 [] e = 110 -> 10
                           [] e = 114 -> 13 [] e = 116 -> 9 [] OTHER -> -1
-         IN IF escaped >= 0 THEN JSONString(units, i + 2, Append(acc, escaped))
+         IN IF escaped >= 0 THEN JSONString(units, i + 2, ChunkAppend(acc, escaped))
             ELSE IF e = 117 /\ i + 5 <= Len(units) /\ \A k \in i + 2..i + 5 : IsHexDigit(units[k])
-            THEN JSONString(units, i + 6, Append(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
+            THEN JSONString(units, i + 6, ChunkAppend(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
                                                        NumDigitValue(units[i + 4])) * 16 + NumDigitValue(units[i + 5])))
             ELSE JSONFail
     [] c = 92 -> JSONFail
-    [] OTHER -> JSONString(units, i + 1, Append(acc, c))
+    [] OTHER -> JSONString(units, i + 1, ChunkAppend(acc, c))
 IsHexDigit(c) == IsDigit(c) \/ (c >= 65 /\ c <= 70) \/ (c >= 97 /\ c <= 102)
 \* The index after the number at i, or 0 when it isn't one.
 JSONNumberEnd(units, i) ==
@@ -9857,24 +9900,24 @@ JSONNumberEnd(units, i) ==
       exponentSign == IF At(fraction + 1, {43, 45}) THEN fraction + 2 ELSE fraction + 1
   IN IF fraction = 0 \/ ~At(fraction, {69, 101}) THEN fraction ELSE Digits(exponentSign)
 JSONDigitsEnd(units, i) == IF i <= Len(units) /\ IsDigit(units[i]) THEN JSONDigitsEnd(units, i + 1) ELSE i
-\* The members of an object after its opening brace, from index i.
+\* The members of an object after its opening brace, from index i, after those read so far, in chunks.
 JSONObject(units, i, members) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> members], i + 1)
-  ELSE LET j == IF members = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> ChunkValues(members)], i + 1)
+  ELSE LET j == IF ChunkLen(members) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 \/ j > Len(units) \/ units[j] # 34 THEN JSONFail ELSE
-  LET key == JSONString(units, j + 1, <<>>) IN IF ~key.ok THEN key ELSE
+  LET key == JSONString(units, j + 1, NoChunks) IN IF ~key.ok THEN key ELSE
   LET colon == JSONWhitespace(units, key.i) IN
   IF colon > Len(units) \/ units[colon] # 58 THEN JSONFail ELSE
   LET value == JSONValue(units, JSONWhitespace(units, colon + 1)) IN IF ~value.ok THEN value
-  ELSE JSONObject(units, value.i, Append(members, <<key.units, value.node>>))
-\* The elements of an array after its opening bracket, from index i.
+  ELSE JSONObject(units, value.i, ChunkAppend(members, <<key.units, value.node>>))
+\* The elements of an array after its opening bracket, from index i, after those read so far, in chunks.
 JSONArray(units, i, items) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> items], i + 1)
-  ELSE LET j == IF items = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> ChunkValues(items)], i + 1)
+  ELSE LET j == IF ChunkLen(items) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 THEN JSONFail ELSE
-  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, Append(items, value.node))
+  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, ChunkAppend(items, value.node))
 \* Evaluates a parse tree to [s, v, record], with the JSON Parse Record (§25.5.1.2) that
 \* CreateJSONParseRecord would make for it: [value, source, elements, entries], where entries maps
 \* each key to the record of its last member.
@@ -9883,17 +9926,18 @@ JSONEvaluate(s, tree) ==
          [s |-> s, v |-> tree.value,
           record |-> [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]]
     [] tree.type = "array" ->
-         LET items == JSONEvaluateItems(s, tree.items, <<>>, <<>>)
+         LET items == JSONEvaluateItems(s, tree.items, 1, NoChunks, NoChunks)
              a == CreateArrayFromList(items.s, items.values)
          IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
              members == JSONEvaluateMembers(o.s, Val(o), tree.members, <<>>)
          IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
-JSONEvaluateItems(s, items, values, records) ==
-  IF items = <<>> THEN [s |-> s, values |-> values, records |-> records]
-  ELSE LET r == JSONEvaluate(s, Head(items)) IN
-       JSONEvaluateItems(r.s, Tail(items), Append(values, r.v), Append(records, r.record))
+\* The items from k, after the values and the records of those evaluated so far, in chunks.
+JSONEvaluateItems(s, items, k, values, records) ==
+  IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
+  ELSE LET r == JSONEvaluate(s, items[k]) IN
+       JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
 JSONEvaluateMembers(s, o, members, entries) ==
   IF members = <<>> THEN [s |-> s, entries |-> entries]
   ELSE LET key == Str(Head(members)[1])
@@ -10842,7 +10886,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, Val(sep).value, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -10936,11 +10980,11 @@ ArrayMethod(s, o, len, m, args) ==
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
     \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, N(","), LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, <<>>) IN
+         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, NoChunks) IN
          IF IsAbrupt(values) THEN values ELSE FillArray(values.s, Val(a), Val(values))
     \* Array.prototype.toSorted (§23.1.3.34).
     [] m = "toSorted" ->
@@ -10960,8 +11004,8 @@ ArrayMethod(s, o, len, m, args) ==
          LET newLen == NumAdd(NumSub(len, Val(sc)), NumFromInt(Len(items))) IN
          IF NumLess(MaxSafeInteger, newLen) THEN ThrowTypeError(sc.s) ELSE
          LET a == ArrayCreateLength(sc.s, newLen) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, start, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, start, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o items \o Val(after))
     \* Array.prototype.unshift (§23.1.3.37).
     [] m = "unshift" ->
@@ -10976,21 +11020,23 @@ ArrayMethod(s, o, len, m, args) ==
          LET i == IF NumLess(Val(r).value, PosZero) THEN NumAdd(len, Val(r).value) ELSE Val(r).value IN
          IF NumLess(i, PosZero) \/ ~NumLess(i, len) THEN ThrowError(r.s, "RangeError") ELSE
          LET a == ArrayCreateLength(r.s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, i, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, i, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o <<Arg(args, 2)>> \o Val(after))
 \* The result of indexOf and lastIndexOf from their search.
 SearchResult(r) == IF IsAbrupt(r) THEN r ELSE Ok(r.s, IF Val(r).stop THEN Val(r).st.found ELSE IntV(-1))
 \* The Set of each value to the indices from k up (Array.prototype.push, splice, sort, unshift).
-SetElements(s, o, values, k) ==
-  IF values = <<>> THEN Ok(s, o)
-  ELSE LET w == Set(s, o, Index(k), Head(values), TRUE) IN
-       IF IsAbrupt(w) THEN w ELSE SetElements(w.s, o, Tail(values), NumAdd(k, OneNum))
-\* The Get of count indices from k, stepping by dir, appended to acc.
+SetElements(s, o, values, k) == SetValuesFrom(s, o, values, 1, k)
+\* The Set of the values from the i-th, by index rather than by Tail, which copies the rest.
+SetValuesFrom(s, o, values, i, k) ==
+  IF i > Len(values) THEN Ok(s, o)
+  ELSE LET w == Set(s, o, Index(k), values[i], TRUE) IN
+       IF IsAbrupt(w) THEN w ELSE SetValuesFrom(w.s, o, values, i + 1, NumAdd(k, OneNum))
+\* The Get of count indices from k, stepping by dir, after the values in acc, in chunks.
 ReadThrough(s, o, k, count, dir, acc) ==
-  IF ~NumLess(PosZero, count) THEN Ok(s, acc)
+  IF ~NumLess(PosZero, count) THEN Ok(s, ChunkValues(acc))
   ELSE LET v == Get(s, o, Index(k)) IN
-       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, Append(acc, Val(v)))
+       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, ChunkAppend(acc, Val(v)))
 \* More than 64 indices fill in halves, so that thousands of them nest log n deep rather than n.
 FillFrom(s, o, k, final, value) ==
   IF ~NumLess(k, final) THEN Ok(s, o)
@@ -11015,19 +11061,24 @@ LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <
 \* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
 \* element's toLocaleString the arguments locale, where they aren't Empty. More than 64 elements
 \* join in halves, so that thousands of them nest log n deep rather than n.
-JoinFrom(s, o, len, k, sep, acc, locale) ==
-  IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+JoinFrom(s, o, len, sep, locale) ==
+  LET r == JoinParts(s, o, len, PosZero, sep, NoChunks, locale)
+  IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Str(FoldLeftSeq(ChunkValues(Val(r)))))
+\* The units of the elements from k, each after the separator but the first, after the parts so
+\* far, in chunks, so that joining n elements copies each element's units a few times, not n.
+JoinParts(s, o, len, k, sep, parts, locale) ==
+  IF ~NumLess(k, len) THEN Ok(s, parts)
   ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
        LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
-           first == JoinFrom(s, o, middle, k, sep, acc, locale)
-       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, locale)
+           first == JoinParts(s, o, middle, k, sep, parts, locale)
+       IN IF IsAbrupt(first) THEN first ELSE JoinParts(first.s, o, len, middle, sep, Val(first), locale)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
                    ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
-          ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
+          ELSE JoinParts(next.s, o, len, NumAdd(k, OneNum), sep,
+                         ChunkAppend(IF NumIsZero(k) THEN parts ELSE ChunkAppend(parts, sep), Val(next).value), locale)
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
   IF ~IsCallable(s, predicate) THEN ThrowTypeError(s)
@@ -11075,7 +11126,7 @@ ReverseFrom(s, o, len, lower, middle) ==
        IN IF IsAbrupt(r) THEN r ELSE ReverseFrom(r.s, o, len, NumAdd(lower, OneNum), middle)
 \* SortIndexedProperties (§23.1.3.30.1) with CompareArrayElements, skipping holes when skipHoles.
 SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
-  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
+  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, NoChunks)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
   IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)
@@ -15851,14 +15902,15 @@ SortElements(s, values, comparator) ==
            left == SortElements(s, SubSeq(values, 1, half), comparator)
        IN IF IsAbrupt(left) THEN left ELSE
           LET right == SortElements(left.s, SubSeq(values, half + 1, Len(values)), comparator) IN
-          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, <<>>)
-MergeElements(s, left, right, comparator, acc) ==
-  IF left = <<>> THEN Ok(s, acc \o right)
-  ELSE IF right = <<>> THEN Ok(s, acc \o left)
-  ELSE LET c == CompareTypedArrayElements(s, Head(left), Head(right), comparator) IN
+          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, NoChunks)
+\* The merge of left from i and right from j, after the values merged so far, in chunks.
+MergeElements(s, left, right, comparator, i, j, merged) ==
+  IF i > Len(left) \/ j > Len(right)
+  THEN Ok(s, ChunkValues(merged) \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
+  ELSE LET c == CompareTypedArrayElements(s, left[i], right[j], comparator) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, Tail(right), comparator, Append(acc, Head(right)))
-       ELSE MergeElements(c.s, Tail(left), right, comparator, Append(acc, Head(left)))
+       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, right, comparator, i, j + 1, ChunkAppend(merged, right[j]))
+       ELSE MergeElements(c.s, left, right, comparator, i + 1, j, ChunkAppend(merged, left[i]))
 \* The %TypedArray%.prototype methods (§23.2.3) that start with ValidateTypedArray, on ta of
 \* length len.
 TypedArrayMethod(s, ta, len, m, args) ==

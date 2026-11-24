@@ -443,14 +443,15 @@ SortElements(s, values, comparator) ==
            left == SortElements(s, SubSeq(values, 1, half), comparator)
        IN IF IsAbrupt(left) THEN left ELSE
           LET right == SortElements(left.s, SubSeq(values, half + 1, Len(values)), comparator) IN
-          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, <<>>)
-MergeElements(s, left, right, comparator, acc) ==
-  IF left = <<>> THEN Ok(s, acc \o right)
-  ELSE IF right = <<>> THEN Ok(s, acc \o left)
-  ELSE LET c == CompareTypedArrayElements(s, Head(left), Head(right), comparator) IN
+          IF IsAbrupt(right) THEN right ELSE MergeElements(right.s, Val(left), Val(right), comparator, 1, 1, NoChunks)
+\* The merge of left from i and right from j, after the values merged so far, in chunks.
+MergeElements(s, left, right, comparator, i, j, merged) ==
+  IF i > Len(left) \/ j > Len(right)
+  THEN Ok(s, ChunkValues(merged) \o SubSeq(left, i, Len(left)) \o SubSeq(right, j, Len(right)))
+  ELSE LET c == CompareTypedArrayElements(s, left[i], right[j], comparator) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, Tail(right), comparator, Append(acc, Head(right)))
-       ELSE MergeElements(c.s, Tail(left), right, comparator, Append(acc, Head(left)))
+       ELSE IF NumLess(PosZero, Val(c)) THEN MergeElements(c.s, left, right, comparator, i, j + 1, ChunkAppend(merged, right[j]))
+       ELSE MergeElements(c.s, left, right, comparator, i + 1, j, ChunkAppend(merged, left[i]))
 
 \* The %TypedArray%.prototype methods (§23.2.3) that start with ValidateTypedArray, on ta of
 \* length len.

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { stripTypeScriptTypes } from "node:module";
-import { runInNewContext, Script } from "node:vm";
+import { constants, createContext, runInContext, runInNewContext, Script } from "node:vm";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
@@ -29,12 +29,14 @@ const worker = new Worker(
     check: parallel.check,
     compileToEscore: compile.compileToEscore,
     runtime: prepare.prepareRuntime(workerData.directory),
+    steps: prepare.SCRIPT_STEPS,
   }));
   loading.then(() => parentPort.postMessage({ id: -1 }));
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule);
+      const model = spec.isTest262Host ? { steps: loaded.steps, entries: [], isTest262Host: true } : undefined;
+      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule, model);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
       const prints = [];
       const result = await loaded.check({
@@ -69,8 +71,15 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a script, with the definitions in appended added to the module of its code.
-const checkScript = (source: string, isStrict = true, appended = "", fileName = "spec.ts") =>
+// Checks a script, with the definitions in appended added to the module of its code, on Node's
+// host or on test262's.
+const checkScript = (
+  source: string,
+  isStrict = true,
+  appended = "",
+  fileName = "spec.ts",
+  isTest262Host = false,
+) =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
@@ -78,6 +87,7 @@ const checkScript = (source: string, isStrict = true, appended = "", fileName = 
       fileName,
       isModule: false,
       appended,
+      isTest262Host,
     });
     pending.push(resolve);
   });
@@ -823,6 +833,166 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result where TimSort merges runs", async () => {
       expect((await checkScript(getMerged("888:821657304:0,0,1,2,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // MergeElements merges by index into chunks of 64 values, so the sizes around a chunk and a
+  // comparator that throws partway pin the order and the arguments of its calls.
+  describe("calls a typed array's sort comparator on the pairs that V8's merge sort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [1, 3, 7, 63, 64, 65, 129]) {
+        const array = Int16Array.from({ length: size }, (_, index) => ((index * 7919) % 101) - 50);
+        let calls = 0;
+        let hash = 0;
+        array.sort((left, right) => {
+          calls += 1;
+          hash = (hash * 31 + (left + 50) * 101 + (right + 50)) % 1000003;
+          return left - right;
+        });
+        text += \`\${size}:\${calls}:\${hash}:\${array[0]}:\${array[size - 1]};\`;
+      }
+      const thrown = Int16Array.from({ length: 65 }, (_, index) => ((index * 7919) % 101) - 50);
+      let calls = 0;
+      try {
+        thrown.sort((left, right) => {
+          calls += 1;
+          if (calls === 50) throw new Error(\`at \${left},\${right}\`);
+          return left - right;
+        });
+      } catch (error) {
+        text += \`\${(error as Error).message}:\${thrown[0]}:\${thrown[64]}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "1:0:0:-50:-50;3:2:130954:-50:32;7:13:117066:-50:32;63:308:764496:-50:50;64:317:878231:-50:50;65:321:94865:-50:50;129:769:469886:-50:50;at -19,22:-50:49";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:769:469886", "129:769:469887");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // JSON.parse reads a string's units, an array's items and an object's members into chunks, and
+  // evaluates the items by index, so the sizes around a chunk and a reviver that logs its calls pin
+  // what it reads and the order in which it evaluates and revives them.
+  describe("parses JSON arrays, strings and objects across chunks, reviving in order", () => {
+    const getSource = (expected: string) => `
+      const quote = String.fromCharCode(34);
+      const slash = String.fromCharCode(92);
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const items = Array.from({ length: size }, (_, index) =>
+          index % 3 === 0 ? quote + "s" + index + slash + "n" + slash + "u0041" + quote : String(index * 7),
+        );
+        const array = JSON.parse("[" + items.join(", ") + "]") as unknown[];
+        const value = ("ab" + slash + quote).repeat(size) + slash + "u00e9" + "c".repeat(size);
+        const string = JSON.parse(quote + value + quote) as string;
+        const members = Array.from({ length: size }, (_, index) => quote + "k" + (index % 50) + quote + ": " + index);
+        const last = array.at(-1);
+        const object = JSON.parse("{" + members.join(",") + "}") as Record<string, number>;
+        text += [size, array.length, typeof last === "string" ? last.length + "/" + last.charCodeAt(last.length - 2) : String(last), string.length, string.charCodeAt(size * 3), Object.keys(object).length, object.k0].join(":") + ";";
+      }
+      let hash = 0;
+      let calls = 0;
+      const records = Array.from({ length: 70 }, (_, index) => "{" + quote + "a" + quote + ": " + index + ", " + quote + "b" + quote + ": [" + index + "]}");
+      JSON.parse("[" + records.join(",") + "]", (key, value) => {
+        calls += 1;
+        hash = (hash * 31 + key.length * 101 + (typeof value === "number" ? value : 7)) % 1000003;
+        return value;
+      });
+      text += calls + ":" + hash;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:undefined:1:233:0:;1:1:4/10:5:233:1:0;63:63:434:253:233:50:50;64:64:5/10:257:233:50:50;65:65:448:261:233:50:50;129:129:896:517:233:50:100;281:4386";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("281:4386", "281:4387");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // Array.prototype.join collects each element's units, and each separator, as parts in chunks,
+  // so the sizes around a chunk and elements that log their toString pin the text and the order.
+  describe("joins arrays across chunks of parts, converting the elements in order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129, 300]) {
+        const values = Array.from({ length: size }, (_, index) => (index % 7 === 0 ? null : index % 5 === 0 ? undefined : index * 3));
+        const joined = values.join(size % 2 === 0 ? "--" : "");
+        const sparse = new Array(size);
+        sparse[size >> 1] = "x";
+        let hash = 0;
+        for (let index = 0; index < joined.length; index++) hash = (hash * 31 + joined.charCodeAt(index)) % 1000003;
+        text += [size, joined.length, hash, sparse.join().length, String(values)].map((part) => String(part).length > 40 ? String(part).length : part).join(":") + ";";
+      }
+      const order: number[] = [];
+      const logged = Array.from({ length: 70 }, (_, index) => ({ toString: () => (order.push(index), String(index % 10)) }));
+      text += logged.join("") + ":" + order.join(",").length + ":" + order.slice(60).join(",");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:0:1:;1:0:0:1:;63:103:126117:63:165;64:229:330458:64:166;65:106:189182:65:170;129:238:86159:129:366;300:1190:686128:300:891;0123456789012345678901234567890123456789012345678901234567890123456789:199:60,61,62,63,64,65,66,67,68,69";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("300:1190:686128", "300:1190:686129");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // ReadThrough reads an array's elements into chunks and SetElements writes them by index, so the
+  // sizes around a chunk pin what toReversed, toSpliced, with, sort and push read and write.
+  describe("reads and writes an array's elements across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const values = Array.from({ length: size }, (_, index) => (index * 37) % 101);
+        const reversed = values.toReversed();
+        const spliced = values.toSpliced(size >> 1, 2, -1, -2, -3);
+        const replaced = size === 0 ? [] : values.with(size - 1, -9);
+        const sorted = [...values, undefined].sort((left, right) => (left as number) - (right as number));
+        const pushed = [...values];
+        pushed.push(...values.slice(0, 5));
+        let hash = 0;
+        for (const list of [reversed, spliced, replaced, sorted, pushed]) {
+          for (const value of list) hash = (hash * 31 + (value === undefined ? 7 : (value as number) + 50)) % 1000003;
+        }
+        text += [size, reversed.length, spliced.length, sorted.length, pushed.length, hash].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:3:1:0:507348;1:1:3:2:2:962946;63:63:64:64:68:688589;64:64:65:65:69:172146;65:65:66:66:70:13726;129:129:130:130:134:539989;";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:129:130:130:134:539989", "129:129:130:130:134:539988");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
     }, 600_000);
   });
 
@@ -4050,6 +4220,78 @@ if (view !== "${expected}") throw new Error(view);
 // the port must behave as the include does. A port that reads its error's stack runs in a module,
 // whose location in a stack Node gives as test262's runner does, and one that passes its global
 // this runs in a script.
+// test262's host gives its global $262, whose createRealm makes a realm as Node's vm makes a new
+// context (DONT_CONTEXTIFY), and gives its global.
+describe("gives test262's host a $262 whose createRealm makes a new context's realm", () => {
+  // The own keys of a global, each with its kind of value and its attributes, which typeof reads
+  // of a value that stops at each use without stopping.
+  const DESCRIBE = `(global) => Reflect.ownKeys(global).map((key) => {
+    const d = Reflect.getOwnPropertyDescriptor(global, key);
+    return String(key) + ":" + ("value" in d ? typeof d.value : "accessor") + ":" + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : "");
+  }).join(" ")`;
+  // The globals of a new V8 context that ESCore lacks, which tla-ts's realm has as values that stop
+  // at each use: the diff of the two realms' own keys, which are otherwise the same.
+  const STOPPING = ["console", "WebAssembly"];
+  const nodeKeys: string = runInContext(
+    `(${DESCRIBE})(globalThis)`,
+    createContext(constants.DONT_CONTEXTIFY),
+  );
+  const getSource = (expected: string) => `
+    const keys = (${DESCRIBE})(Reflect.get(globalThis, "$262").createRealm());
+    if (keys !== ${JSON.stringify(expected)}) throw new Error(keys);
+  `;
+
+  it("has a new context's own keys, as Node's vm gives them", async () => {
+    expect(STOPPING.map((name) => nodeKeys.includes(` ${name}:object:wc`))).toEqual([true, true]);
+    expect(
+      (await checkScript(getSource(nodeKeys), true, "", "spec.ts", true)).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects other keys", async () => {
+    const wrong = nodeKeys.replace(" console:object:wc", "");
+    expect((await checkScript(getSource(wrong), true, "", "spec.ts", true)).message).toContain(
+      THREW,
+    );
+  });
+
+  it("stops where a program uses a global that ESCore lacks", async () => {
+    for (const name of STOPPING) {
+      const source = `Reflect.get(globalThis, "$262").createRealm().${name}.x;`;
+      expect((await checkScript(source, true, "", "spec.ts", true)).message).toContain(
+        `tla-ts can't run the host's ${name}`,
+      );
+    }
+  });
+
+  // A realm of its own intrinsics, whose objects are other than the first realm's.
+  const getRealmSource = (expected: string) => `
+    const other = Reflect.get(globalThis, "$262").createRealm();
+    const result = [other === globalThis, other.Array === Array, Object.getPrototypeOf(other.Array.prototype) === other.Object.prototype, other.Array.isArray(new Array()), new other.Array() instanceof Array].join();
+    if (result !== "${expected}") throw new Error(result);
+  `;
+
+  it("makes a realm of its own intrinsics, as Node's vm does", async () => {
+    const node = runInContext(
+      `const other = newGlobal(); [other === globalThis, other.Array === Array, Object.getPrototypeOf(other.Array.prototype) === other.Object.prototype, other.Array.isArray(new Array()), new other.Array() instanceof Array].join()`,
+      Object.assign(createContext(constants.DONT_CONTEXTIFY), {
+        newGlobal: () => runInContext("globalThis", createContext(constants.DONT_CONTEXTIFY)),
+      }),
+    );
+    expect(node).toBe("false,false,true,true,false");
+    expect(
+      (await checkScript(getRealmSource(node), true, "", "spec.ts", true)).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects a realm that shares the first realm's intrinsics", async () => {
+    expect(
+      (await checkScript(getRealmSource("false,false,true,true,true"), true, "", "spec.ts", true))
+        .message,
+    ).toContain(THREW);
+  });
+});
+
 describe("ports test262's harness includes", () => {
   const readPort = (name: string) =>
     readFileSync(join(import.meta.dirname, "../conformance", name), "utf8");

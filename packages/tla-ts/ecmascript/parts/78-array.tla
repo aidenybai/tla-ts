@@ -399,7 +399,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, Val(sep).value, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -493,11 +493,11 @@ ArrayMethod(s, o, len, m, args) ==
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
     \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, N(","), LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, <<>>) IN
+         LET values == ReadThrough(a.s, o, NumSub(len, OneNum), len, -1, NoChunks) IN
          IF IsAbrupt(values) THEN values ELSE FillArray(values.s, Val(a), Val(values))
     \* Array.prototype.toSorted (§23.1.3.34).
     [] m = "toSorted" ->
@@ -517,8 +517,8 @@ ArrayMethod(s, o, len, m, args) ==
          LET newLen == NumAdd(NumSub(len, Val(sc)), NumFromInt(Len(items))) IN
          IF NumLess(MaxSafeInteger, newLen) THEN ThrowTypeError(sc.s) ELSE
          LET a == ArrayCreateLength(sc.s, newLen) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, start, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, start, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(start, Val(sc)), NumSub(NumSub(len, start), Val(sc)), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o items \o Val(after))
     \* Array.prototype.unshift (§23.1.3.37).
     [] m = "unshift" ->
@@ -533,24 +533,26 @@ ArrayMethod(s, o, len, m, args) ==
          LET i == IF NumLess(Val(r).value, PosZero) THEN NumAdd(len, Val(r).value) ELSE Val(r).value IN
          IF NumLess(i, PosZero) \/ ~NumLess(i, len) THEN ThrowError(r.s, "RangeError") ELSE
          LET a == ArrayCreateLength(r.s, len) IN IF IsAbrupt(a) THEN a ELSE
-         LET before == ReadThrough(a.s, o, PosZero, i, 1, <<>>) IN IF IsAbrupt(before) THEN before ELSE
-         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, <<>>) IN
+         LET before == ReadThrough(a.s, o, PosZero, i, 1, NoChunks) IN IF IsAbrupt(before) THEN before ELSE
+         LET after == ReadThrough(before.s, o, NumAdd(i, OneNum), NumSub(NumSub(len, i), OneNum), 1, NoChunks) IN
          IF IsAbrupt(after) THEN after ELSE FillArray(after.s, Val(a), Val(before) \o <<Arg(args, 2)>> \o Val(after))
 
 \* The result of indexOf and lastIndexOf from their search.
 SearchResult(r) == IF IsAbrupt(r) THEN r ELSE Ok(r.s, IF Val(r).stop THEN Val(r).st.found ELSE IntV(-1))
 
 \* The Set of each value to the indices from k up (Array.prototype.push, splice, sort, unshift).
-SetElements(s, o, values, k) ==
-  IF values = <<>> THEN Ok(s, o)
-  ELSE LET w == Set(s, o, Index(k), Head(values), TRUE) IN
-       IF IsAbrupt(w) THEN w ELSE SetElements(w.s, o, Tail(values), NumAdd(k, OneNum))
+SetElements(s, o, values, k) == SetValuesFrom(s, o, values, 1, k)
+\* The Set of the values from the i-th, by index rather than by Tail, which copies the rest.
+SetValuesFrom(s, o, values, i, k) ==
+  IF i > Len(values) THEN Ok(s, o)
+  ELSE LET w == Set(s, o, Index(k), values[i], TRUE) IN
+       IF IsAbrupt(w) THEN w ELSE SetValuesFrom(w.s, o, values, i + 1, NumAdd(k, OneNum))
 
-\* The Get of count indices from k, stepping by dir, appended to acc.
+\* The Get of count indices from k, stepping by dir, after the values in acc, in chunks.
 ReadThrough(s, o, k, count, dir, acc) ==
-  IF ~NumLess(PosZero, count) THEN Ok(s, acc)
+  IF ~NumLess(PosZero, count) THEN Ok(s, ChunkValues(acc))
   ELSE LET v == Get(s, o, Index(k)) IN
-       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, Append(acc, Val(v)))
+       IF IsAbrupt(v) THEN v ELSE ReadThrough(v.s, o, NumAdd(k, NumFromInt(dir)), NumSub(count, OneNum), dir, ChunkAppend(acc, Val(v)))
 
 \* More than 64 indices fill in halves, so that thousands of them nest log n deep rather than n.
 FillFrom(s, o, k, final, value) ==
@@ -579,19 +581,24 @@ LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <
 \* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
 \* element's toLocaleString the arguments locale, where they aren't Empty. More than 64 elements
 \* join in halves, so that thousands of them nest log n deep rather than n.
-JoinFrom(s, o, len, k, sep, acc, locale) ==
-  IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+JoinFrom(s, o, len, sep, locale) ==
+  LET r == JoinParts(s, o, len, PosZero, sep, NoChunks, locale)
+  IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Str(FoldLeftSeq(ChunkValues(Val(r)))))
+\* The units of the elements from k, each after the separator but the first, after the parts so
+\* far, in chunks, so that joining n elements copies each element's units a few times, not n.
+JoinParts(s, o, len, k, sep, parts, locale) ==
+  IF ~NumLess(k, len) THEN Ok(s, parts)
   ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
        LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
-           first == JoinFrom(s, o, middle, k, sep, acc, locale)
-       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, locale)
+           first == JoinParts(s, o, middle, k, sep, parts, locale)
+       IN IF IsAbrupt(first) THEN first ELSE JoinParts(first.s, o, len, middle, sep, Val(first), locale)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
                    ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
-          ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
+          ELSE JoinParts(next.s, o, len, NumAdd(k, OneNum), sep,
+                         ChunkAppend(IF NumIsZero(k) THEN parts ELSE ChunkAppend(parts, sep), Val(next).value), locale)
 
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
@@ -643,7 +650,7 @@ ReverseFrom(s, o, len, lower, middle) ==
 
 \* SortIndexedProperties (§23.1.3.30.1) with CompareArrayElements, skipping holes when skipHoles.
 SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
-  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
+  LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, NoChunks)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
   IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)

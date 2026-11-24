@@ -48,10 +48,10 @@ JSONValue(units, i) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
   CASE c = 34 ->
-         LET r == JSONString(units, i + 1, <<>>) IN
+         LET r == JSONString(units, i + 1, NoChunks) IN
          IF r.ok THEN JSONPrimitive(units, Str(r.units), i, r.i) ELSE r
-    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), <<>>)
-    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), <<>>)
+    [] c = 123 -> JSONObject(units, JSONWhitespace(units, i + 1), NoChunks)
+    [] c = 91 -> JSONArray(units, JSONWhitespace(units, i + 1), NoChunks)
     [] c = 45 \/ IsDigit(c) ->
          LET end == JSONNumberEnd(units, i) IN
          IF end = 0 THEN JSONFail ELSE JSONPrimitive(units, Num(StrToNum(SubSeq(units, i, end - 1))), i, end)
@@ -60,23 +60,24 @@ JSONValue(units, i) ==
     [] JSONHas(units, i, N("null")) -> JSONPrimitive(units, Null, i, i + 4)
     [] OTHER -> JSONFail
 
-\* A string's code units after its opening quote at i - 1, with the index after its closing quote.
+\* A string's code units after its opening quote at i - 1, with the index after its closing quote,
+\* after those read so far, in chunks.
 JSONString(units, i, acc) ==
   IF i > Len(units) THEN JSONFail
   ELSE LET c == units[i] IN
-  CASE c = 34 -> [ok |-> TRUE, units |-> acc, i |-> i + 1]
+  CASE c = 34 -> [ok |-> TRUE, units |-> ChunkValues(acc), i |-> i + 1]
     [] c < 32 -> JSONFail
     [] c = 92 /\ i < Len(units) ->
          LET e == units[i + 1]
              escaped == CASE e \in {34, 47, 92} -> e [] e = 98 -> 8 [] e = 102 -> 12 [] e = 110 -> 10
                           [] e = 114 -> 13 [] e = 116 -> 9 [] OTHER -> -1
-         IN IF escaped >= 0 THEN JSONString(units, i + 2, Append(acc, escaped))
+         IN IF escaped >= 0 THEN JSONString(units, i + 2, ChunkAppend(acc, escaped))
             ELSE IF e = 117 /\ i + 5 <= Len(units) /\ \A k \in i + 2..i + 5 : IsHexDigit(units[k])
-            THEN JSONString(units, i + 6, Append(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
+            THEN JSONString(units, i + 6, ChunkAppend(acc, ((NumDigitValue(units[i + 2]) * 16 + NumDigitValue(units[i + 3])) * 16 +
                                                        NumDigitValue(units[i + 4])) * 16 + NumDigitValue(units[i + 5])))
             ELSE JSONFail
     [] c = 92 -> JSONFail
-    [] OTHER -> JSONString(units, i + 1, Append(acc, c))
+    [] OTHER -> JSONString(units, i + 1, ChunkAppend(acc, c))
 IsHexDigit(c) == IsDigit(c) \/ (c >= 65 /\ c <= 70) \/ (c >= 97 /\ c <= 102)
 
 \* The index after the number at i, or 0 when it isn't one.
@@ -90,25 +91,25 @@ JSONNumberEnd(units, i) ==
   IN IF fraction = 0 \/ ~At(fraction, {69, 101}) THEN fraction ELSE Digits(exponentSign)
 JSONDigitsEnd(units, i) == IF i <= Len(units) /\ IsDigit(units[i]) THEN JSONDigitsEnd(units, i + 1) ELSE i
 
-\* The members of an object after its opening brace, from index i.
+\* The members of an object after its opening brace, from index i, after those read so far, in chunks.
 JSONObject(units, i, members) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> members], i + 1)
-  ELSE LET j == IF members = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 125 THEN JSONNode(units, [type |-> "object", members |-> ChunkValues(members)], i + 1)
+  ELSE LET j == IF ChunkLen(members) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 \/ j > Len(units) \/ units[j] # 34 THEN JSONFail ELSE
-  LET key == JSONString(units, j + 1, <<>>) IN IF ~key.ok THEN key ELSE
+  LET key == JSONString(units, j + 1, NoChunks) IN IF ~key.ok THEN key ELSE
   LET colon == JSONWhitespace(units, key.i) IN
   IF colon > Len(units) \/ units[colon] # 58 THEN JSONFail ELSE
   LET value == JSONValue(units, JSONWhitespace(units, colon + 1)) IN IF ~value.ok THEN value
-  ELSE JSONObject(units, value.i, Append(members, <<key.units, value.node>>))
+  ELSE JSONObject(units, value.i, ChunkAppend(members, <<key.units, value.node>>))
 
-\* The elements of an array after its opening bracket, from index i.
+\* The elements of an array after its opening bracket, from index i, after those read so far, in chunks.
 JSONArray(units, i, items) ==
   IF i > Len(units) THEN JSONFail
-  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> items], i + 1)
-  ELSE LET j == IF items = <<>> THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
+  ELSE IF units[i] = 93 THEN JSONNode(units, [type |-> "array", items |-> ChunkValues(items)], i + 1)
+  ELSE LET j == IF ChunkLen(items) = 0 THEN i ELSE IF units[i] = 44 THEN JSONWhitespace(units, i + 1) ELSE 0 IN
   IF j = 0 THEN JSONFail ELSE
-  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, Append(items, value.node))
+  LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, ChunkAppend(items, value.node))
 
 \* Evaluates a parse tree to [s, v, record], with the JSON Parse Record (§25.5.1.2) that
 \* CreateJSONParseRecord would make for it: [value, source, elements, entries], where entries maps
@@ -118,17 +119,18 @@ JSONEvaluate(s, tree) ==
          [s |-> s, v |-> tree.value,
           record |-> [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]]
     [] tree.type = "array" ->
-         LET items == JSONEvaluateItems(s, tree.items, <<>>, <<>>)
+         LET items == JSONEvaluateItems(s, tree.items, 1, NoChunks, NoChunks)
              a == CreateArrayFromList(items.s, items.values)
          IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
              members == JSONEvaluateMembers(o.s, Val(o), tree.members, <<>>)
          IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
-JSONEvaluateItems(s, items, values, records) ==
-  IF items = <<>> THEN [s |-> s, values |-> values, records |-> records]
-  ELSE LET r == JSONEvaluate(s, Head(items)) IN
-       JSONEvaluateItems(r.s, Tail(items), Append(values, r.v), Append(records, r.record))
+\* The items from k, after the values and the records of those evaluated so far, in chunks.
+JSONEvaluateItems(s, items, k, values, records) ==
+  IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
+  ELSE LET r == JSONEvaluate(s, items[k]) IN
+       JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
 JSONEvaluateMembers(s, o, members, entries) ==
   IF members = <<>> THEN [s |-> s, entries |-> entries]
   ELSE LET key == Str(Head(members)[1])

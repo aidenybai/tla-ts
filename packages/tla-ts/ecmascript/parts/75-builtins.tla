@@ -131,6 +131,7 @@ GlobalBuiltin(s, f, m, this, args, nt) ==
     [] m = "evalScript" -> EvalScript(s, Arg(args, 1))
     [] m = "eval" -> PerformEval(s, ScriptContext(s), Arg(args, 1), FALSE, FALSE)
     [] m = "createRealm" -> CreateRealm(s)
+    [] m = "createRealmGlobal" -> CreateRealmGlobal(s)
     [] OTHER -> Unsupported(s, N("Unsupported: $262 host function"))
 
 IteratorBuiltin(s, f, m, this, args, nt) == Ok(s, this)

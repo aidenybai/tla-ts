@@ -51,9 +51,9 @@ export interface EscoreSteps {
   entries: readonly string[];
   // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
   reads?: string;
-  // Whether the host loads every file of code as an ES module, as test262's does, rather than as
-  // Node does.
-  isModuleHost?: boolean;
+  // Whether the host is test262's, which loads every file of code as an ES module rather than as
+  // Node does, and whose global has $262, which a new context's has none of (DefineContextHost262).
+  isTest262Host?: boolean;
   // The files that an import() of a computed string may load, which the program compiles though
   // no literal names them, as test262's fixtures beside a test: an import() of "./" and one's name
   // from a file in its directory loads it, and of a name that no file of the directory has
@@ -484,13 +484,13 @@ const loadFiles = (
   source: string,
   fileName: string,
   isModule: boolean,
-  host: Pick<EscoreSteps, "isModuleHost" | "candidates">,
+  host: Pick<EscoreSteps, "isTest262Host" | "candidates">,
   // The names of the parsed files that Node's wrapper holds the code of.
   wrapped: Set<string>,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
-    host.isModuleHost === true ? "module" : getModuleFormat(path, text);
+    host.isTest262Host === true ? "module" : getModuleFormat(path, text);
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
@@ -907,6 +907,27 @@ export const compileToEscore = (
       : `LET g == DefineHost(s, HostProperties) IN IF IsAbrupt(g) THEN g ELSE SetupHostImport(g.s, ${hostFile})`;
   const runJobs =
     "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
+  // A host exits with an error where its entry module still awaits once nothing is left to run,
+  // which the completion's target marks, and reports the rejection of its entry module's
+  // evaluation as an uncaught exception, before any other promise's rejection, as Node does.
+  const run =
+    files[0].kind === "module"
+      ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE IF Slots(j.s, Val(p)).state = "rejected" THEN Abrupt(j.s, Completion("throw", Slots(j.s, Val(p)).result, [kind |-> "module"])) ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN LET e == ThrowError(t.s, "Error") IN [e EXCEPT !.c.target = [kind |-> "unsettled"]] ELSE t`
+      : isModule
+        ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+        : hostFile !== 0
+          ? `RunProgram(s) == LET h == SetupHostImport(s, ${hostFile}) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+          : isQueuing
+            ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+            : "RunProgram(s) == Program(s)";
+  // test262's host first gives its global $262.
+  const runProgram =
+    model.isTest262Host === true
+      ? run.replace(
+          "RunProgram(s) ==",
+          "RunProgram(start) == LET host == DefineContextHost262(start) IN IF IsAbrupt(host) THEN host ELSE LET s == host.s IN",
+        )
+      : run;
   // A host whose realm was recorded answers none of Intl's questions, as if the program asked none.
   const intl = getHostIntl(
     files.map((file) => file.sourceFile),
@@ -1012,20 +1033,7 @@ export const compileToEscore = (
         {
           name: "RunProgram",
           arity: 1,
-          // A host exits with an error where its entry module still awaits once nothing is left
-          // to run, which the completion's target marks, and reports the rejection of its entry
-          // module's evaluation as an uncaught exception, before any other promise's rejection, as
-          // Node does.
-          text:
-            files[0].kind === "module"
-              ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE IF Slots(j.s, Val(p)).state = "rejected" THEN Abrupt(j.s, Completion("throw", Slots(j.s, Val(p)).result, [kind |-> "module"])) ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN LET e == ThrowError(t.s, "Error") IN [e EXCEPT !.c.target = [kind |-> "unsettled"]] ELSE t`
-              : isModule
-                ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                : hostFile !== 0
-                  ? `RunProgram(s) == LET h == SetupHostImport(s, ${hostFile}) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                  : isQueuing
-                    ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                    : "RunProgram(s) == Program(s)",
+          text: runProgram,
         },
         {
           name: "SettleJobs",
