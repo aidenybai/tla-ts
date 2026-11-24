@@ -61,6 +61,17 @@ const getInstanceCoverage = (instance: string, next: string, invariant: string) 
     loadModule: (name) => (name === "Inner" ? INSTANCED_MODULE : undefined),
   });
 
+const COUNTER_MODULE =
+  "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE v\nStart == v = 0\nStartIn == v \\in {0, 1}\nInc == v' = (v + 1) % 3\nIncIn == v' \\in {(v + 1) % 3}\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n====";
+
+const getLetInstanceCoverage = (variable: string, init: string, next: string) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES ${variable}, y\nPad == 0\nInit == ${init}\nNext == ${next}\nInv == ~(${variable} = 2 /\\ y = 2)\n====`,
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    coverage: 1,
+    loadModule: (name) => (name === "C" ? COUNTER_MODULE : undefined),
+  });
+
 const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
   result.coverage?.relations.map((relation) =>
     relation.expressions.map(
@@ -12442,6 +12453,112 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each(
+    [false, true].flatMap((isShadowed) => [
+      {
+        spec: "Sp",
+        isShadowed,
+        actions: ["Stp line 4, col 1 to line 4, col 6 of module T6 (11 23 11 28)"],
+      },
+      {
+        spec: "SpNx",
+        isShadowed,
+        actions: ["Nx line 6, col 1 to line 6, col 5 of module T6 (12 25 12 29)"],
+      },
+      {
+        spec: "SpNever",
+        isShadowed,
+        actions: [
+          "Never line 7, col 1 to line 7, col 5 of module T6 (13 28 13 32)",
+          "Shut line 8, col 1 to line 8, col 4 of module T6 (13 37 13 40)",
+          "Stp line 4, col 1 to line 4, col 6 of module T6 (13 45 13 50)",
+        ],
+      },
+      {
+        spec: "SpY2",
+        isShadowed,
+        actions: ["Stp line 4, col 1 to line 4, col 6 of module T6 (14 33 14 38)"],
+      },
+    ]),
+  )(
+    "takes the definitions L!$spec(x) calls from T6 (M defines the same names: $isShadowed), as TLC's actions keep the OpDefNode they apply",
+    async (item) => {
+      const warnings: CheckProgress[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${item.isShadowed ? "Stp(a) == a\nNx(a) == a\nNever == TRUE\nShut == TRUE\nYes2 == x = 0\nK == x" : "Pad == 0"}\nL == INSTANCE T6\nSpec == L!${item.spec}(x)\n====`,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T6"
+            ? "---- MODULE T6 ----\nEXTENDS Naturals\nIni(u) == u = 0\nStp(u) == u < 2 /\\ u' = u + 1\nStay(u) == u' = u\nNx(u) == Stp(u) \\/ Stay(u)\nNever == FALSE\nShut == LET z == 1 IN z = 2\nYes2 == 1 = 1\nK == 1\nSp(u) == Ini(u) /\\ [][Stp(u)]_u\nSpNx(u) == Ini(u) /\\ [][Nx(u)]_u\nSpNever(u) == Ini(u) /\\ [][Never \\/ Shut \\/ Stp(u)]_u\nSpY2(u) == Ini(u) /\\ Yes2 /\\ [][Stp(u)]_<<u, K>>\n===="
+            : undefined,
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress);
+        },
+      });
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Action line 3, col 11 to line 3, col 15 of module T6",
+        ...item.actions,
+      ]);
+      expect(warnings).toEqual([]);
+    },
+  );
+
+  const OVERRIDDEN_ACTIONS =
+    "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Op(_)\nVARIABLE x\nStp(u) == u < 2 /\\ u' = u + 1\nMStp(u) == u < 2 /\\ u' = u + 1 /\\ TRUE\nInc(k) == x < 2 /\\ x' = x + k\nMInc(k) == x < 2 /\\ x' = x + k /\\ TRUE\nInit == x = 0\nNext == Stp(x) \\/ Inc(1)\nSpec == Init /\\ [][Stp(x) \\/ Inc(1)]_x\nNextOp == Op(x)\nInv == x < 2\n====";
+
+  it.each([
+    [
+      "INIT Init\nNEXT Next",
+      "Stp <- MStp",
+      "Stp line 10, col 9 to line 10, col 14 of module M",
+      "(10 9 10 14)",
+    ],
+    [
+      "SPECIFICATION Spec",
+      "Stp <- MStp",
+      "Stp line 11, col 20 to line 11, col 25 of module M",
+      "(11 20 11 25)",
+    ],
+    [
+      "INIT Init\nNEXT Next",
+      "Stp <- [M] MStp",
+      "Stp line 10, col 9 to line 10, col 14 of module M",
+      "(10 9 10 14)",
+    ],
+  ])(
+    "names the action of %j that calls Stp with a state-level argument by Stp under %j, as TLC's Tool#getActionsAppl names it by the operator the call applies",
+    async (behavior, override, label, call) => {
+      const result = await check({
+        source: OVERRIDDEN_ACTIONS,
+        config: `${behavior}\nCONSTANT Op <- MInc\n${override}\nInc <- MInc\nINVARIANT Inv`,
+        coverage: 1,
+      });
+      expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Init line 9, col 1 to line 9, col 4 of module M",
+        "MInc line 8, col 1 to line 8, col 7 of module M",
+        `Stp line 5, col 1 to line 5, col 6 of module M ${call}`,
+        "Inv line 13, col 1 to line 13, col 3 of module M",
+      ]);
+    },
+  );
+
+  it("names an action that calls an overridden operator constant by its substitute, where TLC's Tool#getActionsAppl throws a ClassCastException", async () => {
+    const result = await check({
+      source: OVERRIDDEN_ACTIONS,
+      config: "INIT Init\nNEXT NextOp\nCONSTANT Op <- MStp\nINVARIANT Inv",
+      coverage: 1,
+    });
+    const label = "MStp line 12, col 11 to line 12, col 15 of module M";
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 9, col 1 to line 9, col 4 of module M",
+      "MStp line 6, col 1 to line 6, col 7 of module M (12 11 12 15)",
+      "Inv line 13, col 1 to line 13, col 3 of module M",
+    ]);
+  });
+
   it.each([
     [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",
@@ -13020,6 +13137,97 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["Spec == L!SpK", 0],
+    ["Spec == L!SpLit", 0],
+    ["Spec == LET J == INSTANCE T13 WITH N <- 2, v <- x IN J!SpLit", 0],
+    ["Spec == L!SpKN", 1],
+    ["Spec == L!SpLitN", 1],
+    ["Spec == LET J == INSTANCE T13 WITH N <- 2, v <- x IN J!SpKN", 1],
+  ])(
+    "skips a literal definition in the subscript of %s, which TLC's SubscriptCollector looks up as a value, but not a substituted one",
+    async (spec, count) => {
+      const warnings: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T13 WITH N <- 2, v <- x\n${spec}\n====\n`,
+        config: "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n",
+        loadModule: (name) =>
+          name === "T13"
+            ? "---- MODULE T13 ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nK == 1\nKN == N\nLit(a) == 1\nLitN(a) == N\nIni == v = 0\nStp == v < 2 /\\ v' = v + 1\nSpK == Ini /\\ [][Stp]_<<v, K>>\nSpKN == Ini /\\ [][Stp]_<<v, KN>>\nSpLit == Ini /\\ [][Stp]_<<v, Lit(1)>>\nSpLitN == Ini /\\ [][Stp]_<<v, LitN(1)>>\n====\n"
+            : undefined,
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress.text);
+        },
+      });
+      expect(warnings).toEqual(
+        Array.from(
+          { length: count },
+          () =>
+            "TLC could not determine if the subscript of the next-state relation contains\nall state variables. Proceed with fingers crossed.",
+        ),
+      );
+    },
+  );
+
+  const getLiteralMessage = (location: string) =>
+    `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 1.\n${location}`;
+
+  it.each([
+    [
+      "an instanced definition an instanced action calls",
+      "L!NxK",
+      "",
+      getLiteralMessage("line 8, col 15 to line 8, col 15 of module T"),
+    ],
+    [
+      "an instanced definition with a parameter",
+      "L!NxLit",
+      "",
+      getLiteralMessage("line 9, col 17 to line 9, col 22 of module T"),
+    ],
+    [
+      "an instanced definition the next-state relation calls",
+      "L!Stp \\/ L!K",
+      "",
+      getLiteralMessage("line 7, col 18 to line 7, col 20 of module M"),
+    ],
+    [
+      "a definition with a parameter",
+      "L!Stp \\/ Lit(1)",
+      "",
+      getLiteralMessage("line 7, col 18 to line 7, col 23 of module M"),
+    ],
+    [
+      "a LET definition with a parameter",
+      "LET LF(a) == 1 IN L!Stp \\/ LF(1)",
+      "",
+      getLiteralMessage("line 7, col 36 to line 7, col 40 of module M"),
+    ],
+    [
+      "an instanced definition under ENABLED",
+      "L!Stp",
+      "INVARIANT Inv",
+      "Evaluating invariant Inv failed.\nIn computing ENABLED, TLC expected a boolean expression,\nbut instead found 1.\nline 8, col 15 to line 8, col 15 of module T",
+    ],
+  ])(
+    "evaluates a call of %s with a literal body at the call, as TLC's lookup gives the literal",
+    async (_name, next, invariant, message) => {
+      const getFailure = async (coverage: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH N <- 2, v <- x\nLit(a) == 1\nInit == x = 0\nNext == ${next}\nInv == ENABLED L!NxK\n====`,
+            config: `INIT Init\nNEXT Next\n${invariant}`,
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nK == 1\nLit(a) == 1\nStp == v < 2 /\\ v' = v + 1\nNxK == Stp \\/ K\nNxLit == Stp \\/ Lit(1)\n===="
+                : undefined,
+          })
+        ).failure?.message;
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([message, message]);
+    },
+  );
+
+  it.each([
     [
       "LET I2 == Init IN I2",
       "I2",
@@ -13156,6 +13364,331 @@ ASSUME TLCFP(a) = -887695703
       "line 11, col 29 to line 11, col 39 of module Inner: 2",
     ]);
   });
+
+  it.each([
+    [
+      "a root variable shares its name",
+      "v",
+      "v = 0 /\\ y = 0",
+      "LET L == INSTANCE C WITH v <- y IN (v > 5 /\\ L!Inc /\\ UNCHANGED v) \\/ (v' = (v + 1) % 3 /\\ y' = y)",
+      [
+        "line 6, col 45 to line 6, col 49 of module M: 3",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 6, col 63 to line 6, col 73 of module M: 0",
+      ],
+    ],
+    [
+      "no root variable shares its name",
+      "x",
+      "x = 0 /\\ y = 0",
+      "LET L == INSTANCE C WITH v <- x IN (y > 5 /\\ L!Inc /\\ UNCHANGED y) \\/ (x' = (x + 1) % 3 /\\ y' = y)",
+      [
+        "line 6, col 45 to line 6, col 58 of module M: 3",
+        "line 6, col 63 to line 6, col 73 of module M: 0",
+      ],
+    ],
+  ])(
+    "marks a primed declaration of a LET instance as a state variable by its own name when %s, as TLC's Spec#collectPrimedLocs ignores the substitutions",
+    async (_name, variable, init, next, lines) => {
+      const result = await getLetInstanceCoverage(variable, init, next);
+      expect(formatCoverage(result)?.[1]).toEqual(lines);
+    },
+  );
+
+  it.each([
+    [
+      "one instance",
+      "x",
+      "LET L == INSTANCE C WITH v <- x IN L!Start /\\ y = 0",
+      "x' = (x + 1) % 3 /\\ y' = y",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 44 to line 5, col 59 of module M: 1",
+      ],
+    ],
+    [
+      "one instance with a parameter",
+      "v",
+      "LET L(w) == INSTANCE C WITH v <- w IN L(v)!Start /\\ L(y)!StartIn",
+      "LET L(w) == INSTANCE C WITH v <- w IN (L(v)!Inc /\\ L(y)!Stay) \\/ (L(y)!IncIn /\\ L(v)!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 7, col 10 to line 7, col 29 of module C: 0",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances",
+      "x",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y IN Lx!Start /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y IN (Lx!Inc /\\ Ly!Stay) \\/ (Ly!IncIn /\\ Lx!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances whose declaration a root variable names",
+      "v",
+      "LET Lx == INSTANCE C WITH v <- v  Ly == INSTANCE C WITH v <- y IN Lx!Start /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- v  Ly == INSTANCE C WITH v <- y IN (Lx!Inc /\\ Ly!Stay) \\/ (Ly!IncIn /\\ Lx!StayAll)",
+      [
+        "line 7, col 10 to line 7, col 29 of module C: 0",
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 6, col 8 to line 6, col 23 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 12 to line 5, col 23 of module C: 6",
+        "|line 5, col 18 to line 5, col 23 of module C: 3:9",
+      ],
+    ],
+    [
+      "two instances whose substitutes differ in shape",
+      "x",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y + 0 IN Lx!Start /\\ y = 0 /\\ Ly!StartIn",
+      "LET Lx == INSTANCE C WITH v <- x  Ly == INSTANCE C WITH v <- y + 0 IN (Lx!Inc /\\ y' = y /\\ Ly!Stay) \\/ (y' = y /\\ Lx!IncIn /\\ Ly!StayAll)",
+      [
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 5, col 79 to line 5, col 109 of module M: 1",
+      ],
+    ],
+  ])(
+    "lists each definition of a LET instance once in the counts of the initial predicate for %s, as TLC's CostModelNode keys its children by SemanticNode",
+    async (_name, variable, init, next, lines) => {
+      const result = await getLetInstanceCoverage(variable, init, next);
+      expect(formatCoverage(result)?.[0]).toEqual(lines);
+    },
+  );
+
+  it.each([
+    [
+      "a module that instances C under two names",
+      "INSTANCE Twice WITH w <- x",
+      "L!D1!Start",
+      "line 4, col 48 to line 4, col 66 of module M: 1",
+    ],
+    [
+      "a module that extends C and instances it",
+      "INSTANCE Both WITH v <- x",
+      "L!Start",
+      "line 4, col 47 to line 4, col 62 of module M: 1",
+    ],
+  ])(
+    "lists each definition of C once for a LET instance of %s, as SANY shares C's body between the copies",
+    async (_name, instance, start, body) => {
+      const modules = new Map([
+        ["C", COUNTER_MODULE],
+        [
+          "Twice",
+          "---- MODULE Twice ----\nVARIABLE w\nD1 == INSTANCE C WITH v <- w\nD2 == INSTANCE C WITH v <- w\n====",
+        ],
+        ["Both", "---- MODULE Both ----\nEXTENDS C\nD1 == INSTANCE C\n===="],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == LET L == ${instance} IN ${start} /\\ y = 0\nNext == x' = (x + 1) % 3 /\\ y' = y\nInv == ~(x = 2 /\\ y = 2)\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) => modules.get(name),
+      });
+      expect(formatCoverage(result)?.[0]).toEqual([
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        body,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "ENABLED L!Act",
+      [
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 72 of module M: 3",
+      ],
+    ],
+    [
+      "ENABLED L!ActBoth",
+      [
+        "line 8, col 12 to line 8, col 29 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 76 of module M: 3",
+        "|line 8, col 42 to line 8, col 47 of module M: 3",
+        "|line 8, col 55 to line 8, col 55 of module M: 6",
+      ],
+    ],
+    [
+      "ENABLED (L!Act /\\ L!Grd)",
+      [
+        "line 5, col 8 to line 5, col 13 of module Pure5: 3",
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 83 of module M: 3",
+        "|line 8, col 42 to line 8, col 47 of module M: 6",
+        "|line 8, col 55 to line 8, col 55 of module M: 3",
+      ],
+    ],
+    [
+      "ENABLED (L!Act /\\ L!Act)",
+      [
+        "line 7, col 8 to line 7, col 24 of module Pure5: 6",
+        "line 8, col 60 to line 8, col 83 of module M: 3",
+        "|line 8, col 69 to line 8, col 82 of module M: 6",
+      ],
+    ],
+    [
+      "L!Grd /\\ ENABLED L!Act",
+      [
+        "line 5, col 8 to line 5, col 13 of module Pure5: 3",
+        "line 7, col 8 to line 7, col 24 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 81 of module M: 3",
+        "|line 8, col 60 to line 8, col 64 of module M: 3",
+        "|line 8, col 69 to line 8, col 81 of module M: 3",
+        "||line 8, col 42 to line 8, col 47 of module M: 6",
+        "||line 8, col 55 to line 8, col 55 of module M: 3",
+      ],
+    ],
+    [
+      "L!Both /\\ ENABLED L!ActBoth",
+      [
+        "line 6, col 9 to line 6, col 20 of module Pure5: 3",
+        "line 8, col 12 to line 8, col 29 of module Pure5: 3",
+        "line 8, col 60 to line 8, col 86 of module M: 3",
+        "|line 8, col 60 to line 8, col 65 of module M: 3",
+        "|line 8, col 70 to line 8, col 86 of module M: 3",
+        "||line 8, col 42 to line 8, col 47 of module M: 6",
+        "||line 8, col 55 to line 8, col 55 of module M: 9",
+      ],
+    ],
+  ])(
+    "counts a definition that the instanced body of %s calls in the caller's node, as TLC's Tool#enabled finds it as an OpDefNode, not the LET's LazyValue",
+    async (body, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nBound == x < 2\nNext == x' = x + 1\nLvl(e) == 1\nInv == LET L == INSTANCE Pure5 WITH c <- Lvl(x), v <- x IN ${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Pure5"
+            ? "---- MODULE Pure5 ----\nEXTENDS Naturals\nCONSTANT c\nVARIABLE v\nGrd == c >= 0\nBoth == Grd /\\ v < 5\nAct == v' = v + 1 /\\ Grd\nActBoth == v' = v + 1 /\\ Both\n===="
+            : undefined,
+      });
+      expect(formatCoverage(result)?.[2]).toEqual(lines);
+    },
+  );
+
+  const STP_LINES = [
+    "line 4, col 37 to line 4, col 37 of module M: 5",
+    "line 9, col 8 to line 9, col 12 of module T10: 2",
+    "|line 9, col 8 to line 9, col 8 of module T10: 3",
+    "line 9, col 17 to line 9, col 26 of module T10: 2",
+  ];
+
+  it.each([
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!NxOpen",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        [
+          "L!NxOpen line 4, col 1 to line 4, col 1 of module M",
+          "line 4, col 37 to line 4, col 37 of module M: 5",
+          "line 7, col 12 to line 7, col 16 of module T10: 5",
+          "|line 7, col 12 to line 7, col 12 of module T10: 3",
+          "|line 7, col 16 to line 7, col 16 of module T10: 3",
+          ...STP_LINES.slice(1),
+        ],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!Never \\/ L!Stp",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        ["L!Stp line 4, col 1 to line 4, col 1 of module M", ...STP_LINES],
+        ["L!Never line 4, col 1 to line 4, col 1 of module M (6 9 6 15)"],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!Stp",
+      invariant: "L!EnNever \\/ L!EnEver \\/ x = 2",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        ["L!Stp line 4, col 1 to line 4, col 1 of module M", ...STP_LINES],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 37 of module M: 3",
+          "|line 7, col 8 to line 7, col 28 of module M: 3",
+          "||line 7, col 8 to line 7, col 16 of module M: 3",
+          "|||line 12, col 12 to line 12, col 33 of module T10: 3",
+          "||||line 9, col 8 to line 9, col 12 of module T10: 3",
+          "||||line 9, col 17 to line 9, col 26 of module T10: 2",
+          "||line 7, col 21 to line 7, col 28 of module M: 1",
+          "|||line 4, col 37 to line 4, col 37 of module M: 4",
+          "|||line 13, col 11 to line 13, col 31 of module T10: 1",
+          "|line 7, col 33 to line 7, col 37 of module M: 1",
+        ],
+      ],
+    },
+    {
+      behavior: "SPECIFICATION Spec",
+      definition: "Spec == L!SpNever",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Action line 4, col 1 to line 4, col 37 of module M",
+          "line 11, col 12 to line 11, col 16 of module T10: 1",
+        ],
+        ["Action line 4, col 1 to line 4, col 37 of module M", ...STP_LINES],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+  ])(
+    "evaluates T10's own definitions at each reference for $definition and Inv == $invariant, as TLC's SpecProcessor#processConstantDefns precomputes none in an instantiated module with parameters, though it does precompute L!Never",
+    async (item) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T10 WITH N <- 2, v <- x\nInit == x = 0\n${item.definition}\nInv == ${item.invariant}\n====`,
+        config: `${item.behavior}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T10"
+            ? "---- MODULE T10 ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nNever == FALSE\nEver == TRUE\nGate(k) == k = N\nOpen == Gate(2)\nStp == v < 2 /\\ v' = v + 1\nNxOpen == Open /\\ Stp\nSpNever == v = 0 /\\ [][Never \\/ Stp]_v\nEnNever == ENABLED (Never \\/ Stp)\nEnEver == ENABLED (Ever /\\ Stp)\n===="
+            : undefined,
+      });
+      const lines = formatCoverage(result);
+      expect(
+        result.coverage?.relations.map((relation, index) => [
+          relation.label,
+          ...(lines?.[index] ?? []),
+        ]),
+      ).toEqual(item.relations);
+    },
+  );
 
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(

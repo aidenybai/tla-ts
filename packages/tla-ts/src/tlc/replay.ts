@@ -2,7 +2,6 @@ import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
 import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
-import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   chargeEquality,
@@ -31,9 +30,11 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getArgumentTuple,
+  getBodyLiteral,
   getChargedBounds,
   getContextElements,
   getLazyFunction,
+  getLookupValue,
   getMissingArgumentDescriber,
   getQuantifierElements,
   getSubstituteClosure,
@@ -68,6 +69,7 @@ import {
 } from "../values";
 import {
   getActionPredicate,
+  getSubstitutedName,
   getSubstitutedOccurrence,
   isSubstitutionDefinition,
   substitutedExpressions,
@@ -191,11 +193,11 @@ const getIdentifierName = (expression: Expression) =>
 // Spec#collectPrimedLocs ignores the substitutions of an instance it enters, so a declaration there names a state variable only by its own name.
 const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
   const substitution = substitutedExpressions.get(expression);
-  return substitution &&
-    substitution.replacement !== expression &&
-    frames.includes(substitution.frame)
-    ? substitutionFrames.get(expression)?.[0]
-    : undefined;
+  if (substitution && !frames.includes(substitution.frame)) return undefined;
+  const name = getSubstitutedName(expression);
+  return name === undefined
+    ? undefined
+    : { name, expression: getSubstitutedOccurrence(expression) ?? expression };
 };
 
 const bindLetDefinitions = (
@@ -217,7 +219,7 @@ const getVariable = (
   frames?: Expression[],
 ): number | undefined => {
   const occurrence = frames && getNamedOccurrence(expression, frames);
-  if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
+  if (occurrence) return environment.variableIndex.get(occurrence.name);
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
   if (expression.kind === "Let") {
     return getVariable(
@@ -679,7 +681,7 @@ const visitDefined = (
       operator?.kind === "Closure" &&
       operator.params.length === 0 &&
       !replay.environment.variableIndex.has(expression.name) &&
-      !(definition && isConstantLevel(definition, replay.environment))
+      !(definition && getLookupValue(definition, replay.environment) !== undefined)
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
     }
@@ -699,7 +701,11 @@ const visitDefined = (
     );
   }
   const operator = resolveApplyOperator(expression, context);
-  if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
+  if (
+    operator?.kind === "Closure" &&
+    operator.params.length === expression.args.length &&
+    getBodyLiteral(operator.body, replay.environment) === undefined
+  ) {
     const bound = runAt(replay, node, () =>
       bindOperatorArguments(operator, expression.args, context),
     );
@@ -1397,9 +1403,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
   const collectUnchanged = (expression: Expression, scope: Scope | undefined): void => {
     const occurrence = getNamedOccurrence(expression, frames);
     if (occurrence) {
-      if (occurrence.kind === "Identifier" && environment.variableIndex.has(occurrence.name)) {
-        ranges.push(occurrence);
-      }
+      if (environment.variableIndex.has(occurrence.name)) ranges.push(occurrence.expression);
       return;
     }
     if (

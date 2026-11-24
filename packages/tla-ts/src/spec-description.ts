@@ -34,6 +34,7 @@ import {
   forEachBinding,
   getBodyLiteral,
   getDefinition,
+  getLookupValue,
   getRootKey,
   getStartupValue,
   lookupScope,
@@ -204,20 +205,30 @@ const resolveClosure = (
   return operator?.kind === "Closure" ? operator : undefined;
 };
 
-const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
-  definition?.kind === "Operator" &&
-  definition.params.length === 0 &&
-  getStartupValue(definition, environment) !== undefined;
-
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.body.kind !== "Number" &&
   definition.body.kind !== "String" &&
-  isStartupValue(definition, environment);
+  definition.params.length === 0 &&
+  getStartupValue(definition, environment) !== undefined;
 
-const isConstantDefinition = (closure: Closure, environment: Environment) => {
-  const definition = getDefinition(getRootKey(closure.name, environment), environment);
-  return definition?.body === closure.body && isConstantValue(definition, environment);
+const getCalledDefinition = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) =>
+  isLocallyResolved(expression)
+    ? getLocalDefinition(expression, scope)
+    : getDefinition(getOperatorName(expression) ?? "", environment);
+
+const isConstantDefinition = (
+  closure: Closure,
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const definition = getCalledDefinition(expression, scope, environment);
+  return definition?.body === closure.body && getLookupValue(definition, environment) !== undefined;
 };
 
 const getThunk = (expression: Expression, scope: Scope | undefined) => {
@@ -291,6 +302,7 @@ const getInstanceActions = (
       scope,
     },
   ];
+  if (called && isConstantDefinition(called, expression, scope, environment)) return callAction();
   if (called && args.length === 0) {
     return [
       { ...instanceAction, parameters: [], context, expression: called.body, scope: called.scope },
@@ -460,21 +472,29 @@ const getActions = (
     ];
   }
   const args = getArguments(expression);
+  const operatorName = getOperatorName(expression) ?? "";
   const calledName = isLocallyResolved(expression)
     ? called.name
-    : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
+    : (environment.instanceNames.get(operatorName) ?? called.name);
+  const calledDefinition = getCalledDefinition(expression, scope, environment);
+  // Tool#getActionsAppl names an action it doesn't enter by the definition the call names, not by the one a configuration override puts in its place.
+  // Deviation from TLC: Tool#getActionsAppl throws a ClassCastException where an override replaces a constant operator, which this names by the substitute.
+  const namedDefinition = isLocallyResolved(expression)
+    ? undefined
+    : environment.definitions.get(operatorName);
   const callAction = (): SpecAction[] => [
     {
-      name: calledName,
+      name:
+        namedDefinition && namedDefinition !== calledDefinition ? namedDefinition.name : calledName,
       location: expression.location,
-      ...getDefinitionRanges(letDefinition),
+      ...getDefinitionRanges(namedDefinition ?? calledDefinition),
       parameters: [],
       context,
       expression,
       scope,
     },
   ];
-  if (isConstantDefinition(called, environment)) return callAction();
+  if (isConstantDefinition(called, expression, scope, environment)) return callAction();
   if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
@@ -495,7 +515,7 @@ const getActions = (
       environment,
       instanceActions,
       [...context, ...getParameters(called, boundScope)],
-      letDefinition,
+      calledDefinition,
     );
   }, callAction);
 };
@@ -577,7 +597,13 @@ const describeSpecification = (
           scope: thunk.scope,
         }
       : resolveClosure(expression, scope, environment);
-  if (called && isConstantDefinition(called, environment)) return;
+  if (
+    called &&
+    getArguments(expression).length === 0 &&
+    isConstantDefinition(called, expression, scope, environment)
+  ) {
+    return;
+  }
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
@@ -671,7 +697,13 @@ const describeProperty = (
     return;
   }
   const called = resolveClosure(expression, scope, environment);
-  if (called && isConstantDefinition(called, environment)) return;
+  if (
+    called &&
+    getArguments(expression).length === 0 &&
+    isConstantDefinition(called, expression, scope, environment)
+  ) {
+    return;
+  }
   if (
     called &&
     called.params.length === getArguments(expression).length &&
@@ -825,8 +857,10 @@ export const getSubscriptVariables = (
     }
     const called = resolveClosure(expression, innerScope, environment);
     if (!called || called.params.length !== getArguments(expression).length) return true;
-    const definition = getDefinition(getRootKey(called.name, environment), environment);
-    if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
+    const definition = getCalledDefinition(expression, innerScope, environment);
+    if (definition?.body === called.body && getLookupValue(definition, environment) !== undefined) {
+      return true;
+    }
     return collect(called.body, getCallScope(called, expression, innerScope, environment));
   };
   return collect(subscript, scope) ? variables : undefined;

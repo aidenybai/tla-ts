@@ -11,13 +11,14 @@ import { formatRange } from "./errors";
 import {
   frameSubstitutions,
   getActionPredicate,
+  isCalledCopy,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
   syntheticIdentifiers,
   type Substitution,
 } from "./instances";
-import { SELECTION_NAME, untracedExpressions } from "./resolve";
+import { isInstantiated, SELECTION_NAME, untracedExpressions } from "./resolve";
 import { describeNode, getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
@@ -71,6 +72,7 @@ export interface Coverage {
   isPrimed: boolean[];
   isUnchanged: boolean[];
   recursive: number[];
+  twins: number[];
   lets: (number[] | undefined)[];
   roots: number[];
   primary: number[];
@@ -179,6 +181,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     isPrimed: [],
     isUnchanged: [],
     recursive: [],
+    twins: [],
     lets: [],
     roots: [],
     primary: [],
@@ -246,6 +249,7 @@ const addNode = (
   coverage.isPrimed.push(false);
   coverage.isUnchanged.push(expression?.kind === "Unchanged");
   coverage.recursive.push(-1);
+  coverage.twins.push(-1);
   coverage.lets.push(undefined);
   coverage.roots.push(parent === -1 ? node : coverage.roots[parent]);
   coverage.primary.push(0);
@@ -382,6 +386,31 @@ const getBoundNames = (bounds: Bound[]) =>
 const getSubstitutedRange = (expression: Expression) =>
   substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))?.location
     .range;
+
+const getChildNodes = (coverage: Coverage, node: number) => {
+  const children: number[] = [];
+  for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
+    children.push(child);
+  }
+  return children;
+};
+
+// CostModelNode#children is keyed by SemanticNode, and the instances of one module share SANY's instanced body, so TLC keeps one node for the copies of each expression in it.
+const pairTwins = (coverage: Coverage, sources: number[], copies: number[]) => {
+  const paired = new Set<number>();
+  copies.forEach((copy) => {
+    const range = coverage.ranges[copy];
+    const source = sources.find(
+      (candidate) =>
+        !paired.has(candidate) &&
+        (coverage.ranges[candidate] === range || isSameRange(coverage.ranges[candidate], range)),
+    );
+    if (source === undefined) return;
+    paired.add(source);
+    coverage.twins[copy] = source;
+    pairTwins(coverage, getChildNodes(coverage, source), getChildNodes(coverage, copy));
+  });
+};
 
 export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
   (substitutionFrames.get(expression) ?? []).filter(
@@ -579,9 +608,23 @@ export const buildCoverage = (
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
         if (!environment.boundSubstitutions.lets.has(expression)) {
+          const instanced: number[] = [];
           getHashtableOrder(expression.definitions).forEach((definition) => {
-            if (definition.name === SELECTION_NAME) return;
+            // SANY's LetInNode holds the definitions a LET instance exports, not the copies they call.
+            if (definition.name === SELECTION_NAME || isCalledCopy(definition)) return;
+            const start = coverage.expressions.length;
             walkDefinition({ definition, scope: inner });
+            if (!isInstantiated(definition)) return;
+            const tops: number[] = [];
+            for (
+              let node = start;
+              node !== -1 && node < coverage.expressions.length;
+              node = coverage.nextSibling[node]
+            ) {
+              tops.push(node);
+            }
+            pairTwins(coverage, instanced, tops);
+            instanced.push(...tops.filter((node) => coverage.twins[node] === -1));
           });
         }
         walk(expression.body, inner);
@@ -1745,12 +1788,20 @@ const addPair = (pairs: Pair[], pair: Pair) => {
 const isNodePrimed = (coverage: Coverage, node: number) =>
   coverage.isPrimed[node] || coverage.isUnchanged[node];
 
-const getChildren = (coverage: Coverage, node: number) => {
-  const children: number[] = [];
-  for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
-    children.push(child);
-  }
-  return children;
+const getChildGroups = (coverage: Coverage, group: number[]) => {
+  const groups: number[][] = [];
+  group.forEach((node) => {
+    for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
+      const twin = coverage.twins[child];
+      const twins = twin === -1 ? undefined : groups.find((item) => item.includes(twin));
+      if (twins) {
+        twins.push(child);
+        continue;
+      }
+      groups.push([child]);
+    }
+  });
+  return groups;
 };
 
 const getRelationCounts = (coverage: Coverage, relation: CoverageRelation) => {
@@ -1767,18 +1818,24 @@ const getRelationCounts = (coverage: Coverage, relation: CoverageRelation) => {
 const getExpressions = (coverage: Coverage, root: number) => {
   const expressions: CoverageExpression[] = [];
   const subtrees = new Map<number, Pair[]>();
-  const collect = (node: number): Pair[] => {
+  const getOwn = (group: number[]) => ({
+    primary: group.reduce((total, node) => total + coverage.primary[node], 0),
+    secondary: group.reduce((total, node) => total + coverage.secondary[node], 0),
+  });
+  const collect = (group: number[]): Pair[] => {
     const pairs: Pair[] = [];
-    const own = { primary: coverage.primary[node], secondary: coverage.secondary[node] };
-    if (own.primary > 0 || own.secondary > 0 || isNodePrimed(coverage, node)) addPair(pairs, own);
-    getChildren(coverage, node).forEach((child) =>
+    const own = getOwn(group);
+    if (own.primary > 0 || own.secondary > 0 || isNodePrimed(coverage, group[0])) {
+      addPair(pairs, own);
+    }
+    getChildGroups(coverage, group).forEach((child) =>
       collect(child).forEach((pair) => addPair(pairs, pair)),
     );
-    subtrees.set(node, pairs);
+    subtrees.set(group[0], pairs);
     return pairs;
   };
-  const add = (node: number, depth: number, count: number, cost: number) => {
-    const range = coverage.ranges[node];
+  const add = (group: number[], depth: number, count: number, cost: number) => {
+    const range = coverage.ranges[group[0]];
     expressions.push({
       location: range ? formatRange(range) : "Unknown location",
       depth,
@@ -1786,25 +1843,25 @@ const getExpressions = (coverage: Coverage, root: number) => {
       cost,
     });
   };
-  const addSelf = (node: number, depth: number) =>
-    add(node, depth, coverage.primary[node], coverage.secondary[node]);
-  const print = (node: number, depth: number) => {
-    const children = getChildren(coverage, node);
+  const addSelf = (group: number[], depth: number, own: Pair) =>
+    add(group, depth, own.primary, own.secondary);
+  const print = (group: number[], depth: number) => {
+    const children = getChildGroups(coverage, group);
     const collected: Pair[] = [];
     children.forEach((child) =>
-      (subtrees.get(child) ?? collect(child)).forEach((pair) => addPair(collected, pair)),
+      (subtrees.get(child[0]) ?? collect(child)).forEach((pair) => addPair(collected, pair)),
     );
-    const own = { primary: coverage.primary[node], secondary: coverage.secondary[node] };
-    const isPrimed = isNodePrimed(coverage, node);
+    const own = getOwn(group);
+    const isPrimed = isNodePrimed(coverage, group[0]);
     const printChildren = (level: number) => children.forEach((child) => print(child, level));
-    if (coverage.isUnchanged[node]) {
+    if (coverage.isUnchanged[group[0]]) {
       const changed = collected.filter((pair) => pair.primary !== 0 || pair.secondary !== 0);
-      if (changed.length === 0) addSelf(node, depth);
-      else add(node, depth, Math.max(own.primary, getFirstPair(changed).primary), 0);
+      if (changed.length === 0) addSelf(group, depth, own);
+      else add(group, depth, Math.max(own.primary, getFirstPair(changed).primary), 0);
       return;
     }
     if (collected.length === 0) {
-      if (own.primary !== 0 || isPrimed) addSelf(node, depth);
+      if (own.primary !== 0 || isPrimed) addSelf(group, depth, own);
       return;
     }
     const isZero = own.primary === 0 && own.secondary === 0;
@@ -1812,29 +1869,29 @@ const getExpressions = (coverage: Coverage, root: number) => {
       const consistent = collected[0];
       const isConsistentZero = consistent.primary === 0 && consistent.secondary === 0;
       if (consistent.primary < own.primary) {
-        addSelf(node, depth);
+        addSelf(group, depth, own);
         printChildren(depth + 1);
         return;
       }
       if (!isPrimed && isZero && !isConsistentZero) {
-        add(node, depth, consistent.primary, consistent.secondary);
+        add(group, depth, consistent.primary, consistent.secondary);
         return;
       }
       if (isZero && isConsistentZero) {
-        if (isPrimed) addSelf(node, depth);
+        if (isPrimed) addSelf(group, depth, own);
         printChildren(isPrimed ? depth + 1 : depth);
         return;
       }
       if (own.primary === consistent.primary && own.secondary === consistent.secondary) {
-        addSelf(node, depth);
+        addSelf(group, depth, own);
         return;
       }
     }
     const isPrinted = !isZero || isPrimed;
-    if (isPrinted) addSelf(node, depth);
+    if (isPrinted) addSelf(group, depth, own);
     printChildren(isPrinted ? depth + 1 : depth);
   };
-  getChildren(coverage, root).forEach((child) => {
+  getChildGroups(coverage, [root]).forEach((child) => {
     collect(child);
     print(child, 0);
   });
