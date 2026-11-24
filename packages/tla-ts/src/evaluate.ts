@@ -289,6 +289,7 @@ export interface Context {
 export type Evaluator = (context: Context) => Value;
 
 const evaluateAll = (evaluators: Evaluator[], context: Context) => {
+  // eslint-disable-next-line unicorn/no-new-array
   const values = new Array<Value>(evaluators.length);
   for (let index = 0; index < evaluators.length; index++)
     values[index] = evaluators[index](context);
