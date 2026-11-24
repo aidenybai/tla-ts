@@ -102,6 +102,10 @@ const MUTATING_METHODS = new Set([
 
 const MAX_ARRAY_LENGTH = 3;
 
+// The most characters of TLA+ that a parameter's set of values takes, which the model writes into
+// its spec beside each check of the parameter.
+const MOST_DOMAIN_CHARACTERS = 1_000_000;
+
 // The names that the model's own definitions and variables take, which no TypeScript name may.
 // A bound whose set a guard in the module's function gives, which a step reads in its state.
 const GUARDED = "GuardedSet";
@@ -802,6 +806,32 @@ export const frameModel = (
     // missing, as the in operator tells. An object that holds no field is the empty function, which a record of no
     // fields is.
     if (optional.length > 0) {
+      // The records number the product of each field's values, one more for an optional field,
+      // which may be missing: past the bound, the 2^n records of the optional fields' sets aren't
+      // written out.
+      const count = fields.reduce(
+        (product, field, position) =>
+          product * (optional.includes(position) ? field.size + 1 : field.size),
+        1,
+      );
+      if (count > setBound) {
+        return getInfinite(type, `it has more than ${setBound} values, which TLC lists at most`);
+      }
+      // A field's text appears in each of the 2^n records that hold it: half of them for an optional
+      // field, all of them for another.
+      const length = fields.reduce(
+        (sum, field, position) =>
+          sum +
+          (keys[position].length + field.text.length + 6) *
+            2 ** (optional.includes(position) ? optional.length - 1 : optional.length),
+        2 ** optional.length * 8,
+      );
+      if (length > MOST_DOMAIN_CHARACTERS) {
+        return getInfinite(
+          type,
+          `its ${2 ** optional.length} records' TLA+ would run past ${MOST_DOMAIN_CHARACTERS.toLocaleString("en-US")} characters`,
+        );
+      }
       const parts = Array.from({ length: 2 ** optional.length }, (_, mask) => {
         const held = keys.flatMap((_, position) => {
           const bit = optional.indexOf(position);

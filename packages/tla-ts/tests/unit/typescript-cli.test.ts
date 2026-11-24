@@ -208,6 +208,55 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A record of optional fields is the union of a record for each set of them that it holds: past
+  // the bound of values TLC lists, which their product with one more for each field passes, its
+  // 2^n records aren't written out, and the export is noted rather than its spec running past the
+  // length of a string.
+  describe("calls no export whose record of optional fields has more values than TLC lists", () => {
+    const getModel = (count: number, throws: string) =>
+      `export const pick = (options: { ${Array.from({ length: count }, (_, index) => `f${index}?: boolean`).join("; ")} }) => {\n  if (${throws}) throw new Error("pick " + Object.keys(options).join());\n  return Object.keys(options).length;\n};\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "options.ts"),
+        getModel(24, "options.f0 === true && options.f1 === false"),
+      );
+      expect(runNode(directory, "options.ts").status).toBe(0);
+      const result = runCli(directory, ["options.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /tla-ts calls no pick: its parameter options takes values it can't list: .* isn't finite: it has more than 1000000 values, which TLC lists at most/,
+      );
+    });
+
+    // Within the bound, the 2^12 sets of fields of a long literal or undefined, 3^12 records, each
+    // writing most of the fields, are TLA+ past a million characters, which the model writes
+    // beside each check.
+    it("notes an export whose records' TLA+ is too long to write", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "flags.ts"),
+        `export const count = (flags: { ${Array.from({ length: 12 }, (_, index) => `f${index}?: "${"x".repeat(32)}"`).join("; ")} }) => Object.keys(flags).length;\n`,
+      );
+      expect(runNode(directory, "flags.ts").status).toBe(0);
+      const result = runCli(directory, ["flags.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("records' TLA+ would run past 1,000,000 characters");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "options.ts"),
+        getModel(2, "options.f0 === true && options.f1 === false"),
+      );
+      const result = runCli(directory, ["options.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('the second argument was:\n"pick f0,f1"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
