@@ -1478,6 +1478,22 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     },
   );
 
+  it.each(["A(J) == LET L == J IN L", "A(K) == LET L == K IN L"])(
+    "accepts an operator argument that a recursive operator cannot name, as TLC does, beside %s",
+    async (definition) => {
+      const body = `RECURSIVE R(_)\n${definition}\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1)\nH(K(_)) == R(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F`;
+      expect((await checkSubstitution(body)).status).toBe("success");
+    },
+  );
+
+  it("rejects an operator argument that a recursive operator can name and may apply", async () => {
+    const body =
+      "H(K(_)) == LET RECURSIVE R(_)\n               L == K(1)\n               R(n) == IF n = 0 THEN 0 ELSE R(n - 1)\n           IN R(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F";
+    await expect(checkSubstitution(body)).rejects.toThrow(
+      getMessagePattern([getLeibnizError("Pure")]),
+    );
+  });
+
   it.each([
     "I(a) == INSTANCE Proved WITH c <- a, w <- x\nF(a) == I(a)!T\nJ == INSTANCE Pure WITH c <- 1, Op <- F",
     "I(a) == INSTANCE Proved WITH c <- a, w <- x\nJ == INSTANCE Pure WITH c <- 1, Op <- I!T",
