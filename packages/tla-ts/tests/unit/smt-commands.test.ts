@@ -6370,6 +6370,223 @@ describe("smt.restart_strategy and smt.restart_factor, as Z3 5.3.2's inc_limits 
   });
 });
 
+describe("smt.random_seed, as Z3 5.3.2 reads it into every smt kernel", () => {
+  const declarations = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(declare-const z Int)",
+    "(declare-const w Int)",
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+  ];
+  const assertions = [
+    "(assert (or (<= 5 (+ z (+ x x))) (< (+ (+ 1 x) 3) (+ (ite (< w z) x w) (+ z 5)))))",
+    "(assert (or (or (< -2 (+ x 2)) (< (+ x x) 4)) p))",
+    "(assert (or (= (+ -1 w) (ite (= 1 x) y 1))))",
+    "(assert (or (< -2 (+ (+ 1 y) (+ z x))) (not q)))",
+  ];
+
+  it("seeds the script's incremental kernel", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        "(set-logic QF_UFLIA)",
+        ...declarations,
+        "(push)",
+        ...assertions,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 670)"]);
+  });
+
+  it("seeds the arithmetic solver of sat.euf", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :produce-models true)",
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        ...assertions,
+        "(check-sat-using sat)",
+        "(get-info :rlimit)",
+        "(get-value (x z))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 295)", "((x 25171)", " (z (- 29993)))"]);
+  });
+
+  it("seeds the kernel of the optimizer", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        "(assert (or (< (ite (= (+ -3 2) (+ 0 2)) y (ite (<= 2 -2) y -3)) (+ (+ w -3) (+ w y))) (<= (+ -2 (ite (not q) w w)) (+ (+ -2 -2) 0))))",
+        "(assert (or (= (ite (< 3 (+ w -3)) (ite (<= -3 z) -3 z) x) (ite (= -1 (ite (not q) z 3)) (ite (< w x) -1 2) (ite (not q) y -1))) (= (+ (+ 0 3) 1) (ite (= w (ite (< -2 x) w w)) x (ite (not p) 0 z)))))",
+        "(assert (or (<= 3 (+ (ite (<= 1 y) 0 1) (+ x 1))) (<= (ite (< 0 (ite (< -2 1) w x)) -3 3) (+ (ite p 2 -2) 2))))",
+        "(assert (or (not q) (= x (ite (= (ite (< 1 z) -2 -3) z) (+ y 0) (+ x 0)))))",
+        "(minimize (+ x y))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 4334)"]);
+  });
+
+  it("seeds the kernel of qsat", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...declarations,
+        "(assert (forall ((a Int)) (or q (<= (+ x 1) (ite (< x z) x z)))))",
+        "(assert (or (< (+ (+ x y) 3) (+ (+ 0 x) (+ -1 3))) (<= (+ (ite (<= 0 w) 1 -2) (+ -1 2)) (+ y (+ -2 1)))))",
+        "(assert (or (= (+ -1 z) (+ (+ 3 -1) (+ 0 2))) (< (+ (+ x z) (+ w 3)) 1)))",
+        "(assert (or (= -2 (ite (not p) -2 (ite q -2 1))) (< (+ -2 x) (ite (< (ite (< x y) x w) (+ 2 3)) -3 (ite (not p) z 3)))))",
+        "(assert (or (<= -1 -1) (<= (ite (< (+ -2 z) (+ 3 2)) x 0) -2)))",
+        "(check-sat-using qsat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 2821)"]);
+  });
+});
+
+describe("smt.arith.propagate_eqs, as Z3 5.3.2 reads it into every smt kernel", () => {
+  it("stops the arithmetic solver of sat.euf propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or (or (< z 3) (< w (ite (= w z) z -2))) (not q) (= (+ y 3) y)))",
+        "(assert (or (< (+ y 5) 4)))",
+        "(assert (or (= x w) (< w y) (= (+ w 3) (+ -2 (+ z y)))))",
+        "(assert (or (= (+ (+ y x) w) (+ (+ w 0) (+ x y))) (or (not p) (< (+ y y) w)) (and (= (ite (= -3 y) z z) 2) (<= -3 (+ z w)))))",
+        "(check-sat-using sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 449)"]);
+  });
+
+  it("stops the smt kernel of sat.euf's mbqi propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(set-option :produce-models true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (forall ((z Int)) (or (>= (f z) (- x -2)) (<= (- (f y) (- 3 x)) y))))",
+        "(assert (forall ((z Int)) (or (>= (+ (- z -1) (f z)) -1) (< (- (- -2 y) (f 3)) (+ (+ -2 y) x)))))",
+        "(assert (or (< (f x) (f 4)) (<= (- (- x y) y) (+ -1 (f 0)))))",
+        "(assert (or (< (- 2 (- x x)) (+ 1 (- y x))) (>= (+ x x) (+ x (+ y x)))))",
+        "(check-sat-using (using-params sat :euf true))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 3126)"]);
+  });
+
+  it("stops the kernel of unit-subsume-simplify propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or (= (+ (+ y 0) (+ 0 1)) (+ (+ y w) (+ z -1))) (<= (+ (ite (= 1 -2) -3 -3) (+ 2 y)) (ite (<= (+ x 0) (ite (= 2 -1) -1 2)) 1 (ite (< z z) -1 w)))))",
+        "(assert (or p (<= w (ite (= (+ z w) (ite (<= z -3) 2 -3)) (+ z x) 1))))",
+        "(assert (or (< -1 -3) (< (ite (= 1 2) (+ z -1) (ite (not p) 1 -2)) (+ (ite (<= y 3) 2 0) (+ 0 -3)))))",
+        "(assert (or (= (+ (ite (< x x) x 2) (+ w -1)) (ite (= (+ 1 z) (+ -3 y)) (ite p -3 y) -3)) (< 3 3)))",
+        "(apply unit-subsume-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (let ((a!1 (ite (<= (+ x 0) (ite (= 2 (- 1)) (- 1) 2)) 1 (ite (< z z) (- 1) w))))",
+      "  (let ((a!2 (<= (+ (ite (= 1 (- 2)) (- 3) (- 3)) 2 y) a!1)))",
+      "    (or (= (+ y 0 0 1) (+ y w z (- 1))) a!2)))",
+      "  (let ((a!1 (ite (= (+ z w) (ite (<= z (- 3)) 2 (- 3))) (+ z x) 1)))",
+      "    (or p (<= w a!1)))",
+      "  (let ((a!1 (< (ite (= 1 2) (+ z (- 1)) (ite (not p) 1 (- 2)))",
+      "                (+ (ite (<= y 3) 2 0) 0 (- 3)))))",
+      "    (or (< (- 1) (- 3)) a!1))",
+      "  (let ((a!1 (= (+ (ite (< x x) x 2) w (- 1))",
+      "                (ite (= (+ 1 z) (+ (- 3) y)) (ite p (- 3) y) (- 3)))))",
+      "    (or a!1 (< 3 3)))",
+      "  :precision precise :depth 0)",
+      ")",
+      "(:rlimit 1205)",
+    ]);
+  });
+});
+
+describe("ctx-solver-simplify, as Z3 5.3.2 reads the smt parameters into its kernel", () => {
+  const script = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(declare-const z Int)",
+    "(declare-const w Int)",
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(assert (or (not q) (not p)))",
+    "(assert (or (not q) (not p)))",
+    "(assert (or (= (ite (= 2 0) -3 z) z) (< (ite (< 2 (ite (< 1 x) w z)) (+ -3 z) 0) (+ w (ite (= y x) w w)))))",
+    "(assert (or (< 2 (ite q (ite (< -1 x) y y) (+ w y))) (<= -2 (+ (ite (< z y) 0 w) x))))",
+  ];
+  const goals = [
+    "(goals",
+    "(goal",
+    "  (or (not q) (not p))",
+    "  (let ((a!1 (ite (< 2 (ite (< 1 x) w z)) (+ (- 3) z) 0)))",
+    "  (let ((a!2 (< a!1 (+ w (ite (= y x) w w)))))",
+    "    (or (= (ite (= 2 0) (- 3) z) z) a!2)))",
+    "  (let ((a!1 (< 2 (ite q (ite (< (- 1) x) y y) (+ w y))))",
+    "        (a!2 (<= (- 2) (+ (ite (< z y) 0 w) x))))",
+    "    (or a!1 a!2))",
+    "  :precision precise :depth 1)",
+    ")",
+  ];
+
+  it("seeds the kernel from smt.random_seed", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...script,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1393)"]);
+  });
+
+  it("seeds the kernel from the tactic's random_seed over smt.random_seed", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 3)",
+        ...script,
+        "(apply (using-params ctx-solver-simplify :random_seed 7))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1393)"]);
+  });
+
+  it("stops the kernel propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        ...script,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1437)"]);
+  });
+});
+
 describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => {
   it("prints the model uncompressed until get-value compresses it", () => {
     expect(

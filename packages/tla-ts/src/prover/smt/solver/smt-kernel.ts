@@ -23,6 +23,8 @@ export const getGlobalSmtParams = (
   phaseSelection: Number(parameters.get("smt.phase_selection") ?? "3"),
   restartStrategy: Number(parameters.get("smt.restart_strategy") ?? "1"),
   restartFactor: getDoubleParameter(parameters, "smt.restart_factor"),
+  randomSeed: Number(parameters.get("smt.random_seed") ?? "0"),
+  isArithPropagatingEqs: parameters.get("smt.arith.propagate_eqs") !== "false",
   qiMaxInstances: Number(parameters.get("smt.qi.max_instances") ?? "4294967295"),
   qiMaxEagerMultipatterns: Number(parameters.get("smt.qi.max_multi_patterns") ?? "0"),
   isQiUpdatingGeneration: parameters.get("smt.qi.update_generation") !== "false",

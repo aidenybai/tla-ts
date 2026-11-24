@@ -36,12 +36,14 @@ export class IucSolver {
     private manager: AstManager,
     private spacerManager: SpacerManager,
     parameters: ReadonlyMap<string, string>,
+    randomSeed: number,
   ) {
     this.kernel = new SmtKernel(manager, {
       isMbqi: true,
       isFindingMacros: false,
       mbqiMaxIterations: MBQI_MAX_ITERATIONS,
       ...getGlobalSmtParams(parameters),
+      randomSeed,
     });
   }
 
@@ -198,7 +200,7 @@ export class PropSolver {
     randomSeed: number,
     parameters: ReadonlyMap<string, string>,
   ) {
-    this.context = new IucSolver(manager, spacerManager, parameters);
+    this.context = new IucSolver(manager, spacerManager, parameters, randomSeed);
     this.random = new RandomGen(randomSeed);
   }
 

@@ -741,7 +741,6 @@ export const runSmtlibScript = (
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
-    isArithPropagatingEqs: settings.parameters.get("smt.arith.propagate_eqs") !== "false",
     qiCost: settings.parameters.get("smt.qi.cost"),
     qiEagerThreshold: getDoubleParameter(settings.parameters, "smt.qi.eager_threshold"),
     qiLazyThreshold: getDoubleParameter(settings.parameters, "smt.qi.lazy_threshold"),
