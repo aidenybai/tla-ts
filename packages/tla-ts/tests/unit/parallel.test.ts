@@ -36,6 +36,7 @@ const getCounts = (result: { generatedStates: number; distinctStates: number; de
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("check with workers matches TLC", () => {
@@ -482,6 +483,22 @@ describe("check with workers matches TLC", () => {
       ]);
     },
   );
+
+  it("checks again without the typed tier when workers stop after it gives up partway, reading the clock as one worker does", async () => {
+    const getClockReads = async (workers: number) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+      const result = await tlaTs.check({
+        source:
+          "---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1 + 0 \\div (500 - x)\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers,
+        onProgress: () => {},
+      });
+      return [result.status, result.generatedStates, now / 1000];
+    };
+    expect(await getClockReads(4)).toEqual(await getClockReads(1));
+  });
 
   it("hands a worker a converted function over SUBSET as the FcnLambdaValue it is", async () => {
     const result = await check({

@@ -371,6 +371,7 @@ export type ParallelCheck = (
 export const checkSequentially = (
   options: CheckOptions,
   checkInParallel?: ParallelCheck,
+  isTypedTierSkipped = false,
 ): CheckResult | Promise<CheckResult> => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
@@ -378,7 +379,7 @@ export const checkSequentially = (
     ? createLivenessDump(options.dump, options.writeFile, options.version)
     : undefined;
   try {
-    return searchStates(options, stateWriter, livenessDump, checkInParallel);
+    return searchStates(options, stateWriter, livenessDump, checkInParallel, isTypedTierSkipped);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -398,6 +399,7 @@ const searchStates = (
   stateWriter: StateWriter | undefined,
   livenessDump: LivenessDump | undefined,
   checkInParallel: ParallelCheck | undefined,
+  isTypedTierSkipped: boolean,
 ): CheckResult | Promise<CheckResult> => {
   const config =
     typeof options.config === "string"
@@ -1327,6 +1329,7 @@ const searchStates = (
   let isTypedInitialReported = false;
   let typedProgressAt = Infinity;
   const typedChecks =
+    !isTypedTierSkipped &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.

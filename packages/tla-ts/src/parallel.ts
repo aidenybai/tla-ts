@@ -137,7 +137,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    return checkSequentially({ ...options, config, ...createAttempt() });
+    return checkSequentially({ ...options, config, ...createAttempt() }, undefined, true);
   };
   const workerCount = options.workers ?? 1;
   const isSequential =
@@ -150,7 +150,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;
-  if (isSequential) return fallBack();
+  if (isSequential) return checkSequentially({ ...options, config, ...createAttempt() });
   return checkSequentially({ ...options, config, ...createAttempt() }, (search, description) =>
     search.spec.init === undefined ||
     search.spec.next === undefined ||
