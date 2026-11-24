@@ -11338,6 +11338,72 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["an equality", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> = 1"],
+    ["a record", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN [a |-> F, b |-> F] = 1"],
+    ["an inequality", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> # 1"],
+    ["a membership", "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> \\in {1}"],
+    ["a constant definition", "K == LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<F, F>> = 1"],
+    [
+      "a comparison inside another",
+      "ASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<{s \\in {1} : <<F, F>> = s}>> = <<{}>>",
+    ],
+  ])("formats an error's message once in %s, as TLC does", async (_name, line) => {
+    const prints: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n${line}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["{}", "{1}", "{}", "{1}"]);
+  });
+
+  it.each([
+    ["an enumeration", "<<F \\cup Nat>> = <<{1}>>"],
+    ["a filter's enumeration", "<<{y \\in F \\cup Nat : TRUE}>> = <<{1}>>"],
+    ["a comparison of overridden sets", "<<Seq(F)>> = <<Nat>>"],
+  ])(
+    "formats the message of %s that fails inside a comparison once, as TLC does",
+    async (_name, comparison) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${comparison}\n====`,
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(["{}", "{1}"]);
+    },
+  );
+
+  it("formats an error's message as it throws in a check after a comparison failed", async () => {
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nASSUME LET F == {s \\in SUBSET {1} : PrintT(s)} IN <<{s \\in {1} : <<F, F>> = s}>> = <<{}>>\n====",
+      config: "",
+      onPrint: () => {},
+    });
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nASSUME AssertError("Attempted to enumerate S \\\\cup T when S:\\n{0}\\nand T:\\nNat\\nare not both enumerable", Nat \\cup {0} = Nat)\n====',
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("formats the message of a split of Next that fails, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == \\E o \\in LET F == {s \\in SUBSET {1} : PrintT(s)} IN {<<F, F>>, 1} : x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([prints, result.failure?.traceOutput]).toEqual([
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+      ["{}", "{1}", "{}", "{1}"],
+    ]);
+  });
+
+  it.each([
     [
       "PrintT",
       "PrintT(F) /\\ \\A t \\in F : t # <<7, 7>>",
@@ -11506,6 +11572,63 @@ ASSUME TLCFP(a) = -887695703
       "||line 4, col 20 to line 4, col 32 of module M: 1:4",
       "|||line 4, col 21 to line 4, col 24 of module M: 1",
       "|||line 4, col 30 to line 4, col 32 of module M: 1:5",
+    ]);
+  });
+
+  it.each([
+    [
+      "a pass in each state",
+      "x' = 1 - x /\\ \\A o \\in T : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "passes over a filter of it",
+      "x' = 0 /\\ (\\A o \\in W : TRUE) /\\ (\\A o \\in W : TRUE) /\\ (\\A o \\in T : TRUE)",
+      ["FIN", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a comparison that keeps it",
+      "x' = 1 - x /\\ T # {} /\\ \\A o \\in T : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    [
+      "a tuple that holds one",
+      "x' = 0 /\\ \\A o \\in C[1] : TRUE",
+      ["FIN", "<<0, 1>>", "<<1, 1>>"],
+    ],
+    ["a split of Next on it", "\\E o \\in T : x' = 1 - x", ["<<0, 1>>", "<<1, 1>>", "FIN"]],
+  ])(
+    "runs a constant filter's predicate where TLC does in %s, as SpecProcessor keeps the filter lazy",
+    async (_name, next, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nT == {u \\in (0..1) \\X {1} : PrintT(u)}\nW == {w \\in T : TRUE}\nC == <<{u \\in (0..1) \\X {1} : PrintT(u)}>>\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+        onProgress: (event) => {
+          if (event.kind === "initial-states-computed") prints.push("FIN");
+        },
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
+
+  it("runs a constant filter's predicate again when it rebuilds the trace, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nT == {u \\in (0..1) \\X {1} : PrintT(u)}\nInv == x < 2\nInit == x = 0\nNext == x' = x + 1 /\\ \\A o \\in T : TRUE\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([
+      prints,
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
+      [[], ["<<0, 1>>", "<<1, 1>>"], ["<<0, 1>>", "<<1, 1>>"]],
+      ["<<0, 1>>", "<<1, 1>>", "<<0, 1>>", "<<1, 1>>"],
     ]);
   });
 

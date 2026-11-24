@@ -252,6 +252,32 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
+const hasLazyPart = (value: Value) => {
+  const pending = [value];
+  for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
+    if (typeof inner !== "object") continue;
+    switch (inner.kind) {
+      case "Set":
+        for (let index = 0; index < inner.elements.length; index++) {
+          pending.push(inner.elements[index]);
+        }
+        break;
+      case "Function":
+        for (let index = 0; index < inner.domain.length; index++) {
+          pending.push(inner.domain[index], inner.range[index]);
+        }
+        break;
+      case "ModelValue":
+      case "Interval":
+      case "InfiniteSet":
+        break;
+      default:
+        return true;
+    }
+  }
+  return false;
+};
+
 const hasBodyValue = (definition: Definition, environment: Environment) =>
   definition.body.kind === "Number" ||
   definition.body.kind === "String" ||
@@ -1603,6 +1629,15 @@ export const createSearch = (
     return record ? setAliasedState(record, () => getStateRecord(state)) : getStateRecord(state);
   };
   const scopeExpressions = getScopeExpressions(spec.scope);
+  // SpecProcessor#processConstantDefns keeps a SetPredValue lazy, so each pass over a constant filter runs its predicate again.
+  const hasReplayedStartupValue = [...environment.facts.ids.keys()].some((definition) => {
+    const startup = getStartupValue(definition, environment);
+    return (
+      startup !== undefined &&
+      isImpureDefinition(definition, environment, "replayed") &&
+      hasLazyPart(startup)
+    );
+  });
   return {
     properties,
     spec,
@@ -1622,6 +1657,7 @@ export const createSearch = (
     isNextReplayed:
       spec.next !== undefined &&
       (scopeExpressions === undefined ||
+        hasReplayedStartupValue ||
         isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
     isTraceRebuildShown:
       scopeExpressions === undefined ||
@@ -1655,13 +1691,14 @@ export const createSearch = (
       const definitions = [...environment.facts.ids.keys()];
       // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
       // a constant definition without parameters once as it starts, so one with a startup value
-      // never draws again. An operator a scope binds without its expression can reach any
-      // definition.
+      // draws again only through a lazy part. An operator a scope binds without its expression
+      // can reach any definition.
       const isReplayed = (definition: Definition) =>
         getStartupValue(definition, environment) === undefined &&
         isImpureDefinition(definition, environment, "replayed");
       const hasReplayedEffects =
-        scopeExpressions === undefined
+        hasReplayedStartupValue ||
+        (scopeExpressions === undefined
           ? definitions.some(isReplayed)
           : definitions.some(
               (definition) =>
@@ -1686,7 +1723,7 @@ export const createSearch = (
               ],
               environment,
               "replayed",
-            );
+            ));
       return hasReplayedEffects
         ? undefined
         : {
