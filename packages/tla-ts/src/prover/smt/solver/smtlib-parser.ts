@@ -1737,11 +1737,13 @@ export const createSmtlibReader = (
     const signature = getBvSignature(manager, op, argSorts, indices);
     if (typeof signature === "string") throw new SmtParseError(signature, at);
     const mismatched = getMismatchedArgument(signature, argSorts);
-    if (mismatched !== -1)
+    if (mismatched !== -1) {
+      manager.reserveBvDeclTable(op, manager.getBvSize(argSorts[0]));
       throw new SmtParseError(
         `Argument ${printExpr(manager, DEFAULT_PRINT_ENVIRONMENT, args[mismatched])} at position ${mismatched} has sort ${manager.getSortName(argSorts[mismatched])} it does not match declaration (declare-fun ${signature.name} (${signature.domain.map((sort) => manager.getSortName(sort)).join(" ")}) ${manager.getSortName(signature.range)})`,
         at,
       );
+    }
     const decl = manager.mkBvDecl(op, signature.name, indices, signature.domain, signature.range);
     return manager.mkApp(decl, args, signature.range);
   };

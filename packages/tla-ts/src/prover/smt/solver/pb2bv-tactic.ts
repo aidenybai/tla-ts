@@ -236,7 +236,7 @@ class Pb2Bv {
     const sum = polynomial.reduce((total, monomial) => total.add(monomial.coeff), Rational.zero);
     if (sum.compare(bound) < 0) return manager.falseExpr;
     const bits = getNumBits(sum);
-    const sort = manager.mkBvSort(bits);
+    const sort = manager.getBvSort(bits);
     const zero = manager.mkBvNumeral(0n, bits);
     const summands = polynomial.map((monomial) =>
       manager.mkApp(

@@ -223,13 +223,16 @@ export const getBvSignature = (
     };
   if (op === OP_MKBV) {
     if (argSorts.some((sort) => sort !== SORT_BOOL)) return "invalid mkbv operator";
-    return { name: "mkbv", domain: argSorts, range: manager.mkBvSort(argSorts.length) };
+    return { name: "mkbv", domain: argSorts, range: manager.getBvSort(argSorts.length) };
   }
   if (op === OP_INT2BV) {
     if (parameters.length !== 1) return "int2bv expects one parameter";
     if (parameters[0] === 0) return "bit-vector size must be greater than zero";
-    if (argSorts.length !== 1) return "expecting one argument to int_to_bv";
-    return { name: "int_to_bv", domain: argSorts, range: manager.mkBvSort(parameters[0]) };
+    if (argSorts.length !== 1) {
+      manager.reserveBvDeclTable(op, parameters[0]);
+      return "expecting one argument to int_to_bv";
+    }
+    return { name: "int_to_bv", domain: argSorts, range: manager.getBvSort(parameters[0]) };
   }
   if (argSorts.length === 0) return "no arguments supplied to bit-vector operator";
   if (!manager.isBvSort(argSorts[0])) return "could not extract bit-vector size";
@@ -249,15 +252,20 @@ export const getBvSignature = (
               ? {
                   name: op === OP_BREDOR ? "bvredor" : "bvredand",
                   domain: [sort],
-                  range: manager.mkBvSort(1),
+                  range: manager.getBvSort(1),
                 }
               : op === OP_BCOMP
-                ? { name: "bvcomp", domain: [sort, sort], range: manager.mkBvSort(1) }
+                ? { name: "bvcomp", domain: [sort, sort], range: manager.getBvSort(1) }
                 : undefined;
-  if (fixed !== undefined && argSorts.length !== fixed.domain.length) {
-    if (binary?.[1] !== true) return "declared arity mismatches supplied arity";
-    if (argSorts.some((argSort) => argSort !== sort))
-      return "declared sorts do not match supplied sorts";
+  if (
+    fixed !== undefined &&
+    argSorts.length !== fixed.domain.length &&
+    (binary?.[1] !== true || argSorts.some((argSort) => argSort !== sort))
+  ) {
+    manager.reserveBvDeclTable(op, size);
+    return binary?.[1] === true
+      ? "declared sorts do not match supplied sorts"
+      : "declared arity mismatches supplied arity";
   }
   if (fixed !== undefined) return fixed;
   const isUnaryWithInt = argSorts.length === 1 && parameters.length === 1;
@@ -267,8 +275,10 @@ export const getBvSignature = (
       return { name: "bit2bool", domain: argSorts, range: SORT_BOOL };
     case OP_UBV2INT:
     case OP_SBV2INT:
-      if (argSorts.length !== 1)
+      if (argSorts.length !== 1) {
+        manager.reserveBvDeclTable(op, size);
         return `expecting one argument to ${op === OP_UBV2INT ? "ubv_to_int" : "sbv_to_int"}`;
+      }
       return {
         name: op === OP_UBV2INT ? "ubv_to_int" : "sbv_to_int",
         domain: argSorts,
@@ -278,7 +288,7 @@ export const getBvSignature = (
       if (!argSorts.every((argSort) => manager.isBvSort(argSort)))
         return "invalid concat application";
       const width = argSorts.reduce((sum, argSort) => sum + manager.getBvSize(argSort), 0);
-      return { name: "concat", domain: argSorts, range: manager.mkBvSort(width) };
+      return { name: "concat", domain: argSorts, range: manager.getBvSort(width) };
     }
     case OP_SIGN_EXT:
     case OP_ZERO_EXT:
@@ -287,7 +297,7 @@ export const getBvSignature = (
       return {
         name: op === OP_SIGN_EXT ? "sign_extend" : "zero_extend",
         domain: argSorts,
-        range: manager.mkBvSort(size + parameters[0]),
+        range: manager.getBvSort(size + parameters[0]),
       };
     case OP_EXTRACT:
       if (
@@ -300,7 +310,7 @@ export const getBvSignature = (
       return {
         name: "extract",
         domain: argSorts,
-        range: manager.mkBvSort(parameters[0] - parameters[1] + 1),
+        range: manager.getBvSort(parameters[0] - parameters[1] + 1),
       };
     case OP_ROTATE_LEFT:
     case OP_ROTATE_RIGHT: {
@@ -313,7 +323,7 @@ export const getBvSignature = (
       if (argSorts.length !== 1) return "repeat expects one argument";
       if (parameters.length !== 1 || parameters[0] === 0)
         return "repeat expects one nonzero integer parameter";
-      return { name: "repeat", domain: argSorts, range: manager.mkBvSort(size * parameters[0]) };
+      return { name: "repeat", domain: argSorts, range: manager.getBvSort(size * parameters[0]) };
     default:
       return "invalid bit-vector operator";
   }
