@@ -287,6 +287,13 @@ export interface Context {
 
 export type Evaluator = (context: Context) => Value;
 
+const evaluateAll = (evaluators: Evaluator[], context: Context) => {
+  const values = new Array<Value>(evaluators.length);
+  for (let index = 0; index < evaluators.length; index++)
+    values[index] = evaluators[index](context);
+  return values;
+};
+
 type ArgumentBinder = (context: Context) => Binding;
 
 interface CompiledStep {
@@ -3120,11 +3127,11 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       return compileSetComprehension(expression, environment);
     case "SetEnumeration": {
       const elements = expression.elements.map(getChildEvaluator);
-      return (context) => createEnumeratedSet(elements.map((element) => element(context)));
+      return (context) => createEnumeratedSet(evaluateAll(elements, context));
     }
     case "Tuple": {
       const elements = expression.elements.map(getChildEvaluator);
-      return (context) => createTuple(elements.map((element) => element(context)));
+      return (context) => createTuple(evaluateAll(elements, context));
     }
     case "FunctionConstruction":
       return compileFunctionConstruction(expression, environment);
@@ -3148,15 +3155,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const coverage = environment.coverage;
       const isWrittenSorted = writtenIndexes.every((writtenIndex, index) => writtenIndex === index);
       if (!coverage && isWrittenSorted) {
-        return (context) =>
-          createRecordSet(
-            names,
-            sets.map((set) => set(context)),
-            undefined,
-          );
+        return (context) => createRecordSet(names, evaluateAll(sets, context), undefined);
       }
       return (context) => {
-        const writtenSets = sets.map((set) => set(context));
+        const writtenSets = evaluateAll(sets, context);
         return createRecordSet(
           names,
           isWrittenSorted ? writtenSets : writtenIndexes.map((index) => writtenSets[index]),
