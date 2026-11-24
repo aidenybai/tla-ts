@@ -571,7 +571,7 @@ export const buildCoverage = (
       if (isOperator) {
         if (!resolved) return;
         const outer = unadopted;
-        // SANY's OpArgNode holds the operator as declared, so CostModelCreator connects no application to a definition the config substitutes for it.
+        // SANY's OpArgNode holds the operator as declared, so CostModelCreator doesn't visit the definition the config substitutes for it.
         if (!isLocallyResolved(argument) && environment.substitutions.has(argument.name)) {
           unadopted = resolved.definition.body;
         }
