@@ -2486,24 +2486,21 @@ const compileApply = (
   return (context) => {
     const binding = lookupScope(context.scope, expression.operator);
     const operator = binding?.kind === "Operator" ? binding.operator : undefined;
-    const called =
-      operator?.kind === "Closure"
-        ? getCalledBody(expression, operator.body, environment)
-        : undefined;
-    return operator?.kind === "Closure" && called !== undefined
-      ? callOperator(
-          {
-            kind: "Closure",
-            name: operator.name,
-            params: operator.params,
-            body: called,
-            scope: context.scope,
-          },
-          args,
-          context,
-          binders,
-        )
-      : call(context);
+    if (operator?.kind !== "Closure") return call(context);
+    const called = getCalledBody(expression, operator.body, environment);
+    if (called === undefined) return call(context);
+    return callOperator(
+      {
+        kind: "Closure",
+        name: operator.name,
+        params: operator.params,
+        body: called,
+        scope: context.scope,
+      },
+      args,
+      context,
+      binders,
+    );
   };
 };
 
