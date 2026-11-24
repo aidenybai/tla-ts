@@ -2,6 +2,7 @@ import type { CheckOptions, TraceStep, Violation } from "./check";
 import type { CoverageOutput } from "./coverage";
 import {
   FILE_NOT_FOUND_EXCEPTION,
+  getTracePrintFailure,
   isStackOverflow,
   TlaEvaluationError,
   TlaFileError,
@@ -48,6 +49,7 @@ import {
 import { getActionFlowGraph, type ActionStatistics } from "./tlc/action-graph";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { replayInitialStates } from "./tlc/replay";
+import { formatTraceSpecState } from "./tlc/trace-spec";
 import {
   createActionRecord,
   createCounterExample,
@@ -59,7 +61,9 @@ import {
   createModelValue,
   createRecord,
   formatErrorState,
+  formatFingerprintedState,
   formatState,
+  getDiffBase,
   getSetBound,
   markNormalized,
   valuesEqual,
@@ -96,9 +100,10 @@ export type SimulationOutput =
       kind: "behavior";
       trace: TraceStep[];
       levels: number[];
-      fingerprinted: Value[][];
-      isLastStateOnly: boolean;
+      printedStates: string[];
+      printFailure: string | undefined;
     }
+  | { kind: "error-state"; state: Record<string, Value> }
   | CoverageOutput
   | TraceSpecOutput
   | { kind: "progress"; statistics: SimulationStatistics }
@@ -707,8 +712,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       },
       failures: found.failures.map((failure) => toException(failure, last)),
       counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
-      traceSpec: prepared.getTraceSpec(
-        lasso.map((node) => toRecord(node.state)),
+      traceSpec: prepared.getTraceSpec?.(
+        lasso.map((node) => formatTraceSpecState(toRecord(node.state))),
         loopStart,
       ),
     };
@@ -809,6 +814,60 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
     return { positions, failure: undefined };
   };
+  const printBehavior = (trace: TraceNode[], positions: number[]) => {
+    if (traceDepth === INFINITE_DEPTH) {
+      // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
+      output({ kind: "error-state", state: toRecord(trace[trace.length - 1].state) });
+      return;
+    }
+    const steps: TraceStep[] = [];
+    const printedStates: string[] = [];
+    const traceSpecStates: Record<string, string>[] = [];
+    let printFailure: string | undefined;
+    for (const position of positions) {
+      const node = trace[position];
+      const captured = capture.captureOutput(() => toTraceSteps(trace, [position])[0]);
+      const step =
+        captured.lines.length > 0
+          ? { ...captured.result, aliasOutput: captured.lines }
+          : captured.result;
+      steps.push(step);
+      try {
+        printedStates.push(
+          formatFingerprintedState(
+            step.state,
+            options.isDiffTrace && steps.length > 1
+              ? getDiffBase(step.state, steps[steps.length - 2].state)
+              : undefined,
+            // TLC fingerprints only a state with every variable assigned, and an alias through the variables it binds.
+            node.incomplete === undefined &&
+              environment.variables.every((name) => Object.hasOwn(step.state, name))
+              ? environment.variables.map((name) => step.state[name])
+              : [],
+          ),
+        );
+      } catch (error) {
+        printFailure = getTracePrintFailure(error);
+        break;
+      }
+      if (prepared.getTraceSpec) traceSpecStates.push(formatTraceSpecState(toRecord(node.state)));
+    }
+    output({
+      kind: "behavior",
+      trace: steps,
+      levels: positions.map((position) => trace[position].level),
+      printedStates,
+      printFailure,
+    });
+    const traceSpec = prepared.getTraceSpec?.(
+      positions.map(
+        (position, index) =>
+          traceSpecStates[index] ?? formatTraceSpecState(toRecord(trace[position].state)),
+      ),
+      undefined,
+    );
+    if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
+  };
 
   const getSimulatorRandom = runtime.getRandom;
   const enumerableRandom = createJavaRandom(seed);
@@ -870,41 +929,12 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
     reportMessage(error.code, error.message, error.toolMessage);
     const trace = getTrace(error.node, search.getTlcOrder());
-    const isLastStateOnly = traceDepth === INFINITE_DEPTH;
     // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW or function fails to fingerprint crashes TLC without -difftrace too.
     const shown =
-      options.isDiffTrace && !isLastStateOnly
+      options.isDiffTrace && traceDepth !== INFINITE_DEPTH
         ? getDiffTracePositions(trace)
         : { positions: trace.map((_node, index) => index), failure: undefined };
-    // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
-    const steps = shown.positions.map((position) => {
-      const captured = capture.captureOutput(
-        () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
-      );
-      return captured.lines.length > 0
-        ? { ...captured.result, aliasOutput: captured.lines }
-        : captured.result;
-    });
-    output({
-      kind: "behavior",
-      trace: steps,
-      levels: shown.positions.map((position) => trace[position].level),
-      // TLC fingerprints only a state with every variable assigned, and an alias through the variables it binds.
-      fingerprinted: steps.map((step, index) =>
-        trace[shown.positions[index]].incomplete === undefined &&
-        environment.variables.every((name) => Object.hasOwn(step.state, name))
-          ? environment.variables.map((name) => step.state[name])
-          : [],
-      ),
-      isLastStateOnly,
-    });
-    const traceSpec = isLastStateOnly
-      ? undefined
-      : prepared.getTraceSpec(
-          shown.positions.map((position) => toRecord(trace[position].state)),
-          undefined,
-        );
-    if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
+    printBehavior(trace, shown.positions);
     const failure = shown.failure;
     if (failure) {
       reportMessage(failure.code, failure.message, failure.toolMessage);

@@ -1,7 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import type { CheckProgress } from "../../src";
 import { checkDepthFirst, type DepthFirstOutput } from "../../src/dfid";
-import { formatState } from "../../src/values";
 
 const searchDepthFirst = (body: string, coverage?: number) => {
   const outputs: DepthFirstOutput[] = [];
@@ -194,8 +193,7 @@ const formatDepthFirst = (config: string) => {
     onPrint: () => {},
     onOutput: (output) => {
       if (output.kind === "message") messages.push(output.message);
-      if (output.kind === "behavior")
-        states.push(...output.states.map((state) => formatState(state)));
+      if (output.kind === "behavior") states.push(...output.states);
     },
   });
   return { messages, states };

@@ -34,9 +34,11 @@ import { getTlcFingerprint } from "./tlc/fingerprint";
 import { createJavaRandom } from "./tlc/random";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
+import { formatTraceSpecState } from "./tlc/trace-spec";
 import {
   createModelValue,
   formatErrorState,
+  formatFingerprintedState,
   formatState,
   getSetBound,
   isSameValue,
@@ -45,12 +47,14 @@ import {
 
 export interface DepthFirstOptions extends CheckOptions {
   maxDepth: number;
+  /** TLC's -difftrace, which prints each state of an invariant's behavior as its changes from the last. */
+  isDiffTrace?: boolean;
   onOutput: (output: DepthFirstOutput) => void;
 }
 
 export type DepthFirstOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
-  | { kind: "behavior"; states: Record<string, Value>[]; isInvariant: boolean }
+  | { kind: "behavior"; states: string[]; isInvariant: boolean }
   | { kind: "nested-expressions"; callStack: Expression[] }
   | CoverageOutput
   | TraceSpecOutput
@@ -444,8 +448,22 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     ];
     const records = states.map(toRecord);
     const isInvariant = code === MESSAGE_CODE.invariantViolatedBehavior;
-    output({ kind: "behavior", states: records, isInvariant });
-    const traceSpec = isInvariant ? prepared.getTraceSpec(records, undefined) : undefined;
+    output({
+      kind: "behavior",
+      states: records.map((record, index) =>
+        isInvariant
+          ? formatFingerprintedState(
+              record,
+              options.isDiffTrace ? records[index - 1] : undefined,
+              Object.values(record),
+            )
+          : formatState(record),
+      ),
+      isInvariant,
+    });
+    const traceSpec = isInvariant
+      ? prepared.getTraceSpec?.(records.map(formatTraceSpecState), undefined)
+      : undefined;
     if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
   };
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {

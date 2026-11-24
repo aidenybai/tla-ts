@@ -2505,6 +2505,14 @@ describe("the CLI sorts the records of a state once it prints it, as TLC's State
       readTraceSpecFixture("Records"),
     );
   });
+
+  it("evaluates a simulated state's ALIAS once the state before it prints, and writes each state as TLC records it", () => {
+    const run = runTraceSpecFixture("Alias", "te", ["-simulate", "-depth", "10", "-seed", "0"]);
+    expect(run.result.stdout).toContain(
+      'State 3: <Next line 5, col 9 to line 5, col 98 of module Alias>\n/\\ r = [b |-> 1, a |-> 1]\n/\\ s = [b |-> 1, a |-> 1]\n/\\ q = <<[a |-> 0, b |-> 0], [b |-> 0, a |-> 0]>>\n/\\ n = 2\n/\\ t = "<<[a |-> 0, b |-> 0], [b |-> 0, a |-> 0]>>"\n\nState 4: <Next line 5, col 9 to line 5, col 98 of module Alias>\n/\\ r = [b |-> 2, a |-> 2]\n/\\ s = [b |-> 2, a |-> 2]\n/\\ q = <<[a |-> 1, b |-> 1], [b |-> 1, a |-> 1]>>\n/\\ n = 3\n/\\ t = "<<[a |-> 1, b |-> 1], [b |-> 1, a |-> 1]>>"\n',
+    );
+    expect(run.written).toBe(readTraceSpecFixture("Alias"));
+  });
 });
 
 describe("the CLI writes the spec of the last trace under -continue", () => {

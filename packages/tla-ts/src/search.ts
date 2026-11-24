@@ -1123,15 +1123,14 @@ export interface TraceSpecOutput {
   text: string;
 }
 
-export const createTraceSpecWriter =
-  (
-    traceSpec: TraceSpecOptions | undefined,
-    specName: string,
-    config: ModelConfig,
-    environment: Environment,
-  ) =>
-  (states: Record<string, Value>[], loopStart: number | undefined) =>
-    traceSpec &&
+export const createTraceSpecWriter = (
+  traceSpec: TraceSpecOptions | undefined,
+  specName: string,
+  config: ModelConfig,
+  environment: Environment,
+) =>
+  traceSpec &&
+  ((states: Record<string, string>[], loopStart: number | undefined) =>
     writeTraceSpec({
       module: traceSpec.module,
       specName,
@@ -1143,7 +1142,7 @@ export const createTraceSpecWriter =
       isDefined: (name) =>
         environment.rootKeys.has(name) ||
         [...environment.builtins.keys()].some((key) => getKeyName(key) === name),
-    });
+    }));
 
 export const prepareSearch = (options: CheckOptions) => {
   const config =

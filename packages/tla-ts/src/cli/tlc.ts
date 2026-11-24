@@ -499,6 +499,7 @@ const checkSpec = async (
       const status = checkDepthFirst({
         ...options,
         maxDepth: args.dfidDepth,
+        isDiffTrace: args.isDiffTrace,
         onOutput: (output) => {
           if (output.kind === "trace-spec") recordedTraceSpec = output.text;
           else printDepthFirst(printer, output, timing.startTime);

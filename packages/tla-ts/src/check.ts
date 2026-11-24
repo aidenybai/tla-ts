@@ -116,6 +116,7 @@ import {
 import { createTautologyError } from "./liveness";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
+import { formatTraceSpecState } from "./tlc/trace-spec";
 import {
   createActionRecord,
   createCounterExample,
@@ -445,8 +446,10 @@ const searchStates = (
     failure?: EvaluationFailure,
   ): CheckResult => {
     const trace = violation?.trace ?? failure?.trace ?? [];
-    const traceSpec = getTraceSpec(
-      (trace.length > 0 ? trace : continuedTrace).map((step) => getStepState(step)),
+    const traceSpec = getTraceSpec?.(
+      (trace.length > 0 ? trace : continuedTrace).map((step) =>
+        formatTraceSpecState(getStepState(step)),
+      ),
       status === "property-violation" ? undefined : violation?.loopStart,
     );
     return {

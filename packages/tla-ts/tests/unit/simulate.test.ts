@@ -1,6 +1,5 @@
 import { expect, it } from "vite-plus/test";
 import { formatValue } from "../../src";
-import type { TraceStep } from "../../src/check";
 import { simulate, type SimulationStatistics } from "../../src/simulate";
 import { MESSAGE_LEVEL } from "../../src/tlc/messages";
 
@@ -8,8 +7,6 @@ const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
 
 const getPrintedRecords = (body: string, config: string) => {
   const printed: string[][] = [];
-  const print = (trace: TraceStep[]) =>
-    printed.push(trace.map((step) => formatValue(step.state.q)));
   simulate({
     source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES p, q\nId(a, c) == a\n${body}\n====`,
     config,
@@ -20,10 +17,14 @@ const getPrintedRecords = (body: string, config: string) => {
     isGenerating: false,
     scheduler: "random",
     onSimulation: (output) => {
-      if (output.kind === "behavior") print(output.trace);
+      if (output.kind === "behavior") {
+        printed.push(output.printedStates.map((state) => state.split("/\\ q = ")[1].trimEnd()));
+      }
     },
     onProgress: (progress) => {
-      if (progress.kind === "violation") print(progress.violation.trace);
+      if (progress.kind === "violation") {
+        printed.push(progress.violation.trace.map((step) => formatValue(step.state.q)));
+      }
     },
   });
   return printed;
