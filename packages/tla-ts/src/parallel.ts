@@ -27,7 +27,7 @@ import {
   reportStartup,
 } from "./search";
 import { getSpecDescription } from "./spec-description";
-import { getInitialStates } from "./successors";
+import { forEachInitialState } from "./successors";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
 import { createCanonicalizer, getUnorderedString, type Value } from "./values";
@@ -43,6 +43,7 @@ export interface StartMessage extends Pick<
   | "fingerprintPolynomial"
   | "maxSetSize"
   | "isLazyValueExpanded"
+  | "seed"
 > {
   type: "start";
   config: ModelConfig;
@@ -51,7 +52,7 @@ export interface StartMessage extends Pick<
   classes: [string, Uint8Array | undefined][];
   index: number;
   ports: (Port | undefined)[];
-  seed: EncodedStates;
+  frontier: EncodedStates;
   fingerprints: SharedFingerprintBuffers;
   requests: Int32Array;
   remaining: Int32Array;
@@ -135,7 +136,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   const created = createCheckEnvironment(
     config,
-    { ...options, loadModule, loadClass, seed: undefined, moduleOperators: undefined },
+    { ...options, loadModule, loadClass, moduleOperators: undefined },
     (text) => {
       printedCount++;
       print(text);
@@ -170,7 +171,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const canonicalize = createCanonicalizer();
   let sharedFingerprints = createSharedFingerprints();
   const fingerprint = new Int32Array(2);
-  const seeds = Array.from({ length: workerCount }, createStateEncoder);
+  const frontiers = Array.from({ length: workerCount }, createStateEncoder);
   const statistics = {
     generatedStates: 0,
     distinctStates: 0,
@@ -200,27 +201,41 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   });
   const seedInitialStates = (init: Expression) => {
     const seeded: Value[][] = [];
-    for (const state of getInitialStates(init, environment, search.spec.scope)) {
-      reportInitialStatesProgress(statistics.generatedStates, report);
-      canonicalize(state);
-      statistics.generatedStates++;
-      writeStateFingerprint(search.getFingerprintState(state), fingerprint);
-      if (isSharedFingerprintsFull(sharedFingerprints)) {
-        sharedFingerprints = growSharedFingerprints(sharedFingerprints);
-      }
-      if (!insertSharedFingerprint(sharedFingerprints, fingerprint[0], fingerprint[1])) continue;
-      if (search.findViolatedInvariant(state) || search.findFailedInitialPredicate(state)) {
+    let isSeeded = true;
+    forEachInitialState(
+      init,
+      environment,
+      (state) => {
+        reportInitialStatesProgress(statistics.generatedStates, report);
+        statistics.generatedStates++;
+        const isInModel = search.satisfiesConstraints(state);
+        if (isInModel) {
+          canonicalize(state);
+          writeStateFingerprint(search.getFingerprintState(state), fingerprint);
+          if (isSharedFingerprintsFull(sharedFingerprints)) {
+            sharedFingerprints = growSharedFingerprints(sharedFingerprints);
+          }
+          if (!insertSharedFingerprint(sharedFingerprints, fingerprint[0], fingerprint[1])) {
+            return false;
+          }
+        }
+        isSeeded =
+          !search.findViolatedInvariant(state) && !search.findFailedInitialPredicate(state);
+        if (!isSeeded) return true;
+        if (!isInModel) return false;
+        isSeeded = frontiers[seeded.length % workerCount].encode(state);
+        if (!isSeeded) return true;
+        seeded.push(state);
+        statistics.distinctStates++;
         return false;
-      }
-      if (!search.satisfiesConstraints(state)) continue;
-      if (!seeds[seeded.length % workerCount].encode(state)) return false;
-      seeded.push(state);
-      statistics.distinctStates++;
-    }
+      },
+      search.spec.scope,
+      search.spec.initPredicates,
+    );
     tlcFingerprints.push(
       BigInt64Array.from(seeded, (state) => environment.runtime.getFingerprint(state)),
     );
-    return true;
+    return isSeeded;
   };
   report({ kind: "initial-states-started" });
   try {
@@ -277,7 +292,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const ports = Array.from({ length: workerCount }, (_value, peer) =>
       peer === index ? undefined : getPort(index, peer),
     );
-    const seed = seeds[index].finish();
+    const frontier = frontiers[index].finish();
     const message: StartMessage = {
       type: "start",
       source: options.source,
@@ -287,7 +302,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       classes: [...classes],
       index,
       ports,
-      seed,
+      frontier,
+      seed: options.seed,
       isTool: options.isTool,
       traceSpec: options.traceSpec,
       isWarningEnabled: options.isWarningEnabled,
@@ -299,7 +315,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       requests,
       remaining,
     };
-    worker.postMessage(message, [...ports.filter((port) => port !== undefined), seed.words.buffer]);
+    worker.postMessage(message, [
+      ...ports.filter((port) => port !== undefined),
+      frontier.words.buffer,
+    ]);
   });
   const isAborted = (messages: WorkerMessage[]) =>
     messages.some((message) => message.type === "abort");
