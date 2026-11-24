@@ -379,8 +379,8 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   }
 };
 
-const PERIODIC_START = 3000;
-const PROGRESS_INTERVAL = 60_000;
+export const PERIODIC_START = 3000;
+export const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 

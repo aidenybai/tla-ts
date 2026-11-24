@@ -1,6 +1,8 @@
 import type { Expression } from "./ast";
 import {
   checkSequentially,
+  PERIODIC_START,
+  PROGRESS_INTERVAL,
   type CheckOptions,
   type CheckProgress,
   type CheckResult,
@@ -56,6 +58,7 @@ export interface StartMessage extends Pick<
   fingerprints: SharedFingerprintBuffers;
   requests: Int32Array;
   remaining: Int32Array;
+  counts: BigInt64Array;
 }
 
 interface LevelMessage {
@@ -255,6 +258,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   report({ kind: "initial-states-computed", initialStates: statistics.initialStates });
   if (statistics.distinctStates === 0) return createSuccess();
+  statistics.queuedStates = statistics.distinctStates;
 
   const reports: WorkerMessage[] = [];
   let pendingCount = workerCount;
@@ -273,6 +277,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const ready = waitForReports(workerCount);
   const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
   const remaining = new Int32Array(new SharedArrayBuffer(workerCount * 4));
+  const counts = new BigInt64Array(new SharedArrayBuffer(workerCount * 3 * 8));
   const workers = await Promise.all(
     Array.from({ length: workerCount }, () =>
       spawnWorker(
@@ -282,7 +287,32 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ),
     ),
   );
-  const terminate = () => workers.forEach((worker) => worker.terminate());
+  const reportProgress = () => {
+    let generated = 0;
+    let added = 0;
+    let expanded = 0;
+    for (let index = 0; index < counts.length; index += 3) {
+      generated += Number(Atomics.load(counts, index));
+      added += Number(Atomics.load(counts, index + 1));
+      expanded += Number(Atomics.load(counts, index + 2));
+    }
+    report({
+      kind: "progress",
+      statistics: {
+        generatedStates: statistics.generatedStates + generated,
+        distinctStates: statistics.distinctStates + added,
+        queuedStates: statistics.queuedStates + added - expanded,
+        depth: added > 0 ? statistics.depth + 1 : statistics.depth,
+        coverage: undefined,
+      },
+    });
+    progressTimer = setTimeout(reportProgress, PROGRESS_INTERVAL);
+  };
+  let progressTimer = options.onProgress ? setTimeout(reportProgress, PERIODIC_START) : undefined;
+  const terminate = () => {
+    clearTimeout(progressTimer);
+    workers.forEach((worker) => worker.terminate());
+  };
   const channels = new Map<string, MessageChannel>();
   const getPort = (from: number, to: number) => {
     const key = from < to ? `${from}:${to}` : `${to}:${from}`;
@@ -316,6 +346,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       fingerprints: getSharedFingerprintBuffers(sharedFingerprints),
       requests,
       remaining,
+      counts,
     };
     worker.postMessage(message, [
       ...ports.filter((port) => port !== undefined),
@@ -342,6 +373,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   for (;;) {
     const levelReports = waitForReports(workerCount);
     requests.forEach((_request, index) => Atomics.store(requests, index, 0));
+    counts.forEach((_count, index) => Atomics.store(counts, index, 0n));
     send({ type: "level" });
     const messages = await collectLevels(await levelReports);
     if (isAborted(messages)) {
@@ -355,6 +387,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const added = levels.reduce((sum, message) => sum + message.added, 0);
     statistics.generatedStates += levels.reduce((sum, message) => sum + message.generated, 0);
     statistics.distinctStates += added;
+    statistics.queuedStates = added;
     levels.forEach((message) => {
       message.outDegrees.forEach(
         (degreeCount, degree) => (statistics.outDegrees[degree] += degreeCount),

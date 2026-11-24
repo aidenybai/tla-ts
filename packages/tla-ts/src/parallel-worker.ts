@@ -61,6 +61,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   let sharedFingerprints = createSharedFingerprintsFromBuffers(start.fingerprints);
   const requests = start.requests;
   const remaining = start.remaining;
+  const counts = start.counts;
   const generatedStates = search.isSymmetric ? createFingerprintTable() : undefined;
   const fingerprint = new Int32Array(2);
   let resumeLevel = () => {};
@@ -171,6 +172,13 @@ const runWorker = (start: StartMessage, parent: Port) => {
     }
   };
 
+  const publishCounts = (expansion: Expansion) => {
+    const expanded = expansion.outDegrees.reduce((sum, count) => sum + count, 0);
+    Atomics.store(counts, workerIndex * 3, BigInt(expansion.generated));
+    Atomics.store(counts, workerIndex * 3 + 1, BigInt(expansion.next.length));
+    Atomics.store(counts, workerIndex * 3 + 2, BigInt(expanded));
+  };
+
   const report = (message: WorkerMessage) =>
     parent.postMessage(message, message.type === "level" ? [message.fingerprints.buffer] : []);
 
@@ -197,6 +205,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
       if (status === undefined) return undefined;
       // HACK: Bun frees memory on event loop timers, so a long level returns to the loop.
       if (status === "break") {
+        publishCounts(expansion);
         await takeBreak();
         expansion.breakAt = performance.now() + BREAK_INTERVAL;
         continue;
@@ -211,6 +220,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
+    publishCounts(expansion);
     if (isDrawnAfterNext || isWarned) return { type: "abort" };
     const unorderedString = getUnorderedString();
     if (unorderedString !== undefined) return { type: "abort", string: unorderedString };
