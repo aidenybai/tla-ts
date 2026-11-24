@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import { AssertedFormulas } from "../../src/prover/smt/solver/asserted-formulas";
-import { AstManager, FAMILY_DATATYPE } from "../../src/prover/smt/solver/ast";
+import {
+  AstManager,
+  FAMILY_DATATYPE,
+  OP_DIV0,
+  OP_FPA_TO_REAL,
+  SORT_INT,
+} from "../../src/prover/smt/solver/ast";
 import { CgTable, isCongruent } from "../../src/prover/smt/solver/cg-table";
 import { Context } from "../../src/prover/smt/solver/context";
 import { Enode, NO_ENODES } from "../../src/prover/smt/solver/enode";
 import { DtSolver } from "../../src/prover/smt/solver/euf/dt-solver";
 import { mkThSolver } from "../../src/prover/smt/solver/euf/th-solvers";
+import { mkFpaApp } from "../../src/prover/smt/solver/fpa-decl-plugin";
 import { NULL_LITERAL } from "../../src/prover/smt/solver/sat/clause";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
 import { Goal2Sat } from "../../src/prover/smt/solver/sat/goal2sat";
@@ -126,5 +133,38 @@ describe("a theory explanation of sat.euf", () => {
       antecedents,
     );
     expect(antecedents).toEqual([firstLit, secondLit]);
+  });
+});
+
+describe("the reference counts of declarations", () => {
+  it("frees the id of /0 once its model converter releases its last reference", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const numAsts = manager.getNumAsts();
+    manager.incDeclRef(OP_DIV0);
+    manager.incDeclRef(OP_DIV0);
+    manager.decDeclRef(OP_DIV0);
+    manager.decDeclRef(OP_DIV0);
+    expect(manager.getNumAsts()).toBe(numAsts);
+    const first = manager.mkFuncDecl("f", [], SORT_INT);
+    const second = manager.mkFuncDecl("g", [], SORT_INT);
+    expect(manager.funcDecls[first].smallId).not.toBe(manager.funcDecls[second].smallId);
+  });
+
+  it("keeps a floating-point declaration until its last application is deleted", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const sort = manager.mkFpSort(3, 4);
+    const x = manager.mkApp(manager.mkFuncDecl("x", [], sort), [], sort);
+    manager.incRef(x);
+    const numAsts = manager.getNumAsts();
+    const toReal = mkFpaApp(manager, OP_FPA_TO_REAL, [x]);
+    manager.incRef(toReal);
+    const decl = manager.decls[toReal];
+    manager.incDeclRef(decl);
+    manager.decDeclRef(decl);
+    const fresh = manager.mkFuncDecl("y", [], SORT_INT);
+    expect(manager.funcDecls[fresh].smallId).not.toBe(manager.funcDecls[decl].smallId);
+    manager.decDeclRef(fresh);
+    manager.decRef(toReal);
+    expect(manager.getNumAsts()).toBe(numAsts);
   });
 });
