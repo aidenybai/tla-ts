@@ -39,6 +39,7 @@ import {
 } from "./dependencies";
 import {
   createEnvironment,
+  type EnvironmentBase,
   type ResolvedModuleOperator,
   type RuntimeInvariant,
 } from "./environment";
@@ -46,6 +47,7 @@ import {
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
+  TlaSharedBaseError,
   TlaWarningAsError,
   UNEXPECTED_EXCEPTION,
   formatRange,
@@ -55,6 +57,7 @@ import {
   describeRange,
   evaluate,
   evaluateStartupDefinitions,
+  getPendingStartup,
   getStartupValue,
   expectBoolean,
   expectBooleanBody,
@@ -112,7 +115,7 @@ import {
   MISSING_INIT_174,
   withHeadline,
 } from "./tlc/messages";
-import { createTlcOrder } from "./tlc/order";
+import { createTlcOrder, type SharedContexts } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import { writeTraceSpec } from "./tlc/trace-spec";
@@ -124,6 +127,7 @@ import {
   formatValue,
   freezeStringOrder,
   getModelValues,
+  getRankedStrings,
   getWrittenPairs,
   isFunctionValue,
   isUpdatedElementOf,
@@ -143,7 +147,37 @@ export interface CliSettings {
   hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
+  // The base of the group of files this check's spec is one of, which the check starts from, and
+  // the strings of the spec in the order the check ranks them, its own and then the base's.
+  base?: CheckBase;
+  rankedStrings?: readonly string[];
 }
+
+// A group's base, and the strings ranked once it started, which a check of one of the group's files
+// ranks after its own, as its startup would rank those its own ranking lacks.
+export interface CheckBase {
+  environment: EnvironmentBase;
+  strings: readonly string[];
+  // The contexts of the base's modules, which TLC's orders read.
+  contexts: SharedContexts;
+  // The strings that the base's values hold, whose order those values keep.
+  valueStrings: ReadonlySet<string>;
+}
+
+// The strings in the values, as a walk of the objects they are made of finds them.
+const getValueStrings = (values: readonly unknown[]) => {
+  const strings = new Set<string>();
+  const visited = new Set<object>();
+  const pending = [...values];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") strings.add(value);
+    if (typeof value !== "object" || value === null || visited.has(value)) continue;
+    visited.add(value);
+    for (const item of Array.isArray(value) ? value : Object.values(value)) pending.push(item);
+  }
+  return strings;
+};
 
 interface EnvironmentSettings
   extends
@@ -1019,24 +1053,35 @@ export const createCheckEnvironment = (
   options: EnvironmentSettings,
   print: (text: string) => void,
   isStringOrderFrozen = false,
+  ownModule?: string,
 ) => {
-  const order = createTlcOrder(options.source, options.loadModule, options.preparedModules);
+  const order = createTlcOrder(
+    options.source,
+    options.loadModule,
+    options.preparedModules,
+    options.base?.contexts,
+  );
   const getOperatorModules = (kind: ModuleOperator["kind"]) =>
     (options.moduleOperators ?? []).flatMap((operator) =>
       operator.kind === kind ? [operator.module] : [],
     );
+  const runtimeModules = (options.runtimeInvariants ?? []).flatMap(
+    (invariant) => invariant.module ?? [],
+  );
+  // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
+  const rootExtendees = [
+    ...getOperatorModules("postcondition"),
+    ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+    ...getOperatorModules("constraint"),
+    ...getOperatorModules("view"),
+  ];
   setStringOrder(
-    order.getStringOrder(
-      config,
-      (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
-      // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
-      [
-        ...getOperatorModules("postcondition"),
-        ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
-        ...getOperatorModules("constraint"),
-        ...getOperatorModules("view"),
-      ],
-    ),
+    options.rankedStrings !== undefined && runtimeModules.length + rootExtendees.length === 0
+      ? options.rankedStrings
+      : [
+          ...order.getStringOrder(config, runtimeModules, rootExtendees),
+          ...(options.base?.strings ?? []),
+        ],
   );
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
@@ -1065,8 +1110,74 @@ export const createCheckEnvironment = (
     printPrompt: options.printPrompt,
     runtimeInvariants: options.runtimeInvariants,
     isCovered: options.coverage !== undefined,
+    base: options.base?.environment,
+    ownModule,
   });
   return { order, specification };
+};
+
+// The base of a group of files whose specs extend the same modules but ownModule: those modules
+// linked, the facts of their definitions, what those evaluate to as a check starts, and the strings
+// ranked by then. A startup that shows anything starts no base, as each file's check would show it.
+export const createCheckBase = (
+  config: ModelConfig,
+  options: EnvironmentSettings,
+  ownModule: string,
+): CheckBase => {
+  const shown: string[] = [];
+  const created = createCheckEnvironment(
+    config,
+    options,
+    (text) => shown.push(text),
+    false,
+    ownModule,
+  );
+  const specification = created.specification;
+  const environment = specification.environment;
+  environment.runtime.warn = (_code, text) => shown.push(text);
+  evaluateStartupDefinitions(specification.startupModules, environment);
+  const link = specification.linkedBase;
+  const facts = environment.facts.base;
+  const startup = specification.baseStartup;
+  if (shown.length > 0 || link === undefined || facts === undefined || startup === undefined) {
+    throw new TlaSharedBaseError("base-output", `their shared modules show output as they start`);
+  }
+  const startupValues = environment.startupValues.slice(0, facts.definitions.length);
+  const contexts = created.order.getSharedContexts(ownModule);
+  // The definitions of each start's entries that a file's check evaluates as it starts.
+  const starts = new Map(
+    [...contexts.starts].flatMap((entry) => {
+      const definitions = specification.getStartupDefinitions(
+        entry[0] === "" ? undefined : entry[0],
+        entry[1].table.inserted
+          .filter((item) => item.kind === "definition")
+          .map((item) => item.name),
+      );
+      return definitions === undefined
+        ? []
+        : [
+            [
+              entry[0],
+              getPendingStartup([{ substitutes: [], definitions }], environment).flatMap(
+                (module) => module.definitions,
+              ),
+            ],
+          ];
+    }),
+  );
+  return {
+    // A file's check walks the startup of the base's modules again, which evaluates only what the
+    // base's walk left pending.
+    environment: {
+      link,
+      facts,
+      startupValues,
+      startup: { ...startup, modules: getPendingStartup(startup.modules, environment), starts },
+    },
+    strings: getRankedStrings(),
+    valueStrings: getValueStrings(startupValues),
+    contexts,
+  };
 };
 
 export const createOutputCapture = (onPrint: (text: string) => void) => {

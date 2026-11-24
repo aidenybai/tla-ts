@@ -35,6 +35,12 @@ import { extractModule, getMonolithSection, parseModule } from "../parser";
 import { printModule } from "../printer";
 import { simulate } from "../simulate";
 import { CHECK_STACK_MB } from "../worker";
+import {
+  checkHeldBack,
+  checkSharedGroups,
+  getSharedGroup,
+  SHARED_PROGRAM_BUDGET,
+} from "./shared-groups";
 import type { CliSettings } from "../search";
 import { getDotHeader, type StateDump } from "../state-graph";
 import {
@@ -90,6 +96,8 @@ import {
   type JavaProperties,
 } from "./shared";
 import {
+  compileSharedFiles,
+  compileSharedProgram,
   compileTypeScriptFile,
   getNodeExit,
   isProgramPath,
@@ -465,6 +473,8 @@ const checkSpec = async (
       fingerprintPolynomial: args.fingerprintIndex,
       maxSetSize: args.maxSetSize,
       preparedModules: compiled?.preparedModules,
+      base: compiled?.base,
+      rankedStrings: compiled?.strings,
       isLazyValueExpanded: args.isLazyValueExpanded,
       isViewPrinted: args.isViewPrinted,
       dump,
@@ -679,57 +689,98 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     paths.filter(isProgramPath).length > 1
       ? (await import("../typescript/program")).shareParsedFiles
       : <T>(run: () => Promise<T>) => run();
-  await shareFiles(async () => {
-    for (const [index, path] of paths.entries()) {
-      if (index > 0) console.log("");
-      const printer = createMessagePrinter({
-        isTool: parsed.isTool,
-        isWarningEnabled: parsed.isWarningEnabled,
-        isDiffTrace: parsed.isDiffTrace,
-        version,
-        suppressedCodes: parsed.suppressedCodes,
-        errorCodes: parsed.errorCodes,
-        onOutput:
-          userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-      });
-      exitCodes.push(
-        await reportErrors(async () => {
-          const isTypeScript = isProgramPath(path);
-          // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name,
-          // before a TypeScript file compiles, so a stop names the file it comes from.
-          if (paths.length > 1) {
-            console.log(
-              isTypeScript
-                ? `Checking ${basename(path)}`
-                : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
-            );
-          }
-          // A stack overflow that nothing caught ends the check as one that the check caught does.
-          try {
-            const compiled = isTypeScript
-              ? await compileTypeScriptFile(path, parsed.maxSetSize)
-              : undefined;
-            compiled?.notes.forEach((note) => console.log(note));
-            if (parsed.isFramePrinted && compiled?.frame !== undefined) console.log(compiled.frame);
-            return await checkSpec(
-              compiled?.specPath ?? path,
-              drawSeeds(parsed),
-              dump,
-              java,
-              printer,
-              compiled,
-            );
-          } catch (error) {
-            if (!isStackOverflow(error)) throw error;
-            throw isTypeScript
-              ? new TlaStackLimitError(CHECK_STACK_MB)
-              : createStackOverflowError();
-          }
-        }, printer),
-      );
-    }
-  });
-  return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
+  // With -shared, the TypeScript files check in groups, each of which shares one program, which
+  // runs once, and each file's model starts from the state it leaves.
+  const isShared =
+    parsed.isShared &&
+    paths.filter(isProgramPath).length > 1 &&
+    parsed.workers === 1 &&
+    parsed.moduleOperators.length + parsed.invariants.length === 0;
+  const group = getSharedGroup();
+  // The run compiles the shared program of each group of its TypeScript files, so that it parses
+  // each file once for every group, and checks the group in a worker of its own.
+  if (isShared && group === undefined) {
+    return shareFiles(() =>
+      checkSharedGroups(process.argv.slice(2), paths.length, (first, count) => {
+        const programPaths = paths.slice(first, first + count).filter(isProgramPath);
+        return programPaths.length > 1
+          ? compileSharedProgram(programPaths, parsed.maxSetSize, SHARED_PROGRAM_BUDGET)
+          : Promise.resolve(undefined);
+      }),
+    );
+  }
+  const groupPaths =
+    group === undefined ? paths : paths.slice(group.first, group.first + group.count);
+  const programPaths = groupPaths.filter(isProgramPath);
+  const checkGroup = async () => {
+    const program = group?.program;
+    const inputs =
+      program === undefined
+        ? []
+        : await compileSharedFiles(program, {
+            maxSetSize: parsed.maxSetSize,
+            seed: parsed.seed,
+            fingerprintPolynomial: parsed.fingerprintIndex,
+            version,
+          });
+    return shareFiles(async () => {
+      for (const [offset, path] of groupPaths.entries()) {
+        const index = offset + (group?.first ?? 0);
+        if (index > 0) console.log("");
+        const printer = createMessagePrinter({
+          isTool: parsed.isTool,
+          isWarningEnabled: parsed.isWarningEnabled,
+          isDiffTrace: parsed.isDiffTrace,
+          version,
+          suppressedCodes: parsed.suppressedCodes,
+          errorCodes: parsed.errorCodes,
+          onOutput:
+            userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
+        });
+        exitCodes.push(
+          await reportErrors(async () => {
+            const isTypeScript = isProgramPath(path);
+            // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name,
+            // before a TypeScript file compiles, so a stop names the file it comes from.
+            if (paths.length > 1) {
+              console.log(
+                isTypeScript
+                  ? `Checking ${basename(path)}`
+                  : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
+              );
+            }
+            // A stack overflow that nothing caught ends the check as one that the check caught does.
+            try {
+              const compiled = isTypeScript
+                ? (inputs[programPaths.indexOf(path)] ??
+                  (await compileTypeScriptFile(path, parsed.maxSetSize)))
+                : undefined;
+              compiled?.notes.forEach((note) => console.log(note));
+              if (parsed.isFramePrinted && compiled?.frame !== undefined)
+                console.log(compiled.frame);
+              return await checkSpec(
+                compiled?.specPath ?? path,
+                drawSeeds(parsed),
+                dump,
+                java,
+                printer,
+                compiled,
+              );
+            } catch (error) {
+              if (!isStackOverflow(error)) throw error;
+              throw isTypeScript
+                ? new TlaStackLimitError(CHECK_STACK_MB)
+                : createStackOverflowError();
+            }
+          }, printer),
+        );
+      }
+      return exitCodes;
+    });
+  };
+  const checked =
+    group !== undefined && group.count > 1 ? await checkHeldBack(checkGroup) : await checkGroup();
+  return checked.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };
 
 const createMissingFilePrinter174 = (

@@ -26,6 +26,7 @@ import {
 import { CANONICAL_MODULE } from "./canonical";
 import { NATIVE_MODULE } from "./native-module";
 import { type HostRealm, recordHostRealm } from "./realm";
+import type { EscoreSpec } from "./compile";
 import {
   getHostDefinitions,
   getLocalDefinitions,
@@ -283,6 +284,29 @@ const prepareModules = (
       viewTables: isRuntime ? getViewTables(valued) : undefined,
     };
   });
+};
+
+// A spec's program code, read and checked by SANY's checks once, so that the specs of several models
+// that extend it link it as the checks accepted it. It keeps no tokens, as a module that tla-ts
+// compiles declares what its units declare.
+export const prepareProgram = (
+  spec: Pick<EscoreSpec, "config" | "loadModule" | "preparedModules">,
+): PreparedModule => {
+  const prepared = prepare("ProgramCode", spec.loadModule("ProgramCode") ?? "");
+  const levels = new Map<Module, (OperatorLevels | undefined)[]>();
+  let warning: string | undefined;
+  createEnvironment(parseConfig(spec.config), {
+    source: ROOT,
+    loadModule: () => undefined,
+    preparedModules: [...spec.preparedModules, prepared],
+    onModuleLevels: (module, moduleLevels) => levels.set(module, moduleLevels),
+    print: (text) => {
+      warning ??= text;
+    },
+    files,
+  });
+  if (warning !== undefined) throw new TlaError(`SANY's checks warn of a program: ${warning}`);
+  return { ...prepared, tokens: [], levels: levels.get(prepared.module) };
 };
 
 // The prepared modules as a graph holds them, each value a plain copy, without their tokens, which

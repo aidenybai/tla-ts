@@ -1,7 +1,7 @@
 import type { Node, SourceFile, ThrowStatement } from "@typescript/typescript6";
 import type { PreparedModule } from "../tlc/order";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Module } from "../ast";
 import {
@@ -15,8 +15,13 @@ import {
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
 import { getEscoreRuntime } from "../compile";
-import { TlaStrippingError } from "../errors";
+import { parseConfig } from "../config";
+import { TlaError, TlaSharedBaseError, TlaStrippingError } from "../errors";
+import { KEY_SEPARATOR } from "../resolve";
+import type { CheckBase } from "../search";
+import type { TlcVersion } from "../tlc/version";
 import { parseModule } from "../parser";
+import { printModule } from "../printer";
 import { foldNames } from "../typescript/spec/library";
 import { getPatchedUnits } from "../typescript/spec/units";
 import type { ProgramFile } from "../typescript/spec/specialize";
@@ -34,6 +39,10 @@ export interface CompiledInput {
   notes: string[];
   // The frame of a model, which a script has none of.
   frame?: string;
+  // The base of the group of files whose program this file's spec shares, which its check starts
+  // from, and the strings in the order the check ranks them.
+  base?: CheckBase;
+  strings?: readonly string[];
 }
 
 // Whether a path names a file that Node runs, TypeScript or JavaScript, which tla-ts compiles.
@@ -526,3 +535,339 @@ export const compileTypeScriptFile = (path: string, setBound?: number): Promise<
   compileEscoreEntry(path, setBound).catch((error: unknown) =>
     error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
   );
+
+// The definitions of a program shared by several files' models: what its entry's run leaves, which
+// each model starts from, and whether the run threw.
+const SHARED_STEPS = `SharedRun == ApplyTo(RunProgram, InitialState)
+SharedThrew == SharedRun.c.type = "throw"`;
+
+// The start of each file's own module in a shared program, which a group's base links in its place
+// so that its strings rank as the files' do.
+const OWN_MODULE_HEADER = `---- MODULE ProgramModel ----
+EXTENDS ProgramCode, ESCanonical
+CONSTANTS TsNull, TsUndefined
+`;
+
+// The steps of a file of a shared program whose functions its model calls none of, which hold
+// where the program runs without a throw, as a script's do.
+const SHARED_SCRIPT = `${OWN_MODULE_HEADER}VARIABLE programDone
+Init == ~SharedThrew /\\ programDone = TRUE
+Next == UNCHANGED programDone
+====
+`;
+
+// The settings of a run that each file's check of a shared program has alike, which its group's
+// base starts with.
+export interface SharedSettings {
+  maxSetSize: number | undefined;
+  seed: bigint | undefined;
+  fingerprintPolynomial: number | undefined;
+  version: TlcVersion;
+}
+
+// A file's spec of a shared program, as texts: its root, which extends its own module after the
+// shared ones, its config, and its own module.
+interface SharedFile {
+  path: string;
+  specPath: string;
+  source: string;
+  config: string;
+  ownModule: string | undefined;
+  isScript: boolean;
+  notes: string[];
+  frame?: string;
+}
+
+// A group's shared program as the run compiles it, in texts alone, which the group's worker starts
+// and checks: the program's code, the text and leaves of the runtime's view that the code extends,
+// which the worker makes again, and each file's spec, or undefined for a file that compiles alone,
+// with the lines that the compile shows. A program above the budget gives its size alone, and a
+// group whose files all compile alone gives the lines that the compile shows.
+export type SharedProgram =
+  | { kind: "alone"; shown: string[] }
+  | { kind: "oversize"; characters: number }
+  | {
+      kind: "compiled";
+      characters: number;
+      config: string;
+      code: string;
+      view: { text: string; leaves: readonly string[] };
+      files: (SharedFile | undefined)[];
+      shown: string[];
+    };
+
+// The loader of the modules of a file's spec of a shared program, which holds their texts alone, so
+// that a check keeps nothing of the compile.
+const getSharedLoader =
+  (ownModule: string | undefined, programText: string, canonical: string) => (name: string) =>
+    name === "ProgramModel"
+      ? ownModule
+      : name === "ProgramCode"
+        ? programText
+        : name === "ESCanonical"
+          ? canonical
+          : undefined;
+
+// The program that a group's TypeScript files share, compiled where the run parses each file's
+// TypeScript once for every group: an entry that imports the files in their order, and each file's
+// model, which starts from the state that the entry's run leaves, with its own checks, frame and
+// trace. A file without a model that can start there has none, and compiles alone, as every file
+// does where the program stops.
+export const compileSharedProgram = async (
+  paths: readonly string[],
+  setBound: number | undefined,
+  budget: number,
+): Promise<SharedProgram> => {
+  const ts = (await import("@typescript/typescript6")).default;
+  const { compileToEscore } = await import("../typescript/spec/compile");
+  const { getModelConstants, planModel, SHARED_MODEL_DEFINITIONS } =
+    await import("../typescript/spec/model");
+  const { isScript } = await import("../typescript/context");
+  const { getJsxText } = await import("../typescript/program");
+  const { getModuleFormat } = await import("../typescript/spec/resolve");
+  const runtime = await getEscoreRuntime();
+  const plans = paths.map((path) => {
+    const source = readFileSync(path, "utf8");
+    const text = getJsxText(path, source);
+    const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+    if (isScript(sourceFile)) return undefined;
+    // A file whose model stops compiles alone, which reports the stop as the file's.
+    try {
+      const plan = planModel(source, path, runtime, undefined, true, setBound);
+      // An ES module whose functions the model calls none of checks that the program runs.
+      if (plan.isScript) return getModuleFormat(path, text) === "module" ? plan : undefined;
+      return plan.isShareable ? plan : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const members = paths.filter((_path, index) => plans[index] !== undefined);
+  if (members.length < 2) return { kind: "alone", shown: [] };
+  const models = plans.flatMap((plan) => (plan === undefined || plan.isScript ? [] : [plan]));
+  const numbered: string[] = [];
+  // The text and leaves of the runtime's view that the code extends, from which the group's worker
+  // makes the view again.
+  const views: { text: string; leaves: readonly string[] }[] = [];
+  try {
+    const spec = compileToEscore(
+      members.map((path) => `import ${JSON.stringify(realpathSync(path))};`).join("\n"),
+      join(dirname(realpathSync(members[0])), "tla-ts-shared.mjs"),
+      {
+        ...runtime,
+        getView: (text, leaves) => {
+          views.push({ text, leaves });
+          return runtime.getView(text, leaves);
+        },
+      },
+      true,
+      {
+        steps: (files) => {
+          numbered.push(...files.map((file) => file.path));
+          return `${SHARED_STEPS}\n${SHARED_MODEL_DEFINITIONS}`;
+        },
+        entries: [...new Set(models.flatMap((plan) => [...plan.entries]))],
+        reads: models.flatMap((plan) => [plan.reads, plan.getSteps(1)]).join("\n"),
+      },
+    );
+    const code = spec.loadModule("ProgramCode") ?? "";
+    if (code.length > budget) return { kind: "oversize", characters: code.length };
+    const shown: string[] = [];
+    const files = paths.map((path, index): SharedFile | undefined => {
+      const plan = plans[index];
+      if (plan === undefined) return undefined;
+      if (plan.isScript) {
+        return {
+          path,
+          specPath: join(dirname(path), `${spec.name}.tla`),
+          source: spec.source.replace(
+            ", ProgramCode\n",
+            ", ProgramCode, ESCanonical, ProgramModel\n",
+          ),
+          config: [...getModelConstants(spec.config), "INIT Init", "NEXT Next", ""].join("\n"),
+          ownModule: SHARED_SCRIPT,
+          isScript: true,
+          notes: plan.notes,
+        };
+      }
+      const target = realpathSync(path);
+      const file = numbered.findIndex(
+        (other) => existsSync(other) && realpathSync(other) === target,
+      );
+      // The file's model holds the definitions its group's program holds in place of each one's.
+      if (!plan.getSteps(file + 1).includes(SHARED_MODEL_DEFINITIONS)) {
+        shown.push(
+          `tla-ts checks ${basename(path)} alone [model-definitions]: its model defines CallBuiltin's substitute other than its group's program does`,
+        );
+        return undefined;
+      }
+      const model = plan.finish(spec, file + 1);
+      return {
+        path,
+        specPath: join(dirname(path), `${model.name}.tla`),
+        source: model.source,
+        config: model.config,
+        ownModule: model.loadModule("ProgramModel"),
+        isScript: false,
+        notes: model.notes,
+        frame: model.frame,
+      };
+    });
+    return {
+      kind: "compiled",
+      characters: code.length,
+      config: spec.config,
+      code,
+      view: views[0],
+      files,
+      shown,
+    };
+  } catch (error) {
+    if (!(error instanceof TlaError)) throw error;
+    return {
+      kind: "alone",
+      shown: [`tla-ts checks each file alone [program-stops]: ${error.message}`],
+    };
+  }
+};
+
+// The specs of the files of a group's shared program, which the group's worker starts: the
+// program's code, checked by SANY's checks and prepared, and the group's base, its modules that
+// every file's spec extends linked, started and run once, which each file's check starts from
+// where it ranks their strings and reads their definitions as the base did, and otherwise checks
+// alone. A file without a spec, or every file where the program stops or its run throws, compiles
+// alone.
+export const compileSharedFiles = async (
+  program: Exclude<SharedProgram, { kind: "oversize" }>,
+  settings: SharedSettings,
+): Promise<(CompiledInput | undefined)[]> => {
+  const { prepareProgram } = await import("../typescript/spec/prepare");
+  const { CANONICAL_MODULE } = await import("../typescript/spec/canonical");
+  const { createCheckBase } = await import("../search");
+  const { createTlcOrder } = await import("../tlc/order");
+  if (program.kind === "alone") {
+    program.shown.forEach((line) => console.log(line));
+    return [];
+  }
+  const runtime = await getEscoreRuntime();
+  const getConstants = (config: string) =>
+    config.split("\n").filter((line) => line.startsWith("CONSTANT"));
+  // The group's base, from which each file's check starts, and the strings it ranked.
+  const getBase = (sample: CompiledInput) => {
+    const config = parseConfig([...getConstants(sample.config), ""].join("\n"));
+    const base = (() => {
+      try {
+        return createCheckBase(
+          config,
+          {
+            // A check of a parsed root with prepared values reads it as its printed text.
+            source: printModule(sample.source),
+            loadModule: (name) =>
+              name === "ProgramModel" ? `${OWN_MODULE_HEADER}====\n` : sample.loadModule(name),
+            preparedModules: sample.preparedModules,
+            ...settings,
+          },
+          "ProgramModel",
+        );
+      } catch (error) {
+        if (!(error instanceof TlaSharedBaseError)) throw error;
+        console.log(`tla-ts checks each file alone [${error.code}]: ${error.message}`);
+        return undefined;
+      }
+    })();
+    if (base === undefined) return undefined;
+    const threw = base.environment.link.definitions.get(`SharedThrew${KEY_SEPARATOR}ProgramCode`);
+    const id = threw === undefined ? undefined : base.environment.facts.ids.get(threw);
+    if (id === undefined || base.environment.startupValues[id] !== false) {
+      throw new TlaSharedBaseError("program-throws", "their shared program throws as it loads");
+    }
+    return base;
+  };
+  // The strings of a file's spec in the order its check ranks them: its own, then the group's.
+  const getRanked = (input: CompiledInput, base: CheckBase) => {
+    const ranked = new Map<string, number>();
+    [
+      ...createTlcOrder(
+        printModule(input.source),
+        input.loadModule,
+        input.preparedModules,
+      ).getStringOrder(parseConfig(input.config), [], []),
+      ...base.strings,
+    ].forEach((text) => {
+      if (!ranked.has(text)) ranked.set(text, ranked.size);
+    });
+    return ranked;
+  };
+  // Why a file's check can't start from its group's base, as a code and a reason, or undefined
+  // where it can.
+  const getAloneReason = (
+    input: CompiledInput,
+    base: CheckBase,
+    constants: string[],
+    ranked: ReadonlyMap<string, number>,
+  ) => {
+    if (getConstants(input.config).join("\n") !== constants.join("\n")) {
+      return ["config", "its config's CONSTANT lines differ from the group's"];
+    }
+    const strings = new Set(base.strings);
+    // The strings that the base's values hold keep the order the base gave them.
+    const order = [...ranked.keys()].filter((text) => base.valueStrings.has(text));
+    const baseOrder = base.strings.filter((text) => base.valueStrings.has(text));
+    if (order.some((text, index) => text !== baseOrder[index])) {
+      return ["strings", "its strings rank those of its group's values in another order"];
+    }
+    const valueNames = parseConfig(input.config).constants.flatMap((constant) =>
+      constant.value.kind === "ModelValue" ? [constant.value.name] : [],
+    );
+    if (
+      valueNames.some(
+        (name) => strings.has(name) && ranked.get(name) !== base.strings.indexOf(name),
+      )
+    ) {
+      return ["model-values", "its model values rank other than the group's"];
+    }
+    return undefined;
+  };
+  try {
+    const shared = [...runtime.modules, runtime.getView(program.view.text, program.view.leaves)];
+    const loadProgram = (name: string) => (name === "ProgramCode" ? program.code : undefined);
+    const preparedModules = [
+      ...shared,
+      prepareProgram({ config: program.config, loadModule: loadProgram, preparedModules: shared }),
+      ...["ESCanonical"].flatMap((name) => runtime.getExtension(name) ?? []),
+    ];
+    program.shown.forEach((line) => console.log(line));
+    const inputs = program.files.map((file): CompiledInput | undefined =>
+      file === undefined
+        ? undefined
+        : {
+            path: file.path,
+            specPath: file.specPath,
+            source: parseModule(file.source),
+            config: file.config,
+            loadModule: getSharedLoader(file.ownModule, program.code, CANONICAL_MODULE),
+            preparedModules,
+            isScript: file.isScript,
+            notes: file.notes,
+            frame: file.frame,
+          },
+    );
+    const sample = inputs.find((input) => input !== undefined);
+    if (sample === undefined) return inputs;
+    const base = getBase(sample);
+    if (base === undefined) return inputs;
+    const constants = getConstants(sample.config);
+    return inputs.map((input) => {
+      if (input === undefined) return undefined;
+      const ranked = getRanked(input, base);
+      const reason = getAloneReason(input, base, constants, ranked);
+      if (reason === undefined) return { ...input, base, strings: [...ranked.keys()] };
+      console.log(`tla-ts checks ${basename(input.path)} alone [${reason[0]}]: ${reason[1]}`);
+      return input;
+    });
+  } catch (error) {
+    if (!(error instanceof TlaError)) throw error;
+    const code = error instanceof TlaSharedBaseError ? error.code : "program-stops";
+    console.log(`tla-ts checks each file alone [${code}]: ${error.message}`);
+    return [];
+  }
+};

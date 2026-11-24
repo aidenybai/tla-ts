@@ -35,11 +35,28 @@ interface SymbolEntry {
   isLocal: boolean;
 }
 
-interface SymbolTable {
+export interface SymbolTable {
   put: (entry: SymbolEntry) => void;
   inserted: SymbolEntry[];
   ownStart: number;
   enumerate: () => SymbolEntry[];
+  // A table that starts as this one is, which neither changes for what the other puts.
+  fork: () => SymbolTable;
+}
+
+// The context of a module as its builtins and the modules it extends first leave it, which a check
+// of a group's base records for its root and its own module, so that the check of a file of the
+// group whose module extends the same modules first starts from a fork of it.
+interface ContextStart {
+  extended: readonly string[];
+  table: SymbolTable;
+}
+
+// The contexts that a group's base built, which the check of each file of the group reads: those
+// of the modules that every file's spec extends, by name, and the starts of the others.
+export interface SharedContexts {
+  tables: ReadonlyMap<string, SymbolTable>;
+  starts: ReadonlyMap<string, ContextStart>;
 }
 
 interface ParsedModule {
@@ -105,11 +122,25 @@ const CANONICAL_OPERATORS = new Map(
 
 const getCanonicalName = (name: string) => CANONICAL_OPERATORS.get(name) ?? name;
 
-const createSymbolTable = (): SymbolTable => {
-  let buckets: SymbolEntry[][] = Array.from({ length: 11 }, () => []);
-  let threshold = 8;
-  const keys = new Set<string>();
-  const inserted: SymbolEntry[] = [];
+// A table as SANY's Context's Java Hashtable holds it: each bucket's entries, the newest last, and
+// its keys. A fork shares the buckets and keys it starts with, and each table that shares a bucket
+// copies it before it puts into it.
+const createSymbolTable = (
+  start = {
+    buckets: Array.from({ length: 11 }, (): SymbolEntry[] => []),
+    threshold: 8,
+    sharedKeys: [] as readonly ReadonlySet<string>[],
+    inserted: [] as SymbolEntry[],
+    isForked: false,
+  },
+): SymbolTable => {
+  let buckets = start.buckets;
+  let threshold = start.threshold;
+  // Whether each bucket is this table's own, which it puts into without a copy.
+  let ownBuckets = new Uint8Array(buckets.length).fill(start.isForked ? 0 : 1);
+  let sharedKeys = start.sharedKeys;
+  let keys = new Set<string>();
+  const inserted = start.inserted;
   const forEachEntry = (visit: (entry: SymbolEntry) => void) => {
     for (let index = buckets.length - 1; index >= 0; index--) {
       const bucket = buckets[index];
@@ -121,13 +152,19 @@ const createSymbolTable = (): SymbolTable => {
     const rehashed: SymbolEntry[][] = Array.from({ length: capacity }, () => []);
     forEachEntry((entry) => rehashed[entry.hash % capacity].push(entry));
     buckets = rehashed;
+    ownBuckets = new Uint8Array(capacity).fill(1);
     threshold = Math.floor(capacity * 0.75);
   };
-  return {
+  const table: SymbolTable = {
     put: (entry) => {
-      if (keys.has(entry.key)) return;
+      if (keys.has(entry.key) || sharedKeys.some((shared) => shared.has(entry.key))) return;
       if (inserted.length >= threshold) rehash();
-      buckets[entry.hash % buckets.length].push(entry);
+      const index = entry.hash % buckets.length;
+      if (ownBuckets[index] === 0) {
+        buckets[index] = buckets[index].slice();
+        ownBuckets[index] = 1;
+      }
+      buckets[index].push(entry);
       keys.add(entry.key);
       inserted.push(entry);
     },
@@ -138,7 +175,22 @@ const createSymbolTable = (): SymbolTable => {
       forEachEntry((entry) => entries.push(entry));
       return entries;
     },
+    fork: () => {
+      if (keys.size > 0) {
+        sharedKeys = [...sharedKeys, keys];
+        keys = new Set();
+      }
+      ownBuckets.fill(0);
+      return createSymbolTable({
+        buckets: buckets.slice(),
+        threshold,
+        sharedKeys,
+        inserted: inserted.slice(),
+        isForked: true,
+      });
+    },
   };
+  return table;
 };
 
 const createEntry = (name: string, kind: SymbolKind, isLocal: boolean): SymbolEntry => ({
@@ -547,7 +599,11 @@ const internStrings = (module: Module, intern: (text: string) => void) =>
     if (unit.kind === "Assumption") internExpressionStrings(unit.assumption.expression, intern);
   });
 
-const createContexts = (getParsed: ModuleSet) => {
+// The contexts of the modules, from those that a check of a group's base built.
+const createContexts = (
+  getParsed: ModuleSet,
+  shared: SharedContexts = { tables: new Map(), starts: new Map() },
+) => {
   const getUnits = (unit: ParsedModule) => {
     const module = unit.getModule();
     const tokens = unit.getTokens();
@@ -682,29 +738,70 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 
   const contexts = new Map<string, SymbolTable>();
-  const getContext = (name: string | undefined): SymbolTable => {
-    const cached = contexts.get(name ?? "");
-    if (cached) return cached;
-    const table = createSymbolTable();
-    contexts.set(name ?? "", table);
-    const unit = getParsed(name);
-    // SANY copies the builtins into a file module's context, but an inner module's context starts empty.
+  // The number of entries that each context took from its group's start, by module name.
+  const startLengths = new Map<string, number>();
+  // SANY copies the builtins into a file module's context, but an inner module's context starts
+  // empty, and then the contexts of the modules it extends.
+  const putStart = (table: SymbolTable, unit: ParsedModule, extended: readonly string[]) => {
     if (!unit.isNested) {
       SANY_BUILTINS.toReversed().forEach((builtin) =>
         table.put(createEntry(builtin, "builtin", false)),
       );
     }
-    unit.getModule().extends.forEach((extended) =>
-      getContext(extended).inserted.forEach((entry) => {
+    extended.forEach((name) =>
+      getContext(name).inserted.forEach((entry) => {
         if (!entry.isLocal) table.put(entry);
       }),
     );
+  };
+  const getContext = (name: string | undefined): SymbolTable => {
+    const cached =
+      contexts.get(name ?? "") ?? (name === undefined ? undefined : shared.tables.get(name));
+    if (cached) return cached;
+    const unit = getParsed(name);
+    const extended = unit.getModule().extends;
+    const start = shared.starts.get(name ?? "");
+    const isStarted =
+      start !== undefined &&
+      !unit.isNested &&
+      start.extended.every((other, index) => extended[index] === other && shared.tables.has(other));
+    const table = isStarted ? start.table.fork() : createSymbolTable();
+    contexts.set(name ?? "", table);
+    if (isStarted) {
+      startLengths.set(name ?? "", table.inserted.length);
+      putStart(table, unit, extended.slice(start.extended.length));
+    } else putStart(table, unit, extended);
     table.ownStart = table.inserted.length;
     getUnits(unit).forEach((item) => item.apply(table));
     return table;
   };
   return {
     getContext,
+    getStartLength: (name: string | undefined) => {
+      getContext(name);
+      return startLengths.get(name ?? "");
+    },
+    // The contexts that the check of each file of a group whose base this is reads: those of the
+    // modules but the root and ownModule, and the starts of those two, from their builtins and the
+    // modules they extend before ownModule.
+    getSharedContexts: (ownModule: string): SharedContexts => {
+      getContext(undefined);
+      return {
+        tables: new Map([...contexts].filter((entry) => entry[0] !== "" && entry[0] !== ownModule)),
+        starts: new Map(
+          ["", ownModule].map((name) => {
+            const unit = getParsed(name === "" ? undefined : name);
+            const extended = unit.getModule().extends;
+            const before = extended.includes(ownModule)
+              ? extended.slice(0, extended.indexOf(ownModule))
+              : extended;
+            const table = createSymbolTable();
+            putStart(table, unit, before);
+            return [name, { extended: before, table }];
+          }),
+        ),
+      };
+    },
     getOwnEntries: (name: string | undefined) => {
       const table = getContext(name);
       return table.inserted.slice(table.ownStart);
@@ -864,25 +961,33 @@ export interface TlcOrder {
   ) => string[];
   getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
   getDefinitionOrder: (module: string | undefined) => string[];
+  // The definitions of a module's context after those it took from its group's start, or undefined
+  // where it took none.
+  getDefinitionsAfterStart: (module: string | undefined) => string[] | undefined;
   getInstanceDeclarations: (module: string) => string[];
   getInstanceDefinitions: (module: string) => string[];
   getInnerModuleOrder: (module: string | undefined) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
+  // The contexts that the check of each file of a group whose base this check is reads.
+  getSharedContexts: (ownModule: string) => SharedContexts;
   getModule: (name: string | undefined, source: string) => Module;
   parseFile: (source: string, name: string) => Module;
   getLoadedSource: (name: string) => string | undefined;
   getPreparedModule: (name: string) => PreparedModule | undefined;
 }
 
+// The orders of a spec's modules, with the contexts of a group's base's modules, which their own
+// modules make in each spec alike.
 export const createTlcOrder = (
   source: string | Module,
   loadModule: ModuleLoader,
   prepared: readonly PreparedModule[] = [],
+  sharedContexts?: SharedContexts,
 ): TlcOrder => {
   const modules = createModuleSet(source, loadModule, prepared);
   const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
-  const getContexts = () => (contexts ??= createContexts(getParsed));
+  const getContexts = () => (contexts ??= createContexts(getParsed, sharedContexts));
   return {
     getStringOrder: (config, runtimeModules, rootExtendees) =>
       getStringOrder(getParsed, source, config, runtimeModules, rootExtendees),
@@ -898,6 +1003,17 @@ export const createTlcOrder = (
         .getContext(module)
         .inserted.filter((entry) => entry.kind === "definition")
         .map((entry) => entry.name),
+    getDefinitionsAfterStart: (module) => {
+      const moduleContexts = getContexts();
+      const length = moduleContexts.getStartLength(module);
+      return length === undefined
+        ? undefined
+        : moduleContexts
+            .getContext(module)
+            .inserted.slice(length)
+            .filter((entry) => entry.kind === "definition")
+            .map((entry) => entry.name);
+    },
     getInstanceDeclarations: (module) =>
       getContexts()
         .getContext(module)
@@ -917,6 +1033,7 @@ export const createTlcOrder = (
     parseFile: modules.parseFile,
     getLoadedSource: modules.getLoadedSource,
     getPreparedModule: (name) => prepared.find((item) => item.name === name),
+    getSharedContexts: (ownModule) => getContexts().getSharedContexts(ownModule),
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();
       moduleContexts.getContext(undefined);

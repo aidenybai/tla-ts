@@ -24,6 +24,7 @@ import {
   formatRange,
   formatSanyWarnings,
   TlaEvaluationError,
+  TlaSharedBaseError,
   TlaSyntaxError,
   type SanyError,
 } from "./errors";
@@ -40,6 +41,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type StartupDefinition,
   type StartupModule,
   type StartupSubstitute,
 } from "./evaluate";
@@ -120,7 +122,13 @@ import {
 import { checkPlainModule } from "./plain-module";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt } from "./tlc/messages";
-import { createDefinitionFacts, isReevaluationShown, type PreparedFacts } from "./dependencies";
+import {
+  createDefinitionFacts,
+  isReevaluationShown,
+  isWideDefinition,
+  type BaseFacts,
+  type PreparedFacts,
+} from "./dependencies";
 import { resolveSynonym } from "./tlc/jar-data";
 import { createTlcOrder, type PreparedModule, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
@@ -148,6 +156,55 @@ interface EnvironmentOptions {
   printPrompt?: (text: string, code?: number) => void;
   runtimeInvariants?: RuntimeInvariant[];
   isCovered?: boolean;
+  // The link of a group's shared modules that this link starts from, which it copies and never
+  // changes.
+  base?: EnvironmentBase;
+  // The module that every file of a group has its own of: a link that names it links the root's
+  // other extended modules first and records their link as the group's base.
+  ownModule?: string;
+}
+
+// The state that linking the modules a group's files share leaves, which each file's link copies,
+// so that it links only its own modules.
+export interface LinkedBase {
+  definitions: ReadonlyMap<string, Definition>;
+  preparedLevels: ReadonlyMap<string, OperatorLevels>;
+  preparedTexts: readonly string[];
+  narrowDefinitions: ReadonlySet<Definition>;
+  theorems: ReadonlyMap<string, SourceRange>;
+  parameterized: ReadonlyMap<string, boolean>;
+  unresolvedBodyKeys: ReadonlySet<string>;
+  builtins: ReadonlyMap<string, Builtin>;
+  standardExports: ReadonlyMap<string, Symbols>;
+  standardSources: ReadonlyMap<string, LinkedModule>;
+  replacedDefinitions: ReadonlyMap<string, Definition>;
+  linkedModules: ReadonlyMap<string, LinkedModule>;
+  checkedModules: ReadonlyMap<string, LinkedModule>;
+  linkOrder: readonly LinkedModule[];
+  dependencies: ReadonlyMap<string, Set<string>>;
+  usedModules: ReadonlySet<string>;
+  copyCount: number;
+  javaOverrides: ReadonlyMap<string, JavaOverride[]>;
+  acceptedModules: ReadonlySet<Module>;
+}
+
+// A group's base: its link, the facts of its definitions, which hold ids 0 to B - 1 in every
+// file's facts, and what they evaluated to as the group started.
+export interface EnvironmentBase {
+  link: LinkedBase;
+  facts: BaseFacts;
+  startupValues: readonly (Value | undefined)[];
+  startup: BaseStartup;
+}
+
+// The definitions of the base's modules that a check evaluates as it starts, in TLC's order, and the
+// module that each definition comes from. starts holds, by module name, the root's under "", the
+// definitions of the entries that the contexts of the root and the own module take from their
+// group's start, which a check evaluates as it starts.
+export interface BaseStartup {
+  modules: readonly StartupModule[];
+  origins: ReadonlyMap<string, LinkedModule>;
+  starts: ReadonlyMap<string, readonly StartupDefinition[]>;
 }
 
 export interface RuntimeInvariant {
@@ -171,6 +228,14 @@ export interface Specification {
   moduleOperators: ResolvedModuleOperator[];
   runtimeInvariants: RuntimeInvariant[];
   rootName: string;
+  linkedBase: LinkedBase | undefined;
+  baseStartup: Omit<BaseStartup, "starts"> | undefined;
+  // The startup definitions of the module, the root where undefined, for the names of its context,
+  // or undefined where no module of the name links.
+  getStartupDefinitions: (
+    module: string | undefined,
+    names: readonly string[],
+  ) => StartupDefinition[] | undefined;
 }
 
 export interface InstanceAction {
@@ -327,23 +392,24 @@ export const createEnvironment = (
     typeof options.source === "string"
       ? order.getModule(undefined, options.source)
       : options.source;
-  const definitions = new Map<string, Definition>();
+  const base = options.base?.link;
+  const definitions = new Map<string, Definition>(base?.definitions);
   // The levels of the definitions of the prepared modules that SANY's checks accepted, by key.
-  const preparedLevels = new Map<string, OperatorLevels>();
+  const preparedLevels = new Map<string, OperatorLevels>(base?.preparedLevels);
   // The texts of the prepared modules whose levels a check links.
-  const preparedTexts: string[] = [];
+  const preparedTexts = [...(base?.preparedTexts ?? [])];
   const preparedValues: ReadonlyMap<Definition, Value>[] = [];
   const preparedFacts = new Map<Definition, PreparedFacts>();
   // The definitions that hold no wide string nor read a deserializer, as their modules tell.
-  const narrowDefinitions = new Set<Definition>();
-  const theorems = new Map<string, SourceRange>();
+  const narrowDefinitions = new Set<Definition>(base?.narrowDefinitions);
+  const theorems = new Map<string, SourceRange>(base?.theorems);
   const unlinkedTheorems = new Map<string, () => void>();
   const getLinkedDefinition = (key: string) => {
     unlinkedTheorems.get(key)?.();
     return definitions.get(key);
   };
-  const parameterized = new Map<string, boolean>();
-  const unresolvedBodyKeys = new Set<string>();
+  const parameterized = new Map<string, boolean>(base?.parameterized);
+  const unresolvedBodyKeys = new Set<string>(base?.unresolvedBodyKeys);
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
@@ -365,11 +431,11 @@ export const createEnvironment = (
     ),
   );
   const builtins = new Map<string, Builtin>(
-    CORE_OPERATORS.map((operator) => [operator.name, operator]),
+    base?.builtins ?? CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
-  const standardExports = new Map<string, Symbols>();
-  const standardSources = new Map<string, LinkedModule>();
-  const replacedDefinitions = new Map<string, Definition>();
+  const standardExports = new Map<string, Symbols>(base?.standardExports);
+  const standardSources = new Map<string, LinkedModule>(base?.standardSources);
+  const replacedDefinitions = new Map<string, Definition>(base?.replacedDefinitions);
   // The definition that an INSTANCE copies under a key: one that a builtin replaced is copied as its
   // TLA+ where its module has CONSTANTS or VARIABLES, which the INSTANCE may substitute, as the
   // builtin can't read the substitutes.
@@ -386,20 +452,20 @@ export const createEnvironment = (
   runtime.printPrompt =
     options.printPrompt ??
     ((text, code) => options.print(formatPrompt(runtime.isTool, text, code)));
-  const linkedModules = new Map<string, LinkedModule>();
-  const checkedModules = new Map<string, LinkedModule>();
-  const linkOrder: LinkedModule[] = [];
-  const dependencies = new Map<string, Set<string>>();
+  const linkedModules = new Map<string, LinkedModule>(base?.linkedModules);
+  const checkedModules = new Map<string, LinkedModule>(base?.checkedModules);
+  const linkOrder = [...(base?.linkOrder ?? [])];
+  const dependencies = new Map<string, Set<string>>(base?.dependencies);
   const loading: Set<string>[] = [];
   const linking: string[] = [];
-  const usedModules = new Set<string>();
+  const usedModules = new Set<string>(base?.usedModules);
 
   const useModule = (name: string, used: Iterable<string>) =>
     [usedModules, ...loading].forEach((closure) => {
       closure.add(name);
       [...used].forEach((dependency) => closure.add(dependency));
     });
-  let copyCount = 0;
+  let copyCount = base?.copyCount ?? 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
   const originalNames = new Map<string, string>();
   const instanceChecks: InstanceLevelCheck[] = [];
@@ -588,7 +654,7 @@ export const createEnvironment = (
 
   // The modules read from prepared modules that SANY's checks already accepted, whose names and
   // levels a check doesn't resolve or check again.
-  const acceptedModules = new Set<Module>();
+  const acceptedModules = new Set<Module>(base?.acceptedModules);
   const loadModule = (name: string, importer: string) => {
     const prepared = order.getPreparedModule(name);
     if (prepared?.levels && runtime.version === "master") {
@@ -1331,7 +1397,7 @@ export const createEnvironment = (
     return [...substitutionDefinitions, ...copies, ...exported];
   };
 
-  const javaOverrides = new Map<string, JavaOverride[]>();
+  const javaOverrides = new Map<string, JavaOverride[]>(base?.javaOverrides);
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
     const overridden = overrideDefinitions(
       unlinked,
@@ -1359,6 +1425,7 @@ export const createEnvironment = (
           return;
         }
         if (
+          current === symbol ||
           !current.range ||
           !symbol.range ||
           formatRange(current.sourceRange ?? current.range) ===
@@ -1953,6 +2020,68 @@ export const createEnvironment = (
     return linked;
   };
 
+  // The link of the root's extended modules but the group's own module, which leaves no state but
+  // what a file's link copies where SANY's checks accepted each of them as it is.
+  const linkBase = (ownModule: string): LinkedBase => {
+    root.extends
+      .filter((name) => name !== ownModule)
+      .forEach((name) => getStandardSymbols(name) ?? getLinkedModule(name, root.name));
+    const isAccepted =
+      [...linkedModules.values()].every(
+        (linked) => acceptedModules.has(linked.module) && linked.module.instances.length === 0,
+      ) &&
+      instanceChecks.length + semanticErrors.length + warnings.length === 0 &&
+      [
+        unlinkedTheorems,
+        copySources,
+        substitutedDefinitions,
+        instanceParams,
+        originalNames,
+        letInstances,
+        locallyInstantiated,
+        statementLevels,
+        instanceActions,
+        instanceNames,
+        qualifiedNames,
+        builtinAliases,
+      ].every((collection) => collection.size === 0);
+    if (!isAccepted) {
+      throw new TlaSharedBaseError(
+        "base-unaccepted",
+        "a module they share links other than as SANY's checks accepted it",
+      );
+    }
+    return {
+      definitions: new Map(definitions),
+      preparedLevels: new Map(preparedLevels),
+      preparedTexts: [...preparedTexts],
+      // A check reads whether a definition holds a wide string where its module doesn't tell, which
+      // the base's definitions tell once.
+      narrowDefinitions: new Set([
+        ...narrowDefinitions,
+        ...[...definitions.values()].filter(
+          (definition) =>
+            !narrowDefinitions.has(definition) && !isWideDefinition(definition, new Set()),
+        ),
+      ]),
+      theorems: new Map(theorems),
+      parameterized: new Map(parameterized),
+      unresolvedBodyKeys: new Set(unresolvedBodyKeys),
+      builtins: new Map(builtins),
+      standardExports: new Map(standardExports),
+      standardSources: new Map(standardSources),
+      replacedDefinitions: new Map(replacedDefinitions),
+      linkedModules: new Map(linkedModules),
+      checkedModules: new Map(checkedModules),
+      linkOrder: [...linkOrder],
+      dependencies: new Map(dependencies),
+      usedModules: new Set(usedModules),
+      copyCount,
+      javaOverrides: new Map(javaOverrides),
+      acceptedModules: new Set(acceptedModules),
+    };
+  };
+  const linkedBase = options.ownModule === undefined ? undefined : linkBase(options.ownModule);
   const linkedRoot = linkTopLevel(root).linked;
   const traceFile = options.traceFile;
   const traceOperators: ModuleOperator[] =
@@ -2060,6 +2189,8 @@ export const createEnvironment = (
     },
     assumptions.map((assumption) => assumption.expression),
     preparedFacts,
+    options.base?.facts,
+    linkedBase && [...new Set(linkedBase.definitions.values())],
   );
   const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
   // A prepared module's levels hold here where its text names none of the operators that this
@@ -2095,7 +2226,10 @@ export const createEnvironment = (
     variableLocations: linkedRoot.variableLocations,
     facts,
     narrowDefinitions,
-    startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
+    startupValues: Array.from(
+      { length: facts.ids.size },
+      (_value, id): Value | undefined => options.base?.startupValues[id],
+    ),
     tlcEvalValues: new WeakMap(),
     substitutedDefinitions,
     enabledSubstitutions,
@@ -2170,24 +2304,47 @@ export const createEnvironment = (
   const nestedModules = new Set(linkOrder.flatMap((linked) => [...linked.modules.values()]));
   const getDefinitionKey = (linked: LinkedModule, name: string) =>
     linked.visible.get(name)?.key ?? name;
+  // The modules linked after the base's, whose startup a check finds, after the base's.
+  const baseStartup = options.base?.startup;
+  const ownModules = linkOrder.slice(base?.linkOrder.length ?? 0);
   const getOwnDefinitionOrder = order.createDefinitionOrder();
-  const origins = new Map(
-    linkOrder.flatMap((linked) =>
-      getOwnDefinitionOrder(getModuleName(linked)).map((name) => [
+  const getStartupDefinitions = (linked: LinkedModule, names: readonly string[]) =>
+    names.flatMap((name) => {
+      const key = getDefinitionKey(linked, name);
+      const isOverride = substitutions.has(key);
+      const definition = isOverride ? getSubstitute(key) : definitions.get(key);
+      return definition && isProcessedAtStartup(origins.get(key) ?? linked) && !constants.has(key)
+        ? [{ definition, isOverride }]
+        : [];
+    });
+  // A module of a group's file whose context starts from its group's start takes the definitions
+  // of the start's entries from the base, where its file's own modules instance none, so that each
+  // module processes at startup as in the base.
+  const isStartShared =
+    ownModules.every((linked) => linked.module.instances.length === 0) &&
+    locallyInstantiated.size === 0;
+  const getModuleDefinitions = (linked: LinkedModule) => {
+    const name = getModuleName(linked);
+    const started = baseStartup?.starts.get(name ?? "");
+    const after = order.getDefinitionsAfterStart(name);
+    return isStartShared && started !== undefined && after !== undefined
+      ? [...started, ...getStartupDefinitions(linked, after)]
+      : getStartupDefinitions(linked, order.getDefinitionOrder(name));
+  };
+  const getOrigins = (modules: readonly LinkedModule[]) =>
+    modules.flatMap((linked) =>
+      getOwnDefinitionOrder(getModuleName(linked)).map((name): [string, LinkedModule] => [
         getDefinitionKey(linked, name),
         linked,
       ]),
-    ),
-  );
-  return {
-    environment,
-    assumptions,
-    instanceActions,
-    // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited constants and definitions too, and skips each definition by the module it comes from.
-    startupModules: linkOrder
+    );
+  const origins = new Map([...(baseStartup?.origins ?? []), ...getOrigins(ownModules)]);
+  // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited constants and definitions too, and skips each definition by the module it comes from.
+  const getStartupModuleList = (modules: readonly LinkedModule[]) =>
+    modules
       .filter((linked) => !nestedModules.has(linked) && isProcessedAtStartup(linked))
       .flatMap(getStartupModules)
-      .map((linked) => {
+      .map((linked): StartupModule => {
         const moduleSubstitutes = new Map(
           linked.constants.flatMap((constant): [string, StartupSubstitute][] => {
             const substitute = substitutes.get(constant.key);
@@ -2201,21 +2358,26 @@ export const createEnvironment = (
               : order
                   .getDeclarationOrder("constant", getModuleName(linked))
                   .flatMap((name) => moduleSubstitutes.get(name) ?? []),
-          definitions: order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
-            const key = getDefinitionKey(linked, name);
-            const isOverride = substitutions.has(key);
-            const definition = isOverride ? getSubstitute(key) : definitions.get(key);
-            return definition &&
-              isProcessedAtStartup(origins.get(key) ?? linked) &&
-              !constants.has(key)
-              ? [{ definition, isOverride }]
-              : [];
-          }),
+          definitions: getModuleDefinitions(linked),
         };
-      }),
+      });
+  return {
+    environment,
+    assumptions,
+    instanceActions,
+    startupModules: [...(baseStartup?.modules ?? []), ...getStartupModuleList(ownModules)],
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,
     runtimeInvariants,
     rootName: root.name,
+    linkedBase,
+    baseStartup: linkedBase && {
+      modules: getStartupModuleList(linkedBase.linkOrder),
+      origins: new Map(getOrigins(linkedBase.linkOrder)),
+    },
+    getStartupDefinitions: (module, names) => {
+      const linked = module === undefined ? linkedRoot : linkedModules.get(module);
+      return linked && getStartupDefinitions(linked, names);
+    },
   };
 };
