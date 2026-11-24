@@ -69,6 +69,10 @@ const runWorker = (start: StartMessage, parent: Port) => {
   });
   let frontier = decode(start.frontier).map(canonicalize);
   let isDrawnAfterNext = false;
+  let isWarned = false;
+  environment.runtime.warn = () => {
+    isWarned = true;
+  };
   const takeBreak = createBreak();
 
   const answerRequest = (expansion: Expansion, request: number) => {
@@ -206,7 +210,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
-    if (isDrawnAfterNext) return { type: "abort" };
+    if (isDrawnAfterNext || isWarned) return { type: "abort" };
     const unorderedString = getUnorderedString();
     if (unorderedString !== undefined) return { type: "abort", string: unorderedString };
     frontier = expansion.next;

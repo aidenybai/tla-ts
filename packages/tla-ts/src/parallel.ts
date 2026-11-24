@@ -91,9 +91,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       "count" in progress ? progress.count : "",
       "text" in progress ? progress.text : "",
     ].join(" ");
-  const reported = new Set<string>();
+  const reported = new Map<string, number>();
   const report = (progress: CheckProgress) => {
-    reported.add(getKey(progress));
+    const key = getKey(progress);
+    reported.set(key, (reported.get(key) ?? 0) + 1);
     options.onProgress?.(progress);
   };
   const fallBack = (createdString?: string) => {
@@ -106,7 +107,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       config,
       onPrint: (text) => (skippedCount-- > 0 ? undefined : print(text)),
       onProgress: (progress) => {
-        if (!reported.has(getKey(progress))) options.onProgress?.(progress);
+        const key = getKey(progress);
+        const count = reported.get(key) ?? 0;
+        if (count === 0) options.onProgress?.(progress);
+        else reported.set(key, count - 1);
       },
     });
   };
