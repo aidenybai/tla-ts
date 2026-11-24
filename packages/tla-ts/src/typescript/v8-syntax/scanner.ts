@@ -1,3 +1,4 @@
+// Ported from V8 src/parsing/scanner.cc, scanner-inl.h and token.h; see LICENSE-v8.
 // V8's scanner (src/parsing/scanner.cc), as Node 26's V8 14.6 tokenizes JavaScript: its tokens in
 // V8's order, which the parser's range checks rely on, and the errors and octal positions that it
 // records as it scans.

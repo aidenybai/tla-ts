@@ -1,3 +1,5 @@
+// Ported from the property names that V8 src/regexp/regexp-parser.cc accepts through ICU; see
+// LICENSE-v8.
 // The Unicode property names and values V8 14.6 (ICU 78, Unicode 17) accepts in \p{…}, probed
 // against Node 26. Script lists no Katakana_Or_Hiragana because no character has that script.
 export const GENERAL_CATEGORY_VALUES = new Set(

@@ -1,3 +1,4 @@
+// Ported from V8 src/ast/scopes.cc and src/objects/function-kind.h; see LICENSE-v8.
 // V8's scopes (src/ast/scopes.cc), as far as its parser's early errors read them: the names that each
 // scope declares, its declarations in order, its strictness, and its class's private names.
 

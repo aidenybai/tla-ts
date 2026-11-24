@@ -1,3 +1,4 @@
+// Ported from V8 src/common/message-template.h; see LICENSE-v8.
 // V8's MessageTemplates (src/common/message-template.h) that its parser reports, by their names in V8,
 // where % stands for an argument.
 const MESSAGES = {

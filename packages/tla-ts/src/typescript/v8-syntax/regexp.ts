@@ -1,3 +1,4 @@
+// Ported from V8 src/regexp/regexp-parser.cc and regexp-error.h; see LICENSE-v8.
 // V8's regular expression parser (src/regexp/regexp-parser.cc in V8 14.6), reduced to the checks
 // that decide whether a pattern is a syntax error and which RegExpError it reports first.
 import { TlaTypeScriptError } from "../../errors";
