@@ -1747,28 +1747,31 @@ export const runSmtlibScript = (
         const deadline = Date.now() + options.timeLimitMs;
         state.manager.limit.restart(deadline);
         state.manager.limit.push(settings.rlimit);
-        try {
-          const checked = checkSatUsing(tactic, goal);
-          const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
-          setCheck(checked.status, {
-            isFromTactic: true,
-            model: checked.model,
-            core:
-              builder.isTrackingDependencies || !hasNames()
-                ? getDependencyValues(checked.core)
-                : undefined,
-            reasonUnknown,
-          });
-          print(
-            checked.isConversionCanceled
-              ? `(error "tactic failed: ${reasonUnknown}")`
-              : getVerdict(checked.status),
-          );
-        } finally {
-          goal.release();
-          destroyTactics(destructors);
-          state.manager.limit.pop();
-        }
+        const hasProof = (() => {
+          try {
+            const checked = checkSatUsing(tactic, goal);
+            const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
+            setCheck(checked.status, {
+              isFromTactic: true,
+              model: checked.model,
+              core:
+                builder.isTrackingDependencies || !hasNames()
+                  ? getDependencyValues(checked.core)
+                  : undefined,
+              reasonUnknown,
+            });
+            print(
+              checked.isConversionCanceled
+                ? `(error "tactic failed: ${reasonUnknown}")`
+                : getVerdict(checked.status),
+            );
+            return checked.hasProof;
+          } finally {
+            goal.release();
+            destroyTactics(destructors);
+            state.manager.limit.pop();
+          }
+        })();
         validateCheck(list.end);
         const check = state.check;
         if (settings.isProducingUnsatCores && params.get("print_unsat_core") === true) {
@@ -1788,7 +1791,7 @@ export const runSmtlibScript = (
         if (check?.status === L_TRUE && check.model !== undefined) validateCheckModel(list.end);
         if (
           (settings.isProducingProofs || state.isProofsEnabled === true) &&
-          check?.status !== L_TRUE &&
+          hasProof &&
           params.get("print_proof") === true
         )
           throw new SmtUnsupportedError("the proof of check-sat-using");

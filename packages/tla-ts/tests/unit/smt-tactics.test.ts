@@ -1956,6 +1956,18 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     );
   });
 
+  it("has a proof for :print_proof only where the tactic leaves a goal with a formula", () => {
+    const lines = [
+      "(set-option :produce-proofs true)",
+      "(declare-const x Int)",
+      "(assert (> x 0))",
+    ];
+    expect(run([...lines, "(check-sat-using fail :print_proof true)"])).toEqual(["unknown"]);
+    expect(() => run([...lines, "(check-sat-using skip :print_proof true)"])).toThrow(
+      SmtUnsupportedError,
+    );
+  });
+
   it("puts the completion back after fm's model converter, so get-value evaluates each term afresh", () => {
     expect(
       run([

@@ -2641,6 +2641,7 @@ interface TacticCheck {
   core: Dependency | undefined;
   reasonUnknown: string | undefined;
   isConversionCanceled: boolean;
+  hasProof: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
@@ -2741,6 +2742,7 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
     model: undefined,
     core: undefined,
     isConversionCanceled: false,
+    hasProof: Array.isArray(goals) && goals.length > 0 && goals[0].forms.size > 0,
   };
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
