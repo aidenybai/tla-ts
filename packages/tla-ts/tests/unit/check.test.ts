@@ -91,6 +91,16 @@ const getNextCoverageLines = async (next: string) =>
     )
   )?.at(-1);
 
+const getPrintedFilterPasses = async (definition: string, next: string) => {
+  const prints: string[] = [];
+  await check({
+    source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nK == LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${definition}\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${next}\n====`,
+    config: "INIT Init\nNEXT Next",
+    onPrint: (text) => prints.push(text),
+  });
+  return prints;
+};
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -11941,13 +11951,41 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "sorts the set it converts from K == %s for %s only when TLC reads its sets as unnormalized",
     async (definition, next, expected) => {
-      const prints: string[] = [];
-      await check({
-        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nK == LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${definition}\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN ${next}\n====`,
-        config: "INIT Init\nNEXT Next",
-        onPrint: (text) => prints.push(text),
-      });
-      expect(prints).toEqual(expected);
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    ["[n \\in {F, {9}} |-> 1]", "TRUE", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["[[n \\in {F, {9}} |-> 1] EXCEPT ![{9}] = 2]", "TRUE", ["{}", "{1}", "{}", "{1}", '"n"']],
+    [
+      "[n \\in {F, {9}, {8}} |-> 1]",
+      "TRUE",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", '"n"'],
+    ],
+    [
+      "[a \\in {F, {9}}, b \\in {1, 2} |-> 0]",
+      "TRUE",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", '"n"'],
+    ],
+    [
+      "[a \\in {1, 2}, b \\in {F, {9}} |-> 0]",
+      "TRUE",
+      ["{}", "{1}", "{}", "{1}", "{}", "{1}", '"n"'],
+    ],
+    ["[<<a, b>> \\in {<<F, 1>>, <<{9}, 2>>} |-> a]", "TRUE", ["{}", "{1}", "{}", "{1}", '"n"']],
+    ["0", "DOMAIN [n \\in {F, {9}} |-> 1] # {}", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    [
+      "0",
+      "[n \\in {F, {9}} |-> 1] = [n \\in {F, {9}} |-> 1]",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+    ],
+    ["0", "LET f[n \\in {F, {9}}] == 1 IN f # <<>>", ['"n"', "{}", "{1}", "{}", "{1}"]],
+    ["0", "[n \\in {F, {9}} |-> 1] # <<>>", ['"n"', "{}", "{1}", "{}", "{1}"]],
+  ])(
+    "compares the keys of the function K == %s for %s builds as TLC's toFcnRcd normalizes it",
+    async (definition, next, expected) => {
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
     },
   );
 

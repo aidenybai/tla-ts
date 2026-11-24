@@ -1284,6 +1284,46 @@ const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
   return result;
 };
 
+// FcnLambdaValue#toFcnRcd normalizes the function it builds, and FcnRcdValue#sort compares the first key with each other key, then insertion-sorts the rest.
+export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
+  for (let index = 1; index < domain.length; index++) {
+    const first = domain[0];
+    const key = domain[index];
+    if (callTracedMethod(first, () => compareLikeTlc(first, key)) > 0) {
+      domain[0] = key;
+      domain[index] = first;
+      const firstValue = range[0];
+      range[0] = range[index];
+      range[index] = firstValue;
+    }
+  }
+  for (let index = 2; index < domain.length; index++) {
+    const key = domain[index];
+    const value = range[index];
+    let position = index;
+    while (
+      position > 0 &&
+      callTracedMethod(key, () => compareLikeTlc(key, domain[position - 1])) < 0
+    ) {
+      domain[position] = domain[position - 1];
+      range[position] = range[position - 1];
+      position--;
+    }
+    domain[position] = key;
+    range[position] = value;
+  }
+  return createSortedFunction(domain, range);
+};
+
+const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
+
+export const hasLazyKeys = (domain: Value) =>
+  isMixedSet(domain) ||
+  (typeof domain === "object" && domain.kind === "ProductSet" && domain.factors.some(isMixedSet));
+
+export const createConstructedFunction = (domain: Value, keys: Value[], range: Value[]) =>
+  isMixedSet(domain) ? sortLikeFcnRcdValue([...keys], range) : createSortedFunction(keys, range);
+
 const searchLikeTlc = (element: Value, sorted: Value[]) => {
   let low = 0;
   let high = sorted.length;
@@ -4377,12 +4417,10 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
     const domain = getFunctionDomain(value.domain, false);
-    value.enumerated = createSortedFunction(
-      domain,
-      isLazyFunctionCopy(value)
-        ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
-        : domain.map((key) => value.apply(key)),
-    );
+    const range = isLazyFunctionCopy(value)
+      ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
+      : domain.map((key) => value.apply(key));
+    value.enumerated = createConstructedFunction(value.domain, domain, range);
     finishConversion?.();
     return value.enumerated;
   }

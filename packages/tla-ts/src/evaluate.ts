@@ -90,6 +90,7 @@ import {
   forEachElement,
   isBeyondSetBound,
   createRecord,
+  createConstructedFunction,
   createEnumeratedSet,
   createFunctionSet,
   createProductSet,
@@ -115,6 +116,7 @@ import {
   getFunctionClass,
   getNormalizedSetElements,
   getSequenceElements,
+  hasLazyKeys,
   hasObservedPass,
   isElementOf,
   isReceiverEqual,
@@ -124,6 +126,7 @@ import {
   isSetValue,
   isSettledValue,
   isTlcInteger,
+  sortLikeFcnRcdValue,
   toFiniteFunction,
   toFiniteSet,
   updateFunction,
@@ -2649,7 +2652,7 @@ export const getFunctionBuilder = (
         return createLazy(domain, context);
       }
       const keys = getFunctionDomain(domain, false);
-      return createSortedFunction(keys, keys.map(evaluateAt));
+      return createConstructedFunction(domain, keys, keys.map(evaluateAt));
     }
     const pairs: [Value, Value][] = [];
     const sets = mapBoundSets(bounds, (set, index) =>
@@ -2670,7 +2673,12 @@ export const getFunctionBuilder = (
       pairs.push([key, body(withScope(context, scope))]);
       return false;
     });
-    return createFunction(pairs);
+    return hasLazyKeys(domain)
+      ? sortLikeFcnRcdValue(
+          pairs.map((pair) => pair[0]),
+          pairs.map((pair) => pair[1]),
+        )
+      : createFunction(pairs);
   };
   const template = getLazyFunctionTemplate(bounds, expression.body);
   const boundTupleLengths = getBoundTupleLengths(bounds);
