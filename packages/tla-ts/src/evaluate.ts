@@ -1190,7 +1190,6 @@ export const evaluateStartupDefinitions = (modules: StartupModule[], environment
         evaluateAtStartup(definition, definitionId, environment);
       } catch (error) {
         if (!(error instanceof TlaEvaluationError)) throw error;
-        // TLCSet's deviation in tlc/tlc-operators.ts makes a substitute that calls it state-level, so this reports what TLC swallows at TLCSet's bound of 0.
         if (isEvaluatedAtStartup(definition, environment)) return;
         const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
         throw new TlaConfigError(

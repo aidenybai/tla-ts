@@ -285,7 +285,7 @@ export const createTlcOperators = (
         ),
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
-  // Deviation from TLC: TLCGetSet#TLCSet lacks a minLevel, so TLC evaluates a constant definition that sets a named register as it starts, before any checker holds the register, and drops the write.
+  // Deviation from TLC: TLCGetSet#TLCSet lacks a minLevel, so TLC evaluates a constant definition that sets a named register, the exit or the pause as it starts, before any checker exists, and drops the write.
   defineStateOperator("TLCSet", 2, (args, context) => {
     setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"), context?.state);
     return true;
