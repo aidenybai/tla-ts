@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { check } from "../../src";
 import { getJavaClassName } from "../../src/builtins";
 import { PROGRESS_INTERVAL, type SearchStatistics } from "../../src/check";
@@ -33,6 +33,10 @@ const getCounts = (result: { generatedStates: number; distinctStates: number; de
   result.distinctStates,
   result.depth,
 ];
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("check with workers matches TLC", () => {
   it.each([2, 3, 4])("explores the commit protocol with %i workers", async (workers) => {
@@ -212,7 +216,6 @@ describe("check with workers matches TLC", () => {
       vi.advanceTimersByTime(PROGRESS_INTERVAL);
       await new Promise((resolve) => setImmediate(resolve));
     }
-    vi.useRealTimers();
     const result = await checked;
     expect(getCounts(result)).toEqual([8000, 8000, 2]);
     expect(reported.length).toBeGreaterThan(0);
@@ -270,7 +273,6 @@ describe("check with workers matches TLC", () => {
         vi.advanceTimersByTime(PROGRESS_INTERVAL);
         await new Promise((resolve) => setImmediate(resolve));
       }
-      vi.useRealTimers();
       expect([getCounts(await checked), progressCount > 0]).toEqual([counts, true]);
     },
   );

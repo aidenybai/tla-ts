@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { check, type CheckProgress } from "../../src";
 import type { SearchStatistics } from "../../src/check";
 import { getActualProbability } from "../../src/tlc/summary";
@@ -26,6 +26,10 @@ const checkFixture = (
     isWarningEnabled,
     maxSetSize,
   });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("typed tier matches TLC", () => {
   it.each([
@@ -349,7 +353,7 @@ describe("typed tier matches TLC", () => {
 
   const checkCounter = async (init: string, next: string, isTyped: boolean) => {
     let now = 0;
-    const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
     const reported: (CheckProgress["kind"] | SearchStatistics)[] = [];
     const result = await check({
       source: `---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == ${init}\nNext == x < 1000 /\\ x' = ${next}\n====`,
@@ -358,7 +362,6 @@ describe("typed tier matches TLC", () => {
       onProgress: (progress) =>
         reported.push(progress.kind === "progress" ? progress.statistics : progress.kind),
     });
-    clock.mockRestore();
     return { status: result.status, reported };
   };
 
@@ -396,7 +399,7 @@ describe("typed tier matches TLC", () => {
 
   it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
     let now = 0;
-    const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
     const reported: SearchStatistics[] = [];
     const result = await check({
       source:
@@ -406,7 +409,6 @@ describe("typed tier matches TLC", () => {
         if (progress.kind === "progress") reported.push(progress.statistics);
       },
     });
-    clock.mockRestore();
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
       1001, 1001, 1001,
     ]);
