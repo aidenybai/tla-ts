@@ -2,6 +2,7 @@ import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,
   FAMILY_FPA,
+  OP_AND,
   OP_CONCAT,
   OP_FPA_BV2RM,
   OP_FPA_BVWRAP,
@@ -17,7 +18,7 @@ import {
 } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { mkBvApp } from "./bv-decl-plugin";
-import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";
+import { Bv2FpaConverter } from "./bv2fpa-converter";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
 import {
@@ -87,21 +88,24 @@ export const finalizeFpaModel = (
   manager: AstManager,
   converter: WrappedFpa2BvConverter,
   model: ProtoModel,
-) => {
-  const target = new ProtoModel(manager);
-  target.incRef();
-  const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
-  convertMinMaxSpecials(converter, model, target, seen);
-  convertUf2BvUf(converter, model, target, seen);
-  for (const decl of seen) model.unregisterDecl(decl);
-  for (const decl of target.getConstDecls())
-    model.registerConst(decl, target.getSomeConstInterp(decl));
-  for (const decl of target.getFuncDecls()) {
-    const interp = target.funcInterps.get(decl);
-    if (interp !== undefined) model.registerFunc(decl, interp.copy());
-  }
-  target.decRef();
-};
+) =>
+  manager.withoutTemporaries(() => {
+    const target = new ProtoModel(manager);
+    target.incRef();
+    const bv2fp = new Bv2FpaConverter(manager, converter);
+    const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
+    bv2fp.convertMinMaxSpecials(model, target, seen);
+    bv2fp.convertUf2BvUf(model, target, seen);
+    for (const decl of seen) model.unregisterDecl(decl);
+    for (const decl of target.getConstDecls())
+      model.registerConst(decl, target.getSomeConstInterp(decl));
+    for (const decl of target.getFuncDecls()) {
+      const interp = target.funcInterps.get(decl);
+      if (interp !== undefined) model.registerFunc(decl, interp.copy());
+    }
+    bv2fp.release();
+    target.decRef();
+  });
 
 export class TheoryFpa extends Theory {
   readonly name = "fpa";
@@ -140,13 +144,18 @@ export class TheoryFpa extends Theory {
   private mkSideConditions() {
     const manager = this.manager;
     const converter = this.converter;
-    const formulas = converter.extraAssertions.items.map((assertion) => {
-      const rewritten = this.context.rewriter.rewrite(assertion);
-      manager.releaseLater(rewritten);
+    const result = manager.withoutTemporaries(() => {
+      const formulas = converter.extraAssertions.items.map((assertion) =>
+        this.context.rewriter.rewrite(assertion),
+      );
+      converter.extraAssertions.reset();
+      const conjunction = manager.mkApp(OP_AND, formulas, SORT_BOOL);
+      manager.incRef(conjunction);
+      const rewritten = this.theoryRewriter.rewrite(conjunction);
+      manager.decRef(conjunction);
+      for (const formula of formulas) manager.decRef(formula);
       return rewritten;
     });
-    converter.extraAssertions.reset();
-    const result = this.theoryRewriter.rewrite(manager.mkAnd(formulas));
     manager.releaseLater(result);
     return result;
   }
@@ -160,10 +169,12 @@ export class TheoryFpa extends Theory {
   private assertCnstr(expr: number) {
     const context = this.context;
     if (expr === this.manager.trueExpr) return;
-    context.internalize(expr, false);
-    const literal = context.getLiteral(expr);
-    context.markLiteralAsRelevant(literal);
-    context.mkThAxiom([literal]);
+    this.manager.withoutTemporaries(() => {
+      context.internalize(expr, false);
+      const literal = context.getLiteral(expr);
+      context.markLiteralAsRelevant(literal);
+      context.mkThAxiom([literal]);
+    });
   }
 
   private attachNewThVar(node: Enode) {
@@ -239,10 +250,14 @@ export class TheoryFpa extends Theory {
     const firstConverted = this.convert(firstExpr);
     const secondConverted = this.convert(secondExpr);
     const isFloatPair = this.isFloat(firstExpr) && this.isFloat(secondExpr);
-    const eq = isFloatPair
-      ? this.converter.mkEq(firstConverted, secondConverted)
-      : manager.mkEq(firstConverted, secondConverted);
-    const condition = this.rewrite(isNegated ? manager.mkNot(eq) : eq);
+    const unrewritten = manager.withTemporaries(() => {
+      const eq = isFloatPair
+        ? this.converter.mkEq(firstConverted, secondConverted)
+        : manager.mkEq(firstConverted, secondConverted);
+      return isNegated ? manager.mkNot(eq) : eq;
+    });
+    const condition = this.rewrite(unrewritten);
+    manager.decRef(unrewritten);
     const exprEq = manager.mkEq(firstExpr, secondExpr);
     this.assertCnstr(manager.mkEq(isNegated ? manager.mkNot(exprEq) : exprEq, condition));
     this.assertCnstr(this.mkSideConditions());
@@ -356,6 +371,7 @@ export class TheoryFpa extends Theory {
         if (argNode === undefined) throw new SmtInvariantError("the term was not internalized");
         return argNode;
       });
+    const wrapped = this.converter.wrap(owner);
     const op = manager.getOp(owner);
     if (op === OP_FPA_FP)
       return {
@@ -367,7 +383,6 @@ export class TheoryFpa extends Theory {
         dependencies: getEnodes([manager.getArg(owner, 0)]),
         mkValue: (values) => mkRmValue(manager, values[0]),
       };
-    const wrapped = this.converter.wrap(owner);
     if (context.isEInternalized(wrapped))
       return {
         dependencies: getEnodes([wrapped]),

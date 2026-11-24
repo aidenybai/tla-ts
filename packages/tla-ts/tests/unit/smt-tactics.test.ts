@@ -1152,6 +1152,113 @@ describe("fpa2bv, as Z3 5.3.2 builds its terms", () => {
       ]),
     ).toEqual(["unknown", '(:reason-unknown "fail tactic")', "(:rlimit 10)"]);
   });
+
+  it("keeps each rewritten formula until the next rewrite replaces it", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 3 4))",
+        "(declare-const y (_ FloatingPoint 3 4))",
+        "(assert (fp.isSubnormal x))",
+        "(assert (fp.gt (fp.mul RTZ x y) x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 9528)"]);
+  });
+
+  it("frees the locals of each conversion as the function returns", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 3 4))",
+        "(declare-const a Real)",
+        "(assert (= x ((_ to_fp 3 4) RNE a)))",
+        "(assert (fp.lt x ((_ to_fp 3 4) RNE 0.5)))",
+        "(assert (> a 0.25))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 31495)"]);
+  });
+});
+
+describe("bv2fpa_converter, as Z3 5.3.2 converts a model", () => {
+  it("rewrites the sign, exponent and significand of each constant", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const x (_ FloatingPoint 2 3))",
+        "(assert (fp.isNormal x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 95)",
+      "(\n  (define-fun x () (_ FloatingPoint 2 3)\n    (fp #b0 #b01 #b00))\n)",
+    ]);
+  });
+
+  it("rebuilds the entries of an unspecified conversion through its rewriter", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 3 4))",
+        "(assert (fp.isNaN x))",
+        "(assert (= ((_ fp.to_sbv 4) RNE x) #x3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 168)"]);
+  });
+
+  it("evaluates the zeros of fp.min in the model", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 2 3))",
+        "(declare-const y (_ FloatingPoint 2 3))",
+        "(assert (fp.isZero x))",
+        "(assert (fp.isZero y))",
+        "(assert (not (= x y)))",
+        "(assert (= (fp.min x y) x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 555)"]);
+  });
+});
+
+describe("theory_fpa, as Z3 5.3.2 internalizes its conversions", () => {
+  it("internalizes its axioms with the reference counts Z3 has", () => {
+    expect(
+      run([
+        "(declare-const x (_ FloatingPoint 3 4))",
+        "(declare-const a Real)",
+        "(declare-const b Real)",
+        "(assert (= (/ a b) (fp.to_real x)))",
+        "(assert (> a 1.0))",
+        "(assert (fp.isNormal x))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 6639)"]);
+  });
+
+  it("frees the divisor that theory_lra rewrites", () => {
+    expect(
+      run([
+        "(declare-const r Real)",
+        "(declare-const s Real)",
+        "(declare-const f (_ FloatingPoint 2 4))",
+        "(declare-const g (_ FloatingPoint 2 4))",
+        "(assert (= f ((_ to_fp 2 4) RNE r)))",
+        "(assert (= g ((_ to_fp 2 4) RTP s)))",
+        "(assert (fp.lt f g))",
+        "(assert (<= r 3.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 111224)"]);
+  });
 });
 
 describe("the optimizer releases what Z3 releases", () => {

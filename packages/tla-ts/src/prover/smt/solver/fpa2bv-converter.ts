@@ -50,6 +50,7 @@ import {
   SORT_REAL,
 } from "./ast";
 import { mkBvApp } from "./bv-decl-plugin";
+import { releaseBv2FpaMaps } from "./bv2fpa-converter";
 import {
   BV_RM_TIES_TO_AWAY,
   BV_RM_TIES_TO_EVEN,
@@ -100,24 +101,7 @@ export class Fpa2BvConverter {
   }
 
   reset() {
-    const manager = this.manager;
-    for (const entry of [...this.constants, ...this.rmConstants]) {
-      manager.decDeclRef(entry[0]);
-      manager.decRef(entry[1]);
-    }
-    for (const entry of this.uf2BvUf) {
-      manager.decDeclRef(entry[0]);
-      manager.decDeclRef(entry[1]);
-    }
-    for (const entry of this.minMaxUfs) {
-      manager.decDeclRef(entry[0]);
-      manager.decRef(entry[1][0]);
-      manager.decRef(entry[1][1]);
-    }
-    this.constants.clear();
-    this.rmConstants.clear();
-    this.minMaxUfs.clear();
-    this.uf2BvUf.clear();
+    releaseBv2FpaMaps(this.manager, this);
     this.extraAssertions.reset();
   }
 
@@ -173,6 +157,13 @@ export class Fpa2BvConverter {
     );
   }
 
+  private withLocals(body: () => number) {
+    const manager = this.manager;
+    const result = manager.withTemporaries(body);
+    manager.releaseLater(result);
+    return result;
+  }
+
   private simpEq(left: number, right: number) {
     return this.simp.mkEq(left, right);
   }
@@ -212,18 +203,20 @@ export class Fpa2BvConverter {
   }
 
   mkEq(first: number, second: number) {
-    const manager = this.manager;
-    if (manager.isFpSort(manager.sorts[first])) {
-      const eqSgn = this.simpEq(manager.getArg(first, 0), manager.getArg(second, 0));
-      const eqExp = this.simpEq(manager.getArg(first, 1), manager.getArg(second, 1));
-      const eqSig = this.simpEq(manager.getArg(first, 2), manager.getArg(second, 2));
-      const bothTheSame = this.simpAnd(eqSgn, eqExp, eqSig);
-      const firstIsNan = this.mkIsNan(first);
-      const secondIsNan = this.mkIsNan(second);
-      const bothAreNan = this.simpAnd(firstIsNan, secondIsNan);
-      return this.simpOr(bothAreNan, bothTheSame);
-    }
-    return this.simpEq(manager.getArg(first, 0), manager.getArg(second, 0));
+    return this.withLocals(() => {
+      const manager = this.manager;
+      if (manager.isFpSort(manager.sorts[first])) {
+        const eqSgn = this.simpEq(manager.getArg(first, 0), manager.getArg(second, 0));
+        const eqExp = this.simpEq(manager.getArg(first, 1), manager.getArg(second, 1));
+        const eqSig = this.simpEq(manager.getArg(first, 2), manager.getArg(second, 2));
+        const bothTheSame = this.simpAnd(eqSgn, eqExp, eqSig);
+        const firstIsNan = this.mkIsNan(first);
+        const secondIsNan = this.mkIsNan(second);
+        const bothAreNan = this.simpAnd(firstIsNan, secondIsNan);
+        return this.simpOr(bothAreNan, bothTheSame);
+      }
+      return this.simpEq(manager.getArg(first, 0), manager.getArg(second, 0));
+    });
   }
 
   mkIte(condition: number, thenExpr: number, elseExpr: number): number {
@@ -1585,77 +1578,79 @@ export class Fpa2BvConverter {
   }
 
   mkToReal(decl: number, x: number) {
-    const manager = this.manager;
-    const sort = manager.sorts[x];
-    const ebits = manager.getEbits(sort);
-    const sbits = manager.getSbits(sort);
-    const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);
-    const isBitOne = (expr: number, index: number) =>
-      manager.mkEq(this.extract(index, index, expr), bv1);
-    const xIsNan = this.mkIsNan(x);
-    const xIsInf = this.mkIsInf(x);
-    const xIsZero = this.mkIsZero(x);
-    const unpacked = this.unpack(x, true);
-    const zero = manager.mkRealNumeral(Rational.of(0n));
-    const one = manager.mkRealNumeral(Rational.of(1n));
-    const two = manager.mkRealNumeral(Rational.of(2n));
-    this.num(0, 1);
-    const bv1 = this.num(1, 1);
-    let rsig = one;
-    for (let index = sbits - 2; index >= 0; index--) {
-      const bitIsOne = isBitOne(unpacked.sig, index);
-      rsig = real(OP_ADD, real(OP_MUL, rsig, two), this.mkRawIte(bitIsOne, one, zero));
-    }
-    const ep2 = manager.mkRealNumeral(Rational.of(1n << BigInt(sbits - 1)));
-    rsig = real(OP_DIV, rsig, ep2);
-    const expP = this.bv(
-      OP_BSUB,
-      this.signExtend(1, unpacked.exp),
-      this.zeroExtend(1, unpacked.lz),
-    );
-    const expIsNeg = isBitOne(expP, ebits);
-    const expAbs = this.mkRawIte(expIsNeg, this.bv(OP_BNEG, expP), expP);
-    let exp2 = zero;
-    for (let index = ebits; index >= 0; index--) {
-      const bitIsOne = isBitOne(expAbs, index);
-      exp2 = real(OP_ADD, real(OP_MUL, exp2, two), this.mkRawIte(bitIsOne, one, zero));
-    }
-    const twoExp2 = real(OP_POWER, two, exp2);
-    const scale = this.mkRawIte(expIsNeg, real(OP_DIV, one, twoExp2), twoExp2);
-    const magnitude = real(OP_MUL, rsig, scale);
-    const negated = real(OP_UMINUS, magnitude);
-    const sgnIsOne = manager.mkEq(unpacked.sgn, bv1);
-    const value = this.mkRawIte(sgnIsOne, negated, magnitude);
-    const wrapped = this.nanWrap(x);
-    const unspecified = manager.mkApp(
-      this.mkBvUf(decl, [manager.sorts[wrapped]], SORT_REAL),
-      [wrapped],
-      SORT_REAL,
-    );
-    const result = this.mkRawIte(
-      xIsNan,
-      unspecified,
-      this.mkRawIte(xIsInf, unspecified, this.mkRawIte(xIsZero, zero, value)),
-    );
-    const notSpecial = manager.mkNot(this.mkOr(xIsNan, xIsInf, xIsZero));
-    this.extraAssertions.push(
-      manager.mkApp(
-        OP_IMPLIES,
-        [this.mkAnd(notSpecial, sgnIsOne), manager.mkApp(OP_LT, [result, zero], SORT_BOOL)],
-        SORT_BOOL,
-      ),
-    );
-    this.extraAssertions.push(
-      manager.mkApp(
-        OP_IMPLIES,
-        [
-          this.mkAnd(notSpecial, manager.mkNot(sgnIsOne)),
-          manager.mkApp(OP_GT, [result, zero], SORT_BOOL),
-        ],
-        SORT_BOOL,
-      ),
-    );
-    return result;
+    return this.withLocals(() => {
+      const manager = this.manager;
+      const sort = manager.sorts[x];
+      const ebits = manager.getEbits(sort);
+      const sbits = manager.getSbits(sort);
+      const real = (op: number, ...args: number[]) => manager.mkApp(op, args, SORT_REAL);
+      const isBitOne = (expr: number, index: number) =>
+        manager.mkEq(this.extract(index, index, expr), bv1);
+      const xIsNan = this.mkIsNan(x);
+      const xIsInf = this.mkIsInf(x);
+      const xIsZero = this.mkIsZero(x);
+      const unpacked = this.unpack(x, true);
+      const zero = manager.mkRealNumeral(Rational.of(0n));
+      const one = manager.mkRealNumeral(Rational.of(1n));
+      const two = manager.mkRealNumeral(Rational.of(2n));
+      this.num(0, 1);
+      const bv1 = this.num(1, 1);
+      let rsig = one;
+      for (let index = sbits - 2; index >= 0; index--) {
+        const bitIsOne = isBitOne(unpacked.sig, index);
+        rsig = real(OP_ADD, real(OP_MUL, rsig, two), this.mkRawIte(bitIsOne, one, zero));
+      }
+      const ep2 = manager.mkRealNumeral(Rational.of(1n << BigInt(sbits - 1)));
+      rsig = real(OP_DIV, rsig, ep2);
+      const expP = this.bv(
+        OP_BSUB,
+        this.signExtend(1, unpacked.exp),
+        this.zeroExtend(1, unpacked.lz),
+      );
+      const expIsNeg = isBitOne(expP, ebits);
+      const expAbs = this.mkRawIte(expIsNeg, this.bv(OP_BNEG, expP), expP);
+      let exp2 = zero;
+      for (let index = ebits; index >= 0; index--) {
+        const bitIsOne = isBitOne(expAbs, index);
+        exp2 = real(OP_ADD, real(OP_MUL, exp2, two), this.mkRawIte(bitIsOne, one, zero));
+      }
+      const twoExp2 = real(OP_POWER, two, exp2);
+      const scale = this.mkRawIte(expIsNeg, real(OP_DIV, one, twoExp2), twoExp2);
+      const magnitude = real(OP_MUL, rsig, scale);
+      const negated = real(OP_UMINUS, magnitude);
+      const sgnIsOne = manager.mkEq(unpacked.sgn, bv1);
+      const value = this.mkRawIte(sgnIsOne, negated, magnitude);
+      const wrapped = this.nanWrap(x);
+      const unspecified = manager.mkApp(
+        this.mkBvUf(decl, [manager.sorts[wrapped]], SORT_REAL),
+        [wrapped],
+        SORT_REAL,
+      );
+      const result = this.mkRawIte(
+        xIsNan,
+        unspecified,
+        this.mkRawIte(xIsInf, unspecified, this.mkRawIte(xIsZero, zero, value)),
+      );
+      const notSpecial = manager.mkNot(this.mkOr(xIsNan, xIsInf, xIsZero));
+      this.extraAssertions.push(
+        manager.mkApp(
+          OP_IMPLIES,
+          [this.mkAnd(notSpecial, sgnIsOne), manager.mkApp(OP_LT, [result, zero], SORT_BOOL)],
+          SORT_BOOL,
+        ),
+      );
+      this.extraAssertions.push(
+        manager.mkApp(
+          OP_IMPLIES,
+          [
+            this.mkAnd(notSpecial, manager.mkNot(sgnIsOne)),
+            manager.mkApp(OP_GT, [result, zero], SORT_BOOL),
+          ],
+          SORT_BOOL,
+        ),
+      );
+      return result;
+    });
   }
 
   private mkToFpBits(sort: number, rm: number, x: number, isSigned: boolean) {
@@ -1737,11 +1732,13 @@ export class Fpa2BvConverter {
   }
 
   private nanWrap(expr: number) {
-    const argIsNan = this.mkIsNan(expr);
-    const nan = this.mkNan(this.manager.sorts[expr]);
-    const nanBv = this.joinFp(nan);
-    const exprBv = this.joinFp(expr);
-    return this.mkRawIte(argIsNan, nanBv, exprBv);
+    return this.withLocals(() => {
+      const argIsNan = this.mkIsNan(expr);
+      const nan = this.mkNan(this.manager.sorts[expr]);
+      const nanBv = this.joinFp(nan);
+      const exprBv = this.joinFp(expr);
+      return this.mkRawIte(argIsNan, nanBv, exprBv);
+    });
   }
 
   mkToIeeeBv(decl: number, x: number) {
@@ -1854,90 +1851,112 @@ export class Fpa2BvConverter {
   }
 
   mkIsNan(expr: number) {
-    const [, exp, sig] = this.splitFp(expr);
-    const topExp = this.mkTopExp(this.getBvSize(exp));
-    const zero = this.num(0, this.getBvSize(sig));
-    const sigIsZero = this.simpEq(sig, zero);
-    const sigIsNotZero = this.simpNot(sigIsZero);
-    const expIsTop = this.simpEq(exp, topExp);
-    return this.simpAnd(expIsTop, sigIsNotZero);
+    return this.withLocals(() => {
+      const [, exp, sig] = this.splitFp(expr);
+      const topExp = this.mkTopExp(this.getBvSize(exp));
+      const zero = this.num(0, this.getBvSize(sig));
+      const sigIsZero = this.simpEq(sig, zero);
+      const sigIsNotZero = this.simpNot(sigIsZero);
+      const expIsTop = this.simpEq(exp, topExp);
+      return this.simpAnd(expIsTop, sigIsNotZero);
+    });
   }
 
   mkIsInf(expr: number) {
-    const [, exp, sig] = this.splitFp(expr);
-    const topExp = this.mkTopExp(this.getBvSize(exp));
-    const zero = this.num(0, this.getBvSize(sig));
-    const eq1 = this.simpEq(sig, zero);
-    const eq2 = this.simpEq(exp, topExp);
-    return this.simpAnd(eq1, eq2);
+    return this.withLocals(() => {
+      const [, exp, sig] = this.splitFp(expr);
+      const topExp = this.mkTopExp(this.getBvSize(exp));
+      const zero = this.num(0, this.getBvSize(sig));
+      const eq1 = this.simpEq(sig, zero);
+      const eq2 = this.simpEq(exp, topExp);
+      return this.simpAnd(eq1, eq2);
+    });
   }
 
   private mkIsPinf(expr: number) {
-    const isPos = this.mkIsPos(expr);
-    const isInf = this.mkIsInf(expr);
-    return this.simpAnd(isPos, isInf);
+    return this.withLocals(() => {
+      const isPos = this.mkIsPos(expr);
+      const isInf = this.mkIsInf(expr);
+      return this.simpAnd(isPos, isInf);
+    });
   }
 
   private mkIsNinf(expr: number) {
-    const isNeg = this.mkIsNeg(expr);
-    const isInf = this.mkIsInf(expr);
-    return this.simpAnd(isNeg, isInf);
+    return this.withLocals(() => {
+      const isNeg = this.mkIsNeg(expr);
+      const isInf = this.mkIsInf(expr);
+      return this.simpAnd(isNeg, isInf);
+    });
   }
 
   private mkIsPos(expr: number) {
-    const sgn = this.manager.getArg(expr, 0);
-    return this.simpEq(sgn, this.num(0, this.getBvSize(sgn)));
+    return this.withLocals(() => {
+      const sgn = this.manager.getArg(expr, 0);
+      return this.simpEq(sgn, this.num(0, this.getBvSize(sgn)));
+    });
   }
 
   private mkIsNeg(expr: number) {
-    const sgn = this.manager.getArg(expr, 0);
-    return this.simpEq(sgn, this.num(1, this.getBvSize(sgn)));
+    return this.withLocals(() => {
+      const sgn = this.manager.getArg(expr, 0);
+      return this.simpEq(sgn, this.num(1, this.getBvSize(sgn)));
+    });
   }
 
   mkIsZero(expr: number) {
-    const [, exp, sig] = this.splitFp(expr);
-    const botExp = this.mkBotExp(this.getBvSize(exp));
-    const zero = this.num(0, this.getBvSize(sig));
-    const eq1 = this.simpEq(sig, zero);
-    const eq2 = this.simpEq(exp, botExp);
-    return this.simpAnd(eq1, eq2);
+    return this.withLocals(() => {
+      const [, exp, sig] = this.splitFp(expr);
+      const botExp = this.mkBotExp(this.getBvSize(exp));
+      const zero = this.num(0, this.getBvSize(sig));
+      const eq1 = this.simpEq(sig, zero);
+      const eq2 = this.simpEq(exp, botExp);
+      return this.simpAnd(eq1, eq2);
+    });
   }
 
   private mkIsNzero(expr: number) {
-    const [sgn] = this.splitFp(expr);
-    const isZero = this.mkIsZero(expr);
-    const eq = this.simpEq(sgn, this.num(1, 1));
-    return this.simpAnd(eq, isZero);
+    return this.withLocals(() => {
+      const [sgn] = this.splitFp(expr);
+      const isZero = this.mkIsZero(expr);
+      const eq = this.simpEq(sgn, this.num(1, 1));
+      return this.simpAnd(eq, isZero);
+    });
   }
 
   private mkIsPzero(expr: number) {
-    const [sgn] = this.splitFp(expr);
-    const isZero = this.mkIsZero(expr);
-    const eq = this.simpEq(sgn, this.num(0, 1));
-    return this.simpAnd(eq, isZero);
+    return this.withLocals(() => {
+      const [sgn] = this.splitFp(expr);
+      const isZero = this.mkIsZero(expr);
+      const eq = this.simpEq(sgn, this.num(0, 1));
+      return this.simpAnd(eq, isZero);
+    });
   }
 
   mkIsDenormal(expr: number) {
-    const [, exp] = this.splitFp(expr);
-    const zero = this.num(0, this.getBvSize(exp));
-    const zexp = this.simpEq(exp, zero);
-    const isZero = this.mkIsZero(expr);
-    const nIsZero = this.simpNot(isZero);
-    return this.simpAnd(nIsZero, zexp);
+    return this.withLocals(() => {
+      const [, exp] = this.splitFp(expr);
+      const zero = this.num(0, this.getBvSize(exp));
+      const zexp = this.simpEq(exp, zero);
+      const isZero = this.mkIsZero(expr);
+      const nIsZero = this.simpNot(isZero);
+      return this.simpAnd(nIsZero, zexp);
+    });
   }
 
   mkIsNormal(expr: number) {
-    const [, exp] = this.splitFp(expr);
-    const isDenormal = this.mkIsDenormal(expr);
-    const isZero = this.mkIsZero(expr);
-    const ebits = this.getBvSize(exp);
-    const isSpecial = this.simpEq(exp, this.num(getPowerOfTwoMinusOne(ebits), ebits));
-    const specialOrDenormal = this.simpOr(isSpecial, isDenormal);
-    return this.simpNot(this.simpOr(isZero, specialOrDenormal));
+    return this.withLocals(() => {
+      const [, exp] = this.splitFp(expr);
+      const isDenormal = this.mkIsDenormal(expr);
+      const isZero = this.mkIsZero(expr);
+      const ebits = this.getBvSize(exp);
+      const isSpecial = this.simpEq(exp, this.num(getPowerOfTwoMinusOne(ebits), ebits));
+      const orEx = this.withLocals(() => this.simpOr(isZero, this.simpOr(isSpecial, isDenormal)));
+      return this.simpNot(orEx);
+    });
   }
 
   private mkIsRm(rm: number, value: number) {
-    return this.simpEq(rm, this.num(value, 3));
+    return this.withLocals(() => this.simpEq(rm, this.num(value, 3)));
   }
 
   private mkTopExp(size: number) {
@@ -1957,25 +1976,27 @@ export class Fpa2BvConverter {
   }
 
   private mkLeadingZeros(expr: number, maxBits: number): number {
-    const size = this.getBvSize(expr);
-    if (size === 0) return this.num(0, maxBits);
-    if (size === 1) {
-      const nilBit = this.num(0, 1);
-      const oneM = this.num(1, maxBits);
-      const nilM = this.num(0, maxBits);
-      const eq = this.simpEq(expr, nilBit);
-      return this.simpIte(eq, oneM, nilM);
-    }
-    const high = this.extract(size - 1, Math.floor(size / 2), expr);
-    const low = this.extract(Math.floor(size / 2) - 1, 0, expr);
-    const highSize = this.getBvSize(high);
-    const lzHigh = this.mkLeadingZeros(high, maxBits);
-    const lzLow = this.mkLeadingZeros(low, maxBits);
-    const nilH = this.num(0, highSize);
-    const highIsZero = this.simpEq(high, nilH);
-    const hM = this.num(highSize, maxBits);
-    const sum = this.bv(OP_BADD, hM, lzLow);
-    return this.simpIte(highIsZero, sum, lzHigh);
+    return this.withLocals(() => {
+      const size = this.getBvSize(expr);
+      if (size === 0) return this.num(0, maxBits);
+      if (size === 1) {
+        const nilBit = this.num(0, 1);
+        const oneM = this.num(1, maxBits);
+        const nilM = this.num(0, maxBits);
+        const eq = this.simpEq(expr, nilBit);
+        return this.simpIte(eq, oneM, nilM);
+      }
+      const high = this.extract(size - 1, Math.floor(size / 2), expr);
+      const low = this.extract(Math.floor(size / 2) - 1, 0, expr);
+      const highSize = this.getBvSize(high);
+      const lzHigh = this.mkLeadingZeros(high, maxBits);
+      const lzLow = this.mkLeadingZeros(low, maxBits);
+      const nilH = this.num(0, highSize);
+      const highIsZero = this.simpEq(high, nilH);
+      const hM = this.num(highSize, maxBits);
+      const sum = this.bv(OP_BADD, hM, lzLow);
+      return this.simpIte(highIsZero, sum, lzHigh);
+    });
   }
 
   private mkBias(expr: number) {
@@ -2035,140 +2056,144 @@ export class Fpa2BvConverter {
   }
 
   private mkRoundingDecision(rm: number, sgn: number, last: number, round: number, sticky: number) {
-    const lastOrSticky = this.bv(OP_BOR, last, sticky);
-    const roundOrSticky = this.bv(OP_BOR, round, sticky);
-    this.bv(OP_BNOT, last);
-    const notRound = this.bv(OP_BNOT, round);
-    this.bv(OP_BNOT, sticky);
-    const notLors = this.bv(OP_BNOT, lastOrSticky);
-    const notRors = this.bv(OP_BNOT, roundOrSticky);
-    const notSgn = this.bv(OP_BNOT, sgn);
-    const incTeven = this.bv(OP_BNOT, this.bv(OP_BOR, notRound, notLors));
-    const incPos = this.bv(OP_BNOT, this.bv(OP_BOR, sgn, notRors));
-    const incNeg = this.bv(OP_BNOT, this.bv(OP_BOR, notSgn, notRors));
-    const nilBit = this.num(0, 1);
-    const rmIsToNeg = this.mkIsRm(rm, BV_RM_TO_NEGATIVE);
-    const rmIsToPos = this.mkIsRm(rm, BV_RM_TO_POSITIVE);
-    const rmIsAway = this.mkIsRm(rm, BV_RM_TIES_TO_AWAY);
-    const rmIsEven = this.mkIsRm(rm, BV_RM_TIES_TO_EVEN);
-    const incC4 = this.simpIte(rmIsToNeg, incNeg, nilBit);
-    const incC3 = this.simpIte(rmIsToPos, incPos, incC4);
-    const incC2 = this.simpIte(rmIsAway, round, incC3);
-    return this.simpIte(rmIsEven, incTeven, incC2);
+    return this.withLocals(() => {
+      const lastOrSticky = this.bv(OP_BOR, last, sticky);
+      const roundOrSticky = this.bv(OP_BOR, round, sticky);
+      this.bv(OP_BNOT, last);
+      const notRound = this.bv(OP_BNOT, round);
+      this.bv(OP_BNOT, sticky);
+      const notLors = this.bv(OP_BNOT, lastOrSticky);
+      const notRors = this.bv(OP_BNOT, roundOrSticky);
+      const notSgn = this.bv(OP_BNOT, sgn);
+      const incTeven = this.bv(OP_BNOT, this.bv(OP_BOR, notRound, notLors));
+      const incPos = this.bv(OP_BNOT, this.bv(OP_BOR, sgn, notRors));
+      const incNeg = this.bv(OP_BNOT, this.bv(OP_BOR, notSgn, notRors));
+      const nilBit = this.num(0, 1);
+      const rmIsToNeg = this.mkIsRm(rm, BV_RM_TO_NEGATIVE);
+      const rmIsToPos = this.mkIsRm(rm, BV_RM_TO_POSITIVE);
+      const rmIsAway = this.mkIsRm(rm, BV_RM_TIES_TO_AWAY);
+      const rmIsEven = this.mkIsRm(rm, BV_RM_TIES_TO_EVEN);
+      const incC4 = this.simpIte(rmIsToNeg, incNeg, nilBit);
+      const incC3 = this.simpIte(rmIsToPos, incPos, incC4);
+      const incC2 = this.simpIte(rmIsAway, round, incC3);
+      return this.simpIte(rmIsEven, incTeven, incC2);
+    });
   }
 
   round(sort: number, rm: number, sgn: number, inputSig: number, inputExp: number) {
-    const manager = this.manager;
-    const ebits = manager.getEbits(sort);
-    const sbits = manager.getSbits(sort);
-    const eMin = this.mkMinExp(ebits);
-    const eMax = this.mkMaxExp(ebits);
-    const oneBit = this.num(1, 1);
-    const hExp = this.extract(ebits + 1, ebits + 1, inputExp);
-    const shExp = this.extract(ebits, ebits, inputExp);
-    const thExp = this.extract(ebits - 1, ebits - 1, inputExp);
-    const e3 = this.simpEq(hExp, oneBit);
-    const e2 = this.simpEq(shExp, oneBit);
-    const e1 = this.simpEq(thExp, oneBit);
-    const e21 = this.simpOr(e2, e1);
-    const ne3 = this.simpNot(e3);
-    const eTopThree = this.simpAnd(ne3, e21);
-    const extEmax = this.zeroExtend(2, eMax);
-    const topSig = this.extract(sbits + 3, sbits + 3, inputSig);
-    const eEqEmax = this.simpEq(extEmax, inputExp);
-    const sigm1 = this.simpEq(topSig, oneBit);
-    const eEqEmaxAndSigm1 = this.simpAnd(eEqEmax, sigm1);
-    const ovf1 = this.simpOr(eTopThree, eEqEmaxAndSigm1);
-    const lz = this.mkLeadingZeros(inputSig, ebits + 2);
-    const t1 = this.bv(OP_BADD, inputExp, this.num(1, ebits + 2));
-    const t2 = this.bv(OP_BSUB, t1, lz);
-    const t = this.bv(OP_BSUB, t2, this.signExtend(2, eMin));
-    const tiny = this.bv(OP_SLEQ, t, this.num(-1, ebits + 2));
-    const beta = this.bv(OP_BADD, this.bv(OP_BSUB, inputExp, lz), this.num(1, ebits + 2));
-    const sigmaSub = this.bv(OP_BSUB, inputExp, this.signExtend(2, eMin));
-    const sigmaAdd = this.bv(OP_BADD, sigmaSub, this.num(1, ebits + 2));
-    const sigma = this.simpIte(tiny, sigmaAdd, lz);
-    const sigSize = this.getBvSize(inputSig);
-    const sigmaSize = ebits + 2;
-    const sigmaNeg = this.bv(OP_BNEG, sigma);
-    let sigmaNegCapped = sigmaNeg;
-    if (getLog2(sbits + 2) < sigmaSize) {
-      const sigmaCap = this.num(sbits + 2, sigmaSize);
-      const sigmaLeCap = this.bv(OP_ULEQ, sigmaNeg, sigmaCap);
-      sigmaNegCapped = this.simpIte(sigmaLeCap, sigmaNeg, sigmaCap);
-    }
-    const sigmaLtZero = this.bv(OP_SLEQ, sigma, this.num(-1, sigmaSize));
-    const sigExt = this.concat(inputSig, this.num(0, sigSize));
-    const shiftWidth = 2 * sigSize;
-    const rsShift =
-      sigmaSize <= shiftWidth
-        ? this.zeroExtend(shiftWidth - sigmaSize, sigmaNegCapped)
-        : this.extract(shiftWidth - 1, 0, sigmaNegCapped);
-    const lsShift =
-      sigmaSize <= shiftWidth
-        ? this.zeroExtend(shiftWidth - sigmaSize, sigma)
-        : this.extract(shiftWidth - 1, 0, sigma);
-    const rsSig = this.bv(OP_BLSHR, sigExt, rsShift);
-    const lsSig = this.bv(OP_BSHL, sigExt, lsShift);
-    const bigShSig = this.simpIte(sigmaLtZero, rsSig, lsSig);
-    const sigExtractLowBit = 2 * sigSize - 1 - (sbits + 2) + 1;
-    const shiftedSig = this.extract(2 * sigSize - 1, sigExtractLowBit, bigShSig);
-    const stickyBit = this.bv(OP_BREDOR, this.extract(sigExtractLowBit - 1, 0, bigShSig));
-    const extSticky = this.zeroExtend(sbits + 1, stickyBit);
-    const stickySig = this.bv(OP_BOR, shiftedSig, extSticky);
-    const extEmin = this.zeroExtend(2, eMin);
-    const tinyExp = this.simpIte(tiny, extEmin, beta);
-    const sticky = this.extract(0, 0, stickySig);
-    const round = this.extract(1, 1, stickySig);
-    const last = this.extract(2, 2, stickySig);
-    const retainedSig = this.extract(sbits + 1, 2, stickySig);
-    const incBit = this.mkRoundingDecision(rm, sgn, last, round, sticky);
-    const sigWide = this.zeroExtend(1, retainedSig);
-    const inc = this.zeroExtend(sbits, incBit);
-    const incrementedSig = this.bv(OP_BADD, sigWide, inc);
-    const sigTop = this.extract(sbits, sbits, incrementedSig);
-    const sigOvf = this.simpEq(sigTop, oneBit);
-    const hallbut1Sig = this.extract(sbits, 1, incrementedSig);
-    const lallbut1Sig = this.extract(sbits - 1, 0, incrementedSig);
-    const normalizedSig = this.simpIte(sigOvf, hallbut1Sig, lallbut1Sig);
-    const expP1 = this.bv(OP_BADD, tinyExp, this.num(1, ebits + 2));
-    const normalizedExp = this.simpIte(sigOvf, expP1, tinyExp);
-    const unadjustedBiasedExp = this.mkBias(this.extract(ebits - 1, 0, normalizedExp));
-    const expRedand = this.bv(OP_BREDAND, unadjustedBiasedExp);
-    const preOvf2 = this.simpEq(expRedand, oneBit);
-    const ovf2 = this.simpAnd(sigOvf, preOvf2);
-    const pem2m1 = this.num(getPowerOfTwoMinusOne(ebits - 2), ebits);
-    const biasedExp = this.simpIte(ovf2, pem2m1, unadjustedBiasedExp);
-    const ovf = this.simpOr(ovf1, ovf2);
-    const topExp = this.mkTopExp(ebits);
-    const botExp = this.mkBotExp(ebits);
-    const nilBit = this.num(0, 1);
-    const rmIsToZero = this.mkIsRm(rm, BV_RM_TO_ZERO);
-    const rmIsToNeg = this.mkIsRm(rm, BV_RM_TO_NEGATIVE);
-    const rmIsToPos = this.mkIsRm(rm, BV_RM_TO_POSITIVE);
-    const rmZeroOrNeg = this.simpOr(rmIsToZero, rmIsToNeg);
-    const rmZeroOrPos = this.simpOr(rmIsToZero, rmIsToPos);
-    const zeroBit = this.num(0, 1);
-    const sgnIsZero = this.simpEq(sgn, zeroBit);
-    const maxSig = this.num(getPowerOfTwoMinusOne(sbits - 1), sbits - 1);
-    const maxExp = this.concat(
-      this.num(getPowerOfTwoMinusOne(ebits - 1), ebits - 1),
-      this.num(0, 1),
-    );
-    const infSig = this.num(0, sbits - 1);
-    const maxInfExpNeg = this.simpIte(rmZeroOrPos, maxExp, topExp);
-    const maxInfExpPos = this.simpIte(rmZeroOrNeg, maxExp, topExp);
-    const ovflExp = this.simpIte(sgnIsZero, maxInfExpPos, maxInfExpNeg);
-    const denormalBit = this.extract(sbits - 1, sbits - 1, normalizedSig);
-    const nDCheck = this.simpEq(denormalBit, nilBit);
-    const nDExp = this.simpIte(nDCheck, botExp, biasedExp);
-    const resExp = this.simpIte(ovf, ovflExp, nDExp);
-    const maxInfSigNeg = this.simpIte(rmZeroOrPos, maxSig, infSig);
-    const maxInfSigPos = this.simpIte(rmZeroOrNeg, maxSig, infSig);
-    const ovflSig = this.simpIte(sgnIsZero, maxInfSigPos, maxInfSigNeg);
-    const restSig = this.extract(sbits - 2, 0, normalizedSig);
-    const resSig = this.simpIte(ovf, ovflSig, restSig);
-    return this.mkFp(sgn, resExp, resSig);
+    return this.withLocals(() => {
+      const manager = this.manager;
+      const ebits = manager.getEbits(sort);
+      const sbits = manager.getSbits(sort);
+      const eMin = this.mkMinExp(ebits);
+      const eMax = this.mkMaxExp(ebits);
+      const oneBit = this.num(1, 1);
+      const hExp = this.extract(ebits + 1, ebits + 1, inputExp);
+      const shExp = this.extract(ebits, ebits, inputExp);
+      const thExp = this.extract(ebits - 1, ebits - 1, inputExp);
+      const e3 = this.simpEq(hExp, oneBit);
+      const e2 = this.simpEq(shExp, oneBit);
+      const e1 = this.simpEq(thExp, oneBit);
+      const e21 = this.simpOr(e2, e1);
+      const ne3 = this.simpNot(e3);
+      const eTopThree = this.simpAnd(ne3, e21);
+      const extEmax = this.zeroExtend(2, eMax);
+      const topSig = this.extract(sbits + 3, sbits + 3, inputSig);
+      const eEqEmax = this.simpEq(extEmax, inputExp);
+      const sigm1 = this.simpEq(topSig, oneBit);
+      const eEqEmaxAndSigm1 = this.simpAnd(eEqEmax, sigm1);
+      const ovf1 = this.simpOr(eTopThree, eEqEmaxAndSigm1);
+      const lz = this.mkLeadingZeros(inputSig, ebits + 2);
+      const t1 = this.bv(OP_BADD, inputExp, this.num(1, ebits + 2));
+      const t2 = this.bv(OP_BSUB, t1, lz);
+      const t = this.bv(OP_BSUB, t2, this.signExtend(2, eMin));
+      const tiny = this.bv(OP_SLEQ, t, this.num(-1, ebits + 2));
+      const beta = this.bv(OP_BADD, this.bv(OP_BSUB, inputExp, lz), this.num(1, ebits + 2));
+      const sigmaSub = this.bv(OP_BSUB, inputExp, this.signExtend(2, eMin));
+      const sigmaAdd = this.bv(OP_BADD, sigmaSub, this.num(1, ebits + 2));
+      const sigma = this.simpIte(tiny, sigmaAdd, lz);
+      const sigSize = this.getBvSize(inputSig);
+      const sigmaSize = ebits + 2;
+      const sigmaNeg = this.bv(OP_BNEG, sigma);
+      let sigmaNegCapped = sigmaNeg;
+      if (getLog2(sbits + 2) < sigmaSize) {
+        const sigmaCap = this.num(sbits + 2, sigmaSize);
+        const sigmaLeCap = this.bv(OP_ULEQ, sigmaNeg, sigmaCap);
+        sigmaNegCapped = this.simpIte(sigmaLeCap, sigmaNeg, sigmaCap);
+      }
+      const sigmaLtZero = this.bv(OP_SLEQ, sigma, this.num(-1, sigmaSize));
+      const sigExt = this.concat(inputSig, this.num(0, sigSize));
+      const shiftWidth = 2 * sigSize;
+      const rsShift =
+        sigmaSize <= shiftWidth
+          ? this.zeroExtend(shiftWidth - sigmaSize, sigmaNegCapped)
+          : this.extract(shiftWidth - 1, 0, sigmaNegCapped);
+      const lsShift =
+        sigmaSize <= shiftWidth
+          ? this.zeroExtend(shiftWidth - sigmaSize, sigma)
+          : this.extract(shiftWidth - 1, 0, sigma);
+      const rsSig = this.bv(OP_BLSHR, sigExt, rsShift);
+      const lsSig = this.bv(OP_BSHL, sigExt, lsShift);
+      const bigShSig = this.simpIte(sigmaLtZero, rsSig, lsSig);
+      const sigExtractLowBit = 2 * sigSize - 1 - (sbits + 2) + 1;
+      const shiftedSig = this.extract(2 * sigSize - 1, sigExtractLowBit, bigShSig);
+      const stickyBit = this.bv(OP_BREDOR, this.extract(sigExtractLowBit - 1, 0, bigShSig));
+      const extSticky = this.zeroExtend(sbits + 1, stickyBit);
+      const stickySig = this.bv(OP_BOR, shiftedSig, extSticky);
+      const extEmin = this.zeroExtend(2, eMin);
+      const tinyExp = this.simpIte(tiny, extEmin, beta);
+      const sticky = this.extract(0, 0, stickySig);
+      const round = this.extract(1, 1, stickySig);
+      const last = this.extract(2, 2, stickySig);
+      const retainedSig = this.extract(sbits + 1, 2, stickySig);
+      const incBit = this.mkRoundingDecision(rm, sgn, last, round, sticky);
+      const sigWide = this.zeroExtend(1, retainedSig);
+      const inc = this.zeroExtend(sbits, incBit);
+      const incrementedSig = this.bv(OP_BADD, sigWide, inc);
+      const sigTop = this.extract(sbits, sbits, incrementedSig);
+      const sigOvf = this.simpEq(sigTop, oneBit);
+      const hallbut1Sig = this.extract(sbits, 1, incrementedSig);
+      const lallbut1Sig = this.extract(sbits - 1, 0, incrementedSig);
+      const normalizedSig = this.simpIte(sigOvf, hallbut1Sig, lallbut1Sig);
+      const expP1 = this.bv(OP_BADD, tinyExp, this.num(1, ebits + 2));
+      const normalizedExp = this.simpIte(sigOvf, expP1, tinyExp);
+      const unadjustedBiasedExp = this.mkBias(this.extract(ebits - 1, 0, normalizedExp));
+      const expRedand = this.bv(OP_BREDAND, unadjustedBiasedExp);
+      const preOvf2 = this.simpEq(expRedand, oneBit);
+      const ovf2 = this.simpAnd(sigOvf, preOvf2);
+      const pem2m1 = this.num(getPowerOfTwoMinusOne(ebits - 2), ebits);
+      const biasedExp = this.simpIte(ovf2, pem2m1, unadjustedBiasedExp);
+      const ovf = this.simpOr(ovf1, ovf2);
+      const topExp = this.mkTopExp(ebits);
+      const botExp = this.mkBotExp(ebits);
+      const nilBit = this.num(0, 1);
+      const rmIsToZero = this.mkIsRm(rm, BV_RM_TO_ZERO);
+      const rmIsToNeg = this.mkIsRm(rm, BV_RM_TO_NEGATIVE);
+      const rmIsToPos = this.mkIsRm(rm, BV_RM_TO_POSITIVE);
+      const rmZeroOrNeg = this.simpOr(rmIsToZero, rmIsToNeg);
+      const rmZeroOrPos = this.simpOr(rmIsToZero, rmIsToPos);
+      const zeroBit = this.num(0, 1);
+      const sgnIsZero = this.simpEq(sgn, zeroBit);
+      const maxSig = this.num(getPowerOfTwoMinusOne(sbits - 1), sbits - 1);
+      const maxExp = this.concat(
+        this.num(getPowerOfTwoMinusOne(ebits - 1), ebits - 1),
+        this.num(0, 1),
+      );
+      const infSig = this.num(0, sbits - 1);
+      const maxInfExpNeg = this.simpIte(rmZeroOrPos, maxExp, topExp);
+      const maxInfExpPos = this.simpIte(rmZeroOrNeg, maxExp, topExp);
+      const ovflExp = this.simpIte(sgnIsZero, maxInfExpPos, maxInfExpNeg);
+      const denormalBit = this.extract(sbits - 1, sbits - 1, normalizedSig);
+      const nDCheck = this.simpEq(denormalBit, nilBit);
+      const nDExp = this.simpIte(nDCheck, botExp, biasedExp);
+      const resExp = this.simpIte(ovf, ovflExp, nDExp);
+      const maxInfSigNeg = this.simpIte(rmZeroOrPos, maxSig, infSig);
+      const maxInfSigPos = this.simpIte(rmZeroOrNeg, maxSig, infSig);
+      const ovflSig = this.simpIte(sgnIsZero, maxInfSigPos, maxInfSigNeg);
+      const restSig = this.extract(sbits - 2, 0, normalizedSig);
+      const resSig = this.simpIte(ovf, ovflSig, restSig);
+      return this.mkFp(sgn, resExp, resSig);
+    });
   }
 }
 

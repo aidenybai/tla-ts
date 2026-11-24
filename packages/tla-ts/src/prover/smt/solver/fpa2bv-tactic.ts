@@ -1,7 +1,6 @@
 import type { AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
-import { convertMinMaxSpecials, convertUf2BvUf } from "./bv2fpa-converter";
-import { BV_RM_TO_ZERO, mkFpNumeralOfBits, mkRmNumeral } from "./fpa-decl-plugin";
+import { Bv2FpaConverter } from "./bv2fpa-converter";
 import { Fpa2BvConverter } from "./fpa2bv-converter";
 import { Fpa2BvRewriter } from "./fpa2bv-rewriter";
 import type { Goal } from "./goal";
@@ -9,32 +8,14 @@ import { ObjHashtable } from "./hashtable";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { Rewriter } from "./rewriter";
 
-const getConstValue = (model: ProtoModel, expr: number) =>
-  model.constInterps.get(model.manager.decls[expr]);
-
-const convertModel = (converter: Fpa2BvConverter, source: ProtoModel) => {
+const convertModel = (converter: Bv2FpaConverter, source: ProtoModel) => {
   const manager = source.manager;
   const target = new ProtoModel(manager).mkModel();
   const seen = new ObjHashtable((decl) => manager.getDeclHash(decl));
-  for (const entry of converter.constants) {
-    const sort = manager.funcDecls[entry[0]].range;
-    const bv = manager.getArg(manager.getArg(entry[1], 0), 0);
-    const value = getConstValue(source, bv);
-    seen.add(manager.decls[bv]);
-    target.registerConst(
-      entry[0],
-      mkFpNumeralOfBits(manager, sort, value === undefined ? 0n : manager.getBvNumeralValue(value)),
-    );
-  }
-  for (const entry of converter.rmConstants) {
-    const bv = manager.getArg(entry[1], 0);
-    const value = getConstValue(source, bv);
-    const rm = value === undefined ? BV_RM_TO_ZERO : Number(manager.getBvNumeralValue(value));
-    seen.add(manager.decls[bv]);
-    target.registerConst(entry[0], mkRmNumeral(manager, rm <= 3 ? rm : BV_RM_TO_ZERO));
-  }
-  convertMinMaxSpecials(converter, source, target, seen);
-  convertUf2BvUf(converter, source, target, seen);
+  converter.convertConsts(source, target, seen);
+  converter.convertRmConsts(source, target, seen);
+  converter.convertMinMaxSpecials(source, target, seen);
+  converter.convertUf2BvUf(source, target, seen);
   for (const decl of source.getConstDecls())
     if (!seen.has(decl)) target.registerConst(decl, source.constInterps.get(decl) as number);
   for (const decl of source.getFuncDecls()) {
@@ -62,18 +43,24 @@ export const runFpa2Bv = (manager: AstManager) => (goal: Goal) => {
   const converter = new Fpa2BvConverter(manager, simp);
   const rewriter = new Fpa2BvRewriter(manager, converter);
   const size = goal.forms.size;
+  let newCurr: number | undefined;
   for (let index = 0; !goal.isInconsistent && index < size; index++) {
     const result = rewriter.rewrite(goal.forms.get(index));
+    if (newCurr !== undefined) manager.decRef(newCurr);
+    newCurr = result;
     goal.update(index, result, goal.getDependency(index));
-    manager.decRef(result);
   }
-  if (goal.isModelsEnabled)
+  if (goal.isModelsEnabled) {
+    const bv2fp = new Bv2FpaConverter(manager, converter);
     goal.addModelConversion(
-      (model) => convertModel(converter, model),
-      () => converter.reset(),
+      (model) => manager.withoutTemporaries(() => convertModel(bv2fp, model)),
+      () => bv2fp.release(),
     );
+  }
   goal.depth++;
   for (const assertion of converter.extraAssertions.items) goal.assert(assertion);
+  if (newCurr !== undefined) manager.decRef(newCurr);
   rewriter.release();
+  converter.reset();
   return [goal];
 };

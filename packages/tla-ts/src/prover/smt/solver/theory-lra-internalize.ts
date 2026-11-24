@@ -396,7 +396,10 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
           if (op === OP_DIV) {
             const divisor = context.rewriter.rewrite(manager.getArg(term, 1));
             if (!this.isNonzeroNumeral(divisor)) this.foundUnderspecified(term);
+            if (!context.relevancy.isEnabled)
+              this.mkDivAxiom(manager.getArg(term, 0), manager.getArg(term, 1));
             manager.pushArgs(term, toEnsureVar);
+            manager.decRef(divisor);
           } else if (op === OP_IDIV) {
             if (!this.isNonzeroNumeral(manager.getArg(term, 1))) this.foundUnderspecified(term);
             const remainder = manager.mkApp(OP_MOD, manager.getArgs(term), SORT_INT);
@@ -466,7 +469,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
             this.foundUnsupported(term);
             manager.pushArgs(term, toEnsureVar);
           }
-          if (!context.relevancy.isEnabled && op !== OP_MOD) this.relevantEh(term);
+          if (!context.relevancy.isEnabled && op !== OP_MOD && op !== OP_DIV) this.relevantEh(term);
         }
       } else {
         this.internalizeArgs(term);
