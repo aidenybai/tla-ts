@@ -4,7 +4,7 @@ import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
 import { getCommonJsExports } from "../context";
-import { getJsxText, type Library } from "../program";
+import { getJsxText, parseFile, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, isIndexKey } from "./native";
@@ -30,7 +30,13 @@ const ENDLESS_STEPS = 20;
 export interface EscoreScript {
   isScript: true;
   notes: string[];
+  isAugmented: boolean;
 }
+
+// The note of a file whose types another file of its run could change, which a program of its own
+// reads, as a run of the file alone does.
+export const getAugmentedNote = (fileName: string) =>
+  `tla-ts reads the types of ${fileName.slice(fileName.lastIndexOf("/") + 1)} in a program of its own [augmented]: another file of its run augments what they read`;
 
 // The definitions every model's steps read: how a step calls a function that the module binds,
 // what a check shows of a JavaScript value, and the message of what a step throws.
@@ -62,6 +68,10 @@ StepStart(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> s.objs.s
 HoldsOf(s, name, args) == Val(Completed(ModelCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
 ReturnsOf(s, name, args) == Completed(ModelCall(s, name, args)).c.type = "normal"
+\* What a call of name throws, as data rather than a failure of the check: <<>> where it returns,
+\* and the text of what it throws.
+ThrownOf(s, name, args) ==
+  LET r == ModelCall(s, name, args) IN IF r.c.type = "throw" THEN <<ThrownText(r)>> ELSE <<>>
 \* What a check shows of a value: TLA+'s values of today's compiler's model, where a number is an
 \* integer, a string a string, an array a sequence, a Set a set, a Map a function, and another
 \* object a record of its enumerable own data properties.
@@ -290,6 +300,7 @@ export interface ModelPlan {
   entries: ReadonlySet<string>;
   reads: string;
   isShareable: boolean;
+  isAugmented: boolean;
   getSteps: (file: number) => string;
   // The modules besides the runtime that the model's code extends, and its assumptions, which a
   // program of its own compiles into its code.
@@ -317,7 +328,7 @@ export const planModel = (
 ): ModelPlan | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
-  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  const file = parseFile(fileName, text);
   // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
   // The names that the file's code reads, of which a host's global may be one.
   const identifiers = new Set<string>();
@@ -347,7 +358,9 @@ export const planModel = (
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
   const today = frameModel(source, fileName, library, runtime.names, setBound);
-  if (today.isScript) return { isScript: true, notes: today.notes };
+  if (today.isScript) {
+    return { isScript: true, notes: today.notes, isAugmented: today.isAugmented };
+  }
   const module = today.source;
   const config = parseConfig(today.config);
   // The binding of the function that each of the spec's names calls.
@@ -364,7 +377,7 @@ export const planModel = (
       parameters: string[];
       types: (ts.TypeNode | undefined)[];
       tags: Map<string, string>;
-      node: ts.FunctionLikeDeclaration | ts.FunctionTypeNode;
+      node: ts.FunctionLikeDeclaration | ts.SignatureDeclaration;
     }
   >();
   // A function that a declaration's initializer gives, through parentheses and casts.
@@ -422,14 +435,17 @@ export const planModel = (
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        // A const whose type names a function that its initializer gives from elsewhere.
+        // A const whose type names a function that its initializer gives from elsewhere, or whose
+        // type has the call signature that the frame calls.
         const fn =
           getFunction(declaration.initializer) ??
           (declaration.initializer !== undefined &&
           declaration.type !== undefined &&
           ts.isFunctionTypeNode(declaration.type)
             ? declaration.type
-            : undefined);
+            : ts.isIdentifier(declaration.name)
+              ? today.signatures.get(declaration.name.text)
+              : undefined);
         if (
           fn !== undefined &&
           ts.isIdentifier(declaration.name) &&
@@ -789,9 +805,7 @@ export const planModel = (
   const getGuard = (action: string, parameter: string) => {
     const definition = exported.get(action);
     const body =
-      definition === undefined || ts.isFunctionTypeNode(definition.node)
-        ? undefined
-        : definition.node.body;
+      definition === undefined || !("body" in definition.node) ? undefined : definition.node.body;
     const statement =
       body !== undefined && ts.isBlock(body)
         ? body.statements.find(
@@ -1193,7 +1207,11 @@ export const planModel = (
     );
   }
   // A check of a function's result at a state: whether it holds, or only that it returns.
-  const defineCheck = (name: string, kind: "HoldsOf" | "ReturnsOf", bounds: Bound[]) => {
+  const defineCheck = (
+    name: string,
+    kind: "HoldsOf" | "ReturnsOf" | "ThrownOf",
+    bounds: Bound[],
+  ) => {
     entries.add(bindings.get(name) ?? name);
     const names = bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
     bounds.forEach((bound, index) =>
@@ -1212,7 +1230,7 @@ export const planModel = (
         : define(
             "NativeCheck",
             (operatorName) =>
-              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : "TRUE"}`,
+              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : kind === "ThrownOf" ? "<<>>" : "TRUE"}`,
           );
     return (state: string, values: string[]) =>
       `ApplyTo(${checked}, <<${[state, ...values].join(", ")}>>)`;
@@ -1267,17 +1285,44 @@ export const planModel = (
   config.invariants.forEach(defineInvariant);
   config.constraints.forEach(defineInvariant);
   config.postconditions.forEach(defineInvariant);
+  // Each call that an ASSUME checks gives what it throws as a value, for each list of arguments,
+  // so that its ASSUME prints the first one it throws and holds, and one last ASSUME fails with
+  // the first export's, as TLC stops at the first ASSUME that fails: each export's outcome is
+  // reported, rather than the first that throws stopping the rest.
+  const thrown: string[] = [];
   module.assumptions.forEach((assumption) => {
     if (assumption.expression.kind === "Identifier") {
       const name = assumption.expression.name;
       const definition = definitions.get(name);
       const body = definition?.kind === "Operator" ? definition.body : undefined;
       const bounds = getBounds(name, body);
-      const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
       defined.add(name);
-      steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
+      if (!isCallCheck(body) || bounds.some((bound) => bound.pattern.kind !== "Name")) {
+        const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
+        steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
+        return;
+      }
+      const check = defineCheck(name, "ThrownOf", bounds);
+      const sets = bounds.map((bound) => `(${printExpression(rewriteGuards(bound.set))})`);
+      const outcome = define("Thrown", (operatorName) =>
+        sets.length === 0
+          ? `${operatorName} == ${check(started, [])}`
+          : `${operatorName} ==\n  LET f == [v \\in ${sets.join(" \\X ")} |-> ${check(started, sets.length === 1 ? ["v"] : sets.map((_, index) => `v[${index + 1}]`))}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE f[CHOOSE v \\in t : TRUE]`,
+      );
+      thrown.push(outcome);
+      steps.push(
+        `${name} == IF ${outcome} = <<>> THEN TRUE ELSE PrintT(${JSON.stringify(`${bindings.get(name) ?? name} throws: `)} \\o ${outcome}[1])`,
+      );
     }
   });
+  const returned =
+    thrown.length === 0
+      ? undefined
+      : define(
+          "Returned",
+          (operatorName) =>
+            `${operatorName} ==\n  LET ts == <<${thrown.join(", ")}>> IN\n  IF \\A i \\in DOMAIN ts : ts[i] = <<>> THEN TRUE\n  ELSE Assert(FALSE, ts[CHOOSE i \\in DOMAIN ts : ts[i] # <<>> /\\ \\A j \\in 1..(i - 1) : ts[j] = <<>>][1])`,
+        );
   // The temporal properties, from the tags of the functions that today's properties name.
   // A check of a step, of a function of before, the state before the step, which the function
   // reads as an object of the state variables' values, copied into the state after the step.
@@ -1552,6 +1597,7 @@ export const planModel = (
     ...module.assumptions.flatMap((assumption) =>
       assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
     ),
+    ...(returned === undefined ? [] : [`ASSUME ${returned}`]),
     ...(isStateless ? config.invariants.map((name) => `ASSUME ${name}`) : []),
   ];
   const assumed = `${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`;
@@ -1633,6 +1679,7 @@ export const planModel = (
     // A module whose model keeps its code as it is and starts from the one state its top level
     // leaves reads that state the same in a program of other files that import it.
     isShareable: isModule && lowered === undefined && choose.length === 0 && appended.length === 0,
+    isAugmented: today.isAugmented,
     getSteps: (file: number) => getModelSteps(file, "Completed(ApplyTo(RunProgram, s)).s"),
     extensions: lowered === undefined ? ["ESCanonical"] : ["ESCanonical", "ESNative"],
     assumptions,
@@ -1664,8 +1711,9 @@ export const compileModelToEscore = (
   setBound?: number,
 ): EscoreModel | EscoreScript => {
   const plan = planModel(source, fileName, runtime, library, isLowerable, setBound);
-  if (plan.isScript) return plan;
-  return plan.finish(
+  const augmented = plan.isAugmented ? [getAugmentedNote(fileName)] : [];
+  if (plan.isScript) return { ...plan, notes: [...augmented, ...plan.notes] };
+  const model = plan.finish(
     compileToEscore(plan.code, fileName, runtime, plan.isModule, {
       steps: plan.getSteps(1),
       entries: [...plan.entries],
@@ -1674,4 +1722,5 @@ export const compileModelToEscore = (
       assumptions: plan.assumptions,
     }),
   );
+  return { ...model, notes: [...augmented, ...model.notes] };
 };

@@ -128,6 +128,19 @@ export const getCommonJsExports = (sourceFile: ts.SourceFile) =>
 // A file that exports no function, which a spec exports as an action, runs as JavaScript does
 // rather than as a spec's model. A CommonJS file may export a function by name, which the model's
 // frame tells.
+// Whether a const's type may give it call signatures that the model's frame calls: a function
+// type, a type literal with a call signature, or a named type, which the frame resolves.
+const isTypedCallable = (declaration: ts.VariableDeclaration) => {
+  const type = declaration.type;
+  return (
+    declaration.initializer !== undefined &&
+    type !== undefined &&
+    (ts.isFunctionTypeNode(type) ||
+      ts.isTypeReferenceNode(type) ||
+      (ts.isTypeLiteralNode(type) && type.members.some(ts.isCallSignatureDeclaration)))
+  );
+};
+
 export const isScript = (sourceFile: ts.SourceFile) =>
   getCommonJsExports(sourceFile).size === 0 &&
   sourceFile.statements.every(
@@ -144,7 +157,8 @@ export const isScript = (sourceFile: ts.SourceFile) =>
         ) ||
         !(ts.isVariableStatement(statement)
           ? statement.declarationList.declarations.some(
-              (declaration) => getFunction(declaration)?.body !== undefined,
+              (declaration) =>
+                getFunction(declaration)?.body !== undefined || isTypedCallable(declaration),
             )
           : getFunction(statement)?.body !== undefined)),
   );

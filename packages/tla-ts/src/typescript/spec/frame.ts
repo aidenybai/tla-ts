@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { KEYWORDS } from "../../lexer";
 import { parseModule } from "../../parser";
+import { compareNames } from "../../obligations/module";
 import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
 import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
@@ -20,15 +21,20 @@ interface Declared {
 }
 
 interface Exported extends Declared {
-  node: FunctionNode | ts.FunctionTypeNode;
+  node: FunctionNode | ts.SignatureDeclaration;
   body: ts.ConciseBody;
   tags: Map<string, string>;
+  // The signature of a const's type that the model calls, where the type has call signatures of
+  // its own, as an overloaded or a dual function's does, and how the call reaches it.
+  signature?: { value: ts.Signature; note: string };
 }
 
 interface Parameter {
   node: ts.ParameterDeclaration;
   name: string;
   symbol: ts.Symbol | undefined;
+  // Its type, as the signature that the model calls instantiates it.
+  type: ts.Type;
 }
 
 // Why a type has no finite set of values.
@@ -36,6 +42,12 @@ interface Parameter {
 interface Domain {
   text: string;
   size: number;
+}
+
+// A member of a union as the program writes it, with the node that writes it alone.
+interface WrittenMember {
+  type: ts.Type;
+  node?: ts.TypeNode;
 }
 
 interface Infinite {
@@ -101,6 +113,44 @@ const MUTATING_METHODS = new Set([
 ]);
 
 const MAX_ARRAY_LENGTH = 3;
+
+// The most characters of a type that a note prints, as TypeScript's typeToString prints at most
+// where the program's options don't ask for whole errors.
+const MOST_TYPE_CHARACTERS = 320;
+
+// The types that TypeScript makes before it reads a program, with the keywords that write them, in
+// the order of their ids, which no run changes: a union's members of these types come first, as
+// typeToString prints them and as a frame lists them.
+const INTRINSICS = [
+  { keyword: ts.SyntaxKind.AnyKeyword, flag: ts.TypeFlags.Any },
+  { keyword: ts.SyntaxKind.UnknownKeyword, flag: ts.TypeFlags.Unknown },
+  { keyword: ts.SyntaxKind.StringKeyword, flag: ts.TypeFlags.String },
+  { keyword: ts.SyntaxKind.NumberKeyword, flag: ts.TypeFlags.Number },
+  { keyword: ts.SyntaxKind.BigIntKeyword, flag: ts.TypeFlags.BigInt },
+  { keyword: ts.SyntaxKind.BooleanKeyword, flag: ts.TypeFlags.Boolean },
+  { keyword: ts.SyntaxKind.SymbolKeyword, flag: ts.TypeFlags.ESSymbol },
+  { keyword: ts.SyntaxKind.VoidKeyword, flag: ts.TypeFlags.Void },
+  { keyword: ts.SyntaxKind.NeverKeyword, flag: ts.TypeFlags.Never },
+  { keyword: ts.SyntaxKind.ObjectKeyword, flag: ts.TypeFlags.NonPrimitive },
+];
+
+// The values that a frame lists first of a union's literals, in this order, before its numbers in
+// order of value and its strings in order of their text.
+const FIRST_LITERALS = ["Undefined", "Null", "FALSE", "TRUE"];
+
+// The kinds of a parameter's type that a note names where no domain lists it, in the order that it
+// names the first of a union's.
+const UNLISTED_KINDS = [
+  "a type parameter",
+  "any, as an untyped parameter is",
+  "unknown",
+  "a function",
+  "an instance of a class",
+  "an object with methods",
+];
+
+// The kinds of values that a note names where a union mixes them, in the order that it names them.
+const VALUE_KINDS = ["string", "number", "bigint", "boolean", "array", "Set", "Map", "object"];
 
 // The most characters of TLA+ that a parameter's set of values takes, which the model writes into
 // its spec beside each check of the parameter.
@@ -523,6 +573,39 @@ export const frameModel = (
         : [],
     ),
   ]);
+  // The signature that a call of a const reaches, where the const's type has call signatures, as an
+  // overloaded function's type literal, or a named function type such as Order<A>, has: for a dual
+  // function, the data-first signature, which dual dispatches to by its arity or by its predicate,
+  // and otherwise the signature that takes the most parameters. Overloads are TypeScript's alone,
+  // so each call runs the one function the initializer gives, as Node runs it.
+  const getCalledSignature = (type: ts.TypeNode, initializer: ts.Expression) => {
+    const signatures = checker.getTypeFromTypeNode(type).getCallSignatures();
+    if (signatures.length === 0) return undefined;
+    const call = skipCasts(initializer);
+    const isDual =
+      ts.isCallExpression(call) &&
+      /(^|\.)dual$/.test(call.expression.getText()) &&
+      call.arguments.length === 2;
+    const arity =
+      isDual && ts.isNumericLiteral(call.arguments[0]) ? Number(call.arguments[0].text) : undefined;
+    const widest = signatures.reduce((found, signature) =>
+      signature.getParameters().length > found.getParameters().length ? signature : found,
+    );
+    const value =
+      arity === undefined
+        ? widest
+        : signatures.find((signature) => signature.getParameters().length === arity);
+    if (value === undefined) return undefined;
+    const shown = checker.signatureToString(value);
+    const note = !isDual
+      ? signatures.length === 1
+        ? `its type's signature ${shown}`
+        : `its signature ${shown}, of ${signatures.length}, which takes the most parameters`
+      : arity !== undefined
+        ? `its data-first signature ${shown}, which dual dispatches to by its arity, ${arity}`
+        : `its signature ${shown}, which takes the most parameters, and which dual dispatches to by its predicate`;
+    return { value, note };
+  };
   const exported = helpers.flatMap((declared): Exported[] => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
@@ -541,8 +624,24 @@ export const frameModel = (
     // module's function does, runs as a call of what the initializer gives.
     const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
     const type = ts.isVariableDeclaration(declaration) ? declaration.type : undefined;
-    return initializer !== undefined && type !== undefined && ts.isFunctionTypeNode(type)
-      ? [{ ...declared, node: type, body: initializer, tags: tags.get(statement) ?? new Map() }]
+    if (initializer === undefined || type === undefined) return [];
+    if (ts.isFunctionTypeNode(type)) {
+      return [
+        { ...declared, node: type, body: initializer, tags: tags.get(statement) ?? new Map() },
+      ];
+    }
+    const signature = getCalledSignature(type, initializer);
+    const called = signature?.value.getDeclaration();
+    return signature !== undefined && called !== undefined
+      ? [
+          {
+            ...declared,
+            node: called,
+            body: initializer,
+            tags: tags.get(statement) ?? new Map(),
+            signature,
+          },
+        ]
       : [];
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
@@ -555,15 +654,16 @@ export const frameModel = (
   const getTag = (definition: Exported) =>
     [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
 
-  // The first type that has no end, or the domains of every type.
+  // The first type that has no end, or the domains of every type, which the nodes may write.
   const findDomains = (
     types: readonly ts.Type[],
     path: readonly ts.Type[],
+    nodes: readonly (ts.TypeNode | undefined)[],
     isHeldOptional: (position: number) => boolean = () => false,
   ) =>
     types.reduce<Domain[] | Infinite>((domains, type, position) => {
       if (!Array.isArray(domains)) return domains;
-      const domain = findSizedDomain(type, path, isHeldOptional(position));
+      const domain = findSizedDomain(type, path, nodes[position], isHeldOptional(position));
       return isUnlisted(domain) ? domain : [...domains, domain];
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
@@ -576,6 +676,11 @@ export const frameModel = (
     if (type.flags & ts.TypeFlags.Null) return "Null";
     if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return "Undefined";
     return undefined;
+  };
+  const getLiteralRank = (type: ts.Type) => {
+    const rank = FIRST_LITERALS.indexOf(getLiteral(type) ?? "");
+    if (rank !== -1) return rank;
+    return type.isNumberLiteral() ? FIRST_LITERALS.length : FIRST_LITERALS.length + 1;
   };
   const getShape = (type: ts.Type): Shape | undefined => {
     if (type.isUnion()) {
@@ -660,12 +765,56 @@ export const frameModel = (
           ),
         };
   };
+  // A type's text, as typeToString prints it, with each union's keywords first, as their types'
+  // ids order them, then its other members in order of their text, and null and undefined last.
+  // typeToString orders a union's members by their types' ids, which a checker that frames several
+  // files numbers in the order that the frames read them.
+  const printer = ts.createPrinter({ removeComments: true });
+  const printNode = (node: ts.Node) =>
+    // HACK: printNode's declaration asks for a source file, but typeToString prints with none, so
+    // that a node the checker reuses from a declaration prints from its own file's text.
+    printer.printNode(ts.EmitHint.Unspecified, node, undefined as unknown as ts.SourceFile);
+  const getMemberRank = (node: ts.TypeNode) => {
+    const rank = INTRINSICS.findIndex((intrinsic) => intrinsic.keyword === node.kind);
+    if (rank !== -1) return rank;
+    return ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword
+      ? INTRINSICS.length + 1
+      : node.kind === ts.SyntaxKind.UndefinedKeyword
+        ? INTRINSICS.length + 2
+        : INTRINSICS.length;
+  };
+  const sortUnions = (context: ts.TransformationContext) => (root: ts.TypeNode) => {
+    const visit = (node: ts.Node): ts.Node => {
+      const visited = ts.visitEachChild(node, visit, context);
+      if (!ts.isUnionTypeNode(visited)) return visited;
+      const members = visited.types
+        .map((member) => ({ member, rank: getMemberRank(member), text: printNode(member) }))
+        .toSorted((left, right) => left.rank - right.rank || compareNames(left.text, right.text));
+      return context.factory.updateUnionTypeNode(
+        visited,
+        context.factory.createNodeArray(members.map((inner) => inner.member)),
+      );
+    };
+    return ts.visitNode(root, visit, ts.isTypeNode);
+  };
+  const printType = (type: ts.Type) => {
+    const node = checker.typeToTypeNode(
+      type,
+      undefined,
+      ts.NodeBuilderFlags.AllowUniqueESSymbolType |
+        ts.NodeBuilderFlags.UseAliasDefinedOutsideCurrentScope |
+        ts.NodeBuilderFlags.IgnoreErrors |
+        ts.NodeBuilderFlags.NoTruncation,
+    );
+    if (node === undefined) return checker.typeToString(type);
+    const text = printNode(ts.transform(node, [sortUnions]).transformed[0]);
+    return program.options.noErrorTruncation === true || text.length < MOST_TYPE_CHARACTERS
+      ? text
+      : `${text.slice(0, MOST_TYPE_CHARACTERS - 3)}...`;
+  };
   const getInfinite = (type: ts.Type, reason: string): Infinite => ({
-    message: `${checker.typeToString(type)} isn't finite: ${reason}`,
+    message: `${printType(type)} isn't finite: ${reason}`,
   });
-  // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
-  // values it has. outer holds the types around this one, so a type that holds itself, such as a
-  // tree, has no end.
   // A held optional field's type, where the program's options make optional fields exact, holds the
   // missing type, which TypeScript adds to it beside any undefined that it declares, and which no
   // value of the field is, as removeMissingType tells.
@@ -673,13 +822,112 @@ export const frameModel = (
     program.options.exactOptionalPropertyTypes === true &&
     (type.flags & ts.TypeFlags.Undefined) !== 0 &&
     type !== checker.getUndefinedType();
+  // The symbol that a name refers to, through imports.
+  const getReferenced = (name: ts.EntityName) => {
+    const symbol = checker.getSymbolAtLocation(name);
+    return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias
+      ? checker.getAliasedSymbol(symbol)
+      : symbol;
+  };
+  // A type node as the program writes its type, through parentheses and the aliases that take no
+  // type parameters.
+  const getWrittenNode = (node: ts.TypeNode): ts.TypeNode => {
+    if (ts.isParenthesizedTypeNode(node)) return getWrittenNode(node.type);
+    const declaration = ts.isTypeReferenceNode(node)
+      ? getReferenced(node.typeName)?.declarations?.find(ts.isTypeAliasDeclaration)
+      : undefined;
+    return declaration === undefined || declaration.typeParameters !== undefined
+      ? node
+      : getWrittenNode(declaration.type);
+  };
+  // The node that writes a type: its alias's declaration, as a type's alias is the one that wrote
+  // it, or else the node that the type comes from.
+  const findWrittenNode = (type: ts.Type, node: ts.TypeNode | undefined) => {
+    const declaration =
+      type.aliasTypeArguments === undefined
+        ? type.aliasSymbol?.declarations?.find(ts.isTypeAliasDeclaration)
+        : undefined;
+    const written = declaration?.type ?? node;
+    return written === undefined ? undefined : getWrittenNode(written);
+  };
+  // A union's members as a node writes them, each at its place, with the unions written in it
+  // flattened in place. A union that no node writes, such as a keyof's or an enum's, puts its
+  // members at one place.
+  const getWrittenMembers = (node: ts.TypeNode): WrittenMember[][] => {
+    const written = getWrittenNode(node);
+    if (ts.isUnionTypeNode(written)) return written.types.flatMap(getWrittenMembers);
+    const type = checker.getTypeFromTypeNode(written);
+    return [
+      type.isUnion() ? type.types.map((member) => ({ type: member })) : [{ type, node: written }],
+    ];
+  };
+  // The place of a type among a union's written members, or the place after them.
+  const getPlace = (written: readonly WrittenMember[][], type: ts.Type) => {
+    const place = written.findIndex((members) => members.some((member) => member.type === type));
+    return place === -1 ? written.length : place;
+  };
+  // The nodes that write a collection's or a tuple's type arguments, where a node writes the type
+  // itself rather than an alias that may reorder them.
+  const getArgumentNodes = (type: ts.Type, node: ts.TypeNode | undefined) => {
+    const written = findWrittenNode(type, node);
+    if (written === undefined || checker.getTypeFromTypeNode(written) !== type) return [];
+    const inner =
+      ts.isTypeOperatorNode(written) && written.operator === ts.SyntaxKind.ReadonlyKeyword
+        ? written.type
+        : written;
+    if (ts.isArrayTypeNode(inner)) return [inner.elementType];
+    if (ts.isTupleTypeNode(inner)) {
+      return inner.elements.map((element) =>
+        ts.isNamedTupleMember(element) ? element.type : element,
+      );
+    }
+    return ts.isTypeReferenceNode(inner) &&
+      ((getReferenced(inner.typeName)?.flags ?? 0) & ts.SymbolFlags.TypeAlias) === 0
+      ? (inner.typeArguments ?? [])
+      : [];
+  };
+  // A mapped type's keys, as the program writes the union that the type maps, where it writes one
+  // that names every property: the mapped type's constraint, or an argument of its alias, such as
+  // Record's keys.
+  const findWrittenKeys = (type: ts.Type, node: ts.TypeNode | undefined) => {
+    const written = node === undefined ? undefined : getWrittenNode(node);
+    const argumentNodes =
+      written !== undefined &&
+      ts.isTypeReferenceNode(written) &&
+      type.aliasSymbol !== undefined &&
+      getReferenced(written.typeName) === type.aliasSymbol
+        ? (written.typeArguments ?? [])
+        : (type.aliasTypeArguments ?? []).map((argument) => findWrittenNode(argument, undefined));
+    const constraint = type.getSymbol()?.declarations?.find(ts.isMappedTypeNode)
+      ?.typeParameter.constraint;
+    const names = type.getProperties().map((property) => property.name);
+    return [constraint, ...argumentNodes]
+      .flatMap((candidate) =>
+        candidate === undefined
+          ? []
+          : [
+              getWrittenMembers(candidate).map((members) =>
+                members.flatMap((member) =>
+                  member.type.isStringLiteral() || member.type.isNumberLiteral()
+                    ? [String(member.type.value)]
+                    : [],
+                ),
+              ),
+            ],
+      )
+      .find((keys) => names.every((name) => keys.some((place) => place.includes(name))));
+  };
+  // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
+  // values it has. outer holds the types around this one, so a type that holds itself, such as a
+  // tree, has no end. node, where it's given, writes the type.
   const findSizedDomain = (
     type: ts.Type,
     outer: readonly ts.Type[],
+    node?: ts.TypeNode,
     isHeldOptional = false,
   ): Domain | Infinite => {
     if (outer.includes(type)) {
-      return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
+      return { message: `${printType(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
     if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
@@ -687,19 +935,45 @@ export const frameModel = (
       const members = isHeldOptional
         ? type.types.filter((member) => !isMissing(member))
         : type.types;
+      // The members go in the order that the program writes them, as TLC enumerates a union's
+      // operands, and a set's strings, in order: literals as Undefined, Null, FALSE, and TRUE,
+      // then numbers by value, then strings, and then other types, intrinsic types first. Their
+      // types' ids, which TypeScript orders them by, depend on what else the run's program read
+      // first, so members that nothing writes, such as a keyof's, go by their text.
+      const writtenNode = findWrittenNode(type, node);
+      const written = writtenNode === undefined ? [] : getWrittenMembers(writtenNode);
       const literalTypes = members
         .filter((member) => getLiteral(member) !== undefined)
-        .toSorted((left, right) =>
-          left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
+        .toSorted(
+          (left, right) =>
+            getLiteralRank(left) - getLiteralRank(right) ||
+            (left.isNumberLiteral() && right.isNumberLiteral()
+              ? left.value - right.value
+              : getPlace(written, left) - getPlace(written, right) ||
+                compareNames(getLiteral(left) ?? "", getLiteral(right) ?? "")),
         );
+      const otherTypes = members
+        .filter((member) => !literalTypes.includes(member))
+        .map((member) => {
+          const node = written.flat().find((inner) => inner.type === member)?.node;
+          const rank = INTRINSICS.findIndex((intrinsic) => member.flags === intrinsic.flag);
+          return {
+            member,
+            node,
+            place: rank === -1 ? INTRINSICS.length + getPlace(written, member) : rank,
+            text: node === undefined ? printType(member) : "",
+          };
+        })
+        .toSorted((left, right) => left.place - right.place || compareNames(left.text, right.text));
       const others = findDomains(
-        members.filter((member) => !literalTypes.includes(member)),
+        otherTypes.map((inner) => inner.member),
         path,
+        otherTypes.map((inner) => inner.node),
       );
       if (!Array.isArray(others)) return others;
       if (getShape(type) === undefined) {
         return {
-          message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+          message: `${printType(type)} mixes values that TLC can't compare, such as a string and a number`,
           isIncomparable: true,
         };
       }
@@ -731,6 +1005,7 @@ export const frameModel = (
       const elements = findDomains(
         isTypeReference(type) ? checker.getTypeArguments(type) : [],
         path,
+        getArgumentNodes(type, node),
       );
       if (!Array.isArray(elements)) return elements;
       if (isSetType(type)) {
@@ -760,7 +1035,11 @@ export const frameModel = (
       return { text: `{<<${element}>> : ${element} \\in (${elements[0].text})}`, size };
     }
     if (checker.isArrayType(type) && isTypeReference(type)) {
-      const element = findSizedDomain(checker.getTypeArguments(type)[0], path);
+      const element = findSizedDomain(
+        checker.getTypeArguments(type)[0],
+        path,
+        getArgumentNodes(type, node)[0],
+      );
       if (isUnlisted(element)) return element;
       const length = names.getFresh("length");
       return {
@@ -771,7 +1050,25 @@ export const frameModel = (
         ).reduce((sum, count) => sum + count),
       };
     }
-    const properties = type.getProperties();
+    // A mapped type's properties, which no declaration gives, go in the order of its keys' union's
+    // members, which their ids give, so the record's fields go in the order that the program writes
+    // the union, or else by their names.
+    const declared = type.getProperties();
+    const writtenKeys = declared.some((property) => property.declarations === undefined)
+      ? (findWrittenKeys(type, node) ?? [])
+      : undefined;
+    const getKeyPlace = (name: string) => {
+      const place = writtenKeys?.findIndex((members) => members.includes(name)) ?? -1;
+      return place === -1 ? (writtenKeys?.length ?? 0) : place;
+    };
+    const properties =
+      writtenKeys === undefined
+        ? declared
+        : declared.toSorted(
+            (left, right) =>
+              getKeyPlace(left.name) - getKeyPlace(right.name) ||
+              compareNames(left.name, right.name),
+          );
     const isRecord =
       type.flags & ts.TypeFlags.Object &&
       type.getCallSignatures().length === 0 &&
@@ -789,6 +1086,13 @@ export const frameModel = (
     const fields = findDomains(
       fieldTypes,
       path,
+      properties.map((property) => {
+        const declaration = property.valueDeclaration;
+        return declaration !== undefined &&
+          (ts.isPropertySignature(declaration) || ts.isPropertyDeclaration(declaration))
+          ? declaration.type
+          : undefined;
+      }),
       (position) => (properties[position].flags & ts.SymbolFlags.Optional) !== 0,
     );
     if (!Array.isArray(fields)) return fields;
@@ -858,7 +1162,7 @@ export const frameModel = (
     }
     if (!keys.every(isNumericKey) || fieldTypes.some((fieldType) => fieldType !== fieldTypes[0])) {
       return {
-        message: `${checker.typeToString(type)} has numeric keys, so every key must be a number with the same value type`,
+        message: `${printType(type)} has numeric keys, so every key must be a number with the same value type`,
       };
     }
     return {
@@ -871,8 +1175,8 @@ export const frameModel = (
   };
   // The domain of a type, which TLC lists only where it has at most as many values as TLC puts in a
   // set.
-  const findDomain = (type: ts.Type): string | Infinite => {
-    const domain = findSizedDomain(type, []);
+  const findDomain = (type: ts.Type, node: ts.TypeNode | undefined): string | Infinite => {
+    const domain = findSizedDomain(type, [], node);
     if (isUnlisted(domain)) return domain;
     return domain.size > setBound
       ? getInfinite(type, `it has more than ${setBound} values, which TLC lists at most`)
@@ -881,8 +1185,9 @@ export const frameModel = (
   const getType = (node: ts.ParameterDeclaration | ts.VariableDeclaration) =>
     checker.getTypeAtLocation(node.name);
   // The values that a parameter of an exported function ranges over, which TLC lists.
-  const getDomain = (node: ts.ParameterDeclaration) => {
-    const domain = findDomain(getType(node));
+  const getDomain = (parameter: Parameter) => {
+    const node = parameter.node;
+    const domain = findDomain(parameter.type, node.type);
     if (!isInfinite(domain)) return domain;
     const name = ts.isIdentifier(node.name) ? node.name.text : undefined;
     if (name === undefined) throw new TlaTypeScriptError(domain.message, node);
@@ -892,11 +1197,22 @@ export const frameModel = (
     );
   };
   const getParameters = (definition: Exported): Parameter[] =>
-    definition.node.parameters.map((node) => ({
-      node,
-      name: node.name.getText(),
-      symbol: ts.isIdentifier(node.name) ? getSymbol(node.name) : undefined,
-    }));
+    definition.node.parameters.map((node, index) => {
+      const symbol = definition.signature?.value.getParameters()[index];
+      return {
+        node,
+        name: node.name.getText(),
+        symbol: ts.isIdentifier(node.name) ? getSymbol(node.name) : undefined,
+        type:
+          symbol === undefined
+            ? getType(node)
+            : checker.getTypeOfSymbolAtLocation(symbol, definition.declaration),
+      };
+    });
+  // The type that a call of an exported function returns.
+  const getReturnType = (definition: Exported) =>
+    definition.signature?.value.getReturnType() ??
+    checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
   // A leading `if (!set.has(parameter)) return;` chooses the parameter from that set, as
   // `\E parameter \in set` does, so TLC doesn't enumerate the parameter's whole type. The set may
   // use parameters that earlier guards chose, as in \E a \in A : \E b \in B(a).
@@ -977,14 +1293,14 @@ export const frameModel = (
   const readStateGuards = (definition: Exported, parameters: Parameter[]) =>
     new Map(
       [...readGuards(definition, parameters)].filter((entry) => {
-        const type = getType(entry[0].node);
-        return isInfinite(findDomain(type)) || !isExact(type);
+        const type = entry[0].type;
+        return isInfinite(findDomain(type, entry[0].node.type)) || !isExact(type);
       }),
     );
   // Whether an exported function is an action: one that changes state or returns nothing.
   const isStepExport = (definition: Exported) => {
     if (writesState(definition.body, new Set())) return true;
-    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    const returnType = getReturnType(definition);
     return (
       returnType === undefined ||
       (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
@@ -998,7 +1314,8 @@ export const frameModel = (
     if (type.flags & ts.TypeFlags.Any) return "any, as an untyped parameter is";
     if (type.flags & ts.TypeFlags.Unknown) return "unknown";
     if (type.isUnion()) {
-      const kind = type.types.map(getUnlistedKind).find((inner) => inner !== undefined);
+      const kinds = type.types.map(getUnlistedKind);
+      const kind = UNLISTED_KINDS.find((candidate) => kinds.includes(candidate));
       return kind === undefined ? undefined : `a union with ${kind}`;
     }
     if (type.getCallSignatures().length > 0) return "a function";
@@ -1028,13 +1345,14 @@ export const frameModel = (
                   : "object";
   // The kinds of the values that a union mixes, beside null and undefined, which TLC compares with
   // any value.
-  const getMixedKinds = (type: ts.Type) => [
-    ...new Set(
+  const getMixedKinds = (type: ts.Type) => {
+    const kinds = new Set<string>(
       (type.isUnion() ? type.types : [type])
         .filter((member) => getLiteral(member) !== "Null" && getLiteral(member) !== "Undefined")
         .map(getValueKind),
-    ),
-  ];
+    );
+    return VALUE_KINDS.filter((kind) => kinds.has(kind));
+  };
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -1043,7 +1361,7 @@ export const frameModel = (
     const parameters = getParameters(definition);
     const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
     const unlisted = parameters.find((parameter) => {
-      const domain = findDomain(getType(parameter.node));
+      const domain = findDomain(parameter.type, parameter.node.type);
       return !guarded.has(parameter) && isInfinite(domain);
     });
     // A call's argument lists, every combination of its parameters' values, which the model lists
@@ -1051,16 +1369,16 @@ export const frameModel = (
     const count = parameters
       .filter((parameter) => !guarded.has(parameter))
       .reduce((product, parameter) => {
-        const domain = findSizedDomain(getType(parameter.node), []);
+        const domain = findSizedDomain(parameter.type, [], parameter.node.type);
         return isUnlisted(domain) ? product : product * BigInt(domain.size);
       }, 1n);
     if (unlisted === undefined && count > BigInt(setBound)) {
       return `its parameters make ${count.toLocaleString("en-US")} argument lists, more than the ${setBound.toLocaleString("en-US")} it lists`;
     }
     if (unlisted !== undefined) {
-      const type = getType(unlisted.node);
+      const type = unlisted.type;
       const kind = getUnlistedKind(type);
-      const domain = findDomain(type);
+      const domain = findDomain(type, unlisted.node.type);
       const kinds = getMixedKinds(type);
       if (kind !== undefined) {
         return `its parameter ${unlisted.name} is ${kind}, whose values tla-ts can't list`;
@@ -1070,7 +1388,9 @@ export const frameModel = (
         : `its parameter ${unlisted.name} takes values it can't list: ${isInfinite(domain) ? domain.message : ""}`;
     }
     return definition.node.parameters.length === 0 &&
-      !ts.isFunctionTypeNode(definition.node) &&
+      (ts.isFunctionDeclaration(definition.node) ||
+        ts.isArrowFunction(definition.node) ||
+        ts.isFunctionExpression(definition.node)) &&
       isAlwaysThrowing(definition.node)
       ? "every call of it throws"
       : undefined;
@@ -1078,7 +1398,9 @@ export const frameModel = (
   const notes: string[] = [];
   const called = exported.filter((definition) => {
     const reason = getUncalledReason(definition);
-    if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}: ${reason}`);
+    const by = definition.signature === undefined ? "" : ` by ${definition.signature.note}`;
+    if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}${by}: ${reason}`);
+    else if (definition.signature !== undefined) notes.push(`tla-ts calls ${definition.name}${by}`);
     return reason === undefined;
   });
   const init: string[] = [];
@@ -1102,7 +1424,7 @@ export const frameModel = (
   variables.forEach((variable) => {
     const declaration = variable.declared.declaration;
     if (ts.isVariableDeclaration(declaration) && declaration.initializer === undefined) {
-      const domain = findDomain(getType(declaration));
+      const domain = findDomain(getType(declaration), declaration.type);
       if (isInfinite(domain)) {
         notes.push(
           `tla-ts starts ${variable.declared.name} at undefined, as Node does: ${domain.message}`,
@@ -1139,7 +1461,7 @@ export const frameModel = (
       return;
     }
     const domains = parameters.map((parameter) =>
-      chosen.has(parameter) ? GUARDED : getDomain(parameter.node),
+      chosen.has(parameter) ? GUARDED : getDomain(parameter),
     );
     const independent = parameters.flatMap((parameter, index) =>
       chosen.get(parameter) === true ? [] : [`${parameter.tla} \\in ${domains[index]}`],
@@ -1161,7 +1483,7 @@ export const frameModel = (
     // Fairness holds for each parameter value when every parameter has a finite type, with the
     // guards that chose parameters kept inside the action.
     const typeDomains = parameters.map((parameter, index) =>
-      chosen.has(parameter) ? findDomain(getType(parameter.node)) : domains[index],
+      chosen.has(parameter) ? findDomain(parameter.type, parameter.node.type) : domains[index],
     );
     const finite = typeDomains.flatMap((domain) => (isInfinite(domain) ? [] : [domain]));
     if (finite.length < typeDomains.length) {
@@ -1186,7 +1508,7 @@ export const frameModel = (
     predicates.push(
       `${definition.name} == ${quantify(
         "\\A",
-        parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`),
+        parameters.map((parameter) => `${parameter.tla} \\in ${getDomain(parameter)}`),
         "LET result == TRUE IN result = result",
       )}`,
     );
@@ -1217,7 +1539,7 @@ export const frameModel = (
     }
     const bounds = isQuantified
       ? declareParameters(definition).map(
-          (parameter) => `${parameter.tla} \\in ${getDomain(parameter.node)}`,
+          (parameter) => `${parameter.tla} \\in ${getDomain(parameter)}`,
         )
       : [];
     const define = (body: string) => predicates.push(`${definition.name} == ${body}`);
@@ -1263,7 +1585,7 @@ export const frameModel = (
     const tag = getTag(definition);
     if (tag !== undefined) return translateProperty(definition, tag);
     if (isStepExport(definition)) return translateStep(definition);
-    const returnType = checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+    const returnType = getReturnType(definition);
     if (
       definition.node.parameters.length > 0 ||
       returnType === undefined ||
@@ -1336,12 +1658,24 @@ export const frameModel = (
   ].join("\n");
   return {
     isScript: called.length === 0,
+    // Whether another file of the run could change the types that the frame reads, which it reads
+    // in a program of its own.
+    isAugmented: program.isAugmented,
     text,
     source: parseModule(text),
     config,
     variables: stateNames.map((name): StateVariable => ({ name })),
     notes,
     bindings,
+    // The signature that the model calls of each exported const whose type has call signatures,
+    // by the const's name.
+    signatures: new Map(
+      exported.flatMap((definition) =>
+        definition.signature === undefined
+          ? []
+          : [[definition.identifier.text, definition.node] as const],
+      ),
+    ),
     symmetric,
     // The state variable that the model's actions count on without end, whose search checks the
     // states within ENDLESS_STEPS steps and then stops.

@@ -257,6 +257,80 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // Each call that an ASSUME checks gives what it throws as a value, so every export that throws is
+  // printed with its message, rather than the first that throws stopping the checks of the rest,
+  // and the last ASSUME fails with the first one's message, as TLC fails at the first false one.
+  describe("reports each export that throws, with its own message", () => {
+    const getModel = (secondThrows: string) =>
+      `export const first = (n: 0 | 1 | 2) => {\n  if (n === 1) throw new Error("first " + n);\n  return n;\n};\nexport const second = (flag: boolean) => {\n  if (${secondThrows}) throw new RangeError("second " + flag);\n  return flag;\n};\nexport const third = (n: 0 | 1) => n + 1;\n`;
+    const runInNode = (directory: string, call: string) =>
+      spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", `import * as m from "./three.ts"; ${call};`],
+        { cwd: directory, encoding: "utf8" },
+      );
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "three.ts"), getModel("!flag"));
+      expect(runInNode(directory, "m.first(1)").stderr).toContain("Error: first 1");
+      expect(runInNode(directory, "m.second(false)").stderr).toContain("RangeError: second false");
+      expect(runInNode(directory, "m.third(0); m.third(1)").status).toBe(0);
+      const result = runCli(directory, ["three.ts"]);
+      expect(result.status).toBe(10);
+      expect(result.stdout).toContain('"first throws: first 1"\n"second throws: second false"\n');
+      expect(result.stdout).not.toContain("third throws");
+      expect(result.stdout).toContain('the second argument was:\n"first 1"');
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "three.ts"), getModel("false"));
+      expect(runInNode(directory, "m.second(false); m.second(true)").status).toBe(0);
+      const result = runCli(directory, ["three.ts"]);
+      expect(result.status).toBe(10);
+      expect(result.stdout).toContain('"first throws: first 1"');
+      expect(result.stdout).not.toContain("second throws");
+    });
+  });
+
+  // A const whose type has call signatures, as a dual function's overloads and a named function
+  // type give it, runs as one function, which the model calls by one signature: a dual's
+  // data-first one, which dual dispatches to by its arity, and a named type's own.
+  describe("calls a dual or a named function type's const by the signature it notes", () => {
+    const getModel = (last: number) =>
+      `type Bit = 0 | 1;\ninterface Compare<A> {\n  (self: A, that: A): -1 | 0 | 1;\n}\nconst dual = <F>(arity: number, body: (self: Bit, that: Bit) => number): F =>\n  ((...args: Bit[]) => (args.length >= arity ? body(args[0], args[1]) : (self: Bit) => body(self, args[0]))) as F;\nexport const add: {\n  (that: Bit): (self: Bit) => number;\n  (self: Bit, that: Bit): number;\n} = dual(2, (self: Bit, that: Bit) => {\n  if (self === 1 && that === ${last}) throw new Error("add " + self + that);\n  return self + that;\n});\nconst compare = (self: Bit, that: Bit): -1 | 0 | 1 => (self < that ? -1 : self > that ? 1 : 0);\nexport const Order: Compare<Bit> = compare;\n`;
+    const NOTES = [
+      "tla-ts calls add by its data-first signature (self: Bit, that: Bit): number, which dual dispatches to by its arity, 2",
+      "tla-ts calls Order by its type's signature (self: Bit, that: Bit): 0 | 1 | -1",
+    ];
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dual.ts"), getModel(2));
+      expect(runNode(directory, "dual.ts").status).toBe(0);
+      const result = runCli(directory, ["dual.ts"]);
+      expect(result.status).toBe(0);
+      NOTES.forEach((note) => expect(result.stdout).toContain(note));
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dual.ts"), getModel(1));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { add } from "./dual.ts"; add(1, 1);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: add 11");
+      const result = runCli(directory, ["dual.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(NOTES[0]);
+      expect(result.stdout).toContain('the second argument was:\n"add 11"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
@@ -1621,6 +1695,173 @@ describe("the CLI with TypeScript files", () => {
         ),
       ]);
     }, 120_000);
+  });
+
+  // A run's files read their types in one program of their project, but a file whose types a
+  // global that another file of the run augments could change reads them in a program of its own,
+  // as a run of it alone does. a.ts picks a key of Kinds, which holds only a where a.ts runs alone.
+  describe("reads each file's types in its run's program", () => {
+    const getKinds = (kind: string) =>
+      `declare global {\n  interface Kinds {\n    ${kind}: true;\n  }\n}\n`;
+    const writeModules = (directory: string) => {
+      writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      writeFileSync(
+        join(directory, "a.ts"),
+        `${getKinds("a")}let last: keyof Kinds | undefined = undefined;\nexport const pick = (kind: keyof Kinds) => {\n  last = kind;\n};\nexport const isA = () => last === undefined || last === "a";\n`,
+      );
+      writeFileSync(join(directory, "b.ts"), `${getKinds("b")}export const isB = () => true;\n`);
+      writeFileSync(
+        join(directory, "c.ts"),
+        `import { isA } from "./a.ts";\n${getKinds("c")}export const isC = () => isA();\n`,
+      );
+      return directory;
+    };
+    const getChecks = (output: string) =>
+      output
+        .split(/^Checking /m)
+        .slice(1)
+        .map((check) =>
+          check.includes("Model checking completed. No error has been found.")
+            ? "pass"
+            : (/^Error: .*$/m.exec(check)?.[0] ?? check),
+        );
+    // The files that read their types in a program of their own.
+    const getAugmented = (output: string) =>
+      [
+        ...output.matchAll(
+          /^tla-ts reads the types of (\S+) in a program of its own \[augmented\]/gm,
+        ),
+      ].map((match) => match[1]);
+
+    it.each([[[]], [["-shared"]]])(
+      "checks a file that another file augments as a run of it alone does, with %j",
+      (flags) => {
+        const directory = writeModules(copyFixtures("passing"));
+        expect(runNode(directory, "a.ts").status).toBe(0);
+        expect(runCli(directory, ["a.ts"]).stdout).toContain(
+          "Model checking completed. No error has been found.",
+        );
+        const result = runCli(directory, [...flags, "a.ts", "b.ts"]);
+        expect(getChecks(result.stdout)).toEqual(["pass", "pass"]);
+        expect(getAugmented(result.stdout)).toEqual(["a.ts", "b.ts"]);
+      },
+      120_000,
+    );
+
+    // A file that imports a.ts reads its augmentation as a run of it alone does, so it reads the
+    // run's program, where a.ts reads its own.
+    it("reads the run's program for a file whose imports reach the augmentation", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      const result = runCli(directory, ["a.ts", "c.ts"]);
+      expect(getChecks(result.stdout)).toEqual(["pass", "pass"]);
+      expect(getAugmented(result.stdout)).toEqual(["a.ts"]);
+    }, 120_000);
+
+    // Where a.ts imports b.ts, Kinds holds b too, which a.ts picks, so isA fails.
+    it("rejects a file whose own imports augment what it reads", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      writeFileSync(
+        join(directory, "a.ts"),
+        `import "./b.ts";\n${readFileSync(join(directory, "a.ts"), "utf8")}`,
+      );
+      expect(runNode(directory, "a.ts").status).toBe(0);
+      const result = runCli(directory, ["a.ts", "b.ts"]);
+      expect(getChecks(result.stdout)).toEqual(["Error: Invariant isA is violated.", "pass"]);
+      expect(getAugmented(result.stdout)).toEqual(["b.ts"]);
+    }, 120_000);
+  });
+
+  // A run's program numbers its types in the order that its files read them, and TypeScript orders
+  // a union's members by those numbers, so b.ts, which reads "y" first, would turn a.ts's "x" | "y"
+  // around. a.ts's frame and notes read the same alone and after b.ts.
+  describe("frames a file as a run of it alone does, whatever file reads its types first", () => {
+    const writeModules = (directory: string, check: string) => {
+      writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      writeFileSync(
+        join(directory, "a.ts"),
+        `type Key = "x" | "y";\nlet last: Key | undefined = undefined;\nexport const pick = (key: Key) => {\n  last = key;\n};\nexport const label = (entry: { key: "x" | "y"; [name: string]: unknown }) => {\n  last = entry.key;\n};\nexport const isPicked = () => last === undefined || ${check};\n`,
+      );
+      writeFileSync(
+        join(directory, "b.ts"),
+        'let seen: "y" | undefined = undefined;\nexport const see = (key: "y") => {\n  seen = key;\n};\nexport const isSeen = () => seen === undefined || seen === "y";\n',
+      );
+      return directory;
+    };
+    // a.ts's output, without the process and the times that each run prints anew.
+    const getOutput = (stdout: string) =>
+      (stdout.split("Checking a.ts\n").at(-1) ?? "")
+        .replace(/\[pid: \d+\]/g, "")
+        .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "")
+        .replace(/Finished in \S+/g, "");
+    const options = ["-noGenerateSpecTE", "-seed", "1", "-fp", "1", "-frame"];
+
+    it.each([
+      [
+        'last === "x" || last === "y"',
+        "Model checking completed. No error has been found.",
+        "false",
+      ],
+      ['last === "x"', "Error: Invariant isPicked is violated.", "true"],
+    ])(
+      "prints a.ts where it checks %s",
+      (check, verdict, isViolated) => {
+        const directory = writeModules(copyFixtures("passing"), check);
+        const alone = runCli(directory, [...options, "a.ts"]);
+        expect(alone.stdout).toContain('Next == \\E key \\in ({"x", "y"}) : pick(key)');
+        expect(alone.stdout).toContain(
+          'tla-ts calls no label: its parameter entry takes values it can\'t list: { [name: string]: unknown; key: "x" | "y"; } isn\'t finite',
+        );
+        expect(alone.stdout).toContain(verdict);
+        expect(isViolatedInNode(directory, "a.ts", 1, alone.stdout)).toBe(isViolated);
+        const after = runCli(directory, [...options, "b.ts", "a.ts"]);
+        expect(after.stdout).toContain("Checking a.ts\n");
+        expect(getOutput(after.stdout)).toBe(getOutput(alone.stdout));
+      },
+      120_000,
+    );
+
+    // A mapped type's fields come in the order of its keys' union, which their ids give, so they
+    // follow the union as a.ts writes it, which here is by their names.
+    it("prints the fields of a record of a mapped type by their names", () => {
+      const directory = writeModules(copyFixtures("passing"), 'last === "x"');
+      writeFileSync(
+        join(directory, "a.ts"),
+        'type Key = "x" | "y";\nlet last: Record<Key, boolean> | undefined = undefined;\nexport const set = (flags: Record<Key, boolean>) => {\n  last = flags;\n};\nexport const isSet = () => last === undefined || typeof last.x === "boolean";\n',
+      );
+      const alone = runCli(directory, [...options, "a.ts"]);
+      expect(alone.stdout).toContain(
+        "Next == \\E flags \\in [x : (BOOLEAN), y : (BOOLEAN)] : set(flags)",
+      );
+      expect(alone.stdout).toContain("Model checking completed. No error has been found.");
+      const after = runCli(directory, [...options, "b.ts", "a.ts"]);
+      expect(getOutput(after.stdout)).toBe(getOutput(alone.stdout));
+    }, 120_000);
+
+    // TLC enumerates a \cup operand by operand and stops at the first state that violates an
+    // invariant, so the frame lists a union's members in the order that a.ts writes them, rather
+    // than by their text, and the check reports the first that a.ts writes.
+    it.each([
+      ['{ fruit: "pear" } | { fruit: "apple" }', '"pear"', '"apple"'],
+      ['{ fruit: "apple" } | { fruit: "pear" }', '"apple"', '"pear"'],
+    ])(
+      "enumerates the union %s in the order that a.ts writes it",
+      (union, first, second) => {
+        const directory = writeModules(copyFixtures("passing"), 'last === "x"');
+        writeFileSync(
+          join(directory, "a.ts"),
+          `type Order = ${union};\nlet last: Order | undefined = undefined;\nexport const order = (next: Order) => {\n  last = next;\n};\nexport const isUnset = () => last === undefined;\n`,
+        );
+        const alone = runCli(directory, [...options, "a.ts"]);
+        expect(alone.stdout).toContain(
+          `Next == \\E next \\in ([fruit : ({${first}})]) \\cup ([fruit : ({${second}})]) : order(next)`,
+        );
+        expect(alone.stdout).toContain("Error: Invariant isUnset is violated.");
+        expect(alone.stdout).toContain(`State 2: <order([fruit |-> ${first}])`);
+        const after = runCli(directory, [...options, "b.ts", "a.ts"]);
+        expect(getOutput(after.stdout)).toBe(getOutput(alone.stdout));
+      },
+      120_000,
+    );
   });
 
   // A file of thousands of function declarations, as react-dom's client build has, instantiates
