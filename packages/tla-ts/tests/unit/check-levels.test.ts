@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, parseModule } from "../../src";
 import { createSanyError, createSemanticError } from "../../src/errors";
 
 describe("level checking matches SANY", () => {
@@ -3251,5 +3251,29 @@ describe("read the level bound of a long chain of calls, as TLC does", () => {
       status: "invariant-violation",
       violation: { name: "Bounded" },
     });
+  });
+});
+
+describe("levels the constant definitions before a prepared module's other units as the full checks do", () => {
+  const checkPrepared = (assumption: string) => {
+    const text = `---- MODULE Tree ----\nEXTENDS Naturals\nInc(a) == a + 1\nTwice(a) == LET b == Inc(a) IN Inc(b)\nVARIABLE x\nInit == x = Twice(0)\nNext == x' = IF x < 6 THEN Twice(x) ELSE x\nASSUME ${assumption}\n====`;
+    return check({
+      source: "---- MODULE M ----\nEXTENDS Tree\n====",
+      config: "INIT Init\nNEXT Next",
+      preparedModules: [
+        { name: "Tree", text, tokens: [], module: parseModule(text), levels: undefined },
+      ],
+    });
+  };
+
+  it("checks the steps that apply them", async () => {
+    const result = await checkPrepared("Twice(1) = 3");
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("gives their applications the levels of their arguments", async () => {
+    await expect(checkPrepared("Twice(x) = 2")).rejects.toThrow(
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+    );
   });
 });

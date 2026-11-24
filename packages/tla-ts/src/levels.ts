@@ -402,8 +402,8 @@ export const FCN_CONSTRUCTOR_LEVELS = createSignature("$FcnConstructor", 0, [3],
 export const RCD_CONSTRUCTOR_LEVELS = createSignature("$RcdConstructor", 0, [3], [1]);
 const SET_OF_RCDS_LEVELS = createSignature("$SetOfRcds", 0, [2], [1]);
 export const EXCEPT_LEVELS = createSignature("$Except", 0, [2], [1]);
-const PAIR_LEVELS = createSignature("$Pair", 0, [3], [1]);
-const SEQ_LEVELS = createSignature("$Seq", 0, [2], [1]);
+export const PAIR_LEVELS = createSignature("$Pair", 0, [3], [1]);
+export const SEQ_LEVELS = createSignature("$Seq", 0, [2], [1]);
 export const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
 export const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
 const SQUARE_ACT_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
@@ -2464,11 +2464,14 @@ export const createProofChecker = (
   };
 };
 
+// resolvedLevels holds the levels of the definitions that a pass levelled already, which the
+// checks take rather than analyze.
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
   instances: InstanceLevelCheck[],
   warnings: SanyError[],
+  resolvedLevels: ReadonlyMap<Definition, OperatorLevels | undefined> | undefined,
 ) => {
   const analyzer = createLevelAnalyzer(context);
   const proofs = createProofChecker(analyzer, context.instances, module.name);
@@ -2522,7 +2525,9 @@ export const checkModuleLevels = (
               ? []
               : [
                   createCheck(definition.location, () => {
-                    levels[position] = analyzer.analyzeDefinition(definition, new Map());
+                    levels[position] =
+                      resolvedLevels?.get(definition) ??
+                      analyzer.analyzeDefinition(definition, new Map());
                   }),
                 ],
           ),

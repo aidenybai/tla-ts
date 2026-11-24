@@ -3044,7 +3044,13 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
   return errors;
 };
 
-export const resolveModule = (module: Module, unit: ModuleUnit) => {
+// resolved holds the definitions whose bodies a pass resolved already, which the checks bind
+// without walking them.
+export const resolveModule = (
+  module: Module,
+  unit: ModuleUnit,
+  resolved: ReadonlySet<Definition>,
+) => {
   const symbols = createSymbols(module, unit);
   const bindings = new Map<string, ModuleBinding>(
     [...CORE_SYMBOLS, ...unit.bound].map((entry) => [
@@ -3204,7 +3210,14 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.definitions.map((definition) =>
         createCheck(definition.location, definition, true, (inner) => {
-          if (isTheoremDefinition(module, definition)) {
+          if (resolved.has(definition)) {
+            bindings.set(definition.name, {
+              kind: "Definition",
+              arity: getArity(definition),
+              range: definition.location.range,
+              position: definition.location,
+            });
+          } else if (isTheoremDefinition(module, definition)) {
             resolveExpression(definition.body, undefined, inner);
           } else if (resolveDefinition(definition, undefined, inner, recursive)) {
             bindings.set(definition.name, {

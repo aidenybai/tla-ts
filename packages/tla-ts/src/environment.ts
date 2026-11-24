@@ -119,7 +119,7 @@ import {
   type OperatorLevels,
   type SectionMember,
 } from "./levels";
-import { checkPlainModule } from "./plain-module";
+import { checkPlainModule, type PlainContext } from "./plain-module";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt } from "./tlc/messages";
 import {
@@ -1842,24 +1842,61 @@ export const createEnvironment = (
       acceptedModules.has(unlinked) && parsed === unlinked && parsed.modules.length === 0;
     // A plain module, whose names and levels SANY's checks find in one pass, links as it is, where
     // what it extends conflicts nowhere, which only the full checks report.
-    const plain =
+    const isPlainChecked = !(
       isAccepted ||
       runtime.version !== "master" ||
       scope.recursiveCount.declarations.length > 0 ||
       reports.some((report) => report.errors.length > 0 || report.warnings.length > 0)
-        ? undefined
-        : checkPlainModule(parsed, {
-            imported: visible,
-            getKey: (name) => getKey({ name }),
-            getLevels: (name) => {
-              if (RUNTIME_VARIABLES.includes(name)) return undefined;
-              const key = visible.get(name)?.key ?? name;
-              if (definitions.has(key)) return preparedLevels.get(key);
-              return getSignatureLevels(name) ?? "declared";
-            },
-          });
+    );
+    const plainContext: PlainContext = {
+      imported: visible,
+      getKey: (name) => getKey({ name }),
+      getLevels: (name) => {
+        if (RUNTIME_VARIABLES.includes(name)) return undefined;
+        const key = visible.get(name)?.key ?? name;
+        if (definitions.has(key)) return preparedLevels.get(key);
+        return getSignatureLevels(name) ?? "declared";
+      },
+    };
+    const plain = isPlainChecked ? checkPlainModule(parsed, plainContext) : undefined;
     const plainLevels = plain?.levels;
     if (plain && !plain.isWide) parsed.definitions.forEach((item) => narrowDefinitions.add(item));
+    // The definitions before the first unit of another kind of a prepared module that isn't plain,
+    // such as a program's code before its model's steps, which the same pass resolves and levels
+    // where they're plain, so that the full checks bind them without walking them. The pass finds
+    // none of the errors that the full checks report, which a prepared module's definitions have
+    // none of.
+    const leadingUnits = parsed.units.slice(
+      0,
+      parsed.units.findIndex((item) => item.kind !== "Definition"),
+    );
+    const leading = leadingUnits.flatMap((item) =>
+      item.kind === "Definition" ? [item.definition] : [],
+    );
+    const leadingPlain =
+      isPlainChecked &&
+      plain === undefined &&
+      leading.length > 0 &&
+      order.getPreparedModule(parsed.name)?.module === unlinked
+        ? checkPlainModule(
+            {
+              ...parsed,
+              constants: [],
+              variables: [],
+              definitions: leading,
+              instances: [],
+              assumptions: [],
+              theorems: [],
+              uses: [],
+              units: leadingUnits,
+              modules: [],
+            },
+            plainContext,
+          )
+        : undefined;
+    const resolvedLeading = new Set(leadingPlain === undefined ? [] : leading);
+    if (leadingPlain && !leadingPlain.isWide)
+      leading.forEach((item) => narrowDefinitions.add(item));
     const isLinkedAsIs = isAccepted || plainLevels !== undefined;
     const module = isLinkedAsIs ? parsed : subexpressions.resolve();
     parsed.theorems
@@ -1885,7 +1922,7 @@ export const createEnvironment = (
             closed: scope.recursiveCount.closed,
           },
         }
-      : resolveModule(module, unit);
+      : resolveModule(module, unit, resolvedLeading);
     scope.errors.push(...resolved.errors);
     const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
     const acceptedLevels = accepted?.levels ?? plainLevels;
@@ -1899,11 +1936,12 @@ export const createEnvironment = (
         if (facts && !facts.isWide) narrowDefinitions.add(definition);
       });
     }
-    const definitionLevels =
-      acceptedLevels &&
-      new Map(
-        module.definitions.map((definition, position) => [definition, acceptedLevels[position]]),
-      );
+    const definitionLevels = acceptedLevels
+      ? new Map(
+          module.definitions.map((definition, position) => [definition, acceptedLevels[position]]),
+        )
+      : leadingPlain &&
+        new Map(leading.map((definition, position) => [definition, leadingPlain.levels[position]]));
     unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -2020,6 +2058,7 @@ export const createEnvironment = (
         },
         instanceChecks.splice(firstCheck),
         warnings,
+        leadingPlain && definitionLevels,
       ),
     );
     if (!scope.isHidden) linkOrder.push(linked);
