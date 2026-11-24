@@ -63,6 +63,39 @@ const getIntRoot = (value: bigint, degree: number): bigint | undefined => {
   return low ** exponent === value ? low : undefined;
 };
 
+const getIntSquareRoot = (value: bigint) => {
+  if (value < 0n) return undefined;
+  if (value < 2n) return value;
+  const mod16 = Number(value & 15n);
+  if (mod16 !== 0 && mod16 !== 1 && mod16 !== 4 && mod16 !== 9) return undefined;
+  let low = 1n;
+  let high = value;
+  let lowSquare = 1n;
+  while (true) {
+    if (lowSquare === value) return low;
+    const doubled = low * 2n;
+    if (doubled > high) break;
+    const doubledSquare = doubled * doubled;
+    if (doubledSquare > value) {
+      high = doubled;
+      break;
+    }
+    low = doubled;
+    lowSquare = doubledSquare;
+  }
+  while (true) {
+    if (lowSquare === value) return low;
+    if (low + 1n === high) return undefined;
+    const mid = (high + low) / 2n;
+    const midSquare = mid * mid;
+    if (midSquare > value) high = mid;
+    else {
+      low = mid;
+      lowSquare = midSquare;
+    }
+  }
+};
+
 // rational::mult_inverse: the inverse of the value modulo 2^bits, which only an odd value has.
 export const getMultInverse = (value: bigint, bits: number) => {
   if (value === 1n) return 1n;
@@ -164,6 +197,12 @@ export class Rational {
   root(degree: number) {
     const num = getIntRoot(this.num, degree);
     const den = num === undefined ? undefined : getIntRoot(this.den, degree);
+    return num === undefined || den === undefined ? undefined : Rational.of(num, den);
+  }
+
+  getSquareRoot() {
+    const num = getIntSquareRoot(this.num);
+    const den = num === undefined ? undefined : getIntSquareRoot(this.den);
     return num === undefined || den === undefined ? undefined : Rational.of(num, den);
   }
 

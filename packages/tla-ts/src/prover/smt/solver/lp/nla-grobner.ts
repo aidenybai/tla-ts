@@ -62,7 +62,7 @@ const divides = (divisor: Rational, value: Rational) =>
 
 const getPerfectSquareRoot = (coeff: Rational, vars: number[]) => {
   if (vars.length % 2 === 1) return undefined;
-  const root = coeff.root(2);
+  const root = coeff.getSquareRoot();
   if (root === undefined) return undefined;
   for (let index = 0; index < vars.length;) {
     const start = index;
