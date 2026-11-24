@@ -47,6 +47,7 @@ const checkInput = (input: CompiledInput, base?: CheckBase) => {
     preparedModules: input.preparedModules,
     seed: 1n,
     base,
+    rankedStrings: base && input.strings,
   };
   return check(options).catch((error: unknown) =>
     error instanceof TlaError ? error.message : Promise.reject(error),
@@ -65,6 +66,7 @@ const getBaseState = (base: CheckBase) => {
     ids: environment.facts.ids.size,
     startupValues: [...environment.startupValues],
     strings: [...base.strings],
+    contexts: [...base.contexts].map((entry) => [entry[0], entry[1].inserted.length]),
   };
 };
 

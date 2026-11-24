@@ -474,6 +474,7 @@ const checkSpec = async (
       maxSetSize: args.maxSetSize,
       preparedModules: compiled?.preparedModules,
       base: compiled?.base,
+      rankedStrings: compiled?.strings,
       isLazyValueExpanded: args.isLazyValueExpanded,
       isViewPrinted: args.isViewPrinted,
       dump,

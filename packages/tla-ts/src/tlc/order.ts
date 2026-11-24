@@ -35,7 +35,7 @@ interface SymbolEntry {
   isLocal: boolean;
 }
 
-interface SymbolTable {
+export interface SymbolTable {
   put: (entry: SymbolEntry) => void;
   inserted: SymbolEntry[];
   ownStart: number;
@@ -547,7 +547,11 @@ const internStrings = (module: Module, intern: (text: string) => void) =>
     if (unit.kind === "Assumption") internExpressionStrings(unit.assumption.expression, intern);
   });
 
-const createContexts = (getParsed: ModuleSet) => {
+// The contexts of the modules, those of shared that a check of a group's base built among them.
+const createContexts = (
+  getParsed: ModuleSet,
+  shared: ReadonlyMap<string, SymbolTable> = new Map(),
+) => {
   const getUnits = (unit: ParsedModule) => {
     const module = unit.getModule();
     const tokens = unit.getTokens();
@@ -683,7 +687,7 @@ const createContexts = (getParsed: ModuleSet) => {
 
   const contexts = new Map<string, SymbolTable>();
   const getContext = (name: string | undefined): SymbolTable => {
-    const cached = contexts.get(name ?? "");
+    const cached = contexts.get(name ?? "") ?? (name === undefined ? undefined : shared.get(name));
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
@@ -705,6 +709,7 @@ const createContexts = (getParsed: ModuleSet) => {
   };
   return {
     getContext,
+    contexts,
     getOwnEntries: (name: string | undefined) => {
       const table = getContext(name);
       return table.inserted.slice(table.ownStart);
@@ -868,21 +873,26 @@ export interface TlcOrder {
   getInstanceDefinitions: (module: string) => string[];
   getInnerModuleOrder: (module: string | undefined) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
+  // The contexts of the modules that the orders read so far, by module name, the root's under "".
+  getModuleContexts: () => ReadonlyMap<string, SymbolTable>;
   getModule: (name: string | undefined, source: string) => Module;
   parseFile: (source: string, name: string) => Module;
   getLoadedSource: (name: string) => string | undefined;
   getPreparedModule: (name: string) => PreparedModule | undefined;
 }
 
+// The orders of a spec's modules, with the contexts of a group's base's modules, which their own
+// modules make in each spec alike.
 export const createTlcOrder = (
   source: string | Module,
   loadModule: ModuleLoader,
   prepared: readonly PreparedModule[] = [],
+  sharedContexts?: ReadonlyMap<string, SymbolTable>,
 ): TlcOrder => {
   const modules = createModuleSet(source, loadModule, prepared);
   const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
-  const getContexts = () => (contexts ??= createContexts(getParsed));
+  const getContexts = () => (contexts ??= createContexts(getParsed, sharedContexts));
   return {
     getStringOrder: (config, runtimeModules, rootExtendees) =>
       getStringOrder(getParsed, source, config, runtimeModules, rootExtendees),
@@ -917,6 +927,7 @@ export const createTlcOrder = (
     parseFile: modules.parseFile,
     getLoadedSource: modules.getLoadedSource,
     getPreparedModule: (name) => prepared.find((item) => item.name === name),
+    getModuleContexts: () => getContexts().contexts,
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();
       moduleContexts.getContext(undefined);

@@ -40,8 +40,9 @@ export interface CompiledInput {
   // The frame of a model, which a script has none of.
   frame?: string;
   // The base of the group of files whose program this file's spec shares, which its check starts
-  // from.
+  // from, and the strings in the order the check ranks them.
   base?: CheckBase;
+  strings?: readonly string[];
 }
 
 // Whether a path names a file that Node runs, TypeScript or JavaScript, which tla-ts compiles.
@@ -738,12 +739,8 @@ export const compileSharedFiles = async (
   };
   // Why a file's check can't start from its group's base, as a code and a reason, or undefined
   // where it can.
-  const getAloneReason = (input: CompiledInput, base: CheckBase, constants: string[]) => {
-    if (getConstants(input.config).join("\n") !== constants.join("\n")) {
-      return ["config", "its config's CONSTANT lines differ from the group's"];
-    }
-    const strings = new Set(base.strings);
-    // The ranks of the strings, as the file's check ranks its own, then the group's.
+  // The strings of a file's spec in the order its check ranks them: its own, then the group's.
+  const getRanked = (input: CompiledInput, base: CheckBase) => {
     const ranked = new Map<string, number>();
     [
       ...createTlcOrder(
@@ -755,6 +752,18 @@ export const compileSharedFiles = async (
     ].forEach((text) => {
       if (!ranked.has(text)) ranked.set(text, ranked.size);
     });
+    return ranked;
+  };
+  const getAloneReason = (
+    input: CompiledInput,
+    base: CheckBase,
+    constants: string[],
+    ranked: ReadonlyMap<string, number>,
+  ) => {
+    if (getConstants(input.config).join("\n") !== constants.join("\n")) {
+      return ["config", "its config's CONSTANT lines differ from the group's"];
+    }
+    const strings = new Set(base.strings);
     // The strings that the base's values hold keep the order the base gave them.
     const order = [...ranked.keys()].filter((text) => base.valueStrings.has(text));
     const baseOrder = base.strings.filter((text) => base.valueStrings.has(text));
@@ -783,8 +792,9 @@ export const compileSharedFiles = async (
     const constants = getConstants(sample.config);
     return inputs.map((input) => {
       if (input === undefined) return undefined;
-      const reason = getAloneReason(input, base, constants);
-      if (reason === undefined) return { ...input, base };
+      const ranked = getRanked(input, base);
+      const reason = getAloneReason(input, base, constants, ranked);
+      if (reason === undefined) return { ...input, base, strings: [...ranked.keys()] };
       console.log(`tla-ts checks ${basename(input.path)} alone [${reason[0]}]: ${reason[1]}`);
       return input;
     });

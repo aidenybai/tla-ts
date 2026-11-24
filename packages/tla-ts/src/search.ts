@@ -114,7 +114,7 @@ import {
   MISSING_INIT_174,
   withHeadline,
 } from "./tlc/messages";
-import { createTlcOrder } from "./tlc/order";
+import { createTlcOrder, type SymbolTable } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import { writeTraceSpec } from "./tlc/trace-spec";
@@ -146,8 +146,10 @@ export interface CliSettings {
   hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
-  // The base of the group of files this check's spec is one of, which the check starts from.
+  // The base of the group of files this check's spec is one of, which the check starts from, and
+  // the strings of the spec in the order the check ranks them, its own and then the base's.
   base?: CheckBase;
+  rankedStrings?: readonly string[];
 }
 
 // A group's base, and the strings ranked once it started, which a check of one of the group's files
@@ -155,6 +157,8 @@ export interface CliSettings {
 export interface CheckBase {
   environment: EnvironmentBase;
   strings: readonly string[];
+  // The contexts of the base's modules, by name, which TLC's orders read.
+  contexts: ReadonlyMap<string, SymbolTable>;
   // The strings that the base's values hold, whose order those values keep.
   valueStrings: ReadonlySet<string>;
 }
@@ -1050,25 +1054,34 @@ export const createCheckEnvironment = (
   isStringOrderFrozen = false,
   ownModule?: string,
 ) => {
-  const order = createTlcOrder(options.source, options.loadModule, options.preparedModules);
+  const order = createTlcOrder(
+    options.source,
+    options.loadModule,
+    options.preparedModules,
+    options.base?.contexts,
+  );
   const getOperatorModules = (kind: ModuleOperator["kind"]) =>
     (options.moduleOperators ?? []).flatMap((operator) =>
       operator.kind === kind ? [operator.module] : [],
     );
-  setStringOrder([
-    ...order.getStringOrder(
-      config,
-      (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
-      // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
-      [
-        ...getOperatorModules("postcondition"),
-        ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
-        ...getOperatorModules("constraint"),
-        ...getOperatorModules("view"),
-      ],
-    ),
-    ...(options.base?.strings ?? []),
-  ]);
+  const runtimeModules = (options.runtimeInvariants ?? []).flatMap(
+    (invariant) => invariant.module ?? [],
+  );
+  // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
+  const rootExtendees = [
+    ...getOperatorModules("postcondition"),
+    ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+    ...getOperatorModules("constraint"),
+    ...getOperatorModules("view"),
+  ];
+  setStringOrder(
+    options.rankedStrings !== undefined && runtimeModules.length + rootExtendees.length === 0
+      ? options.rankedStrings
+      : [
+          ...order.getStringOrder(config, runtimeModules, rootExtendees),
+          ...(options.base?.strings ?? []),
+        ],
+  );
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
   if (isStringOrderFrozen) freezeStringOrder();
@@ -1111,13 +1124,14 @@ export const createCheckBase = (
   ownModule: string,
 ): CheckBase => {
   const shown: string[] = [];
-  const specification = createCheckEnvironment(
+  const created = createCheckEnvironment(
     config,
     options,
     (text) => shown.push(text),
     false,
     ownModule,
-  ).specification;
+  );
+  const specification = created.specification;
   const environment = specification.environment;
   environment.runtime.warn = (_code, text) => shown.push(text);
   evaluateStartupDefinitions(specification.startupModules, environment);
@@ -1132,6 +1146,11 @@ export const createCheckBase = (
     environment: { link, facts, startupValues, startup },
     strings: getRankedStrings(),
     valueStrings: getValueStrings(startupValues),
+    contexts: new Map(
+      [...created.order.getModuleContexts()].filter(
+        (entry) => entry[0] !== "" && entry[0] !== ownModule,
+      ),
+    ),
   };
 };
 
