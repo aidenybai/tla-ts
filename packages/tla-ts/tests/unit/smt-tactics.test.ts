@@ -1891,6 +1891,27 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
       ]),
     ).toEqual(["(goals\n(goal\n  (not (<= x 3))\n  :precision precise :depth 2)\n)"]);
   });
+
+  it("has no printer for the model a SAT solver leaves as the model converter", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(apply qffd :print_model_converter true)",
+        "(apply sat :print_model_converter true)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+    ]);
+    expect(() =>
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(apply sat :print_model_converter true)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {

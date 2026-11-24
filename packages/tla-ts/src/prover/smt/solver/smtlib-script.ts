@@ -2162,9 +2162,11 @@ export const runSmtlibScript = (
             );
           if (
             params.get("print_model_converter") === true &&
-            input.converters.some(
-              (entry) => !("definitions" in entry) || entry.definitions.length > 0,
-            )
+            ((input.model !== undefined &&
+              (input.model.constInterps.size > 0 || input.model.funcInterps.size > 0)) ||
+              input.converters.some(
+                (entry) => !("definitions" in entry) || entry.definitions.length > 0,
+              ))
           )
             throw new SmtUnsupportedError("printing a model converter");
           if (params.get("print_benchmark") !== true) return;
