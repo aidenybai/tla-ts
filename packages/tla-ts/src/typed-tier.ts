@@ -6787,7 +6787,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       check.reportProgress?.(
         statistics.generated,
         statistics.distinct,
-        statistics.distinct - index - 1,
+        // TLC reports progress while its worker expands the next state, which has left the queue.
+        Math.max(statistics.distinct - index - 2, 0),
         statistics.depth,
       );
     }

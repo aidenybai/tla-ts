@@ -2073,7 +2073,12 @@ const searchStates = (
       const progress = createResult("success");
       options.onProgress?.({
         kind: "progress",
-        statistics: { ...progress, coverage: isCoverageDue ? progress.coverage : undefined },
+        statistics: {
+          ...progress,
+          // TLC reports progress while its worker expands the next state, which has left the queue.
+          queuedStates: Math.max(progress.queuedStates - 1, 0),
+          coverage: isCoverageDue ? progress.coverage : undefined,
+        },
       });
     }
   }
