@@ -3,7 +3,7 @@ import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
 import { getLocals, type Locals } from "./locals";
-import { getSourceString } from "./runtime";
+import { getPatches, getSourceString } from "./units";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
 // Evaluate rule for its kind leaves once the node is known, with the evaluation of each child in
@@ -102,15 +102,6 @@ export interface SpecializedProgram {
 
 const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
-
-// A file's units that its source string holds as "?", as a function from position to unit, joined
-// in halves so that building it takes n log n rather than n^2 steps.
-const getPatches = (patches: number[][]): string =>
-  patches.length === 0
-    ? "<<>>"
-    : patches.length === 1
-      ? `(${patches[0][0]} :> ${patches[0][1]})`
-      : `(${getPatches(patches.slice(0, patches.length >> 1))} @@ ${getPatches(patches.slice(patches.length >> 1))})`;
 
 const getStr = (text: string) => `Str(${getUnits(text)})`;
 

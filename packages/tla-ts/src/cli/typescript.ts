@@ -18,6 +18,7 @@ import { getEscoreRuntime } from "../compile";
 import { TlaStrippingError } from "../errors";
 import { parseModule } from "../parser";
 import { foldNames } from "../typescript/spec/library";
+import { getPatchedUnits } from "../typescript/spec/units";
 import type { ProgramFile } from "../typescript/spec/specialize";
 
 // A spec tla-ts compiled from the TypeScript file at path. specPath is where its module would be
@@ -235,6 +236,12 @@ NodeErrorSource(s, v) ==
 const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string | undefined) => {
   const getUnits = (text: string) =>
     `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
+  // A line's units as its string's, where that's shorter than their tuple, as it is for most lines.
+  const getLineUnits = (line: string) => {
+    const units = getUnits(line);
+    const patched = getPatchedUnits(line);
+    return patched.length < units.length ? patched : units;
+  };
   const getFunction = (pairs: string[]) =>
     pairs.length === 0 ? "[key \\in {} |-> Empty]" : pairs.join(" @@ ");
   const stop = getTlaString("tla-ts can't print what Node prints for this uncaught exception");
@@ -283,7 +290,7 @@ const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string 
 ThrowSiteLocation(site) ==
   CASE ${files.flatMap((file) => [...file.sites].map(([index, text]) => `site = <<${file.number}, ${index}>> -> ${getTlaString(text)}\n    [] `)).join("")}OTHER -> Empty
 FileUrls == ${getByFile((file) => getUnits(file.url))}
-FileLines == ${getByFile((file) => getByLine(file, getUnits))}
+FileLines == ${getByFile((file) => getByLine(file, getLineUnits))}
 FilePads == ${getByFile((file) => getByLine(file, getPad))}
 UnitCharacters == ${getFunction(characters.filter((character) => character.length === 1).map((character) => `${character.charCodeAt(0)} :> ${getTlaString(character)}`))}
 PairCharacters == ${getFunction(characters.filter((character) => character.length === 2).map((character) => `<<${character.charCodeAt(0)}, ${character.charCodeAt(1)}>> :> ${getTlaString(character)}`))}

@@ -13,10 +13,10 @@ import {
   getHostLocale,
   getHostRealmFacts,
   getHostTimeZone,
-  getTlaString,
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
+import { getPatchedUnits, getTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
@@ -129,6 +129,15 @@ const getUnitRuns = (sequence: string) => {
     : `CodeUnitsOfRuns(<<${starts.join(", ")}>>, <<${ends.join(", ")}>>)`;
 };
 
+// A long sequence of code units as its text's source string and the units that the string holds as
+// "?" (see getPatchedUnits), where that's shorter than the sequence.
+const getLongUnits = (sequence: string) => {
+  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+  if (units.length < 4096) return undefined;
+  const patched = getPatchedUnits(units.map((unit) => String.fromCharCode(unit)).join(""));
+  return patched.length < sequence.length ? patched : undefined;
+};
+
 const compact = (definitions: readonly CodeDefinition[]) => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
@@ -168,7 +177,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? entry[0]}`,
+      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? getLongUnits(entry[0]) ?? entry[0]}`,
     })),
     ...kept,
   ];
