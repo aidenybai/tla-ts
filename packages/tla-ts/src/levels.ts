@@ -2029,29 +2029,46 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
   };
 
+  // A member applies another member's parameter where its own scope binds the name alike, or where
+  // the name is a constant or variable, as SANY's nodes tell apart two parameters of one name.
   const setSectionAppliedParams = (members: SectionMember[]) => {
-    const allParams = new Set(
-      members.flatMap((member) => [
-        ...analyzeDefinition(member.definition, member.scope).allParams,
-      ]),
+    const bindings = new Map<string, (ScopeEntry | undefined)[]>();
+    members.forEach((member) =>
+      analyzeDefinition(member.definition, member.scope).allParams.forEach((name) => {
+        const entry = member.scope.get(name);
+        const isBound =
+          entry === undefined
+            ? context.constants.has(name) || context.variables.has(name)
+            : entry.kind === "Formal";
+        const entries = bindings.get(name);
+        if (!isBound || entries?.includes(entry)) return;
+        if (entries) entries.push(entry);
+        else bindings.set(name, [entry]);
+      }),
     );
     members.forEach((member) => {
       const body = sectionBodies.get(member.definition);
       if (body === undefined) return;
       const stored = analyzeDefinition(member.definition, member.scope);
-      definitionLevels.set(member.definition, {
-        ...stored,
-        appliedParams: new Set(
-          isClosedDefinition(member)
-            ? (body.appliedParams ?? [
-                ...body.params,
-                ...body.formals
-                  .filter((_formal, index) => body.weights[index] === 1)
-                  .map((formal) => formal.name),
-              ])
-            : [...stored.formals.map((formal) => formal.name), ...allParams],
-        ),
+      if (isClosedDefinition(member)) {
+        definitionLevels.set(member.definition, {
+          ...stored,
+          appliedParams: new Set(
+            body.appliedParams ?? [
+              ...body.params,
+              ...body.formals
+                .filter((_formal, index) => body.weights[index] === 1)
+                .map((formal) => formal.name),
+            ],
+          ),
+        });
+        return;
+      }
+      const appliedParams = new Set(stored.formals.map((formal) => formal.name));
+      bindings.forEach((entries, name) => {
+        if (entries.includes(member.scope.get(name))) appliedParams.add(name);
       });
+      definitionLevels.set(member.definition, { ...stored, appliedParams });
     });
   };
 
