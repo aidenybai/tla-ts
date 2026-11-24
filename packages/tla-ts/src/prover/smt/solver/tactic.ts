@@ -1867,12 +1867,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment, params) => {
         if (environment.parameters.get("sat.euf") === "true" || params.get("euf") === true)
           checkSmtNumerals(environment.parameters);
-        return (goal) =>
-          createFdTactic(
+        const isParallel = environment.parameters.get("parallel.enable") === "true";
+        return (goal) => {
+          if (isParallel) throw new SmtUnsupportedError("the parallel qffd tactic");
+          return createFdTactic(
             environment.manager,
             getSatTacticParams(environment, params),
             environment.parameters,
           )(goal);
+        };
       },
     },
   ],

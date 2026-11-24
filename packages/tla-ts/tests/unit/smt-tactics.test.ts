@@ -2546,6 +2546,17 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("has no port of the parallel tactic that qffd becomes under parallel.enable", () => {
+    expect(() =>
+      run([
+        "(set-option :parallel.enable true)",
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(check-sat-using qffd)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
+
   it("checks the named assertions as assumptions and keeps the goal it gives up on", () => {
     expect(
       run([
