@@ -511,3 +511,15 @@ export class TlaStrippingError extends TlaTypeScriptError {
     this.end = end;
   }
 }
+
+// A group of files that can't share one check of their common modules, or a file that can't start
+// from its group's: the code names the reason, which the output of -shared shows.
+export class TlaSharedBaseError extends TlaError {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "TlaSharedBaseError";
+    this.code = code;
+  }
+}

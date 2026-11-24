@@ -217,15 +217,13 @@ const prepareModules = (
   texts: readonly (readonly [string, string])[],
   extended: readonly PreparedModule[] = [],
   program = EMPTY_PROGRAM,
-  root = ROOT,
-  configText = CONFIG,
 ): PreparedModule[] => {
   const modules = texts.map((entry) => prepare(entry[0], entry[1]));
-  const config = parseConfig(configText);
+  const config = parseConfig(CONFIG);
   const levels = new Map<Module, (OperatorLevels | undefined)[]>();
   let warning: string | undefined;
   createEnvironment(config, {
-    source: root,
+    source: ROOT,
     loadModule: (name) => (name === "ProgramCode" ? program : undefined),
     preparedModules: [...extended, ...modules],
     onModuleLevels: (module, moduleLevels) => levels.set(module, moduleLevels),
@@ -243,7 +241,7 @@ const prepareModules = (
   const started = createCheckEnvironment(
     config,
     {
-      source: root,
+      source: ROOT,
       loadModule: (name) => (name === "ProgramCode" ? program : undefined),
       preparedModules: [...extended, ...accepted],
     },
@@ -287,16 +285,26 @@ const prepareModules = (
   });
 };
 
-// A spec's program code, read, checked by SANY's checks and started once, so that the specs of
-// several models that extend it link it as it is and start from what its definitions evaluate to.
-export const prepareProgram = (spec: EscoreSpec) =>
-  prepareModules(
-    [["ProgramCode", spec.loadModule("ProgramCode") ?? ""]],
-    spec.preparedModules,
-    undefined,
-    ROOT.replace("====", "Init == TRUE\nNext == TRUE\n===="),
-    spec.config,
-  )[0];
+// A spec's program code, read and checked by SANY's checks once, so that the specs of several models
+// that extend it link it as the checks accepted it. It keeps no tokens, as a module that tla-ts
+// compiles declares what its units declare.
+export const prepareProgram = (spec: EscoreSpec): PreparedModule => {
+  const prepared = prepare("ProgramCode", spec.loadModule("ProgramCode") ?? "");
+  const levels = new Map<Module, (OperatorLevels | undefined)[]>();
+  let warning: string | undefined;
+  createEnvironment(parseConfig(spec.config), {
+    source: ROOT,
+    loadModule: () => undefined,
+    preparedModules: [...spec.preparedModules, prepared],
+    onModuleLevels: (module, moduleLevels) => levels.set(module, moduleLevels),
+    print: (text) => {
+      warning ??= text;
+    },
+    files,
+  });
+  if (warning !== undefined) throw new TlaError(`SANY's checks warn of a program: ${warning}`);
+  return { ...prepared, tokens: [], levels: levels.get(prepared.module) };
+};
 
 // The prepared modules as a graph holds them, each value a plain copy, without their tokens, which
 // lexing a module's text makes faster than the graph reads them.

@@ -7,6 +7,7 @@ import {
   type Definition,
   type Expression,
 } from "./ast";
+import { TlaSharedBaseError } from "./errors";
 import type { Environment } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getBoundNames } from "./resolve";
@@ -35,7 +36,30 @@ export interface DefinitionFacts {
   // The effects of a LET definition in the definitions, which a check reads for each LET of an
   // action it compiles.
   getLetEffects: (definition: Definition) => number | undefined;
-  varyingBodies: Set<Expression>;
+  isVaryingBody: (body: Expression) => boolean;
+  // The facts of a group's base, where these facts are the base's.
+  base: BaseFacts | undefined;
+}
+
+// What the walk for varying bodies finds: the bodies that vary, those that vary only where an
+// effectful value exists, and whether one does.
+interface VaryingParts {
+  bodies: ReadonlySet<Expression>;
+  parameterBodies: ReadonlySet<Expression>;
+  hasEffectfulValue: boolean;
+}
+
+// The facts of a group's base: its definitions, which hold ids 0 to B - 1 in each file's facts, with
+// their rows and effects as the base closed them, which no definition of a file changes, as none of
+// the base's reads one. A row holds one word, as the base declares no variables.
+export interface BaseFacts {
+  definitions: readonly Definition[];
+  ids: ReadonlyMap<Definition, number>;
+  rows: Uint32Array;
+  effects: Uint32Array;
+  getLetEffects: (definition: Definition) => number | undefined;
+  varying: VaryingParts;
+  assumptions: ReadonlySet<Expression>;
 }
 
 interface EffectRows {
@@ -414,14 +438,22 @@ interface EdgeLists {
   targets: Int32Array;
 }
 
-const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: number) => {
+// The rows closed over the edges, where the rows of the nodes below offset are closed already and
+// those nodes call no other.
+const closeRows = (
+  local: Uint32Array,
+  words: number,
+  edges: EdgeLists,
+  mask: number,
+  offset = 0,
+) => {
   const count = edges.starts.length - 1;
   const starts = edges.starts;
   const targets = edges.targets;
   const closed = local.slice();
-  const index = new Int32Array(count).fill(-1);
+  const index = new Int32Array(count).fill(-1, offset);
   const lowLink = new Int32Array(count);
-  const component = new Int32Array(count).fill(-1);
+  const component = new Int32Array(count).fill(-2, 0, offset).fill(-1, offset);
   const stack: number[] = [];
   const frames: number[] = [];
   let nextIndex = 0;
@@ -437,7 +469,7 @@ const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: nu
     index[node] = lowLink[node] = nextIndex++;
     stack.push(node);
   };
-  for (let root = 0; root < count; root++) {
+  for (let root = offset; root < count; root++) {
     if (index[root] !== -1) continue;
     enter(root);
     while (frames.length > 0) {
@@ -557,16 +589,69 @@ const collectLetDefinitions = (
   return numbered;
 };
 
+// The base's closed row of each pass, as the base's rows and effects keep it: the bits of the pass's
+// mask, and, for the pass of what a substitute shows again, a bit of it where the row shows it.
+const getBaseRows = (base: BaseFacts, words: number, count: number) => {
+  const length = base.definitions.length;
+  const getRows = (getWord: (id: number) => number) => {
+    const rows = new Uint32Array(count * words);
+    for (let id = 0; id < length; id++) rows[id * words] = getWord(id);
+    return rows;
+  };
+  return {
+    reads: getRows((id) => base.rows[id] & READ_MASK),
+    levels: getRows((id) => base.rows[id] & TEMPORAL_LEVEL_FLAGS),
+    startup: getRows((id) => base.rows[id] & ABOVE_CONSTANT_BOUND),
+    shown: getRows((id) => ((base.rows[id] & REEVALUATION_SHOWN) === 0 ? 0 : IMPURE)),
+    purity: getRows((id) => base.rows[id] & PURITY_MASK),
+    effects: getRows((id) => base.effects[id]),
+  };
+};
+
+const EMPTY_BASE: BaseFacts = {
+  definitions: [],
+  ids: new Map(),
+  rows: new Uint32Array(0),
+  effects: new Uint32Array(0),
+  getLetEffects: () => undefined,
+  varying: { bodies: new Set(), parameterBodies: new Set(), hasEffectfulValue: false },
+  assumptions: new Set(),
+};
+
+// The facts of the definitions. Those of a group's base come first, with the ids and rows the base
+// gave them, and only the others are walked and closed. A check that starts a base names its
+// definitions, whose facts it keeps.
 export const createDefinitionFacts = (
   environment: DefinitionNames,
   assumptions: Expression[],
   prepared: ReadonlyMap<Definition, PreparedFacts> = new Map(),
+  base: BaseFacts = EMPTY_BASE,
+  baseDefinitions?: readonly Definition[],
 ): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
-  const ids = new Map(definitions.map((definition, id) => [definition, id]));
+  const offset = base.definitions.length;
   const words = 1 + ((environment.variables.length + 31) >>> 5);
-  const local = new Uint32Array(definitions.length * words);
-  const localImpurity = new Uint32Array(definitions.length * words);
+  const isPrefix = (prefix: readonly Definition[]) =>
+    prefix.every((definition, id) => definitions[id] === definition);
+  if (!isPrefix(base.definitions) || (offset > 0 && base.rows.length !== offset)) {
+    throw new TlaSharedBaseError(
+      "base-definitions",
+      "a file's link changes its base's definitions",
+    );
+  }
+  if (baseDefinitions !== undefined && (!isPrefix(baseDefinitions) || words !== 1)) {
+    throw new TlaSharedBaseError(
+      "base-definitions",
+      "the modules they share declare variables, or their config changes their definitions",
+    );
+  }
+  const ids = new Map(base.ids);
+  definitions.forEach((definition, id) => {
+    if (id >= offset) ids.set(definition, id);
+  });
+  const baseRows = getBaseRows(base, words, definitions.length);
+  const local = baseRows.reads;
+  const localImpurity = baseRows.purity;
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
   // Where the LET numbers of each prepared definition start, or -1 for a definition this walk
   // numbers itself.
@@ -585,6 +670,7 @@ export const createDefinitionFacts = (
   };
   definitions.forEach((definition, id) => {
     edgeStarts[id] = callees.length;
+    if (id < offset) return;
     const preparedFacts = prepared.get(definition);
     const isPrepared = preparedFacts !== undefined && preparedFacts.row.length === words;
     if (isPrepared) letStarts[id] = lets.parents.length;
@@ -608,26 +694,34 @@ export const createDefinitionFacts = (
     starts[definitions.length] = targets.length;
     return { starts, targets: Int32Array.from(targets) };
   };
+  // Each pass closes the rows of the definitions after the base's, from the base's closed rows.
+  const getPassRows = (passRows: Uint32Array, from: Uint32Array) => {
+    passRows.set(from.subarray(offset * words), offset * words);
+    return passRows;
+  };
   const readEdges = getEdgeLists((edge) => (edgeFlags[edge] & OVERRIDDEN_EDGE) === 0);
-  const reads = closeRows(local, words, readEdges, READ_MASK);
+  const reads = closeRows(local, words, readEdges, READ_MASK, offset);
   const levels = closeRows(
-    local,
+    getPassRows(baseRows.levels, local),
     words,
     getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | LEVEL_EDGE)) === LEVEL_EDGE),
     TEMPORAL_LEVEL_FLAGS,
+    offset,
   );
   const startup = closeRows(
-    local,
+    getPassRows(baseRows.startup, local),
     words,
     getEdgeLists((edge) => (edgeFlags[edge] & (OVERRIDDEN_EDGE | BOUND_EDGE)) === BOUND_EDGE),
     ABOVE_CONSTANT_BOUND,
+    offset,
   );
   // SpecProcessor#processConstantDefns evaluates a substitute before it stores the definitions the
   // substitute reads, so their draws and output can show again.
-  const shown =
+  const shown = getPassRows(baseRows.shown, localImpurity);
+  const closedShown =
     environment.substitutions.size > 0
-      ? closeRows(localImpurity, words, readEdges, SHOWN_MASK)
-      : localImpurity;
+      ? closeRows(shown, words, readEdges, SHOWN_MASK, offset)
+      : shown;
   const purity = closeRows(
     localImpurity,
     words,
@@ -638,18 +732,23 @@ export const createDefinitionFacts = (
           reads[callees[edge] * words] | startup[callees[edge] * words],
         ) ||
         ((edgeFlags[edge] & SUBSTITUTE_EDGE) !== 0 &&
-          (shown[callees[edge] * words] & SHOWN_MASK) !== 0),
+          (closedShown[callees[edge] * words] & SHOWN_MASK) !== 0),
     ),
     PURITY_MASK,
+    offset,
   );
   const rows = reads.map((word, position) =>
-    position % words === 0
-      ? (word & READ_MASK) |
-        (startup[position] & ABOVE_CONSTANT_BOUND) |
-        (levels[position] & TEMPORAL_LEVEL_FLAGS) |
-        (purity[position] & PURITY_MASK) |
-        ((shown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
-      : word,
+    position < offset * words
+      ? position % words === 0
+        ? base.rows[position / words]
+        : 0
+      : position % words === 0
+        ? (word & READ_MASK) |
+          (startup[position] & ABOVE_CONSTANT_BOUND) |
+          (levels[position] & TEMPORAL_LEVEL_FLAGS) |
+          (purity[position] & PURITY_MASK) |
+          ((closedShown[position] & SHOWN_MASK) === 0 ? 0 : REEVALUATION_SHOWN)
+        : word,
   );
   // A LET definition's effects are those of its builtins and of the definitions it calls, and with
   // them those of the LET definitions in it, which come after it in the numbering.
@@ -681,20 +780,51 @@ export const createDefinitionFacts = (
     )).indexOf(definition);
     return position === -1 ? undefined : letStarts[id] + position;
   };
-  const effects = closeRows(localImpurity, words, readEdges, EFFECT_MASK);
+  const getLetEffects = (definition: Definition) => {
+    const number = lets.numbers.get(definition) ?? getPreparedLetNumber(definition);
+    return number === undefined ? base.getLetEffects(definition) : lets.effects[number];
+  };
+  const effects = closeRows(
+    getPassRows(baseRows.effects, localImpurity),
+    words,
+    readEdges,
+    EFFECT_MASK,
+    offset,
+  );
+  const ownAssumptions = assumptions.filter((assumption) => !base.assumptions.has(assumption));
+  const varying = collectVaryingBodies(
+    definitions,
+    ownAssumptions,
+    environment,
+    { ids, effects, words },
+    offset,
+    baseDefinitions !== undefined,
+  );
+  const hasEffectfulValue = base.varying.hasEffectfulValue || varying.hasEffectfulValue;
   return {
     ids,
     rows,
     words,
-    getLetEffects: (definition) => {
-      const number = lets.numbers.get(definition) ?? getPreparedLetNumber(definition);
-      return number === undefined ? undefined : lets.effects[number];
-    },
-    varyingBodies: collectVaryingBodies(definitions, assumptions, environment, {
-      ids,
-      effects,
-      words,
-    }),
+    getLetEffects,
+    isVaryingBody: (body) =>
+      base.varying.bodies.has(body) ||
+      varying.bodies.has(body) ||
+      (hasEffectfulValue &&
+        (base.varying.parameterBodies.has(body) || varying.parameterBodies.has(body))),
+    base:
+      baseDefinitions &&
+      (() => {
+        const count = baseDefinitions.length;
+        return {
+          definitions: baseDefinitions,
+          ids: new Map(baseDefinitions.map((definition, id) => [definition, id])),
+          rows: rows.slice(0, count),
+          effects: effects.slice(0, count),
+          getLetEffects,
+          varying,
+          assumptions: new Set(assumptions),
+        };
+      })(),
   };
 };
 
@@ -766,12 +896,16 @@ const isOperatorName = (
     : isParameterized(definition);
 };
 
+// The bodies that vary among the definitions from offset on and the assumptions, and, where isComplete
+// holds or an effectful value exists, those that vary only where one does.
 const collectVaryingBodies = (
   definitions: Definition[],
   assumptions: Expression[],
   environment: DefinitionNames,
   effectRows: EffectRows,
-) => {
+  offset: number,
+  isComplete: boolean,
+): VaryingParts => {
   const varyingBodies = new Set<Expression>();
   const parameterBodies: Expression[] = [];
   let hasEffectfulValue = false;
@@ -900,16 +1034,17 @@ const collectVaryingBodies = (
       visitDefinition(definition, new Map(), isEffectful);
     }
   };
-  definitions.forEach((definition, id) => {
-    if (isEffectfulDefinition(id)) visitBody(definition, true);
+  const own = definitions.slice(offset);
+  own.forEach((definition, index) => {
+    if (isEffectfulDefinition(offset + index)) visitBody(definition, true);
   });
   assumptions.forEach((assumption) => visit(assumption, new Map(), hasEffect([assumption])));
-  if (!hasEffectfulValue) return varyingBodies;
-  definitions.forEach((definition, id) => {
-    if (!isEffectfulDefinition(id)) visitBody(definition, false);
-  });
-  parameterBodies.forEach((body) => varyingBodies.add(body));
-  return varyingBodies;
+  if (hasEffectfulValue || isComplete) {
+    own.forEach((definition, index) => {
+      if (!isEffectfulDefinition(offset + index)) visitBody(definition, false);
+    });
+  }
+  return { bodies: varyingBodies, parameterBodies: new Set(parameterBodies), hasEffectfulValue };
 };
 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
@@ -944,8 +1079,7 @@ export const isBodyVarying = (
   body: Expression,
   environment: Environment,
 ) =>
-  environment.facts.varyingBodies.has(body) ||
-  isExpressionImpure(expressions, environment, "varying");
+  environment.facts.isVaryingBody(body) || isExpressionImpure(expressions, environment, "varying");
 
 export const isImpureDefinition = (
   definition: Definition,

@@ -158,6 +158,14 @@ BeforeOf(s, from, names) ==
   LET values == CopyList(s, from, [i \in DOMAIN names |-> Val(BindingValue(from, names[i]))], 0)
   IN NewRecord(values.s, [i \in DOMAIN names |-> <<Str(names[i]), values.args[i]>>])`);
 
+// The definitions of a model that read nothing of its file, the substitute for CallBuiltin among
+// them, which the program of files that share it holds in place of each file's model, so that the
+// modules they share call none of a file's.
+export const SHARED_MODEL_DEFINITIONS = MODEL_DEFINITIONS.slice(
+  MODEL_DEFINITIONS.indexOf("Mutators =="),
+  MODEL_DEFINITIONS.indexOf("RECURSIVE SetToSeq(_)"),
+);
+
 const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
@@ -1544,16 +1552,7 @@ export const planModel = (
   // program shared with other files, in a module of their own that extends it.
   const finish = (compiled: EscoreSpec, shared?: number): EscoreModel => {
     const configLines = [
-      ...compiled.config
-        .trimEnd()
-        .split("\n")
-        .filter((line) => !/^(INIT|NEXT) /.test(line))
-        .map((line) =>
-          line === "CONSTANT CallBuiltin <- ProgramCallBuiltin"
-            ? "CONSTANT CallBuiltin <- ModelCallBuiltin"
-            : line,
-        ),
-      "CONSTANTS TsNull = Null TsUndefined = Undefined",
+      ...getModelConstants(compiled.config),
       config.specification === undefined
         ? "INIT Init\nNEXT Next"
         : `SPECIFICATION ${config.specification}`,
@@ -1586,13 +1585,16 @@ export const planModel = (
               `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
             )
             .replace(/\n====\n$/, `\n${assumed}`)
-        : `---- MODULE ProgramModel ----\nEXTENDS ProgramCode, ESCanonical\n${getModelSteps(shared, "Completed(SharedRun).s")}\n${assumed}`;
+        : `---- MODULE ProgramModel ----\nEXTENDS ProgramCode, ESCanonical\n${getModelSteps(shared, "Completed(SharedRun).s").replace(SHARED_MODEL_DEFINITIONS, "")}\n${assumed}`;
     return {
       ...compiled,
       source:
         shared === undefined
           ? compiled.source
-          : compiled.source.replace(", ProgramCode\n", ", ProgramModel\n"),
+          : compiled.source.replace(
+              ", ProgramCode\n",
+              ", ProgramCode, ESCanonical, ProgramModel\n",
+            ),
       config: configLines.join("\n"),
       preparedModules: [
         ...compiled.preparedModules,
@@ -1628,6 +1630,21 @@ export const planModel = (
     finish,
   };
 };
+
+// The CONSTANT lines of the config of a model of a program whose config is given: the program's,
+// with the model's substitute for CallBuiltin, then the model's own.
+export const getModelConstants = (config: string) => [
+  ...config
+    .trimEnd()
+    .split("\n")
+    .filter((line) => !/^(INIT|NEXT) /.test(line))
+    .map((line) =>
+      line === "CONSTANT CallBuiltin <- ProgramCallBuiltin"
+        ? "CONSTANT CallBuiltin <- ModelCallBuiltin"
+        : line,
+    ),
+  "CONSTANTS TsNull = Null TsUndefined = Undefined",
+];
 
 export const compileModelToEscore = (
   source: string,
