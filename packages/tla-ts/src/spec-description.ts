@@ -205,16 +205,12 @@ const resolveClosure = (
   return operator?.kind === "Closure" ? operator : undefined;
 };
 
-const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
-  definition?.kind === "Operator" &&
-  definition.params.length === 0 &&
-  getStartupValue(definition, environment) !== undefined;
-
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.body.kind !== "Number" &&
   definition.body.kind !== "String" &&
-  isStartupValue(definition, environment);
+  definition.params.length === 0 &&
+  getStartupValue(definition, environment) !== undefined;
 
 const getCalledDefinition = (
   expression: Expression,

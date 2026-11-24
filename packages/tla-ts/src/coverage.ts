@@ -1794,8 +1794,11 @@ const getChildGroups = (coverage: Coverage, group: number[]) => {
     for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
       const twin = coverage.twins[child];
       const twins = twin === -1 ? undefined : groups.find((item) => item.includes(twin));
-      if (twins) twins.push(child);
-      else groups.push([child]);
+      if (twins) {
+        twins.push(child);
+        continue;
+      }
+      groups.push([child]);
     }
   });
   return groups;
