@@ -1566,7 +1566,7 @@ const searchStates = (
       checked.postcondition,
     );
   };
-  // Tool#getActionsAppl binds a literal argument to its value, where the whole relation binds it as Tool#getOpContext does, so TLC's failure comes from the split actions.
+  // TLC runs the split actions, which bind a literal argument to its value instead of a LazyValue.
   const getSplitFailure = (error: unknown, index: number) => {
     if (
       coverage ||
@@ -1611,7 +1611,7 @@ const searchStates = (
     const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
     const replayError = replay.result.replayError;
-    // Tool#getOpContext binds an argument to a LazyValue that Tool#getNextStatesAppl enters, where the run shares the binding an identifier argument already has, so the replay, which enters it as CallStackTool does, fails at TLC's expression.
+    // TLC enters an argument's LazyValue where the argument was written, which only the replay mirrors.
     const failure = error instanceof TlaBoundValueError && replayError ? replayError : error;
     return createFailureResult(
       withNextStateExitCode(failure),

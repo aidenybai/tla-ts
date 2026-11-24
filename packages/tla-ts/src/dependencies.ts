@@ -338,7 +338,7 @@ const SHOWN_MASK = IMPURE | REPEATED_EFFECT | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
-// TLCSet's deviation in tlc/tlc-operators.ts covers only the keys whose write TLC drops, so TLCSet of a numbered register keeps TLC's constant level.
+// TLCSet's deviation covers only the keys whose write TLC drops as it starts.
 export const isStateLevelCall = (builtin: Builtin, node: Expression) => {
   if (builtin.name !== "TLCSet") return builtin.isStateLevel === true;
   const key = node.kind === "Apply" ? node.args[0] : undefined;

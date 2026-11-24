@@ -470,7 +470,7 @@ const getActions = (
       return;
     }
   }
-  // Tool#getActionsAppl casts a formal parameter in action position to an OpDefNode, and the call or \E around it catches the ClassCastException.
+  // Tool#getActionsAppl throws a ClassCastException at a parameter in action position.
   if (
     expression.kind === "Identifier" &&
     isLocallyResolved(expression) &&
@@ -486,11 +486,10 @@ const getActions = (
   // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
   if (theorem) throw createRelationError(theorem);
   const args = getArguments(expression);
-  // Tool#getActionsAppl binds a literal argument to its value, where Tool#getOpContext binds a LazyValue that a parameter standing as an action enters.
   if (called && args.some((arg) => arg.kind === "Number" || arg.kind === "String")) {
     description.hasLiteralArgument = true;
   }
-  // SymbolNodeValueLookupProvider#lookup finds an override on the body under an instance's SubstInNode, so where a generated alias stands for the copy, TLC takes the override, not the instance.
+  // SymbolNodeValueLookupProvider#lookup takes a module override on the body over the instance's SubstInNode.
   if (instanceAction && !(called && untracedExpressions.has(called.body))) {
     actions.push(
       ...getInstanceActions(instanceAction, expression, scope, called, environment, context),
@@ -506,7 +505,7 @@ const getActions = (
       ...getDefinitionRanges(letDefinition),
       parameters: [],
     });
-    // Tool#getActionsAppl makes the call an action of its own where the lookup of a LET definition finds its literal body's value.
+    // Tool#getActionsAppl doesn't enter a LET definition whose lookup finds its literal body's value.
     if (getBodyLiteral(thunk.expression, environment) !== undefined) {
       actions.push(getLetAction());
       return;
@@ -554,7 +553,7 @@ const getActions = (
   const namedDefinition = isLocallyResolved(expression)
     ? undefined
     : environment.definitions.get(operatorName);
-  // Deviation from TLC: Tool#getActionsAppl casts the declaration of a constant operator an override replaces to an OpDefNode and throws a ClassCastException, so this names the action as the cast would.
+  // Deviation from TLC: Tool#getActionsAppl throws a ClassCastException on a call of an overridden constant operator it doesn't enter, which this names by its declaration.
   const namedConstant = isLocallyResolved(expression)
     ? undefined
     : environment.overriddenOperatorConstants.get(operatorName);

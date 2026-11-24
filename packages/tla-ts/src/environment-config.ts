@@ -453,7 +453,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       .filter((constant) => constant.arity > 0 && substitutions.has(constant.key))
       .map((constant) => [constant.key, constant]),
   );
-  // SymbolNodeValueLookupProvider#lookup finds a root override on the OpDefNode, so an instance's own OpDefNode of a standard operator still reaches the Java override on its body.
+  // A root override replaces only the root's definition, not an instance's copy of a standard operator.
   const getUnsubstitutedKey = (key: string) => {
     const builtin = rootSubstituted.has(key) ? linked.builtins.get(key) : undefined;
     if (!builtin) return key;

@@ -685,7 +685,7 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value, as it takes a LET definition's literal body. It enters any other LET definition's body, which lookup finds as an OpDefNode.
+    // Tool#enabledApplImpl enters a LazyValue that holds a value, where Tool#getNextStatesAppl takes the value but enters a LET definition without a literal body.
     if (
       binding?.kind === "Thunk" &&
       (replay.isEnabled
@@ -1395,7 +1395,7 @@ export const replaySuccessors = <Action extends ReplayAction & { node?: number }
     const successors: Value[][] = [];
     const node = action.node ?? -1;
     walkSuccessors(action, node, state, environment, (next) => successors.push(next));
-    // Tool#getNextStates counts an action's successors once it returns them, so an action that fails counts none.
+    // Tool#getNextStates counts an action's successors only once the action returns.
     if (coverage && node !== -1) coverage.primary[node] += successors.length;
     successors.forEach((successor) => onState(successor, action));
   });

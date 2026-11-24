@@ -846,7 +846,7 @@ const compileIdentifier = (
   let calledRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
-    // Tool#getNextStatesAppl takes a LET definition's literal body as the value its OpDefNode looks up, where Tool#enabled enters the LazyValue.
+    // Tool#getNextStatesAppl takes a LET definition's literal body as a value, where Tool#enabled enters it.
     if (
       binding?.kind === "Thunk" &&
       !binding.isReleased &&

@@ -2333,7 +2333,6 @@ const compileApply = (
   const global = isLocallyResolved(expression)
     ? undefined
     : resolveGlobalOperator(expression.operator, environment);
-  // Tool#evalAppl hands the Java override an instance's definition reaches the call's own arguments and context.
   const called =
     global?.kind === "Closure" &&
     global.body.kind === "Apply" &&
