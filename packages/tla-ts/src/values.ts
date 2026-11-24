@@ -547,7 +547,7 @@ const isOverriddenComparison = (left: Value, right: Value) =>
     right.kind === "SequenceSet"
   );
 
-// TLC formats a message as it throws, which can run a spec's Print, so a first attempt that may be retried defers it, and one that computeLikeTlcOnFailure retries in TLC's order stops before an observed filter runs its predicate.
+// TLC formats a message as it throws, which can run a spec's Print, so a first attempt that may be retried defers it.
 let attempt: "none" | "deferring" | "stopping" = "none";
 
 export const stopFirstAttempt = () => {
