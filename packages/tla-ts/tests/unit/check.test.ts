@@ -13178,6 +13178,17 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("prints in its written order a function that @@ combines once its lazy keys are sorted, as TLC's ToString prints an unnormalized function", async () => {
+    expect(await getPrintedFilterPasses("0", "PrintT(ToString(F :> 1 @@ {9} :> 2))")).toEqual([
+      '"n"',
+      "{}",
+      "{1}",
+      "{}",
+      "{1}",
+      '"({{}, {1}} :> 1 @@ {9} :> 2)"',
+    ]);
+  });
+
   it.each([
     ["{{s \\in SUBSET {1} : PrintT(s)}}", "y = y", ["{}", "{1}", '"c"']],
     ["{{s \\in SUBSET {1} : PrintT(s)}}", "{y, {{2}}} # {}", ["{}", "{1}", '"c"']],

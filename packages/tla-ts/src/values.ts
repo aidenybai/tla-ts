@@ -1777,8 +1777,7 @@ const getPairKeys = (pairs: [Value, Value][]) => {
   return keys;
 };
 
-const createSortedWrittenFunction = (pairs: [Value, Value][]) => {
-  const functionValue = createFunction(pairs);
+const setWrittenPairsOrder = (functionValue: FunctionValue, pairs: [Value, Value][]) => {
   const domain = functionValue.domain;
   if (domain.length !== pairs.length) return functionValue;
   for (let index = 0; index < pairs.length; index++) {
@@ -1787,6 +1786,9 @@ const createSortedWrittenFunction = (pairs: [Value, Value][]) => {
   }
   return functionValue;
 };
+
+const createSortedWrittenFunction = (pairs: [Value, Value][]) =>
+  setWrittenPairsOrder(createFunction(pairs), pairs);
 
 const getPairRange = (pairs: [Value, Value][]) => {
   const range = new Array<Value>(pairs.length);
@@ -1798,7 +1800,7 @@ export const createSortedPairsFunction = (pairs: [Value, Value][]) =>
   createSortedFunction(getPairKeys(pairs), getPairRange(pairs));
 
 const sortWrittenPairsLikeTlc = (pairs: [Value, Value][]) =>
-  sortLikeFcnRcdValue(getPairKeys(pairs), getPairRange(pairs));
+  setWrittenPairsOrder(sortLikeFcnRcdValue(getPairKeys(pairs), getPairRange(pairs)), pairs);
 
 // TLC's CombineFcn and Bags build the function unnormalized, and tla-ts runs the FcnRcdValue#sort of its first normalize here when a key's comparison shows.
 export const createWrittenFunction = (pairs: [Value, Value][]) =>

@@ -200,6 +200,24 @@ describe("the Bags module matches TLC", () => {
     },
   );
 
+  it.each([
+    ["(F :> 1) (+) ({9} :> 2)", '"({{}, {1}} :> 1 @@ {9} :> 2)"'],
+    ["((F :> 1) (+) ({9} :> 2)) (-) ({9} :> 1)", '"({{}, {1}} :> 1 @@ {9} :> 1)"'],
+    [
+      "BagOfAll(LAMBDA e : IF e = 1 THEN F ELSE {9}, SetToBag({1, 2}))",
+      '"({{}, {1}} :> 1 @@ {9} :> 1)"',
+    ],
+  ])(
+    "prints %s in its written order once its lazy keys are sorted, as TLC's ToString prints an unnormalized bag",
+    async (expression, line) => {
+      expect(
+        await getPrintedLines(
+          `PrintT("n") /\\ LET F == {s \\in SUBSET {1} : PrintT(s)} IN PrintT(ToString(${expression}))`,
+        ),
+      ).toEqual(['"n"', "{}", "{1}", "{}", "{1}", line]);
+    },
+  );
+
   it("applies an operator whose body is not a literal", async () => {
     const result = await checkBags(
       "ASSUME BagOfAll(LAMBDA e : TRUE, <<1>>) = (TRUE :> 1)\nASSUME LET H(e) == -1 IN BagOfAll(H, <<1, 1>>) = (-1 :> 2)\nASSUME BagOfAll(LAMBDA e : C, <<1>>) = (C :> 1)",
