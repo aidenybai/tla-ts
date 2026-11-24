@@ -8965,6 +8965,17 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("converts a lazy function past 10,000 EXCEPTs to a tuple and a record, as TLC's FcnLambdaValue#toTuple and #toFcnRcd walk them in a loop", async () => {
+    const clauses = Array.from({ length: 10000 }, (_value, index) => `![1] = ${index + 1}`);
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 0 /\\ LET f == [a \\in {1} |-> [[z \\in 1..2 |-> z] EXCEPT ${clauses.join(", ")}]][1] IN PrintT(Len(f)) /\\ PrintT(f)\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["2", "<<10000, 2>>"]]);
+  });
+
   it.each([
     [
       "a tuple and a function",

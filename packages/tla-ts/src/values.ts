@@ -1498,10 +1498,7 @@ const normalizeDeeplyWithin = (
       return pending;
     case "LazyFunction": {
       if (value.enumerated) return normalizeDeeplyWithin(value.enumerated, depth + 1, pending);
-      const copies: LazyFunctionCopy[] = [];
-      for (let current = value; isLazyFunctionCopy(current); current = current.original) {
-        copies.push(current);
-      }
+      const copies = getLazyFunctionCopies(value);
       for (let index = copies.length - 1; index >= 0; index--) {
         const copy = copies[index];
         pending = normalizeDeeplyWithin(copy.newValue, depth + 1, pending);
@@ -4584,14 +4581,27 @@ export const getLazyFunctionNode = (value: LazyFunctionValue) =>
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
+const getLazyFunctionCopies = (value: LazyFunctionValue) => {
+  const copies: LazyFunctionCopy[] = [];
+  for (let current = value; isLazyFunctionCopy(current); current = current.original) {
+    copies.push(current);
+  }
+  return copies;
+};
+
 // FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
-const getCopiedValue = (copy: LazyFunctionCopy, key: Value, value: Value): Value => {
-  const previous = isLazyFunctionCopy(copy.original)
-    ? getCopiedValue(copy.original, key, value)
-    : value;
-  return isEqualLikeTlc(copy.path[copy.depth], key)
-    ? takeExcept(previous, copy.path, copy.depth + 1, copy.newValue)
-    : previous;
+const getCopiedRange = (copy: LazyFunctionCopy, domain: Value[]) => {
+  const copies = getLazyFunctionCopies(copy);
+  return domain.map((key) => {
+    let value = copy.applyBody(key);
+    for (let index = copies.length - 1; index >= 0; index--) {
+      const older = copies[index];
+      if (isEqualLikeTlc(older.path[older.depth], key)) {
+        value = takeExcept(value, older.path, older.depth + 1, older.newValue);
+      }
+    }
+    return value;
+  });
 };
 
 const describeNonFunction = (value: Value) => `Expected a function but found ${formatValue(value)}`;
@@ -4611,7 +4621,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     }
     const domain = getFunctionDomain(value.domain, false);
     const range = isLazyFunctionCopy(value)
-      ? domain.map((key) => getCopiedValue(value, key, value.applyBody(key)))
+      ? getCopiedRange(value, domain)
       : domain.map((key) => value.apply(key));
     value.enumerated = createConstructedFunction(value.domain, domain, range);
     finishConversion?.();
@@ -4888,6 +4898,12 @@ const selectLazyBody = (
   return isElementOf(argument, functionValue.domain) ? body.apply(argument) : undefined;
 };
 
+const applyUncheckedBody = (
+  _functionValue: LazyFunctionValue,
+  body: LazyFunctionValue,
+  argument: Value,
+) => body.apply(argument);
+
 // FcnLambdaValue#apply and #select compare the argument once with each EXCEPT, newest first, and check the domain only when none ends at it.
 const applyExcepts = <Result extends Value | undefined>(
   functionValue: LazyFunctionValue,
@@ -5005,18 +5021,11 @@ const copyLazyFunction = (
   depth: number,
   newValue: Value,
 ) => {
-  const argument = path[depth];
   // Deviation from TLC: FcnLambdaValue#takeExcept builds its copy with new FcnLambdaValue(this), which drops cm, so TLC counts none of the copy's evaluations of the body, not even the second one at a key whose EXCEPT goes deeper.
   const copy: LazyFunctionCopy = {
     kind: "LazyFunction",
     domain: functionValue.domain,
-    apply:
-      depth === path.length - 1
-        ? (key) => (isEqualLikeTlc(argument, key) ? newValue : functionValue.apply(key))
-        : (key) =>
-            isEqualLikeTlc(argument, key)
-              ? takeExcept(functionValue.apply(key), path, depth + 1, newValue)
-              : functionValue.apply(key),
+    apply: (key) => applyExcepts(copy, key, isElementOf, applyUncheckedBody),
     source: functionValue.source,
     boundTupleLengths: functionValue.boundTupleLengths,
     isApplicationObserved: functionValue.isApplicationObserved,
