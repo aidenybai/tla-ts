@@ -6,7 +6,11 @@ import {
   TlaConfigError,
   TlaEvaluationError,
 } from "../../src";
-import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import {
+  STACK_OVERFLOW_MESSAGE,
+  UNEXPECTED_EVAL_EXCEPTION,
+  UNEXPECTED_EXCEPTION,
+} from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
 import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
@@ -3183,6 +3187,32 @@ describe("evaluation errors match TLC", () => {
       75,
     ]);
   });
+
+  it.each([
+    ["(x[1] = 0 /\\ x' = <<1, {Any}>>) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)", ["<<0, 0>>"]],
+    ["(x[1] = 0 /\\ x' = <<1, [a |-> Any]>>) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)", ["<<0, 0>>"]],
+    ["(x[1] = 0 /\\ x' = <<1, <<Any>>>>) \\/ (x[1] = 1 /\\ x' = <<2, x[2]>>)", ["<<0, 0>>"]],
+    ["(x[1] = 0 /\\ x' = <<1, 0>>) \\/ (x[1] = 1 /\\ x' = <<2, {Any}>>)", ["<<0, 0>>", "<<1, 0>>"]],
+  ])(
+    "reports the comparison of ANY as it rebuilds the step %s, as TLC's Tool#getState lets the EvalException of AnySet#compareTo through",
+    async (next, trace) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = <<0, 0>>\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([
+        result.failure?.trace.map((step) => formatValue(step.state.x)),
+        result.failure?.traceFailure?.message,
+        result.failure?.fingerprint?.reason,
+        result.failure?.exitCode,
+      ]).toEqual([
+        trace,
+        `${UNEXPECTED_EVAL_EXCEPTION}Attempted to compare ANY with the value\nANY`,
+        "TLC has found a state in which the value of a variable contains ANY",
+        75,
+      ]);
+    },
+  );
 
   // Deviation from TLC: TLC prints "Too many possible next states for the last state in the trace." after x = 1.
   it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {

@@ -7,7 +7,14 @@ import { getStateHash, isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
-import { createModelValue, getFingerprintError, isSameValue, type Value } from "./values";
+import {
+  createModelValue,
+  getFingerprintError,
+  hasLazyPart,
+  isEqualLikeTlc,
+  isSameValue,
+  type Value,
+} from "./values";
 
 export interface Behavior {
   trace: TraceStep[];
@@ -142,9 +149,12 @@ export const createTraceBuilder = (context: TraceContext) => {
   const isEqualState = (state: Value[], successor: Value[]) =>
     state.every((value, position) => {
       const error = getFingerprintError(value);
+      if (!error) return isSameValue(value, successor[position]);
       // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC misses the step and reports a TLC bug(5), or a NullPointerException after an initial state.
-      if (error) throw error;
-      return isSameValue(value, successor[position]);
+      if (hasLazyPart(value)) throw error;
+      // TLC compares a value that holds no lazy part, which fails on ANY, before StatePrinter fingerprints it.
+      isEqualLikeTlc(value, successor[position]);
+      throw error;
     });
   // Deviation from TLC: Tool#getState bounds a step's successors by -maxSetSize, so TLC can't print a trace past a state with more.
   const findStepAction = (

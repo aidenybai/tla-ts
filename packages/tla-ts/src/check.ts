@@ -1706,18 +1706,18 @@ const searchStates = (
         const behavior = traceError
           ? traces.getStateTrace(index, { isPrintedOnly: true })
           : traces.getTrace(index, successor, { isPrintedOnly: true });
-        const traceFailure =
+        const rebuilt =
           traceError &&
-          getTraceFailure(
-            traceError,
-            captureOutput(() => {
-              try {
-                traces.findStepAction(index, state, successor.state, true);
-              } catch (failed) {
-                if (!(failed instanceof TlaEvaluationError)) throw failed;
-              }
-            }).lines,
-          );
+          captureOutput(() => {
+            try {
+              traces.findStepAction(index, state, successor.state, true);
+              return traceError;
+            } catch (failed) {
+              if (!(failed instanceof TlaEvaluationError)) throw failed;
+              return failed;
+            }
+          });
+        const traceFailure = rebuilt && getTraceFailure(rebuilt.result, rebuilt.lines);
         const replay = is174
           ? captureOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);
