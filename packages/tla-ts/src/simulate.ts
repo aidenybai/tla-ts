@@ -126,6 +126,9 @@ const FATAL_CODES = new Set<number>([
   MESSAGE_CODE.incompleteSuccessor,
 ]);
 
+// TLC's worker keeps simulating after an error until its main thread stops it, about 150 states later.
+const STOP_DELAY_STATES = 150;
+
 const INFINITE_DEPTH = 2147483647;
 
 const RL_ALPHA = 0.3;
@@ -813,6 +816,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;
+  let stoppedStates: number | undefined;
   while (true) {
     statistics.traces++;
     currentTrace = statistics.traces;
@@ -828,9 +832,12 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     if (outcome) errors.push(outcome);
     if (outcome?.isException) break;
     if (BigInt(traceCount) >= traceLimit) break;
-    // TLC's worker starts one more behavior before the Simulator stops it, unless traces are bounded.
     const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
-    if (isStopping && options.traceCount === undefined) {
+    if (isStopping && stoppedStates === undefined) stoppedStates = statistics.generatedStates;
+    if (
+      stoppedStates !== undefined &&
+      statistics.generatedStates - stoppedStates >= STOP_DELAY_STATES
+    ) {
       statistics.traces++;
       break;
     }

@@ -1,7 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { formatValue } from "../../src";
 import type { TraceStep } from "../../src/check";
-import { simulate } from "../../src/simulate";
+import { simulate, type SimulationStatistics } from "../../src/simulate";
 import { MESSAGE_LEVEL } from "../../src/tlc/messages";
 
 const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
@@ -785,4 +785,62 @@ it("checks the assumptions of a specification without variables and then finds n
       "2118 There is no state satisfying the initial state predicate.",
     ],
   ]);
+});
+
+const getStopTotals = (
+  source: string,
+  config: string,
+  traceDepth: number,
+  traceCount: bigint,
+  isContinued: boolean,
+) => {
+  let summary: SimulationStatistics | undefined;
+  const status = simulate({
+    source,
+    config,
+    seed: 4n,
+    traceDepth,
+    traceCount,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isContinued,
+    onSimulation: (output) => {
+      if (output.kind === "summary") summary = output.statistics;
+    },
+  });
+  return [status, summary?.generatedStates, summary?.traces];
+};
+
+it("stops simulating about 150 states after a deadlock, as TLC's worker does until its main thread stops it", () => {
+  const totals = getStopTotals(
+    "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == (x = 2 /\\ x' = 3) \\/ (x < 3 /\\ x' = (x + 1) % 3)\n====",
+    "INIT Init\nNEXT Next",
+    15,
+    20000n,
+    false,
+  );
+  expect(totals).toEqual([11, 154, 30]);
+});
+
+it("finishes every behavior when fewer than 150 states remain after a deadlock, as TLC's worker does", () => {
+  const totals = getStopTotals(
+    "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nNext == x < 20 /\\ x' = x + 1\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(x = 20)\n====",
+    "SPECIFICATION Spec\nPROPERTY Prop",
+    30,
+    8n,
+    false,
+  );
+  expect(totals).toEqual([11, 161, 8]);
+});
+
+it("stops simulating about 150 states after an error that -continue can't continue, as TLC's worker does", () => {
+  const totals = getStopTotals(
+    "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == x < 2 \\/ (CHOOSE y \\in {} : TRUE)\n====",
+    "INIT Init\nNEXT Next\nINVARIANT Inv",
+    6,
+    2000n,
+    true,
+  );
+  expect(totals).toEqual([76, 153, 77]);
 });
