@@ -684,11 +684,11 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const paths = [...new Set(specPaths.map(findSpec))];
   const exitCodes: number[] = [];
   const userFile = parsed.userFile;
-  // The programs of several TypeScript or JavaScript files share the files that they parse.
-  const shareFiles =
-    paths.filter(isProgramPath).length > 1
-      ? (await import("../typescript/program")).shareParsedFiles
-      : <T>(run: () => Promise<T>) => run();
+  // Several TypeScript or JavaScript files share a program of each project of theirs.
+  const shareFiles = async <T>(programPaths: readonly string[], run: () => Promise<T>) =>
+    programPaths.length > 1
+      ? (await import("../typescript/program")).shareParsedFiles(programPaths, run)
+      : run();
   // With -shared, the TypeScript files check in groups, each of which shares one program, which
   // runs once, and each file's model starts from the state it leaves.
   const isShared =
@@ -700,7 +700,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   // The run compiles the shared program of each group of its TypeScript files, so that it parses
   // each file once for every group, and checks the group in a worker of its own.
   if (isShared && group === undefined) {
-    return shareFiles(() =>
+    return shareFiles(paths.filter(isProgramPath), () =>
       checkSharedGroups(process.argv.slice(2), paths.length, (first, count) => {
         const programPaths = paths.slice(first, first + count).filter(isProgramPath);
         return programPaths.length > 1
@@ -723,7 +723,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
             fingerprintPolynomial: parsed.fingerprintIndex,
             version,
           });
-    return shareFiles(async () => {
+    return shareFiles(programPaths, async () => {
       for (const [offset, path] of groupPaths.entries()) {
         const index = offset + (group?.first ?? 0);
         if (index > 0) console.log("");

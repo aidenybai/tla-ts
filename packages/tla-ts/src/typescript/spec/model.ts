@@ -4,7 +4,7 @@ import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
 import { getCommonJsExports } from "../context";
-import { getJsxText, type Library } from "../program";
+import { getJsxText, parseFile, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, isIndexKey } from "./native";
@@ -30,7 +30,13 @@ const ENDLESS_STEPS = 20;
 export interface EscoreScript {
   isScript: true;
   notes: string[];
+  isAugmented: boolean;
 }
+
+// The note of a file whose types another file of its run could change, which a program of its own
+// reads, as a run of the file alone does.
+export const getAugmentedNote = (fileName: string) =>
+  `tla-ts reads the types of ${fileName.slice(fileName.lastIndexOf("/") + 1)} in a program of its own [augmented]: another file of its run augments what they read`;
 
 // The definitions every model's steps read: how a step calls a function that the module binds,
 // what a check shows of a JavaScript value, and the message of what a step throws.
@@ -294,6 +300,7 @@ export interface ModelPlan {
   entries: ReadonlySet<string>;
   reads: string;
   isShareable: boolean;
+  isAugmented: boolean;
   getSteps: (file: number) => string;
   finish: (compiled: EscoreSpec, shared?: number) => EscoreModel;
 }
@@ -317,7 +324,7 @@ export const planModel = (
 ): ModelPlan | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
-  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  const file = parseFile(fileName, text);
   // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
   // The names that the file's code reads, of which a host's global may be one.
   const identifiers = new Set<string>();
@@ -347,7 +354,9 @@ export const planModel = (
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
   const today = frameModel(source, fileName, library, runtime.names, setBound);
-  if (today.isScript) return { isScript: true, notes: today.notes };
+  if (today.isScript) {
+    return { isScript: true, notes: today.notes, isAugmented: today.isAugmented };
+  }
   const module = today.source;
   const config = parseConfig(today.config);
   // The binding of the function that each of the spec's names calls.
@@ -1669,6 +1678,7 @@ export const planModel = (
     // A module whose model keeps its code as it is and starts from the one state its top level
     // leaves reads that state the same in a program of other files that import it.
     isShareable: isModule && lowered === undefined && choose.length === 0 && appended.length === 0,
+    isAugmented: today.isAugmented,
     getSteps: (file: number) => getModelSteps(file, "Completed(ApplyTo(RunProgram, s)).s"),
     finish,
   };
@@ -1698,12 +1708,14 @@ export const compileModelToEscore = (
   setBound?: number,
 ): EscoreModel | EscoreScript => {
   const plan = planModel(source, fileName, runtime, library, isLowerable, setBound);
-  if (plan.isScript) return plan;
-  return plan.finish(
+  const augmented = plan.isAugmented ? [getAugmentedNote(fileName)] : [];
+  if (plan.isScript) return { ...plan, notes: [...augmented, ...plan.notes] };
+  const model = plan.finish(
     compileToEscore(plan.code, fileName, runtime, plan.isModule, {
       steps: plan.getSteps(1),
       entries: [...plan.entries],
       reads: plan.reads,
     }),
   );
+  return { ...model, notes: [...augmented, ...model.notes] };
 };

@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { KEYWORDS } from "../../lexer";
 import { parseModule } from "../../parser";
+import { compareNames } from "../../obligations/module";
 import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
 import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
@@ -106,6 +107,28 @@ const MUTATING_METHODS = new Set([
 ]);
 
 const MAX_ARRAY_LENGTH = 3;
+
+// The most characters of a type that a note prints, as TypeScript's typeToString prints at most
+// where the program's options don't ask for whole errors.
+const MOST_TYPE_CHARACTERS = 320;
+
+// The values that a frame lists first of a union's literals, in this order, before its numbers in
+// order of value and its strings in order of their text.
+const FIRST_LITERALS = ["Undefined", "Null", "FALSE", "TRUE"];
+
+// The kinds of a parameter's type that a note names where no domain lists it, in the order that it
+// names the first of a union's.
+const UNLISTED_KINDS = [
+  "a type parameter",
+  "any, as an untyped parameter is",
+  "unknown",
+  "a function",
+  "an instance of a class",
+  "an object with methods",
+];
+
+// The kinds of values that a note names where a union mixes them, in the order that it names them.
+const VALUE_KINDS = ["string", "number", "bigint", "boolean", "array", "Set", "Map", "object"];
 
 // The most characters of TLA+ that a parameter's set of values takes, which the model writes into
 // its spec beside each check of the parameter.
@@ -631,6 +654,11 @@ export const frameModel = (
     if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return "Undefined";
     return undefined;
   };
+  const getLiteralRank = (type: ts.Type) => {
+    const rank = FIRST_LITERALS.indexOf(getLiteral(type) ?? "");
+    if (rank !== -1) return rank;
+    return type.isNumberLiteral() ? FIRST_LITERALS.length : FIRST_LITERALS.length + 1;
+  };
   const getShape = (type: ts.Type): Shape | undefined => {
     if (type.isUnion()) {
       return type.types
@@ -714,8 +742,51 @@ export const frameModel = (
           ),
         };
   };
+  // A type's text, as typeToString prints it, with each union's members in order of their text, and
+  // null and undefined last. typeToString orders a union's members by their types' ids, which a
+  // checker that frames several files numbers in the order that the frames read them.
+  const printer = ts.createPrinter({ removeComments: true });
+  const printNode = (node: ts.Node) =>
+    // HACK: printNode's declaration asks for a source file, but typeToString prints with none, so
+    // that a node the checker reuses from a declaration prints from its own file's text.
+    printer.printNode(ts.EmitHint.Unspecified, node, undefined as unknown as ts.SourceFile);
+  const getNullableRank = (node: ts.TypeNode) =>
+    ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword
+      ? 1
+      : node.kind === ts.SyntaxKind.UndefinedKeyword
+        ? 2
+        : 0;
+  const sortUnions = (context: ts.TransformationContext) => (root: ts.TypeNode) => {
+    const visit = (node: ts.Node): ts.Node => {
+      const visited = ts.visitEachChild(node, visit, context);
+      if (!ts.isUnionTypeNode(visited)) return visited;
+      const members = visited.types
+        .map((member) => ({ member, rank: getNullableRank(member), text: printNode(member) }))
+        .toSorted((left, right) => left.rank - right.rank || compareNames(left.text, right.text));
+      return context.factory.updateUnionTypeNode(
+        visited,
+        context.factory.createNodeArray(members.map((inner) => inner.member)),
+      );
+    };
+    return ts.visitNode(root, visit, ts.isTypeNode);
+  };
+  const printType = (type: ts.Type) => {
+    const node = checker.typeToTypeNode(
+      type,
+      undefined,
+      ts.NodeBuilderFlags.AllowUniqueESSymbolType |
+        ts.NodeBuilderFlags.UseAliasDefinedOutsideCurrentScope |
+        ts.NodeBuilderFlags.IgnoreErrors |
+        ts.NodeBuilderFlags.NoTruncation,
+    );
+    if (node === undefined) return checker.typeToString(type);
+    const text = printNode(ts.transform(node, [sortUnions]).transformed[0]);
+    return program.options.noErrorTruncation === true || text.length < MOST_TYPE_CHARACTERS
+      ? text
+      : `${text.slice(0, MOST_TYPE_CHARACTERS - 3)}...`;
+  };
   const getInfinite = (type: ts.Type, reason: string): Infinite => ({
-    message: `${checker.typeToString(type)} isn't finite: ${reason}`,
+    message: `${printType(type)} isn't finite: ${reason}`,
   });
   // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
   // values it has. outer holds the types around this one, so a type that holds itself, such as a
@@ -733,7 +804,7 @@ export const frameModel = (
     isHeldOptional = false,
   ): Domain | Infinite => {
     if (outer.includes(type)) {
-      return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
+      return { message: `${printType(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
     if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
@@ -741,19 +812,29 @@ export const frameModel = (
       const members = isHeldOptional
         ? type.types.filter((member) => !isMissing(member))
         : type.types;
+      // The members go in an order that their types' ids don't give, as printType's do: literals
+      // by value, then other types by their text.
       const literalTypes = members
         .filter((member) => getLiteral(member) !== undefined)
-        .toSorted((left, right) =>
-          left.isNumberLiteral() && right.isNumberLiteral() ? left.value - right.value : 0,
+        .toSorted(
+          (left, right) =>
+            getLiteralRank(left) - getLiteralRank(right) ||
+            (left.isNumberLiteral() && right.isNumberLiteral()
+              ? left.value - right.value
+              : compareNames(getLiteral(left) ?? "", getLiteral(right) ?? "")),
         );
       const others = findDomains(
-        members.filter((member) => !literalTypes.includes(member)),
+        members
+          .filter((member) => !literalTypes.includes(member))
+          .map((member) => ({ member, text: printType(member) }))
+          .toSorted((left, right) => compareNames(left.text, right.text))
+          .map((inner) => inner.member),
         path,
       );
       if (!Array.isArray(others)) return others;
       if (getShape(type) === undefined) {
         return {
-          message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+          message: `${printType(type)} mixes values that TLC can't compare, such as a string and a number`,
           isIncomparable: true,
         };
       }
@@ -825,7 +906,12 @@ export const frameModel = (
         ).reduce((sum, count) => sum + count),
       };
     }
-    const properties = type.getProperties();
+    // A mapped type's properties, which no declaration gives, go in the order of its keys' type's
+    // members, which their ids give, so the record's fields go in order of their names.
+    const declared = type.getProperties();
+    const properties = declared.some((property) => property.declarations === undefined)
+      ? declared.toSorted((left, right) => compareNames(left.name, right.name))
+      : declared;
     const isRecord =
       type.flags & ts.TypeFlags.Object &&
       type.getCallSignatures().length === 0 &&
@@ -912,7 +998,7 @@ export const frameModel = (
     }
     if (!keys.every(isNumericKey) || fieldTypes.some((fieldType) => fieldType !== fieldTypes[0])) {
       return {
-        message: `${checker.typeToString(type)} has numeric keys, so every key must be a number with the same value type`,
+        message: `${printType(type)} has numeric keys, so every key must be a number with the same value type`,
       };
     }
     return {
@@ -1064,7 +1150,8 @@ export const frameModel = (
     if (type.flags & ts.TypeFlags.Any) return "any, as an untyped parameter is";
     if (type.flags & ts.TypeFlags.Unknown) return "unknown";
     if (type.isUnion()) {
-      const kind = type.types.map(getUnlistedKind).find((inner) => inner !== undefined);
+      const kinds = type.types.map(getUnlistedKind);
+      const kind = UNLISTED_KINDS.find((candidate) => kinds.includes(candidate));
       return kind === undefined ? undefined : `a union with ${kind}`;
     }
     if (type.getCallSignatures().length > 0) return "a function";
@@ -1094,13 +1181,14 @@ export const frameModel = (
                   : "object";
   // The kinds of the values that a union mixes, beside null and undefined, which TLC compares with
   // any value.
-  const getMixedKinds = (type: ts.Type) => [
-    ...new Set(
+  const getMixedKinds = (type: ts.Type) => {
+    const kinds = new Set<string>(
       (type.isUnion() ? type.types : [type])
         .filter((member) => getLiteral(member) !== "Null" && getLiteral(member) !== "Undefined")
         .map(getValueKind),
-    ),
-  ];
+    );
+    return VALUE_KINDS.filter((kind) => kinds.has(kind));
+  };
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -1406,6 +1494,9 @@ export const frameModel = (
   ].join("\n");
   return {
     isScript: called.length === 0,
+    // Whether another file of the run could change the types that the frame reads, which it reads
+    // in a program of its own.
+    isAugmented: program.isAugmented,
     text,
     source: parseModule(text),
     config,
