@@ -871,6 +871,7 @@ export const getSpecDescription = (
       instanceActions,
       description,
       next,
+      substitutionFrames.get(specification.body),
     );
     next.forEach((item) => {
       if (item.frames.length === 0) {
