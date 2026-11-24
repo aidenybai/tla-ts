@@ -285,10 +285,7 @@ const describeKind = (value: Value) => {
 export const isTlcInteger = (value: number) =>
   Number.isInteger(value) && value <= MAXIMUM_INTEGER && value >= MINIMUM_INTEGER;
 
-let isWrittenOrderUsed = false;
-
 const setWrittenOrder = (functionValue: FunctionValue, keys: Value[]) => {
-  isWrittenOrderUsed = true;
   functionValue.writtenKeys = keys;
   return functionValue;
 };
@@ -330,7 +327,7 @@ export const createWrittenRecord = (
 
 // TLC's SetOfRcdsValue#member, SetOfFcnsValue#member and FcnRcdValue#toRcd normalize the record or function they check in place.
 const forgetOwnWrittenOrder = (value: Value) => {
-  if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
+  if (typeof value === "object" && value.kind === "Function") {
     value.writtenKeys = undefined;
   }
 };
@@ -341,10 +338,8 @@ const isRecordMismatch = (left: Value[], right: Value[]) =>
   left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);
 
 const compareFunctions = (left: FunctionValue, right: FunctionValue) => {
-  if (isWrittenOrderUsed) {
-    left.writtenKeys = undefined;
-    right.writtenKeys = undefined;
-  }
+  if (left.writtenKeys !== undefined) left.writtenKeys = undefined;
+  if (right.writtenKeys !== undefined) right.writtenKeys = undefined;
   if (
     (left.costModel !== undefined || right.costModel !== undefined) &&
     left.functionClass !== right.functionClass
@@ -464,7 +459,6 @@ export const setStringOrder = (texts: Iterable<string>) => {
   Object.assign(stringOrder, createStringOrder());
   modelValues.clear();
   isTypedModelValueCreated = false;
-  isWrittenOrderUsed = false;
   hasStreamedSet = false;
   for (const text of texts) rankString(text);
 };
@@ -640,7 +634,7 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
       return compareWithItself(toFiniteFunction(value), isEquality);
     case "Function": {
       if ((value.walkFlags & SELF_COMPARED_FLAG) !== 0 || isHashed(value)) return true;
-      if (isWrittenOrderUsed) value.writtenKeys = undefined;
+      if (value.writtenKeys !== undefined) value.writtenKeys = undefined;
       const domain = value.domain;
       const range = value.range;
       let isInnerSettled = true;
