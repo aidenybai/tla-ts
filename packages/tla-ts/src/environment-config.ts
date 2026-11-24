@@ -1,4 +1,4 @@
-import type { Definition, Expression } from "./ast";
+import type { Declaration, Definition, Expression } from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
@@ -54,6 +54,7 @@ interface AppliedConfig {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  overriddenOperatorConstants: Map<string, Declaration>;
 }
 
 const toValue = (value: ConfigValue): Value => {
@@ -447,6 +448,11 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       });
     });
   [...substitutions.keys()].forEach((key) => constants.delete(key));
+  const overriddenOperatorConstants = new Map(
+    linked.root.constants
+      .filter((constant) => constant.arity > 0 && substitutions.has(constant.key))
+      .map((constant) => [constant.key, constant]),
+  );
   // SymbolNodeValueLookupProvider#lookup finds a root override on the OpDefNode, so an instance's own OpDefNode of a standard operator still reaches the Java override on its body.
   const getUnsubstitutedKey = (key: string) => {
     const builtin = rootSubstituted.has(key) ? linked.builtins.get(key) : undefined;
@@ -478,5 +484,5 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.set(key, alias);
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  return { constants, bodyValues, substitutions };
+  return { constants, bodyValues, substitutions, overriddenOperatorConstants };
 };

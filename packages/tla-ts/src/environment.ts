@@ -2051,6 +2051,7 @@ export const createEnvironment = (
     constants,
     bodyValues,
     substitutions,
+    overriddenOperatorConstants: applied.overriddenOperatorConstants,
     reevaluatedSubstitutes: new Map(),
     instanceNames,
     standardAliasBodies,

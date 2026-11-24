@@ -8,6 +8,7 @@ import {
   type Bound,
   type BoundPattern,
   type DecimalExpression,
+  type Declaration,
   type Definition,
   type Expression,
   type FunctionDefinition,
@@ -219,6 +220,7 @@ export interface Environment {
   constants: Map<string, Value>;
   bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
+  overriddenOperatorConstants: Map<string, Declaration>;
   reevaluatedSubstitutes: Map<string, Definition>;
   instanceNames: Map<string, string>;
   standardAliasBodies: Set<Expression>;

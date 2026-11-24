@@ -13852,17 +13852,17 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
-  it("names an action that calls an overridden operator constant by its substitute, where TLC's Tool#getActionsAppl throws a ClassCastException", async () => {
+  it("names an action that calls an overridden operator constant by its declaration, as TLC's Tool#getActionsAppl would if its cast to an OpDefNode didn't throw a ClassCastException", async () => {
     const result = await check({
       source: OVERRIDDEN_ACTIONS,
       config: "INIT Init\nNEXT NextOp\nCONSTANT Op <- MStp\nINVARIANT Inv",
       coverage: 1,
     });
-    const label = "MStp line 12, col 11 to line 12, col 15 of module M";
+    const label = "Op line 12, col 11 to line 12, col 15 of module M";
     expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
     expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
       "Init line 9, col 1 to line 9, col 4 of module M",
-      "MStp line 6, col 1 to line 6, col 7 of module M (12 11 12 15)",
+      "Op line 3, col 10 to line 3, col 14 of module M (12 11 12 15)",
       "Inv line 13, col 1 to line 13, col 3 of module M",
     ]);
   });
