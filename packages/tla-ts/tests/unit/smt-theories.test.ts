@@ -260,6 +260,34 @@ describe("the setup of the smt kernel", () => {
     ).toEqual(["sat", "(:rlimit 432)", "sat", "(:rlimit 561)"]);
   });
 
+  it("leaves the condition of a term ite to the core where the setup turns off arith.reflect", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const y Int)",
+        "(declare-const w Int)",
+        "(declare-const q Bool)",
+        "(assert (<= (ite q y w) 0))",
+        "(push)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 69)"]);
+    expect(
+      run([
+        "(set-logic QF_UFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const y Int)",
+        "(declare-const w Int)",
+        "(declare-const q Bool)",
+        "(assert (<= (ite q (f y) w) 0))",
+        "(push)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 79)"]);
+  });
+
   it("delays the interface equalities of arrays to every fourth final check under AUFLIRA", () => {
     expect(
       run([

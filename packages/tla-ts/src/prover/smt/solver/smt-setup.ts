@@ -131,6 +131,7 @@ export interface SmtConfig {
   isEliminatingTermIte: boolean;
   isLiftingNonGroundIte: boolean;
   isEliminatingBounds: boolean;
+  isArithReflecting: boolean;
   isArithPropagatingEqs: boolean;
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
@@ -178,6 +179,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isEliminatingTermIte: false,
   isLiftingNonGroundIte: false,
   isEliminatingBounds: false,
+  isArithReflecting: true,
   isArithPropagatingEqs: true,
   arithPropagationThreshold: Infinity,
   isArithBoundPropagating: true,
@@ -222,6 +224,7 @@ const setupQfDt = (config: SmtConfig) => {
 const setupDiffLogicParams = (config: SmtConfig) => {
   config.relevancyLevel = 0;
   config.isEq2Ineq = true;
+  config.isArithReflecting = false;
   config.isArithPropagatingEqs = false;
   config.isNnfCnf = false;
 };
@@ -321,6 +324,7 @@ const setupQfIdlByFeatures = (config: SmtConfig, features: StaticFeatures, setup
 
 const setupQfUfIdl = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithReflecting = false;
   config.isNnfCnf = false;
   config.isEq2Ineq = true;
   config.restartStrategy = RS_GEOMETRIC;
@@ -335,6 +339,7 @@ const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => 
       "Benchmark has real variables but it is marked as QF_UFIDL (uninterpreted functions and difference logic).",
     );
   config.relevancyLevel = 0;
+  config.isArithReflecting = false;
   config.isNnfCnf = false;
   if (features.numUninterpretedFunctions === 0) {
     config.isEq2Ineq = true;
@@ -354,6 +359,7 @@ const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => 
 const setupQfUfLra = (config: SmtConfig) => {
   config.theories.push(FAMILY_ARITH);
   config.relevancyLevel = 0;
+  config.isArithReflecting = false;
   config.isNnfCnf = false;
 };
 
@@ -364,6 +370,7 @@ const setupQfUfLia = (config: SmtConfig) => {
 
 const setupQfBv = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithReflecting = false;
   config.isNnfCnf = false;
   config.theories.push(FAMILY_BV);
 };
@@ -462,6 +469,7 @@ const setupAufLira = (config: SmtConfig, isArraySimple = true) => {
 
 const setupLra = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isArithReflecting = false;
   config.isArithPropagatingEqs = false;
   config.isEliminatingTermIte = true;
   config.theories.push(FAMILY_ARITH);

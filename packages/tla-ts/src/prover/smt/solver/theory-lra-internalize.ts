@@ -128,20 +128,40 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
 
   protected mkEnode(expr: number) {
     const context = this.context;
-    for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
-      const arg = this.manager.getArg(expr, index);
-      if (context.isEInternalized(arg)) continue;
-      context.internalize(arg, false);
-      context.markAsRelevant(arg);
-    }
+    const isReflecting = this.isReflecting(expr);
+    if (isReflecting)
+      for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
+        const arg = this.manager.getArg(expr, index);
+        if (context.isEInternalized(arg)) continue;
+        context.internalize(arg, false);
+        context.markAsRelevant(arg);
+      }
     if (context.isEInternalized(expr)) return;
     const op = this.manager.getOp(expr);
     const isArith = this.manager.getFamily(expr) === FAMILY_ARITH;
-    context.mkEnode(expr, false, false, !(isArith && (op === OP_ADD || op === OP_MUL)));
+    context.mkEnode(expr, !isReflecting, false, !(isArith && (op === OP_ADD || op === OP_MUL)));
   }
 
-  private internalizeArgs(expr: number) {
+  private isReflecting(expr: number) {
+    return this.context.config.isArithReflecting || this.isUnderspecified(expr);
+  }
+
+  protected isUnderspecified(expr: number) {
+    const op = this.manager.getOp(expr);
+    return (
+      op === OP_DIV ||
+      op === OP_IDIV ||
+      op === OP_REM ||
+      op === OP_MOD ||
+      op === OP_DIV0 ||
+      op === OP_IDIV0 ||
+      op === OP_MOD0
+    );
+  }
+
+  private internalizeArgs(expr: number, isForced = false) {
     const context = this.context;
+    if (!isForced && !this.isReflecting(expr)) return;
     for (let index = 0; index < this.manager.getNumArgs(expr); index++) {
       const arg = this.manager.getArg(expr, index);
       if (!context.isEInternalized(arg)) context.internalize(arg, false);
@@ -196,7 +216,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   }
 
   private internalizeMul(expr: number) {
-    this.internalizeArgs(expr);
+    this.internalizeArgs(expr, true);
     const hasVar = this.context.isEInternalized(expr) && this.isAttachedExpr(expr);
     this.mkEnode(expr);
     const thVar = this.mkVar(expr);
@@ -224,7 +244,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
   }
 
   private internalizePower(power: number, degree: number) {
-    this.internalizeArgs(power);
+    this.internalizeArgs(power, true);
     const hasVar = this.context.isEInternalized(power) && this.isAttachedExpr(power);
     this.mkEnode(power);
     const thVar = this.mkVar(power);
