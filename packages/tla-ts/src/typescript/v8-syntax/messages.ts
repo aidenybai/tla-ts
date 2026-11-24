@@ -94,7 +94,6 @@ const MESSAGES = {
   kTemplateOctalLiteral: "Octal escape sequences are not allowed in template strings.",
   kTooManyArguments: "Too many arguments in function call (only 65525 allowed)",
   kTooManyParameters: "Too many parameters in function definition (only 65534 allowed)",
-  kTooManyVariables: "Too many variables declared (only 4194303 allowed)",
   kTrailingNumericSeparator: "Numeric separators are not allowed at the end of numeric literals",
   kUndefinedUnicodeCodePoint: "Undefined Unicode code-point",
   kUnexpectedEOS: "Unexpected end of input",

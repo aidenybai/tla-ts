@@ -252,6 +252,16 @@ describe("parse a file's syntax as V8 does without a Node to parse it", () => {
         accepted: "function* g() { yield; }",
       },
       {
+        name: "a parameter past V8's limit",
+        source: `function f(\n${Array.from({ length: 65526 }, (_, index) => `a${index}`).join()}\n) {}`,
+        accepted: `function f(\n${Array.from({ length: 65525 }, (_, index) => `a${index}`).join()}\n) {}`,
+      },
+      {
+        name: "an argument past V8's limit",
+        source: `f(\n${Array(65526).fill(0).join()}\n);`,
+        accepted: `f(\n${Array(65525).fill(0).join()}\n);`,
+      },
+      {
         name: "arguments in a field's initializer",
         source: "class C { x = arguments; }",
         accepted: "class C { x = function () { arguments; }; }",

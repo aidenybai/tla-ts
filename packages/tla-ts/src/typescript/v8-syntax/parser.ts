@@ -99,6 +99,8 @@ interface Expression {
   isPrivateReference: boolean;
   // A binary operation's left operand's position, where an n-ary operation that merges it starts.
   firstPosition: number;
+  // How many expressions a comma list or an async arrow function's head holds.
+  arity: number;
 }
 
 const createExpression = (
@@ -114,6 +116,7 @@ const createExpression = (
   isTaggedTemplate: false,
   isPrivateReference: false,
   firstPosition: -1,
+  arity: 1,
   ...fields,
 });
 
@@ -236,6 +239,10 @@ const FUNCTION_NAME = { IsStrictReserved: 0, SkipCheck: 1, Unknown: 2 } as const
 const isEvalOrArguments = (name: string) => name === "eval" || name === "arguments";
 
 // The kind of a function that flags make, as a plain function, a method or a static method.
+// V8's Code::kMaxArguments, past which a call takes too many arguments and a function too many
+// parameters.
+const MAX_ARGUMENTS = 65526;
+
 const getFunctionKind = (subKind: number, flags: number) => {
   const isGenerator = (flags & FUNCTION_FLAG.Generator) !== 0;
   const isAsync = (flags & FUNCTION_FLAG.Async) !== 0;
@@ -1150,7 +1157,14 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
         if (peek() === TOKEN.RightParen && scanner.peekAhead() === TOKEN.Arrow) break;
       }
       if (list.length === 1) return expression;
-      return createExpression(EXPRESSION.Nary, list[0].position, { operator: TOKEN.Comma });
+      return createCommaList(list);
+    });
+
+  // A comma's list of expressions, which starts at its second where it holds two, as V8 builds it.
+  const createCommaList = (list: Expression[]) =>
+    createExpression(EXPRESSION.Nary, list[list.length === 2 ? 1 : 0].position, {
+      operator: TOKEN.Comma,
+      arity: list.length,
     });
 
   const parseArrowParametersWithRest = (list: Expression[], accumulation: AccumulationScope) => {
@@ -1173,7 +1187,7 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
       return createFailure();
     }
     list.push(createExpression(EXPRESSION.Spread, ellipsis.start));
-    return createExpression(EXPRESSION.Nary, list[0].position, { operator: TOKEN.Comma });
+    return createCommaList(list);
   };
 
   const parseArrayLiteral = (): Expression => {
@@ -1636,10 +1650,17 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
       objectLiteralScope = newScope(SCOPE_TYPE.Block);
       try {
         const proto = { isSeen: false };
+        let count = 0;
+        let hasRestProperty = false;
         while (!check(TOKEN.RightBrace)) {
           const info = createPropertyInfo(true, accumulation);
           if (!parseObjectPropertyDefinition(info, proto)) return createFailure();
+          count += 1;
+          hasRestProperty ||= info.isRest;
           if (peek() !== TOKEN.RightBrace) expect(TOKEN.Comma);
+        }
+        if (hasRestProperty && count > MAX_ARGUMENTS) {
+          recordPatternError({ start: at, end: position() }, "kTooManyArguments");
         }
         return createExpression(EXPRESSION.ObjectLiteral, at);
       } finally {
@@ -1648,8 +1669,10 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
     });
   };
 
+  // Parses a call's arguments, and returns how many it gives.
   const parseArguments = (isMaybeArrow: boolean) => {
     consume();
+    let count = 0;
     withAccumulationScope((accumulation) => {
       while (peek() !== TOKEN.RightParen) {
         const isSpread = check(TOKEN.Ellipsis);
@@ -1667,11 +1690,17 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
             }
           }
         }
+        count += 1;
         if (!check(TOKEN.Comma)) break;
       }
     });
+    if (count + 1 > MAX_ARGUMENTS) {
+      reportMessage("kTooManyArguments");
+      return count;
+    }
     const location = scanner.getLocation();
     if (!check(TOKEN.RightParen)) reportMessageAt(location, "kUnterminatedArgList");
+    return count;
   };
 
   const parseConditionalChainAssignmentExpressionCoverGrammar = () => {
@@ -1716,6 +1745,13 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
       };
       nextArrowScope = undefined;
       nextArrowStrictParameterError = undefined;
+      if (
+        expression.kind !== EXPRESSION.EmptyParentheses &&
+        !hasError() &&
+        expression.arity + 1 > MAX_ARGUMENTS
+      ) {
+        reportMessageAt({ start: begin, end: endPosition() }, "kMalformedArrowFunParamList");
+      }
       return parseArrowFunctionLiteral(formals, begin);
     }
     if (isAssignableIdentifier(expression)) {
@@ -2032,10 +2068,17 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
         EXPRESSION_SCOPE.MaybeAsyncArrowParameterDeclaration,
         (arrowHead) => {
           nextArrowStrictParameterError = undefined;
-          parseArguments(true);
+          const count = parseArguments(true);
           if (peek() === TOKEN.Arrow) {
             nextArrowScope = validateAndCreateArrowScope(arrowHead);
-            return createExpression(EXPRESSION.EmptyParentheses, at, { isParenthesized: true });
+            return createExpression(
+              count === 0 ? EXPRESSION.EmptyParentheses : EXPRESSION.Nary,
+              at,
+              {
+                isParenthesized: true,
+                arity: count,
+              },
+            );
           }
           validateExpressionOf(arrowHead);
           return undefined;
@@ -2322,6 +2365,10 @@ export const getV8SyntaxError = (source: string, isModule: boolean) => {
           if (!check(TOKEN.Comma)) break;
           if (peek() === TOKEN.RightParen) break;
         }
+      }
+      if (formals.arity + 1 > MAX_ARGUMENTS) {
+        reportMessage("kTooManyParameters");
+        return;
       }
       if (!formals.isSimple) formals.scope.hasSimpleParameters = false;
     } finally {
