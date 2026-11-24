@@ -18,6 +18,9 @@ import { MbpContext, ProjectPlugin } from "../mbp/mbp-plugin";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
 import { IncSatSolver } from "../sat/inc-sat-solver";
+import { MBQI_MAX_ITERATIONS } from "../context";
+import { getGlobalSmtParams, SmtKernel } from "../smt-kernel";
+import { getSatParams } from "../tactic";
 import { VarSubst } from "../var-subst";
 import { type Enode, getClass } from "./egraph";
 import type { EufSolver } from "./euf-solver";
@@ -52,7 +55,7 @@ export class Mbqi {
   private readonly manager: AstManager;
   private readonly modelFixer: ModelFixer;
   private model: ProtoModel | null = null;
-  private solver: IncSatSolver | null = null;
+  private solver: IncSatSolver | SmtKernel | null = null;
   private q2body = new Map<number, QBody>();
   private maxCex = 1;
   private generationBound = UINT_MAX;
@@ -592,11 +595,27 @@ export class Mbqi {
     this.ctx.updateModel(model, false);
   }
 
-  // init_solver: mk_smt2_solver gives the incremental sat solver of sat.euf.
   private initSolver() {
-    const ctx = this.ctx;
-    this.solver ??= new IncSatSolver(ctx.manager, ctx.s.params, this.parameters, true);
+    this.solver ??= this.mkSmt2Solver();
     return this.solver;
+  }
+
+  // Z3 picks the sub-solver by the global sat parameters, not by the outer solver's.
+  private mkSmt2Solver() {
+    const ctx = this.ctx;
+    const parameters = this.parameters;
+    const satParams = getSatParams(parameters);
+    if (satParams.get("smt") === true)
+      return new IncSatSolver(ctx.manager, ctx.s.params, parameters, true);
+    if (satParams.get("euf") === true)
+      return new IncSatSolver(ctx.manager, satParams, parameters, true);
+    return new SmtKernel(ctx.manager, {
+      isMbqi: true,
+      mbqiMaxIterations: MBQI_MAX_ITERATIONS,
+      isFindingMacros: false,
+      ...getGlobalSmtParams(parameters),
+      randomSeed: Number(parameters.get("smt.random_seed") ?? "0"),
+    });
   }
 
   initSearch() {

@@ -75,6 +75,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
+    isFindingMacros: params.isFindingMacros,
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,
@@ -146,6 +147,7 @@ export const solveAssuming = (
   const context = new Context(manager, {
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
+    isFindingMacros: params.isFindingMacros,
     isEmatching: params.isEmatching,
     relevancyLevel: params.relevancyLevel ?? 2,
     caseSplitStrategy: params.caseSplitStrategy,

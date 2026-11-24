@@ -17,7 +17,7 @@ import {
   FAMILY_SEQ,
   FAMILY_SPECIAL_RELATIONS,
 } from "./ast";
-import { SmtDefaultError, SmtUnsupportedError } from "../../../errors";
+import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
 import { Rational } from "./rational";
 
@@ -87,7 +87,7 @@ export const PS_OCCURRENCE = 6;
 export const PS_THEORY = 7;
 
 export const getPhaseSelection = (phaseSelection: number) => {
-  if (phaseSelection > PS_THEORY) throw new SmtUnsupportedError("an smt.phase_selection above 7");
+  if (phaseSelection > PS_THEORY) throw new SmtDefaultError("illegal phase selection numeral");
   return phaseSelection;
 };
 
@@ -98,8 +98,13 @@ export const RS_ARITHMETIC = 4;
 
 export const getRestartStrategy = (restartStrategy: number) => {
   if (restartStrategy > RS_ARITHMETIC)
-    throw new SmtUnsupportedError("an smt.restart_strategy above 4");
+    throw new SmtDefaultError("illegal restart strategy numeral");
   return restartStrategy;
+};
+
+export const checkSmtNumerals = (parameters: ReadonlyMap<string, string>) => {
+  getPhaseSelection(Number(parameters.get("smt.phase_selection") ?? "3"));
+  getRestartStrategy(Number(parameters.get("smt.restart_strategy") ?? "1"));
 };
 
 const IA_ZERO = 0;
@@ -121,6 +126,7 @@ export interface SmtConfig {
   isNnfCnf: boolean;
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
+  isEmatching: boolean;
   isUsingPatternDatabase: boolean;
   isEliminatingTermIte: boolean;
   isLiftingNonGroundIte: boolean;
@@ -167,6 +173,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isNnfCnf: true,
   isEq2Ineq: false,
   isFindingMacros: false,
+  isEmatching: true,
   isUsingPatternDatabase: false,
   isEliminatingTermIte: false,
   isLiftingNonGroundIte: false,

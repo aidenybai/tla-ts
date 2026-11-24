@@ -24,7 +24,7 @@ import { NgPushAppIteRw } from "./push-app-ite";
 import { RefVector } from "./ref-vector";
 import { KERNEL_REWRITER_OPTIONS, Rewriter } from "./rewriter";
 import { RewriterTpl } from "./rewriter-tpl";
-import type { SmtConfig } from "./smt-setup";
+import { DEFAULT_CONFIG, type SmtConfig } from "./smt-setup";
 
 export class PatternInferenceRw extends RewriterTpl {
   isUsingDatabase = false;
@@ -239,11 +239,7 @@ export class AssertedFormulas {
   private rewriter: Rewriter;
   private isEliminatingAnd = false;
   private isReducePending = true;
-  private isNnfCnf = true;
-  private isEq2Ineq = false;
-  private isEliminatingTermIte = false;
-  private isLiftingNonGroundIte = false;
-  private isEliminatingBounds = false;
+  private config: SmtConfig;
   private names: DefinedNames;
   private termIteElim: ElimTermIteRw;
   private patternInference: PatternInferenceRw;
@@ -260,10 +256,11 @@ export class AssertedFormulas {
 
   constructor(
     private manager: AstManager,
-    private isFindingMacros = false,
-    private isEmatching = true,
+    isFindingMacros = false,
+    isEmatching = true,
     private isProofsEnabled = false,
   ) {
+    this.config = { ...DEFAULT_CONFIG, isFindingMacros, isEmatching };
     this.formulas = new RefVector(manager);
     this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
@@ -360,24 +357,11 @@ export class AssertedFormulas {
 
   // The setup's parameters, which set_eliminate_and gives the rewriter.
   setup(config: SmtConfig) {
-    this.isNnfCnf = config.isNnfCnf;
-    this.isEq2Ineq = config.isEq2Ineq;
-    this.isEliminatingTermIte = config.isEliminatingTermIte;
-    this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
-    this.isEliminatingBounds = config.isEliminatingBounds;
-    this.isFindingMacros ||= config.isFindingMacros;
-    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
+    this.config = config;
   }
 
-  updateParams(config: SmtConfig, isEmatching = true) {
-    this.isEmatching = isEmatching;
-    this.isNnfCnf = config.isNnfCnf;
-    this.isEq2Ineq = config.isEq2Ineq;
-    this.isEliminatingTermIte = config.isEliminatingTermIte;
-    this.isLiftingNonGroundIte = config.isLiftingNonGroundIte;
-    this.isEliminatingBounds = config.isEliminatingBounds;
-    this.isFindingMacros = config.isFindingMacros;
-    this.patternInference.isUsingDatabase = config.isUsingPatternDatabase;
+  updateParams(config: SmtConfig) {
+    this.config = config;
     this.isReducePending = true;
   }
 
@@ -403,21 +387,22 @@ export class AssertedFormulas {
   reduce() {
     if (this.isInconsistent || this.isCanceled() || this.qhead === this.formulas.size) return;
     if (!this.hasQuantifiers && !this.isPreprocessing) return;
-    const isFindingMacros = this.isFindingMacros && this.hasQuantifiers;
+    const config = this.config;
+    const isFindingMacros = config.isFindingMacros && this.hasQuantifiers;
     if (this.macros.hasMacros()) this.invoke(isFindingMacros, () => this.findMacros());
     this.setEliminateAnd(false);
     if (!this.invoke(true, () => this.propagateValues())) return;
     if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
-    if (!this.invoke(this.isNnfCnf || this.hasQuantifiers, () => this.nnfCnf())) return;
+    if (!this.invoke(config.isNnfCnf || this.hasQuantifiers, () => this.nnfCnf())) return;
     this.setEliminateAnd(true);
     if (!this.invoke(true, () => this.reduceAsserted())) return;
-    if (!this.invoke(this.isLiftingNonGroundIte, () => this.liftNonGroundIte())) return;
-    if (!this.invoke(this.isEliminatingTermIte, () => this.elimTermIte())) return;
+    if (!this.invoke(config.isLiftingNonGroundIte, () => this.liftNonGroundIte())) return;
+    if (!this.invoke(config.isEliminatingTermIte, () => this.elimTermIte())) return;
     if (!this.invoke(this.hasQuantifiers, () => this.refineInjAxioms())) return;
     if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
-    if (!this.invoke(this.isEliminatingBounds && this.hasQuantifiers, () => this.elimBounds()))
+    if (!this.invoke(config.isEliminatingBounds && this.hasQuantifiers, () => this.elimBounds()))
       return;
-    if (!this.invoke(this.isEmatching && this.hasQuantifiers, () => this.inferPatterns())) return;
+    if (!this.invoke(config.isEmatching && this.hasQuantifiers, () => this.inferPatterns())) return;
     if (!this.invoke(true, () => this.maximizeBvSharing())) return;
     if (!this.invoke(true, () => this.reduceAsserted())) return;
     if (!this.invoke(true, () => this.flattenClauses())) return;
@@ -501,6 +486,7 @@ export class AssertedFormulas {
   }
 
   private inferPatterns() {
+    this.patternInference.isUsingDatabase = this.config.isUsingPatternDatabase;
     this.simplifyFormulas((formula) => this.patternInference.rewrite(formula));
   }
 
@@ -524,7 +510,7 @@ export class AssertedFormulas {
     this.isEliminatingAnd = isEliminatingAnd;
     this.isReducePending = true;
     this.rewriter.setEliminatingAnd(isEliminatingAnd);
-    this.rewriter.setEq2Ineq(this.isEq2Ineq);
+    this.rewriter.setEq2Ineq(this.config.isEq2Ineq);
     this.flushCache();
   }
 

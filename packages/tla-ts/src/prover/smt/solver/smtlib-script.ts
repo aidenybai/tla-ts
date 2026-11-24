@@ -56,12 +56,7 @@ import {
 } from "./smtlib-parser";
 import { O_MAXIMIZE, O_MAXSMT, O_MINIMIZE, OptContext, type OptObjective } from "./opt-context";
 import { getLogicStrategy } from "./logic-tactics";
-import {
-  getPhaseSelection,
-  getRestartStrategy,
-  isMbqiByFeatures,
-  isMbqiByLogic,
-} from "./smt-setup";
+import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic, logicHasRealsOnly, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
@@ -956,6 +951,14 @@ export const runSmtlibScript = (
       return undefined;
     }
   };
+  const freeTacticsOnThrow = <Result>(destructors: (() => void)[], action: () => Result) => {
+    try {
+      return action();
+    } catch (error) {
+      destroyTactics(destructors);
+      throw error;
+    }
+  };
   const resetKernel = () => {
     const logic = state.logic;
     const parameters = settings.parameters;
@@ -967,49 +970,52 @@ export const runSmtlibScript = (
         : readDefaultTactic(defaultTactic);
     const destructors: (() => void)[] = [];
     const inits: (() => void)[] = [];
-    const tactic =
-      sexpr === undefined
-        ? undefined
-        : compileTactic(getTacticEnvironment(destructors, inits), sexpr).build(new Map());
-    const isParallel = parameters.get("parallel.enable") === "true";
-    const isFdSolver =
-      !isParallel &&
-      (((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD");
-    const isEuf = parameters.get("sat.euf") === "true";
-    const isSatSolver =
-      isFdSolver ||
-      (logic === "QF_BV" && settings.isHiDiv0) ||
-      parameters.get("tactic.default_tactic") === "sat" ||
-      parameters.get("sat.smt") === "true" ||
-      isEuf;
-    const strategy = getLogicStrategy(logic, isProofsEnabled);
-    state.manager.dropStartupExprs();
-    const internalTactic =
-      tactic ??
-      (isFdSolver
-        ? undefined
-        : compileInternalTactic(getTacticEnvironment(destructors, inits), strategy));
-    const kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
-    const satSolver =
-      isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
-        ? new IncSatSolver(state.manager, getSatParams(parameters), parameters, true)
-        : undefined;
-    const fdSolver =
-      (logic === "QF_FD" || logic === "SAT") &&
-      !isProofsEnabled &&
-      !isParallel &&
-      tactic === undefined
-        ? new FdSolver(state.manager, getSatParams(parameters), parameters)
-        : undefined;
+    const solver = freeTacticsOnThrow(destructors, () => {
+      const tactic =
+        sexpr === undefined
+          ? undefined
+          : compileTactic(getTacticEnvironment(destructors, inits), sexpr).build(new Map());
+      const isParallel = parameters.get("parallel.enable") === "true";
+      const isFdSolver =
+        !isParallel &&
+        (((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD");
+      const isEuf = parameters.get("sat.euf") === "true";
+      const isSatSolver =
+        isFdSolver ||
+        (logic === "QF_BV" && settings.isHiDiv0) ||
+        parameters.get("tactic.default_tactic") === "sat" ||
+        parameters.get("sat.smt") === "true" ||
+        isEuf;
+      const strategy = getLogicStrategy(logic, isProofsEnabled);
+      state.manager.dropStartupExprs();
+      const internalTactic =
+        tactic ??
+        (isFdSolver
+          ? undefined
+          : compileInternalTactic(getTacticEnvironment(destructors, inits), strategy));
+      const kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+      const satSolver =
+        isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
+          ? new IncSatSolver(state.manager, getSatParams(parameters), parameters, true)
+          : undefined;
+      const fdSolver =
+        (logic === "QF_FD" || logic === "SAT") &&
+        !isProofsEnabled &&
+        !isParallel &&
+        tactic === undefined
+          ? new FdSolver(state.manager, getSatParams(parameters), parameters)
+          : undefined;
+      return { strategy, internalTactic, kernel, satSolver, fdSolver };
+    });
     const old = detachSolver();
     state.tacticDestructors = destructors;
     state.tacticInits = inits;
-    state.strategy = strategy;
+    state.strategy = solver.strategy;
     state.isSolverProducingModels = settings.isProducingModels;
-    state.tactic = internalTactic;
-    state.kernel = kernel;
-    state.satSolver = satSolver;
-    state.fdSolver = fdSolver;
+    state.tactic = solver.internalTactic;
+    state.kernel = solver.kernel;
+    state.satSolver = solver.satSolver;
+    state.fdSolver = solver.fdSolver;
     dropSolver(old);
   };
   // Z3 reports an error of the sat config at the token its parser is on.
@@ -1445,8 +1451,6 @@ export const runSmtlibScript = (
       Number(parameterValue) !== Number(defaultValue)
     )
       throw new SmtUnsupportedError(`the option :${name}`);
-    if (name === "smt.phase_selection") getPhaseSelection(Number(parameterValue));
-    if (name === "smt.restart_strategy") getRestartStrategy(Number(parameterValue));
     settings.parameters.set(name, parameterValue);
     const isTrue = parameterValue === "true";
     if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
@@ -1462,8 +1466,6 @@ export const runSmtlibScript = (
     if (settings.parameters.get("smtlib2_compliant") === "true") settings.isPrintingSuccess = true;
     if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
     if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
-    const kernel = state.kernel;
-    if (kernel !== undefined) kernel.updateParams(getKernelParams(kernel.isSetUp));
     if (optionName === ":rewriter.hi_div0") {
       settings.isHiDiv0 = isTrue;
       state.manager.isHiDiv0 = isTrue;
@@ -1487,7 +1489,9 @@ export const runSmtlibScript = (
     )
       throw new SmtUnsupportedError(`the option ${optionName}`);
     const satParams = getSatParams(settings.parameters);
+    const kernel = state.kernel;
     runAt(value, () => {
+      kernel?.updateParams(getKernelParams(kernel.isSetUp));
       state.satSolver?.updateParams(satParams);
       state.fdSolver?.updateParams(satParams);
     });
@@ -1722,8 +1726,11 @@ export const runSmtlibScript = (
         const inits: (() => void)[] = [];
         const builder = compileTactic(getTacticEnvironment(destructors, inits), list.items[1]);
         useManager(list.end);
-        const tactic = builder.build(params);
-        for (const init of inits) init();
+        const tactic = freeTacticsOnThrow(destructors, () => {
+          const built = builder.build(params);
+          for (const init of inits) init();
+          return built;
+        });
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
@@ -2059,8 +2066,11 @@ export const runSmtlibScript = (
           list.items[1],
         );
         useManager(list.end);
-        const tactic = builder.build(params);
-        for (const init of inits) init();
+        const tactic = freeTacticsOnThrow(destructors, () => {
+          const built = builder.build(params);
+          for (const init of inits) init();
+          return built;
+        });
         const input = getCommandGoal(builder.isTrackingDependencies, list.end);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())

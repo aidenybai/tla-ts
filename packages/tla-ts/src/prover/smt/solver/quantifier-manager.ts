@@ -72,7 +72,7 @@ export class DefaultQuantifierManager {
 
   assignEh(quantifier: number) {
     this.isActive = true;
-    if (this.context.params.isEmatching === false) return;
+    if (!this.context.config.isEmatching) return;
     const manager = this.context.manager;
     const patterns = manager
       .getQuantifier(quantifier)
@@ -95,7 +95,7 @@ export class DefaultQuantifierManager {
   }
 
   private isUsingEmatching() {
-    return this.context.params.isEmatching !== false && this.quantifiers.length > 0;
+    return this.context.config.isEmatching && this.quantifiers.length > 0;
   }
 
   addEqEh(first: Enode, second: Enode) {
