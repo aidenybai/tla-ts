@@ -45,7 +45,7 @@ interface LinkedSpecification {
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
   copySources: Map<string, CopySource>;
-  standardAliasBodies: Expression[];
+  standardAliasBodies: Set<Expression>;
   operatorConstants: Map<string, Value>;
   order: TlcOrder;
 }

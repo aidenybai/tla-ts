@@ -357,7 +357,7 @@ export const createEnvironment = (
   const standardSources = new Map<string, LinkedModule>();
   const replacedDefinitions = new Map<string, Definition>();
   const builtinAliases = new Map<string, string>();
-  const standardAliasBodies: Expression[] = [];
+  const standardAliasBodies = new Set<Expression>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
@@ -730,7 +730,7 @@ export const createEnvironment = (
       ...createLocalAlias(name, key, params, forwarded, instance.location),
       head: instance.head,
     };
-    standardAliasBodies.push(alias.body);
+    standardAliasBodies.add(alias.body);
     const standardDefinition = builtins.has(key) ? getStandardDefinition(key) : undefined;
     return standardDefinition ? { ...alias, standardDefinition } : alias;
   };
@@ -1102,7 +1102,7 @@ export const createEnvironment = (
       ...createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
       head: instance.head,
     };
-    standardAliasBodies.push(alias.body);
+    standardAliasBodies.add(alias.body);
     definitions.set(key, alias);
     if (copy) {
       instanceCopies.set(alias, {
@@ -2053,6 +2053,7 @@ export const createEnvironment = (
     substitutions,
     reevaluatedSubstitutes: new Map(),
     instanceNames,
+    standardAliasBodies,
     variables,
     variableIndex,
     variableLocations: linkedRoot.variableLocations,

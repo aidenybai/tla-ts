@@ -14118,6 +14118,52 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const getTlcEvalPrints = async (call: string, override: string, assumption: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANT N\nVARIABLE y\nS == INSTANCE TLC\nJ == INSTANCE T19\nI(j) == INSTANCE T16 WITH k <- j, y <- y\nMyEval(v) == v\nInit == y = 0\nNext == y' = (y + 1) % 2\nD == ${call}(RandomElement(1..100))\nASSUME ${assumption}\n====`,
+      config: `INIT Init\nNEXT Next\nCONSTANT N <- D${override}`,
+      seed: 4n,
+      onPrint: (text) => printed.push(text),
+      loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+    });
+    return printed;
+  };
+
+  it.each([
+    ["S!TLCEval", "", "<<74, 74, 74, 74, 74>>"],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- MyEval", "<<74, 74, 74, 74, 74>>"],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- [TLC] MyEval", "<<74, 92, 92, 68, 74>>"],
+    ["J!TLCEval", "\nCONSTANT TLCEval <- MyEval", "<<74, 74, 74, 74, 74>>"],
+    ["LET R == INSTANCE TLC IN R!TLCEval", "", "<<74, 92, 92, 68, 74>>"],
+  ])(
+    "caches %s(RandomElement(1..100)) at each reference to N <- D%j as TLC's Java TLCEval does with the call's arguments",
+    async (call, override, expected) => {
+      expect(await getTlcEvalPrints(call, override, "PrintT(<<D, N, N, N, D>>)")).toEqual([
+        expected,
+      ]);
+    },
+  );
+
+  it.each([
+    ["S!TLCEval", ""],
+    ["S!TLCEval", "\nCONSTANT TLCEval <- MyEval"],
+    ["J!TLCEval", "\nCONSTANT TLCEval <- MyEval"],
+  ])(
+    "draws %s(RandomElement(1..100)) again at each reference to N <- D%j under a bound name, where TLC's Java TLCEval sees the caller's context",
+    async (call, override) => {
+      expect(
+        await getTlcEvalPrints(call, override, "\\A a \\in {1} : PrintT(<<D, N, N, D>>)"),
+      ).toEqual(["<<74, 92, 92, 74>>"]);
+    },
+  );
+
+  it("caches I(1)!TLCEval(RandomElement(1..100)) as TLC does through an instance without parameters, where it passes TLCEval the instance's argument too", async () => {
+    expect(await getTlcEvalPrints("I(1)!TLCEval", "", "PrintT(<<D, N, N, N, D>>)")).toEqual([
+      "<<74, 74, 74, 74, 74>>",
+    ]);
+  });
+
   it.each([
     [
       "I == INSTANCE Inner WITH K <- M + 1, w <- y",

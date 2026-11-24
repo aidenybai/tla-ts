@@ -209,9 +209,9 @@ const collectLocalFacts = (
         const builtinName = builtin?.name ?? target;
         const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
         if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
-        if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
+        if (STREAMED_BUILTINS.has(builtinName)) row[0] |= STREAMED;
         if (builtin && RANDOM_BUILTINS.has(builtin.name)) row[0] |= RANDOM;
-        if (target === "TLCEval") row[0] |= TLC_EVAL;
+        if (builtinName === "TLCEval") row[0] |= TLC_EVAL;
         if (!isOverridden && isImpure) row[0] |= READS_IMPURE;
         if (
           isInnerLevelCounted &&
