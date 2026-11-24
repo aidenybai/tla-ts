@@ -1732,7 +1732,6 @@ const compileIdentifier = (program: Program, name: string, frame: Frame): Compil
     }
     if (definition.params.length > 0) return unsupported();
     if (isConstantLevel(definition, program.environment)) {
-      // TLC evaluates a constant definition once, as it starts.
       return compileConstant(program, startup ?? evaluateConstant(program, definition.body));
     }
     return inline(program, definition, () =>
