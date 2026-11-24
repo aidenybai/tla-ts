@@ -1277,16 +1277,10 @@ export const compileToEscore = (
     "",
   ];
   const laidOut = layOutModule("ProgramCode", parts);
-  const getText = () =>
-    parts
-      .map((part) =>
-        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
-      )
-      .join("\n");
   const programCode: PreparedModule = {
     name: "ProgramCode",
     get text() {
-      return getText();
+      return laidOut.getText();
     },
     tokens: [],
     module: laidOut.module,
@@ -1300,7 +1294,7 @@ export const compileToEscore = (
       "\n",
     ),
     regions: program.regions,
-    loadModule: (name) => (name === "ProgramCode" ? getText() : undefined),
+    loadModule: (name) => (name === "ProgramCode" ? laidOut.getText() : undefined),
     preparedModules: [...runtime.modules, view, programCode],
   };
 };

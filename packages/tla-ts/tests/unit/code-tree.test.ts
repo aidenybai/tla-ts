@@ -196,11 +196,12 @@ describe("the layout of a program's code", () => {
   it("places each node where the parser reads it in the text it prints as", () => {
     const parts = getModuleParts();
     const laidOut = layOutModule("Code", parts);
-    const text = parts
-      .map((part) =>
-        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
-      )
-      .join("\n");
+    const text = laidOut.getText();
+    expect(text).toBe(
+      getModuleParts()
+        .map((part) => (typeof part === "string" ? part : printCodeDefinition(part)))
+        .join("\n"),
+    );
     const tokens = tokenize(text);
     const parsed = parseModule(text);
     expect(getPlacedSyntax(laidOut.module)).toBe(getPlacedSyntax(parsed));
@@ -221,11 +222,7 @@ describe("the layout of a program's code", () => {
   it("gives each node the properties that the parser gives it, in its order", () => {
     const parts = getModuleParts();
     const laidOut = layOutModule("Code", parts);
-    const text = parts
-      .map((part) =>
-        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
-      )
-      .join("\n");
+    const text = laidOut.getText();
     // Each object's keys in order, with the shape of each value, as V8 gives objects their maps.
     const getShape = (value: unknown): unknown =>
       value === null || typeof value !== "object"
