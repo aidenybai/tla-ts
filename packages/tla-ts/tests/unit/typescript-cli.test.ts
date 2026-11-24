@@ -331,6 +331,40 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A step's LET binds e1 to the first argument it converts, which TLA+ rejects after an export
+  // named e1, so the compile stops where a name that the spec defines is bound again, rather than
+  // the spec failing to parse. An export named otherwise is checked as Node runs it.
+  describe("stops where the spec binds an export's name again after it defines it", () => {
+    const getModel = (name: string) =>
+      `export const ${name} = (flag: boolean) => {\n  if (flag) throw new Error("${name} " + flag);\n  return 1;\n};\nexport const two = (flag: boolean) => {\n  if (flag) throw new Error("two " + flag);\n  return 2;\n};\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel("e1"));
+      expect(runNode(directory, "pair.ts").status).toBe(0);
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).toBe(255);
+      expect(result.stderr).toBe(
+        "TlaTypeScriptError: tla-ts can't name e1 in TLA+, which the program's spec binds again after it defines it\n",
+      );
+      expect(result.stdout).not.toContain("Semantic errors");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel("one"));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { one } from "./pair.ts"; one(true);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: one true");
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('"one throws: one true"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
