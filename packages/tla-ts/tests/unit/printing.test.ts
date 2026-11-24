@@ -11,6 +11,16 @@ const checkPrinting = async (body: string, config = "") => {
   return { result, printed };
 };
 
+const checkWithObservedFilter = async (expression: string) => {
+  const lines: string[] = [];
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
+    config: "",
+    onPrint: (text) => lines.push(text),
+  });
+  return [lines, result.violation?.message];
+};
+
 describe("printing matches TLC", () => {
   it.each([
     ["3..1", "{}"],
@@ -326,13 +336,7 @@ describe("printing matches TLC", () => {
   ])(
     "runs a filter's predicate as TLC tries to enumerate a set it formats in %s",
     async (expression, printed, message) => {
-      const lines: string[] = [];
-      const result = await check({
-        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
-        config: "",
-        onPrint: (text) => lines.push(text),
-      });
-      expect([lines, result.violation?.message]).toEqual([printed, message]);
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
     },
   );
 
@@ -375,13 +379,7 @@ describe("printing matches TLC", () => {
   ])(
     "runs a filter's predicate as TLC does when %s fails",
     async (expression, printed, message) => {
-      const lines: string[] = [];
-      const result = await check({
-        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nG == {s \\in SUBSET {1} : PrintT(s)}\nASSUME ${expression}\n====`,
-        config: "",
-        onPrint: (text) => lines.push(text),
-      });
-      expect([lines, result.violation?.message]).toEqual([printed, message]);
+      expect(await checkWithObservedFilter(expression)).toEqual([printed, message]);
     },
   );
 
