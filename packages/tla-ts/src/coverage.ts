@@ -73,7 +73,7 @@ export interface Coverage {
   recursive: number[];
   twins: number[];
   lets: (number[] | undefined)[];
-  appliedBodies: (number[] | undefined)[];
+  appliedBodies: (AppliedBody[] | undefined)[];
   roots: number[];
   primary: number[];
   secondary: number[];
@@ -95,6 +95,11 @@ export interface Coverage {
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
+}
+
+interface AppliedBody {
+  after: number;
+  node: number;
 }
 
 export interface CoverageFrame {
@@ -494,8 +499,9 @@ export const buildCoverage = (
       expression === unadopted ? undefined : expression && applications.get(expression);
     applied?.forEach((application) => {
       const bodies = (coverage.appliedBodies[application] ??= []);
-      const index = bodies.findIndex((body) => coverage.expressions[body] === expression);
-      bodies[index === -1 ? bodies.length : index] = node;
+      const adopted = bodies.find((item) => coverage.expressions[item.node] === expression);
+      if (adopted) adopted.node = node;
+      else bodies.push({ after: coverage.lastChild[application], node });
     });
     const body = expression && letBodies.get(expression);
     if (body) {
@@ -909,7 +915,8 @@ const findChild = (coverage: Coverage, node: number, expression: Expression): nu
     }
   }
   return (
-    coverage.appliedBodies[node]?.find((body) => coverage.expressions[body] === expression) ?? -1
+    coverage.appliedBodies[node]?.find((body) => coverage.expressions[body.node] === expression)
+      ?.node ?? -1
   );
 };
 
@@ -1850,10 +1857,16 @@ const getChildGroups = (coverage: Coverage, group: number[]) => {
     groups.push([child]);
   };
   group.forEach((node) => {
+    const bodies = coverage.appliedBodies[node];
+    const addBodiesAfter = (sibling: number) =>
+      bodies?.forEach((body) => {
+        if (body.after === sibling) addChild(body.node);
+      });
+    addBodiesAfter(-1);
     for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
       addChild(child);
+      addBodiesAfter(child);
     }
-    coverage.appliedBodies[node]?.forEach(addChild);
   });
   return groups;
 };

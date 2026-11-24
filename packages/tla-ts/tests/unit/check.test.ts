@@ -6079,6 +6079,31 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("lists an operator argument's body among its parameter's application's children in the order CostModelCreator visits it", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAdd(a, b) == a + b\nAp(G(_, _), b) == G(b, b)\nFoo(F(_, _), a) == F(Ap(Add, a), a + 1)\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ Foo(Add, x) > 0\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 8, col 9 to line 8, col 13 of module M: 3",
+      "|line 8, col 9 to line 8, col 9 of module M: 4",
+      "line 8, col 18 to line 8, col 27 of module M: 3",
+      "line 8, col 32 to line 8, col 46 of module M: 3",
+      "|line 8, col 32 to line 8, col 42 of module M: 3",
+      "||line 6, col 20 to line 6, col 39 of module M: 3",
+      "|||line 6, col 22 to line 6, col 31 of module M: 3",
+      "||||line 5, col 19 to line 5, col 25 of module M: 3",
+      "|||||line 5, col 21 to line 5, col 21 of module M: 3",
+      "|||||line 5, col 24 to line 5, col 24 of module M: 3",
+      "|||||line 4, col 14 to line 4, col 18 of module M: 6",
+      "||||line 6, col 30 to line 6, col 30 of module M: 3",
+      "|||line 4, col 14 to line 4, col 18 of module M: 6",
+      "|||line 6, col 34 to line 6, col 38 of module M: 3",
+      "||line 4, col 14 to line 4, col 18 of module M: 6",
+      "||line 8, col 41 to line 8, col 41 of module M: 3",
+    ]);
+  });
+
   it("counts the body of an operator argument the config substitutes, or of an instance's operator, into its parameter's application, as TLC's CostModelCreator connects neither", async () => {
     const result = await check({
       source:
