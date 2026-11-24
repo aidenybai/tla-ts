@@ -1072,6 +1072,18 @@ describe("fpa2bv, as Z3 5.3.2 builds its terms", () => {
       "(goals\n(goal\n  (or p (and (not true) false))\n  (or p (and (not true) true))\n  :precision precise :depth 1)\n)",
     ]);
   });
+
+  it("converts a real to a 24-bit exponent, whose bounds have 2^23 bits", () => {
+    expect(
+      run([
+        "(declare-const r Real)",
+        "(assert (fp.isInfinite ((_ to_fp 24 4) RNE r)))",
+        "(check-sat-using (then fpa2bv fail))",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "fail tactic")', "(:rlimit 10)"]);
+  });
 });
 
 describe("the optimizer releases what Z3 releases", () => {
