@@ -693,9 +693,9 @@ RECURSIVE JSONNumberEnd(_, _)
 RECURSIVE JSONDigitsEnd(_, _)
 RECURSIVE JSONObject(_, _, _)
 RECURSIVE JSONArray(_, _, _)
-RECURSIVE JSONEvaluate(_, _)
-RECURSIVE JSONEvaluateItems(_, _, _, _, _)
-RECURSIVE JSONEvaluateMembers(_, _, _, _, _)
+RECURSIVE JSONEvaluate(_, _, _)
+RECURSIVE JSONEvaluateItems(_, _, _, _, _, _)
+RECURSIVE JSONEvaluateMembers(_, _, _, _, _, _)
 RECURSIVE JSONEntries(_)
 RECURSIVE InternalizeJSONProperty(_, _, _, _, _)
 RECURSIVE InternalizeJSONElements(_, _, _, _, _, _)
@@ -9825,7 +9825,7 @@ JSONParse(s, text, reviver) ==
   LET str == ToStr(s, text) IN IF IsAbrupt(str) THEN str ELSE
   LET tree == ParseJSON(Val(str).value) IN
   IF tree = None THEN ThrowError(str.s, "SyntaxError")
-  ELSE LET result == JSONEvaluate(str.s, tree) IN
+  ELSE LET result == JSONEvaluate(str.s, tree, IsCallable(str.s, reviver)) IN
        IF ~IsCallable(result.s, reviver) THEN Ok(result.s, result.v)
        ELSE LET root == OrdinaryObjectCreate(result.s, Intrinsic(result.s, "ObjectPrototype")) IN
             LET c == CreateDataPropertyOrThrow(root.s, Val(root), EmptyStr, result.v) IN
@@ -9906,32 +9906,39 @@ JSONArray(units, i, items) ==
   IF j = 0 THEN JSONFail ELSE
   LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, ChunkAppend(items, value.node))
 \* Evaluates a parse tree to [s, v, record], with the JSON Parse Record (§25.5.1.2) that
-\* CreateJSONParseRecord would make for it: [value, source, elements, entries], where entries maps
-\* each key to the record of its last member.
-JSONEvaluate(s, tree) ==
+\* CreateJSONParseRecord would make for it where a reviver reads it, isRevived, or None:
+\* [value, source, elements, entries], where entries maps each key to the record of its last member.
+JSONEvaluate(s, tree, isRevived) ==
   CASE tree.type = "value" ->
          [s |-> s, v |-> tree.value,
-          record |-> [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]]
+          record |-> IF isRevived THEN [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]
+                     ELSE None]
     [] tree.type = "array" ->
-         LET items == JSONEvaluateItems(s, tree.items, 1, NoChunks, NoChunks)
+         LET items == JSONEvaluateItems(s, tree.items, isRevived, 1, NoChunks, NoChunks)
              a == CreateArrayFromList(items.s, items.values)
-         IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
+         IN [s |-> a.s, v |-> Val(a),
+             record |-> IF isRevived THEN [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]
+                        ELSE None]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-             members == JSONEvaluateMembers(o.s, Val(o), tree.members, 1, NoChunks)
-         IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
+             members == JSONEvaluateMembers(o.s, Val(o), tree.members, isRevived, 1, NoChunks)
+         IN [s |-> members.s, v |-> Val(o),
+             record |-> IF isRevived THEN [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]
+                        ELSE None]
 \* The items from k, after the values and the records of those evaluated so far, in chunks.
-JSONEvaluateItems(s, items, k, values, records) ==
+JSONEvaluateItems(s, items, isRevived, k, values, records) ==
   IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
-  ELSE LET r == JSONEvaluate(s, items[k]) IN
-       JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
+  ELSE LET r == JSONEvaluate(s, items[k], isRevived) IN
+       JSONEvaluateItems(r.s, items, isRevived, k + 1, ChunkAppend(values, r.v),
+                         IF isRevived THEN ChunkAppend(records, r.record) ELSE records)
 \* The members from k, after the keys and the records of those evaluated so far, in chunks.
-JSONEvaluateMembers(s, o, members, k, pairs) ==
+JSONEvaluateMembers(s, o, members, isRevived, k, pairs) ==
   IF k > Len(members) THEN [s |-> s, entries |-> JSONEntries(ChunkValues(pairs))]
   ELSE LET key == Str(members[k][1])
-           r == JSONEvaluate(s, members[k][2])
+           r == JSONEvaluate(s, members[k][2], isRevived)
            c == CreateDataProperty(r.s, o, key, r.v)
-       IN JSONEvaluateMembers(c.s, o, members, k + 1, ChunkAppend(pairs, <<key, r.record>>))
+       IN JSONEvaluateMembers(c.s, o, members, isRevived, k + 1,
+                              IF isRevived THEN ChunkAppend(pairs, <<key, r.record>>) ELSE pairs)
 \* The function from each key to the record of its last pair, as joining (key :> record) @@ entries
 \* from the first pair to the last would make it, joined in halves.
 JSONEntries(pairs) ==

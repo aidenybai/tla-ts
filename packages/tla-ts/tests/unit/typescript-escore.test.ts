@@ -1266,6 +1266,44 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // JSON.parse makes the parse records that a reviver reads only where the reviver is callable, so
+  // revivers that are missing, plain objects, functions and proxies pin the result and the calls.
+  describe("parses JSON with and without a callable reviver", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const document = { a: [1, 2.5, { b: "c", d: [true, null] }], e: { f: -0, a: 3 }, g: Array.from({ length: 130 }, (_, index) => index % 7) };
+      const source = JSON.stringify(document).replace('"a":3', '"a":3,"a":4');
+      const calls: string[] = [];
+      const revive = (key: string, value: unknown, context?: { source?: string }) => {
+        calls.push(\`\${key}=\${context?.source ?? typeof value}\`);
+        return typeof value === "number" ? value * 2 : value;
+      };
+      const revivers: unknown[] = [undefined, {}, revive, new Proxy(revive, {}), new Proxy({}, {})];
+      for (const reviver of revivers) {
+        const parsed = JSON.parse(source, reviver as never);
+        text += [getHash(JSON.stringify(parsed)), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = "546821:0:0;546821:0:0;267604:143:567419;267604:286:465905;546821:286:465905;";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("267604:143:567419", "267604:143:567418");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
