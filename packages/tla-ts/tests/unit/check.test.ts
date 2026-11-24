@@ -10331,6 +10331,21 @@ ASSUME TLCFP(a) = -887695703
       ],
     ],
     [
+      "a function CHOOSE returns for a tuple pattern",
+      "(CHOOSE <<a, b>> \\in {[i \\in {1, 2} |-> i]} : a = 1) = <<1, 2>>",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 19 to line 5, col 81 of module M: 1",
+        "|line 5, col 20 to line 5, col 69 of module M: 1",
+        "||line 5, col 65 to line 5, col 69 of module M: 1",
+        "||line 5, col 40 to line 5, col 61 of module M: 1:1",
+        "|||line 5, col 41 to line 5, col 60 of module M: 1:4",
+        "||||line 5, col 59 to line 5, col 59 of module M: 2",
+        "||||line 5, col 48 to line 5, col 53 of module M: 1:3",
+        "|line 5, col 74 to line 5, col 81 of module M: 1:2",
+      ],
+    ],
+    [
       "the function TLCEval makes of a record",
       "[a |-> 1] = TLCEval([a |-> 1])",
       [

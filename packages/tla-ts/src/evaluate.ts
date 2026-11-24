@@ -3021,7 +3021,7 @@ const compileSetComprehension = (
       enumerator?.next();
       const scope = bindPattern(context.scope, pattern, element, describeNonTupleChoice);
       if (!expectBooleanBody(body(withScope(context, scope)), expression)) return false;
-      chosen = getBoundValue(pattern, scope);
+      chosen = element;
       return true;
     });
     if (chosen !== undefined) return chosen;

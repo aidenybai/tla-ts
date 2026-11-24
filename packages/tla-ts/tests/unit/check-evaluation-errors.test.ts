@@ -266,6 +266,16 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.fingerprint?.reason).toBe(reason);
   });
 
+  it("applies the function CHOOSE binds to a tuple pattern as that function", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (CHOOSE <<a, b>> \\in {[i \\in {1, 2} |-> i]} : TRUE).z = 1\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 1 with non-integer:\n"z"',
+    );
+  });
+
   it.each([
     ["({<<1>>} \\cup {2}) = {}", ["SetEnumeration", "Tuple"]],
     ["({[a |-> 1]} \\cap {{1}}) = {}", ["SetEnumeration", "SetEnumeration", "SetEnumeration"]],
