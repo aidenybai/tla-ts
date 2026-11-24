@@ -11,7 +11,7 @@ import { TlaUnsupportedError } from "../../errors";
 import { tokenize } from "../../lexer";
 import { INFIX_OPERATORS, parenthesizedRanges, parseModuleTokens } from "../../parser";
 import { formatString } from "../../printer";
-import { type PositionTable, TokenLocation } from "../../source-location";
+import { TokenLocation } from "../../source-location";
 import { getParsedTexts } from "../../tlc/order";
 
 // The TLA+ of a program's code as syntax trees, as the parser reads them from the text the code
@@ -116,13 +116,20 @@ export const string = (value: string): Expression => ({
   location: INLINE,
 });
 
-// An operator applied to arguments, written between them where it's an infix operator of two.
-export const apply = (operator: string, args: readonly Operand[]): Expression => ({
-  kind: "Apply",
-  operator,
-  args: args.map(toExpression),
-  location: INLINE,
-});
+const PREFIX_WORDS = new Set(["DOMAIN", "SUBSET", "UNION", "ENABLED", "UNCHANGED"]);
+
+// An operator applied to arguments, written between them where it's an infix operator of two, with
+// the properties that the parser gives the application it reads.
+export const apply = (operator: string, args: readonly Operand[]): Expression => {
+  const operands = args.map(toExpression);
+  if (operands.length === 2 && INFIX_OPERATORS.has(operator)) {
+    return { kind: "Apply", operator, spelling: undefined, args: operands, location: INLINE };
+  }
+  return operands.length === 1 &&
+    (operator === "-." || operator === "~" || PREFIX_WORDS.has(operator))
+    ? { kind: "Apply", operator, args: operands, location: INLINE }
+    : { kind: "Apply", operator, args: operands, argumentsRange: undefined, location: INLINE };
+};
 
 export const tuple = (elements: readonly Operand[]): Expression => ({
   kind: "Tuple",
@@ -157,7 +164,7 @@ export const letIn = (definitions: OperatorDefinition[], body: Operand): Express
 });
 
 export const boundIn = (variable: string, values: Operand): Bound => ({
-  pattern: { kind: "Name", name: variable },
+  pattern: { kind: "Name", name: variable, ranges: undefined },
   set: toExpression(values),
 });
 
@@ -216,12 +223,21 @@ export const exceptAt = (): Expression => ({ kind: "ExceptAt", location: INLINE 
 export const caseOf = (
   arms: readonly (readonly [Operand, Operand])[],
   other?: Operand,
-): Expression => ({
-  kind: "Case",
-  arms: arms.map((arm) => ({ condition: toExpression(arm[0]), body: toExpression(arm[1]) })),
-  other: other === undefined ? undefined : toExpression(other),
-  location: INLINE,
-});
+): Expression => {
+  const caseArms = arms.map((arm) => ({
+    condition: toExpression(arm[0]),
+    body: toExpression(arm[1]),
+  }));
+  return other === undefined
+    ? { kind: "Case", arms: caseArms, other: undefined, location: INLINE }
+    : {
+        kind: "Case",
+        arms: caseArms,
+        other: toExpression(other),
+        otherRange: undefined,
+        location: INLINE,
+      };
+};
 
 export const exists = (bounds: Bound[], body: Operand): Expression => ({
   kind: "Exists",
@@ -237,8 +253,10 @@ export const defineOperator = (
 ): OperatorDefinition => ({
   kind: "Operator",
   name: operatorName,
-  params: params.map((param) => ({ name: param, arity: 0 })),
+  params: params.map((param) => ({ name: param, arity: 0, location: INLINE })),
+  head: undefined,
   body: toExpression(body),
+  bodyRange: undefined,
   isLocal: false,
   isRecursive: false,
   location: INLINE,
@@ -279,181 +297,150 @@ interface Layout {
   strings: Map<number, string>;
 }
 
-// The positions of a module's tokens, as the parser's table holds them, in arrays that grow as the
-// layout writes the tokens.
-class LaidOutTable implements PositionTable {
-  readonly module: string;
-  lines = new Int32Array(1024);
-  columns = new Int32Array(1024);
-  endColumns = new Int32Array(1024);
+// The positions of a module's tokens, in a table of the parser's shape whose arrays grow as the
+// layout writes the tokens, and their texts.
+interface GrowingPositions {
+  module: string;
+  lines: Int32Array;
+  columns: Int32Array;
+  endColumns: Int32Array;
+}
+
+class LaidOutTable {
+  readonly positions: GrowingPositions;
   texts: string[] = [];
 
   constructor(module: string) {
-    this.module = module;
+    this.positions = {
+      module,
+      lines: new Int32Array(1024),
+      columns: new Int32Array(1024),
+      endColumns: new Int32Array(1024),
+    };
   }
 
   add(text: string, line: number, column: number) {
     const index = this.texts.length;
-    if (index === this.lines.length) {
+    const positions = this.positions;
+    if (index === positions.lines.length) {
       const grow = (items: Int32Array) => {
         const grown = new Int32Array(items.length * 2);
         grown.set(items);
         return grown;
       };
-      this.lines = grow(this.lines);
-      this.columns = grow(this.columns);
-      this.endColumns = grow(this.endColumns);
+      positions.lines = grow(positions.lines);
+      positions.columns = grow(positions.columns);
+      positions.endColumns = grow(positions.endColumns);
     }
-    this.lines[index] = line;
-    this.columns[index] = column;
-    this.endColumns[index] = column + text.length - 1;
+    positions.lines[index] = line;
+    positions.columns[index] = column;
+    positions.endColumns[index] = column + text.length - 1;
     this.texts.push(text);
     return index;
   }
 
   getRange(start: number, end: number): SourceRange {
+    const positions = this.positions;
     return {
-      module: this.module,
-      start: { line: this.lines[start], column: this.columns[start] },
-      end: { line: this.lines[end], column: this.endColumns[end] },
+      module: positions.module,
+      start: { line: positions.lines[start], column: positions.columns[start] },
+      end: { line: positions.lines[end], column: positions.endColumns[end] },
     };
   }
 
   // A node's location at a token, whose range runs from one token to another, as the parser makes
   // it.
   getLocation(token: number, start: number, end: number) {
-    const location = new TokenLocation(this.lines[token], this.columns[token], this);
+    const positions = this.positions;
+    const location = new TokenLocation(positions.lines[token], positions.columns[token], positions);
     location.setRange(start, end);
     return location;
   }
 }
-
-const PREFIX_WORDS = new Set(["DOMAIN", "SUBSET", "UNION", "ENABLED", "UNCHANGED"]);
 
 // A copy of a node that the layout placed already, as the tree held it before: each node's copy
 // placed where the node was, so that each place of a node the tree holds twice has a node of its
 // own.
 const copyPlaced = (expression: Expression, layout: Layout): Expression => {
   const copy = (item: Expression) => copyPlaced(item, layout);
-  const location = layout.placements.get(expression) ?? INLINE;
   const copyBounds = (bounds: readonly Bound[]) =>
     bounds.map((item) => ({ pattern: { ...item.pattern }, set: copy(item.set) }));
-  switch (expression.kind) {
-    case "Apply":
-      return {
-        kind: "Apply",
-        operator: expression.operator,
-        args: expression.args.map(copy),
-        location,
-      };
-    case "And":
-    case "Or":
-      return { kind: expression.kind, operands: expression.operands.map(copy), location };
-    case "Tuple":
-    case "SetEnumeration":
-      return { kind: expression.kind, elements: expression.elements.map(copy), location };
-    case "If":
-      return {
-        kind: "If",
-        condition: copy(expression.condition),
-        consequent: copy(expression.consequent),
-        alternative: copy(expression.alternative),
-        location,
-      };
-    case "Case":
-      return {
-        kind: "Case",
-        arms: expression.arms.map((arm) => ({
-          condition: copy(arm.condition),
-          body: copy(arm.body),
-        })),
-        other: expression.other === undefined ? undefined : copy(expression.other),
-        location,
-      };
-    case "Let":
-      return {
-        kind: "Let",
-        definitions: expression.definitions.map((definition) => {
-          if (definition.kind !== "Operator")
-            throw new TlaUnsupportedError("tla-ts can't lay out a LET of a function's definition");
-          return {
-            kind: "Operator",
-            name: definition.name,
-            params: definition.params.map((param) => ({ name: param.name, arity: param.arity })),
-            body: copy(definition.body),
-            isLocal: false,
-            isRecursive: false,
-            location: layout.placements.get(definition) ?? INLINE,
-          };
-        }),
-        body: copy(expression.body),
-        location,
-      };
-    case "Record":
-      return {
-        kind: "Record",
-        fields: expression.fields.map((field) => ({
-          name: field.name,
-          value: copy(field.value),
-          location: INLINE,
-        })),
-        location,
-      };
-    case "Except":
-      return {
-        kind: "Except",
-        function: copy(expression.function),
-        updates: expression.updates.map((update) => ({
-          path: update.path.map((step) =>
-            step.kind === "Field"
-              ? step
-              : { kind: "Index", args: step.args.map(copy), tupleRange: UNPLACED_RANGE },
+  const getCopy = (): Expression => {
+    switch (expression.kind) {
+      case "Apply":
+        return apply(expression.operator, expression.args.map(copy));
+      case "Tuple":
+        return tuple(expression.elements.map(copy));
+      case "SetEnumeration":
+        return setOf(expression.elements.map(copy));
+      case "If":
+        return ifThen(
+          copy(expression.condition),
+          copy(expression.consequent),
+          copy(expression.alternative),
+        );
+      case "Case":
+        return caseOf(
+          expression.arms.map((arm) => [copy(arm.condition), copy(arm.body)] as const),
+          expression.other === undefined ? undefined : copy(expression.other),
+        );
+      case "Let":
+        return letIn(
+          expression.definitions.map((definition) => {
+            if (definition.kind !== "Operator")
+              throw new TlaUnsupportedError(
+                "tla-ts can't lay out a LET of a function's definition",
+              );
+            const definitionCopy = defineOperator(
+              definition.name,
+              definition.params.map((param) => param.name),
+              copy(definition.body),
+            );
+            definitionCopy.location = layout.placements.get(definition) ?? INLINE;
+            return definitionCopy;
+          }),
+          copy(expression.body),
+        );
+      case "Record":
+        return recordOf(expression.fields.map((field) => [field.name, copy(field.value)] as const));
+      case "Except":
+        return except(
+          copy(expression.function),
+          expression.updates.map(
+            (update) =>
+              [
+                update.path.map((step) =>
+                  step.kind === "Field" ? pathTo(step.name) : pathTo(step.args.map(copy)),
+                ),
+                copy(update.value),
+              ] as const,
           ),
-          value: copy(update.value),
-          range: UNPLACED_RANGE,
-        })),
-        location,
-      };
-    case "FunctionApplication":
-      return {
-        kind: "FunctionApplication",
-        function: copy(expression.function),
-        args: expression.args.map(copy),
-        location,
-      };
-    case "FieldAccess":
-      return {
-        kind: "FieldAccess",
-        record: copy(expression.record),
-        field: expression.field,
-        location,
-      };
-    case "FunctionConstruction":
-      return {
-        kind: "FunctionConstruction",
-        bounds: copyBounds(expression.bounds),
-        body: copy(expression.body),
-        location,
-      };
-    case "Forall":
-    case "Exists":
-      return {
-        kind: expression.kind,
-        bounds: copyBounds(expression.bounds),
-        body: copy(expression.body),
-        location,
-      };
-    case "Number":
-      return { kind: "Number", value: expression.value, text: expression.text, location };
-    case "String":
-      return { kind: "String", value: expression.value, location };
-    case "Identifier":
-      return { kind: "Identifier", name: expression.name, location };
-    case "ExceptAt":
-      return { kind: "ExceptAt", location };
-    default:
-      throw new TlaUnsupportedError(`tla-ts can't lay out a ${expression.kind} expression of code`);
-  }
+        );
+      case "FunctionApplication":
+        return subscript(copy(expression.function), expression.args.map(copy));
+      case "FieldAccess":
+        return dot(copy(expression.record), expression.field);
+      case "FunctionConstruction":
+        return functionOf(copyBounds(expression.bounds), copy(expression.body));
+      case "Exists":
+        return exists(copyBounds(expression.bounds), copy(expression.body));
+      case "Number":
+        return { kind: "Number", value: expression.value, text: expression.text, location: INLINE };
+      case "String":
+        return string(expression.value);
+      case "Identifier":
+        return ref(expression.name);
+      case "ExceptAt":
+        return exceptAt();
+      default:
+        throw new TlaUnsupportedError(
+          `tla-ts can't lay out a ${expression.kind} expression of code`,
+        );
+    }
+  };
+  const copied = getCopy();
+  copied.location = layout.placements.get(expression) ?? INLINE;
+  return copied;
 };
 
 // Writes an expression's tokens, the first after gap, unless the expression starts a line, and
@@ -756,8 +743,7 @@ const writeDefinition = (definition: OperatorDefinition, gap: number, writer: To
   if (layout === undefined) return;
   const table = layout.table;
   definition.params.forEach((param, position) => {
-    const range = table.getRange(params[position], params[position]);
-    param.location = { line: range.start.line, column: range.start.column, range };
+    param.location = table.getLocation(params[position], params[position], params[position]);
   });
   definition.head = table.getRange(name, head);
   definition.bodyRange = table.getRange(bodyStart, writer.getCount() - 1);
@@ -1063,7 +1049,7 @@ export const layOutModule = (name: string, parts: readonly (string | OperatorDef
     for (const token of slice) if (token.kind === "String") strings.push(token.text);
   };
   for (const tree of trees) {
-    const treeLine = table.lines[tree.start];
+    const treeLine = table.positions.lines[tree.start];
     let end = position;
     while (end < tokens.length && tokens[end].line < treeLine) end++;
     addTokens(end);

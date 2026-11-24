@@ -218,6 +218,24 @@ describe("the layout of a program's code", () => {
     expect(getParenthesized(laidOut.module.definitions)).toBe(getParenthesized(parsed.definitions));
   });
 
+  it("gives each node the properties that the parser gives it, in its order", () => {
+    const parts = getModuleParts();
+    const laidOut = layOutModule("Code", parts);
+    const text = parts
+      .map((part) =>
+        typeof part === "string" ? part : printCodeDefinition(part, laidOut.placements),
+      )
+      .join("\n");
+    // Each object's keys in order, with the shape of each value, as V8 gives objects their maps.
+    const getShape = (value: unknown): unknown =>
+      value === null || typeof value !== "object"
+        ? typeof value
+        : Array.isArray(value)
+          ? value.map(getShape)
+          : Object.entries(value).map((entry) => [entry[0], getShape(entry[1])]);
+    expect(getShape(laidOut.module.units)).toEqual(getShape(parseModule(text).units));
+  });
+
   it("places a node of a tree at another line than its text puts it", () => {
     const parts = getModuleParts();
     const laidOut = layOutModule("Code", parts);
