@@ -883,10 +883,16 @@ export const markFingerprinted = (value: Value): void => {
     value.flags = flags | VALUE_FINGERPRINTED;
   }
   if (value.kind === "Function") {
-    value.domain.forEach(markFingerprinted);
-    value.range.forEach(markFingerprinted);
+    for (let index = 0; index < value.domain.length; index++) {
+      markFingerprinted(value.domain[index]);
+    }
+    for (let index = 0; index < value.range.length; index++) {
+      markFingerprinted(value.range[index]);
+    }
   } else if (value.kind === "Set" || value.kind === "MixedSet") {
-    value.elements.forEach(markFingerprinted);
+    for (let index = 0; index < value.elements.length; index++) {
+      markFingerprinted(value.elements[index]);
+    }
   } else if (isSetValue(value) && isEnumerable(value)) {
     cacheSet(value);
     toFiniteSet(value).elements.forEach(markFingerprinted);
@@ -1599,14 +1605,18 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
 };
 
 // A key that holds no written order, so comparing it forgets none: TLC compares such keys without
-// anything observable but the result.
+// anything observable but the result. An untyped model value compares with any other value but a
+// function's key without failing.
 const isOrderless = (value: Value): boolean =>
   typeof value !== "object" ||
+  (value.kind === "ModelValue" && value.type === undefined) ||
   (value.kind === "Function" &&
     ((value.flags & VALUE_SELF_COMPARED) !== 0 ||
       (value.writtenKeys === undefined &&
-        value.domain.every(isOrderless) &&
+        value.domain.every(isOrderlessKey) &&
         value.range.every(isOrderless))));
+
+const isOrderlessKey = (key: Value) => !isModelValue(key) && isOrderless(key);
 
 // The keys and values of two sorted domains, merged by searching the longer for each key of the
 // shorter, or undefined where two keys compare equal.
