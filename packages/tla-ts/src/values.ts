@@ -4727,13 +4727,21 @@ const createBoundNonMemberError = (
     ),
   );
 
+// FcnLambdaValue#apply binds its parameters to the elements of the tuple that toTuple returns, so a function converted here isn't converted again when bound.
+export const toBoundTuple = (value: Value, elements: Value[]) =>
+  typeof value === "object" && value.kind === "Function" && value.functionClass === "tuple"
+    ? value
+    : createTuple(elements);
+
 const checkBoundTuple = (
   functionValue: LazyFunctionValue,
   index: number,
   element: Value,
   tupleLength: number | undefined,
 ) => {
-  if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
+  if (tupleLength === undefined) return element;
+  const elements = getSequenceElements(element);
+  if (elements === undefined || elements.length !== tupleLength) {
     throw new TlaEvaluationError(
       describeBoundArgument(
         functionValue,
@@ -4743,6 +4751,7 @@ const checkBoundTuple = (
       ),
     );
   }
+  return toBoundTuple(element, elements);
 };
 
 // Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
@@ -4757,17 +4766,24 @@ const checkBoundArguments = (
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
     throw createBoundDomainError(argument);
   }
-  tupleLengths.forEach((tupleLength, index) => {
+  let components = elements;
+  for (let index = 0; index < tupleLengths.length; index++) {
     if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
+    const tupleLength = tupleLengths[index];
     if (!isElementOf(element, domain.factors[index])) {
       throw createBoundNonMemberError(functionValue, index, element, tupleLength);
     }
-    checkBoundTuple(functionValue, index, element, tupleLength);
-  });
+    const tuple = checkBoundTuple(functionValue, index, element, tupleLength);
+    if (tuple !== element) {
+      if (components === elements) components = [...elements];
+      components[index] = tuple;
+    }
+  }
   if (elements.length > tupleLengths.length) {
     throw createArgumentListError(functionValue, argument);
   }
+  return components === elements ? toBoundTuple(argument, elements) : createTuple(components);
 };
 
 const checkBoundArgumentsWith = (
@@ -4782,17 +4798,24 @@ const checkBoundArgumentsWith = (
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
     throw createBoundDomainError(argument);
   }
-  tupleLengths.forEach((tupleLength, index) => {
+  let components = elements;
+  for (let index = 0; index < tupleLengths.length; index++) {
     if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
+    const tupleLength = tupleLengths[index];
     if (!isMember(element, domain.factors[index])) {
       throw createBoundNonMemberError(functionValue, index, element, tupleLength);
     }
-    checkBoundTuple(functionValue, index, element, tupleLength);
-  });
+    const tuple = checkBoundTuple(functionValue, index, element, tupleLength);
+    if (tuple !== element) {
+      if (components === elements) components = [...elements];
+      components[index] = tuple;
+    }
+  }
   if (elements.length > tupleLengths.length) {
     throw createArgumentListError(functionValue, argument);
   }
+  return components === elements ? toBoundTuple(argument, elements) : createTuple(components);
 };
 
 const checkLazyArgumentWith = (
@@ -4802,10 +4825,12 @@ const checkLazyArgumentWith = (
 ) => {
   const tupleLengths = functionValue.boundTupleLengths;
   if (tupleLengths !== undefined) {
-    checkBoundArgumentsWith(functionValue, tupleLengths, argument, isMember);
-  } else if (!isMember(argument, functionValue.domain)) {
+    return checkBoundArgumentsWith(functionValue, tupleLengths, argument, isMember);
+  }
+  if (!isMember(argument, functionValue.domain)) {
     throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
   }
+  return argument;
 };
 
 export const applyFunction = (
@@ -4822,8 +4847,7 @@ export const applyFunction = (
     }
     const tupleLengths = functionValue.boundTupleLengths;
     if (tupleLengths !== undefined) {
-      checkBoundArguments(functionValue, tupleLengths, argument);
-      return functionValue.apply(argument);
+      return functionValue.apply(checkBoundArguments(functionValue, tupleLengths, argument));
     }
     if (!isElementOf(argument, functionValue.domain)) {
       throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
@@ -4855,7 +4879,7 @@ export const applyFunctionWith = (
     return applyFunction(functionValue, argument, describeMissing);
   }
   if (!isLazyFunctionCopy(functionValue) || !hasReplacedKey(functionValue, argument)) {
-    checkLazyArgumentWith(functionValue, argument, isMember);
+    return functionValue.apply(checkLazyArgumentWith(functionValue, argument, isMember));
   }
   return functionValue.apply(argument);
 };

@@ -8790,6 +8790,67 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "two parameters",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN g[[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 78 of module M: 1",
+        "|line 5, col 52 to line 5, col 74 of module M: 1",
+        "||line 5, col 52 to line 5, col 52 of module M: 1",
+        "||line 5, col 54 to line 5, col 73 of module M: 1:4",
+        "|||line 5, col 61 to line 5, col 66 of module M: 1:3",
+      ],
+    ],
+    [
+      "a tuple pattern and a parameter",
+      "x' = 0 /\\ LET g == [<<a, b>> \\in {<<1, 1>>}, c \\in {1} |-> a] IN g[[i \\in {1, 2} |-> 1], 1] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 69 of module M: 1",
+        "line 5, col 74 to line 5, col 103 of module M: 1",
+        "|line 5, col 74 to line 5, col 99 of module M: 1",
+        "||line 5, col 74 to line 5, col 74 of module M: 1",
+        "||line 5, col 74 to line 5, col 99 of module M: 1",
+        "|||line 5, col 76 to line 5, col 95 of module M: 1:6",
+        "||||line 5, col 83 to line 5, col 88 of module M: 1:3",
+      ],
+    ],
+    [
+      "a recursive function",
+      "x' = 0 /\\ LET f[a, b \\in {1}] == a IN f[[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 23 to line 5, col 42 of module M: 1",
+        "line 5, col 47 to line 5, col 73 of module M: 1",
+        "|line 5, col 47 to line 5, col 69 of module M: 1",
+        "||line 5, col 47 to line 5, col 47 of module M: 1",
+        "||line 5, col 49 to line 5, col 68 of module M: 1:4",
+        "|||line 5, col 56 to line 5, col 61 of module M: 1:3",
+      ],
+    ],
+    [
+      "the copy EXCEPT makes",
+      "x' = 0 /\\ LET g == [a, b \\in {1} |-> a] IN [g EXCEPT ![2, 2] = 5][[i \\in {1, 2} |-> 1]] = 1",
+      [
+        "line 5, col 9 to line 5, col 14 of module M: 1",
+        "line 5, col 28 to line 5, col 47 of module M: 1",
+        "line 5, col 52 to line 5, col 99 of module M: 1",
+        "|line 5, col 52 to line 5, col 95 of module M: 1",
+        "||line 5, col 52 to line 5, col 73 of module M: 1",
+        "||line 5, col 75 to line 5, col 94 of module M: 1:4",
+        "|||line 5, col 82 to line 5, col 87 of module M: 1:3",
+      ],
+    ],
+  ])(
+    "converts the argument of a function of %s to a tuple once, as TLC's FcnLambdaValue#apply binds its parameters from one toTuple",
+    async (_site, next, expected) => {
+      expect(await getNextCoverageLines(next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "S \\cup T of a filter",
       "x' = [t \\in {u \\in (1..3) \\X {0} : u[1] > 1} \\cup {<<5, 0>>} |-> 0]",
       [
