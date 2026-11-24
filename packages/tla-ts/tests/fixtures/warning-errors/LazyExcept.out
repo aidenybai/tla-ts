@@ -1,0 +1,32 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 53 to line 5, col 61 of module LazyExcept
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ r = [a |-> 0]
+/\ x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 78 in LazyExcept
+1. Line 5, column 9 to line 5, column 27 in LazyExcept
+2. Line 5, column 9 to line 5, column 13 in LazyExcept
+3. Line 5, column 18 to line 5, column 27 in LazyExcept
+4. Line 5, column 32 to line 5, column 78 in LazyExcept
+5. Line 5, column 37 to line 5, column 78 in LazyExcept
+6. Line 5, column 52 to line 5, column 77 in LazyExcept
+
+
+Reason:
+The EXCEPT was applied to non-existing fields of the value at
+line 5, col 53 to line 5, col 61 of module LazyExcept
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in _ at (_)

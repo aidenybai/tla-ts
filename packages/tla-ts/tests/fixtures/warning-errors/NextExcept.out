@@ -1,0 +1,27 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: The EXCEPT was applied to non-existing fields of the value at
+line 5, col 38 to line 5, col 46 of module NextExcept
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ r = [a |-> 0]
+/\ x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 62 in NextExcept
+1. Line 5, column 9 to line 5, column 27 in NextExcept
+2. Line 5, column 9 to line 5, column 13 in NextExcept
+3. Line 5, column 18 to line 5, column 27 in NextExcept
+4. Line 5, column 32 to line 5, column 62 in NextExcept
+5. Line 5, column 37 to line 5, column 62 in NextExcept
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+Finished in _ at (_)

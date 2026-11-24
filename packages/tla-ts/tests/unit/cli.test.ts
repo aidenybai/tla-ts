@@ -2081,6 +2081,23 @@ describe("the CLI prints messages for a program to read like TLC", () => {
   });
 });
 
+describe("the CLI reports where an EXCEPT warning that -messagesAsErrors names fails, as TLC does", () => {
+  it.each(["InitExcept", "OperatorExcept", "NextExcept", "LazyExcept"])("reports %s", (name) => {
+    const result = runCli("warning-errors", name, [
+      "-workers",
+      "1",
+      "-deadlock",
+      "-messagesAsErrors",
+      "2144",
+      "-noGenerateSpecTE",
+    ]);
+    expect(result.status).toBe(75);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "warning-errors", `${name}.out`), "utf8").split("\n"),
+    );
+  });
+});
+
 describe("the CLI reports an ACTION_CONSTRAINT that is not a boolean like TLC", () => {
   const getError = (args: string[]) => {
     const lines = runCliWith("tool-output", ["ActionConstraintValue.tla", ...args]).stdout.split(
