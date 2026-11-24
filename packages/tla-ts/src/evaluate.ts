@@ -2906,11 +2906,13 @@ const compileSetComprehension = (
       const size = Array.isArray(elements) ? elements.length : elements.high - elements.low + 1;
       for (let position = 0; position < size; position++) {
         const element = Array.isArray(elements) ? elements[position] : elements.low + position;
+        // SetEnumValue's enumerator charges an element as it hands it out, so a predicate that fails ends the charge there.
+        if (coverage) costCoverage(coverage, base, 1);
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
         else if (isUniform) break;
       }
-      if (coverage) costCoverage(coverage, base, size + 1);
+      if (coverage) costCoverage(coverage, base, 1);
       return createNormalizedSet(kept);
     };
   }
