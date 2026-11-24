@@ -231,6 +231,66 @@ describe("check with workers matches TLC", () => {
     });
   });
 
+  it.each([
+    [
+      "a spec the typed tier doesn't take",
+      readFileSync(join(FIXTURES, "tier-workers", "Interpreted.tla"), "utf8"),
+      readFileSync(join(FIXTURES, "tier-workers", "Interpreted.cfg"), "utf8"),
+      [177, 143, 10],
+    ],
+    [
+      "a property of an instance",
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 1\nNext == x < 512 /\\ x' \\in {2 * x, 2 * x + 1}\nI == INSTANCE Inner WITH y <- 2 * x\nProp == I!Grows\n====",
+      "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      [1023, 1023, 10],
+    ],
+  ])(
+    "checks %s with workers while it records the trace for the trace spec, as the CLI does by default",
+    async (_name, source, config, counts) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let progressCount = 0;
+      let isDone = false;
+      const checked = tlaTs
+        .check({
+          source,
+          config,
+          loadModule: (name) =>
+            name === "Inner"
+              ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE y\nGrows == [][y' > y]_y\n===="
+              : undefined,
+          workers: 2,
+          traceSpec: { module: "M_TTrace", traceFile: "M_TTrace.bin" },
+          onProgress: (progress) => {
+            if (progress.kind === "progress") progressCount++;
+          },
+        })
+        .finally(() => {
+          isDone = true;
+        });
+      while (!isDone) {
+        vi.advanceTimersByTime(PROGRESS_INTERVAL);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      vi.useRealTimers();
+      expect([getCounts(await checked), progressCount > 0]).toEqual([counts, true]);
+    },
+  );
+
+  it("prints what the next-state relation prints in TLC's order", async () => {
+    const printed: string[] = [];
+    const result = await tlaTs.check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nUnused(v) == PrintT(<<"unused", v>>)\nInit == x \\in 1..4\nNext == x < 20 /\\ PrintT(x) /\\ x\' = x + 4\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([getCounts(result), printed]).toEqual([
+      [23, 23, 6],
+      Array.from({ length: 19 }, (_value, index) => String(index + 1)),
+    ]);
+  });
+
   it("explores a queue that only grows to its bound", async () => {
     const result = await checkFixtureInParallel("queue", "Queue", 3);
     expect(result.status).toBe("success");

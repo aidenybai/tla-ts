@@ -11,7 +11,6 @@ import {
 import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
 import type { RuntimeInvariant } from "./environment";
-import { isImpure } from "./evaluate";
 import {
   createSharedFingerprints,
   getSharedFingerprintBuffers,
@@ -140,16 +139,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
-  return checkSequentially(
-    { ...options, config, ...createAttempt() },
-    (search, description, environment) =>
-      search.spec.init === undefined ||
-      search.spec.next === undefined ||
-      search.properties.liveness.length > 0 ||
-      description.isNextOverlapping ||
-      isImpure(environment)
-        ? undefined
-        : checkWithWorkers(config, options, createAttempt(), fallBack),
+  return checkSequentially({ ...options, config, ...createAttempt() }, (search, description) =>
+    search.spec.init === undefined ||
+    search.spec.next === undefined ||
+    search.properties.liveness.length > 0 ||
+    description.isNextOverlapping ||
+    search.isImpure()
+      ? undefined
+      : checkWithWorkers(config, options, createAttempt(), fallBack),
   );
 };
 

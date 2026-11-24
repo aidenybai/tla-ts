@@ -366,7 +366,6 @@ const STOP_REPLAY = new Error("The replay stopped");
 export type ParallelCheck = (
   search: Search,
   description: SpecDescription,
-  environment: Environment,
 ) => Promise<CheckResult> | undefined;
 
 export const checkSequentially = (
@@ -1371,8 +1370,7 @@ const searchStates = (
           });
         }),
     });
-  const parallel =
-    typed === undefined ? checkInParallel?.(search, getDescription(), environment) : undefined;
+  const parallel = typed === undefined ? checkInParallel?.(search, getDescription()) : undefined;
   if (parallel) return parallel;
   const onInitialProgress = isTypedInitialReported ? undefined : options.onProgress;
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {

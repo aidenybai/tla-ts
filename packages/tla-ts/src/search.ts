@@ -62,6 +62,7 @@ import {
   getDefinition,
   getLookupValue,
   getRootKey,
+  isImpure,
   type Builtin,
   type Context,
   type Environment,
@@ -887,6 +888,7 @@ export interface Search {
   isConstrained: boolean;
   isNextReplayed: boolean;
   isTraceRebuildShown: boolean;
+  isImpure: () => boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1647,6 +1649,41 @@ export const createSearch = (
         environment,
         "replayed",
       ),
+    isImpure: () => {
+      const checkScopes = [
+        ...invariants,
+        ...constraints,
+        ...actionConstraints,
+        ...properties.initialPredicates,
+        ...properties.actionProperties,
+      ].map((check) => getScopeExpressions(check.scope));
+      return scopeExpressions === undefined ||
+        checkScopes.some((expressions) => expressions === undefined)
+        ? isImpure(environment)
+        : [...environment.facts.ids.keys()].some(
+            (definition) =>
+              getStartupValue(definition, environment) !== undefined &&
+              isImpureDefinition(definition, environment),
+          ) ||
+            isExpressionImpure(
+              [
+                ...(spec.init ? [spec.init] : []),
+                ...(spec.next ? [spec.next] : []),
+                ...invariantPredicates.map((invariant) => invariant.predicate),
+                ...constraintPredicates.map((constraint) => constraint.predicate),
+                ...actionConstraints.map((constraint) => constraint.expression),
+                ...properties.initialPredicates.map((predicate) => predicate.expression),
+                ...properties.actionProperties.flatMap((property) => [
+                  property.action,
+                  property.subscript,
+                ]),
+                ...scopeExpressions,
+                ...checkScopes.flatMap((expressions) => expressions ?? []),
+              ],
+              environment,
+              "any",
+            );
+    },
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
