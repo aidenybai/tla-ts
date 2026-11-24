@@ -13037,6 +13037,34 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "F :> 1 @@ {9} :> 2",
+      "PrintT(K)",
+      ["{}", "{1}", "{}", "{1}", '"n"', "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ g[F] = 1 /\\ PrintT("b")',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"'],
+    ],
+    [
+      "0",
+      'LET g == F :> 1 @@ {9} :> 2 IN PrintT("a") /\\ g[{9}] = 2 /\\ PrintT("b") /\\ DOMAIN g # {} /\\ PrintT("c") /\\ PrintT(g)',
+      ['"n"', '"a"', "{}", "{1}", "{}", "{1}", '"b"', '"c"', "({9} :> 2 @@ {{}, {1}} :> 1)"],
+    ],
+  ])(
+    "compares the keys of the function K == %s for %s combines with @@ as TLC's first normalize sorts it",
+    async (definition, next, expected) => {
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
       [

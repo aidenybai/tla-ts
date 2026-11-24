@@ -1754,7 +1754,7 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
   return createSortedFunction(domain, range);
 };
 
-export const createWrittenFunction = (pairs: [Value, Value][]) => {
+const createSortedWrittenFunction = (pairs: [Value, Value][]) => {
   const functionValue = createFunction(pairs);
   const isWrittenSorted =
     functionValue.domain.length !== pairs.length ||
@@ -1766,6 +1766,16 @@ export const createWrittenFunction = (pairs: [Value, Value][]) => {
         pairs.map((pair) => pair[0]),
       );
 };
+
+const sortWrittenPairsLikeTlc = (pairs: [Value, Value][]) =>
+  sortLikeFcnRcdValue(
+    pairs.map((pair) => pair[0]),
+    pairs.map((pair) => pair[1]),
+  );
+
+// TLC's CombineFcn builds the function unnormalized, and tla-ts runs the FcnRcdValue#sort of its first normalize here when a key's comparison shows.
+export const createWrittenFunction = (pairs: [Value, Value][]) =>
+  computeLikeTlcOnFailure(createSortedWrittenFunction, sortWrittenPairsLikeTlc, pairs, undefined);
 
 const MAX_SHARED_INTERVAL_LENGTH = 1024;
 const intervalDomains: Value[][] = [];
