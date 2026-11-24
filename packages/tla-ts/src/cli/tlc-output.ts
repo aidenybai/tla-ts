@@ -39,7 +39,7 @@ import {
   MESSAGE_LEVEL,
   type MessagePrinter,
 } from "../tlc/messages";
-import { formatErrorState, formatState, getDiffBase } from "../values";
+import { formatErrorState, formatState, getDiffBase, markNormalized, type Value } from "../values";
 import type { SeededArguments } from "./tlc-arguments";
 
 const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
@@ -94,11 +94,15 @@ const TRACE_MODES = {
   "counter-example": { heading: COUNTER_EXAMPLE, isLastDiffed: true },
 };
 
+// TLC's StatePrinter fingerprints a state right after it prints it, which sorts the records that later states and the trace spec share with it.
+const fingerprintPrinted = (values: Value[]) => values.forEach(markNormalized);
+
 const printTrace = (
   printer: MessagePrinter,
   trace: TraceStep[],
   mode: keyof typeof TRACE_MODES,
   levels?: number[],
+  fingerprinted?: Value[][],
 ) => {
   const heading = TRACE_MODES[mode].heading;
   const isRebuiltAfterHeading = mode === "counter-example" && printer.version === "1.7.4";
@@ -116,6 +120,7 @@ const printTrace = (
         MESSAGE_LEVEL.state,
         `${levels?.[index] ?? index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? getDiffBase(step.state, trace[index - 1].state) : undefined)}`,
       );
+      if (fingerprinted !== undefined) fingerprintPrinted(fingerprinted[index]);
     });
   } catch (error) {
     // Deviation from TLC: it reports an overflow while it prints a trace as "TLC threw an unexpected exception" with a Java stack trace.
@@ -518,19 +523,22 @@ export const printDepthFirst = (
       printCoverage(printer, output.coverage, startTime);
       return;
     case "behavior":
-      output.states.forEach((state, index) =>
-        output.isInvariant
-          ? printer.print(
-              MESSAGE_CODE.statePrint2,
-              MESSAGE_LEVEL.state,
-              `${index + 1}: \n${formatState(state, printer.isDiffTrace ? output.states[index - 1] : undefined)}`,
-            )
-          : printer.print(
-              MESSAGE_CODE.statePrint1,
-              MESSAGE_LEVEL.state,
-              `${index + 1}:\n${formatState(state)}`,
-            ),
-      );
+      output.states.forEach((state, index) => {
+        if (!output.isInvariant) {
+          printer.print(
+            MESSAGE_CODE.statePrint1,
+            MESSAGE_LEVEL.state,
+            `${index + 1}:\n${formatState(state)}`,
+          );
+          return;
+        }
+        printer.print(
+          MESSAGE_CODE.statePrint2,
+          MESSAGE_LEVEL.state,
+          `${index + 1}: \n${formatState(state, printer.isDiffTrace ? output.states[index - 1] : undefined)}`,
+        );
+        fingerprintPrinted(Object.values(state));
+      });
       return;
     case "nested-expressions":
       printNestedExpressions(printer, output.callStack);
@@ -675,7 +683,7 @@ export const printSimulation = (
     case "behavior": {
       const last = output.trace[output.trace.length - 1];
       if (!output.isLastStateOnly) {
-        printTrace(printer, output.trace, "simulation", output.levels);
+        printTrace(printer, output.trace, "simulation", output.levels, output.fingerprinted);
         return;
       }
       print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");

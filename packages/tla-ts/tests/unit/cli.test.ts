@@ -2491,6 +2491,22 @@ describe("the CLI writes the trace exploration spec in every mode, as TLC does",
   });
 });
 
+describe("the CLI sorts the records of a state once it prints it, as TLC's StatePrinter fingerprints it", () => {
+  it("prints sorted a record a later simulated state shares, and writes TLC's spec", () => {
+    const run = runTraceSpecFixture("Records", "te", ["-simulate", "-depth", "10", "-seed", "0"]);
+    expect(run.result.stdout).toContain(
+      "State 2: <Next line 5, col 9 to line 5, col 102 of module Records>\n/\\ n = 1\n/\\ q = [b |-> 1, a |-> 1]\n/\\ r = [b |-> 0, a |-> 0]\n\nState 3: <Next line 5, col 9 to line 5, col 102 of module Records>\n/\\ n = 2\n/\\ q = [a |-> 1, b |-> 1]\n/\\ r = [b |-> 1, a |-> 1]\n",
+    );
+    expect(run.written).toBe(readTraceSpecFixture("Records"));
+  });
+
+  it("writes TLC's spec under -dfid, with the successor outside the model sorted", () => {
+    expect(runTraceSpecFixture("Records", "te", ["-dfid", "5"]).written).toBe(
+      readTraceSpecFixture("Records"),
+    );
+  });
+});
+
 describe("the CLI writes the spec of the last trace under -continue", () => {
   it("writes the last of two simulated traces, where TLC's spec appends both", () => {
     const run = runTraceSpecFixture("Continue", "te", [

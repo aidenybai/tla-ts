@@ -92,7 +92,13 @@ export interface SimulationStatistics {
 
 export type SimulationOutput =
   | { kind: "message"; code: number; level: MessageLevel; message: string; toolMessage: string }
-  | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
+  | {
+      kind: "behavior";
+      trace: TraceStep[];
+      levels: number[];
+      fingerprinted: Value[][];
+      isLastStateOnly: boolean;
+    }
   | CoverageOutput
   | TraceSpecOutput
   | { kind: "progress"; statistics: SimulationStatistics }
@@ -870,18 +876,26 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       options.isDiffTrace && !isLastStateOnly
         ? getDiffTracePositions(trace)
         : { positions: trace.map((_node, index) => index), failure: undefined };
+    // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
+    const steps = shown.positions.map((position) => {
+      const captured = capture.captureOutput(
+        () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
+      );
+      return captured.lines.length > 0
+        ? { ...captured.result, aliasOutput: captured.lines }
+        : captured.result;
+    });
     output({
       kind: "behavior",
-      // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
-      trace: shown.positions.map((position) => {
-        const captured = capture.captureOutput(
-          () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
-        );
-        return captured.lines.length > 0
-          ? { ...captured.result, aliasOutput: captured.lines }
-          : captured.result;
-      }),
+      trace: steps,
       levels: shown.positions.map((position) => trace[position].level),
+      // TLC fingerprints only a state with every variable assigned, and an alias through the variables it binds.
+      fingerprinted: steps.map((step, index) =>
+        trace[shown.positions[index]].incomplete === undefined &&
+        environment.variables.every((name) => Object.hasOwn(step.state, name))
+          ? environment.variables.map((name) => step.state[name])
+          : [],
+      ),
       isLastStateOnly,
     });
     const traceSpec = isLastStateOnly
