@@ -87,10 +87,8 @@ const INITIAL_BUCKETS = 1n << 16n;
 const MAX_LOAD = 20n;
 
 const getFingerprintDistance = (fingerprints: bigint[], buckets: bigint) => {
-  const values = fingerprints.map((fingerprint) => {
-    const low = BigInt.asIntN(32, fingerprint);
-    return low < 0n ? low : BigInt.asIntN(64, fingerprint);
-  });
+  // Deviation from TLC: MemFPIntSet#checkFPs sign-extends each fingerprint's low word over its high word, so two fingerprints that share a negative low word read as equal and TLC divides by zero.
+  const values = fingerprints.map((fingerprint) => BigInt.asIntN(64, fingerprint));
   const sorted = values.toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   const gaps = sorted
     .slice(1)

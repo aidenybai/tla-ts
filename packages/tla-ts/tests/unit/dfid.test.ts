@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import type { CheckProgress } from "../../src";
 import { checkDepthFirst, type DepthFirstOutput } from "../../src/dfid";
+import { formatProbability } from "../../src/tlc/summary";
 
 const searchDepthFirst = (body: string, coverage?: number) => {
   const outputs: DepthFirstOutput[] = [];
@@ -414,6 +415,35 @@ it("checks the assumptions of a specification without variables and then complet
       "2208 Finished computing initial states: 0 states generated, with 0 of them distinct.",
       "success 0 0",
       "2204 0 states generated, 0 distinct states found.",
+    ],
+  ]);
+});
+
+it("reports the distance of two fingerprints that share a negative low word, which TLC's MemFPIntSet#checkFPs reads as equal before it divides by zero", () => {
+  const outputs: DepthFirstOutput[] = [];
+  const exitCode = checkDepthFirst({
+    source:
+      "---- MODULE M ----\nVARIABLES x, y\nInit == \\/ x = 0 /\\ y = 1\n        \\/ x = 27370 /\\ y = 42572\nNext == UNCHANGED <<x, y>>\n====",
+    config: "INIT Init\nNEXT Next",
+    maxDepth: 3,
+    onOutput: (output) => outputs.push(output),
+  });
+  expect([
+    exitCode,
+    outputs.map((output) =>
+      output.kind === "message"
+        ? `${output.code} ${output.message}`
+        : output.kind === "success"
+          ? `success ${formatProbability(output.optimistic)} ${formatProbability(output.actual)}`
+          : output.kind,
+    ),
+  ]).toEqual([
+    0,
+    [
+      "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
+      "2205 Starting level 2: 2 states generated, 2 distinct states found.",
+      "success 2.2E-19 2.2E-19",
+      "2204 4 states generated, 2 distinct states found.",
     ],
   ]);
 });
