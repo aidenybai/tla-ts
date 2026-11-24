@@ -3,7 +3,7 @@ import { TlaTypeScriptError } from "../../errors";
 import { mapChildren } from "../../instances";
 import { parseModule } from "../../parser";
 import { printDefinition } from "../../printer";
-import { type CodeDefinition, forEachBodyName } from "./code-tree";
+import { type CodeDefinition, forEachBodyName, walkCode } from "./code-tree";
 
 const printText = (definition: OperatorDefinition) => printDefinition(definition).join("\n");
 
@@ -41,26 +41,30 @@ const apply = (operator: string, args: Expression[]): Expression => ({
 // definitions and steps are, and of a loop's record [id |-> N, labels |-> ...], LoopN.
 const getReferencedNames = (definition: CodeDefinition) => {
   const names = new Set<string>();
-  forEachBodyName(definition, (name) => names.add(name));
   if (definition.tree === undefined) {
+    forEachBodyName(definition, (name) => names.add(name));
     const text = definition.text ?? "";
     for (const match of text.slice(text.indexOf("==")).matchAll(/\bid \|-> (\d+), labels \|->/g)) {
       names.add(`Loop${match[1]}`);
     }
-  } else addLoops(definition.tree.body, names);
-  return names;
-};
-
-const addLoops = (expression: Expression, names: Set<string>): void => {
-  if (expression.kind === "Record") {
-    expression.fields.forEach((field, position) => {
-      const next = expression.fields[position + 1];
-      if (field.name === "id" && field.value.kind === "Number" && next?.name === "labels") {
-        names.add(`Loop${field.value.text ?? field.value.value}`);
-      }
-    });
+    return names;
   }
-  getChildren(expression).forEach((child) => addLoops(child, names));
+  walkCode(
+    definition.tree.body,
+    (expression) => {
+      if (expression.kind === "Record") {
+        expression.fields.forEach((field, position) => {
+          const next = expression.fields[position + 1];
+          if (field.name === "id" && field.value.kind === "Number" && next?.name === "labels") {
+            names.add(`Loop${field.value.text ?? field.value.value}`);
+          }
+        });
+      }
+      return expression;
+    },
+    (name) => names.add(name),
+  );
+  return names;
 };
 
 const getNames = (expression: Expression, names = new Set<string>()): Set<string> => {

@@ -812,12 +812,187 @@ export const printCodeDefinition = (definition: OperatorDefinition) => {
   return layout.print(0, layout.getCount(), 1);
 };
 
-// The characters of a definition's text.
-export const getCodeLength = (definition: OperatorDefinition) => {
-  const layout = new Layout("", false);
-  writeDefinition(definition, NO_GAP, layout);
-  return layout.length;
+const getGapLength = (gap: number) => (gap === SPACE ? 1 : gap >= 0 ? gap + 1 : 0);
+
+// The characters of the tokens that writeExpression writes of an expression.
+const getExpressionLength = (expression: Expression, gap: number): number => {
+  const placement = getPlacement(expression.location);
+  const first = placement.indent === SPACE ? gap : placement.indent;
+  const blank = placement.blankIndent >= 0 ? placement.blankIndent + 1 : 0;
+  return placement.isParenthesized
+    ? blank + getGapLength(first) + getTokensLength(expression, NO_GAP) + 2
+    : blank + getTokensLength(expression, first);
 };
+
+const getListLength = (items: readonly Expression[]) => {
+  let length = 0;
+  for (let position = 0; position < items.length; position++) {
+    length +=
+      position === 0
+        ? getExpressionLength(items[0], NO_GAP)
+        : 1 + getExpressionLength(items[position], SPACE);
+  }
+  return length;
+};
+
+const getBoundsLength = (bounds: readonly Bound[], gap: number) => {
+  let length = 0;
+  bounds.forEach((item, position) => {
+    const nameGap = getGapLength(position === 0 ? gap : SPACE);
+    const pattern = item.pattern;
+    length +=
+      (position > 0 ? 1 : 0) +
+      nameGap +
+      (pattern.kind === "Name"
+        ? pattern.name.length
+        : 4 +
+          pattern.names.reduce(
+            (total, patternName, index) => total + patternName.length + (index > 0 ? 2 : 0),
+            0,
+          )) +
+      4 +
+      getExpressionLength(item.set, SPACE);
+  });
+  return length;
+};
+
+// The characters of the tokens that writeTokens writes of an expression.
+const getTokensLength = (expression: Expression, gap: number): number => {
+  switch (expression.kind) {
+    case "Number":
+      return getGapLength(gap) + (expression.text ?? String(expression.value)).length;
+    case "String":
+      return getGapLength(gap) + formatString(expression.value).length;
+    case "Identifier":
+      return getGapLength(gap) + expression.name.length;
+    case "ExceptAt":
+      return getGapLength(gap) + 1;
+    case "Apply": {
+      const args = expression.args;
+      if (args.length === 2 && INFIX_OPERATORS.has(expression.operator)) {
+        return (
+          getExpressionLength(args[0], gap) +
+          1 +
+          expression.operator.length +
+          getExpressionLength(args[1], SPACE)
+        );
+      }
+      if (args.length === 1 && (expression.operator === "-." || expression.operator === "~")) {
+        return getGapLength(gap) + 1 + getExpressionLength(args[0], NO_GAP);
+      }
+      if (args.length === 1 && PREFIX_WORDS.has(expression.operator)) {
+        return getGapLength(gap) + expression.operator.length + getExpressionLength(args[0], SPACE);
+      }
+      return getGapLength(gap) + expression.operator.length + 2 + getListLength(args);
+    }
+    case "If":
+      return (
+        getGapLength(gap) +
+        2 +
+        getExpressionLength(expression.condition, SPACE) +
+        5 +
+        getExpressionLength(expression.consequent, SPACE) +
+        5 +
+        getExpressionLength(expression.alternative, SPACE)
+      );
+    case "Case": {
+      const innerGap = getGapLength(getPlacement(expression.location).innerIndent);
+      let length = getGapLength(gap) + 4;
+      expression.arms.forEach((arm, position) => {
+        length +=
+          (position > 0 ? innerGap + 2 : 0) +
+          getExpressionLength(arm.condition, SPACE) +
+          3 +
+          getExpressionLength(arm.body, SPACE);
+      });
+      return expression.other === undefined
+        ? length
+        : length + innerGap + 2 + 6 + 3 + getExpressionLength(expression.other, SPACE);
+    }
+    case "Let": {
+      let length = getGapLength(gap) + 3;
+      expression.definitions.forEach((definition) => {
+        if (definition.kind !== "Operator") {
+          throw new TlaUnsupportedError("tla-ts can't print a LET of a function's definition");
+        }
+        length += getDefinitionLength(definition, SPACE);
+      });
+      return (
+        length +
+        getGapLength(getPlacement(expression.location).innerIndent) +
+        2 +
+        getExpressionLength(expression.body, SPACE)
+      );
+    }
+    case "Tuple":
+      return getGapLength(gap) + 4 + getListLength(expression.elements);
+    case "SetEnumeration":
+      return getGapLength(gap) + 2 + getListLength(expression.elements);
+    case "Record": {
+      let length = getGapLength(gap) + 2;
+      expression.fields.forEach((field, position) => {
+        length +=
+          (position > 0 ? 2 : 0) + field.name.length + 4 + getExpressionLength(field.value, SPACE);
+      });
+      return length;
+    }
+    case "Except": {
+      let length = getGapLength(gap) + 1 + getExpressionLength(expression.function, NO_GAP) + 7 + 1;
+      expression.updates.forEach((update, position) => {
+        length += position > 0 ? 3 : 2;
+        update.path.forEach((step) => {
+          length += step.kind === "Field" ? 1 + step.name.length : 2 + getListLength(step.args);
+        });
+        length += 2 + getExpressionLength(update.value, SPACE);
+      });
+      return length;
+    }
+    case "FunctionApplication":
+      return getExpressionLength(expression.function, gap) + 2 + getListLength(expression.args);
+    case "FieldAccess":
+      return getExpressionLength(expression.record, gap) + 1 + expression.field.length;
+    case "FunctionConstruction":
+      return (
+        getGapLength(gap) +
+        1 +
+        getBoundsLength(expression.bounds, NO_GAP) +
+        4 +
+        getExpressionLength(expression.body, SPACE) +
+        1
+      );
+    case "Exists":
+      return (
+        getGapLength(gap) +
+        2 +
+        getBoundsLength(expression.bounds, SPACE) +
+        2 +
+        getExpressionLength(expression.body, SPACE)
+      );
+    default:
+      throw new TlaUnsupportedError(`tla-ts can't print a ${expression.kind} expression of code`);
+  }
+};
+
+const getDefinitionLength = (definition: OperatorDefinition, gap: number) => {
+  const placement = getPlacement(definition.location);
+  const params = definition.params;
+  return (
+    getGapLength(placement.indent === SPACE ? gap : placement.indent) +
+    definition.name.length +
+    (params.length === 0
+      ? 0
+      : params.reduce(
+          (total, param, position) => total + param.name.length + (position > 0 ? 2 : 0),
+          2,
+        )) +
+    3 +
+    getExpressionLength(definition.body, SPACE)
+  );
+};
+
+// The characters of a definition's text, as printCodeDefinition prints it.
+export const getCodeLength = (definition: OperatorDefinition) =>
+  getDefinitionLength(definition, NO_GAP);
 
 export const printCodeExpression = (expression: Expression) => {
   const layout = new Layout("", false);
@@ -829,22 +1004,295 @@ const CAPITALIZED = /\b[A-Z]\w*\b/g;
 
 const NAME = /^[A-Za-z_]\w*$/;
 
-// Each capitalized word of an expression's text, as \b[A-Z]\w*\b finds them in it, in order, and
-// whether it's in a string: the names of definitions, which no other word is.
-export const forEachCodeName = (
-  expression: Expression,
-  visit: (name: string, isInString: boolean) => void,
+// Walks an expression's nodes in the order of their tokens, each replaced in place, before its
+// tokens, by what replace gives for it, and visits each capitalized word of the tokens, as
+// \b[A-Z]\w*\b finds them in its text, and whether it's in a string: the names of definitions,
+// which no other word is.
+export const walkCode = (
+  root: Expression,
+  replace: (expression: Expression) => Expression,
+  visit?: (name: string, isInString: boolean) => void,
 ) => {
-  const layout = new Layout("", false);
-  writeExpression(expression, NO_GAP, layout);
-  for (const text of layout.texts) {
+  const visitWords = (text: string) => {
+    if (visit === undefined) return;
     const first = text.charCodeAt(0);
     // A capital starts a name, a quote a string, and a backslash an operator such as \E.
     if (first >= 65 && first <= 90 && NAME.test(text)) visit(text, false);
     else if (first === 34 || first === 92 || (first >= 65 && first <= 90)) {
       for (const match of text.matchAll(CAPITALIZED)) visit(match[0], first === 34);
     }
+  };
+  const walkList = (items: Expression[]) => {
+    for (let position = 0; position < items.length; position++) {
+      items[position] = walk(items[position]);
+    }
+  };
+  const walkBounds = (bounds: Bound[]) =>
+    bounds.forEach((item) => {
+      const pattern = item.pattern;
+      if (pattern.kind === "Name") visitWords(pattern.name);
+      else pattern.names.forEach(visitWords);
+      item.set = walk(item.set);
+    });
+  const walk = (input: Expression): Expression => {
+    const expression = replace(input);
+    switch (expression.kind) {
+      case "String":
+        if (visit !== undefined) visitWords(formatString(expression.value));
+        break;
+      case "Identifier":
+        visitWords(expression.name);
+        break;
+      case "Apply": {
+        const args = expression.args;
+        if (args.length === 2 && INFIX_OPERATORS.has(expression.operator)) {
+          args[0] = walk(args[0]);
+          visitWords(expression.operator);
+          args[1] = walk(args[1]);
+        } else if (
+          args.length === 1 &&
+          (expression.operator === "-." || expression.operator === "~")
+        ) {
+          args[0] = walk(args[0]);
+        } else {
+          visitWords(expression.operator);
+          walkList(args);
+        }
+        break;
+      }
+      case "If":
+        visitWords("IF");
+        expression.condition = walk(expression.condition);
+        visitWords("THEN");
+        expression.consequent = walk(expression.consequent);
+        visitWords("ELSE");
+        expression.alternative = walk(expression.alternative);
+        break;
+      case "Case":
+        visitWords("CASE");
+        expression.arms.forEach((arm) => {
+          arm.condition = walk(arm.condition);
+          arm.body = walk(arm.body);
+        });
+        if (expression.other !== undefined) {
+          visitWords("OTHER");
+          expression.other = walk(expression.other);
+        }
+        break;
+      case "Let":
+        visitWords("LET");
+        expression.definitions.forEach((definition) => {
+          visitWords(definition.name);
+          if (definition.kind === "Operator") {
+            definition.params.forEach((param) => visitWords(param.name));
+          }
+          definition.body = walk(definition.body);
+        });
+        visitWords("IN");
+        expression.body = walk(expression.body);
+        break;
+      case "Tuple":
+      case "SetEnumeration":
+        walkList(expression.elements);
+        break;
+      case "Record":
+        expression.fields.forEach((field) => {
+          visitWords(field.name);
+          field.value = walk(field.value);
+        });
+        break;
+      case "Except":
+        expression.function = walk(expression.function);
+        visitWords("EXCEPT");
+        expression.updates.forEach((update) => {
+          update.path.forEach((step) => {
+            if (step.kind === "Field") visitWords(step.name);
+            else walkList(step.args);
+          });
+          update.value = walk(update.value);
+        });
+        break;
+      case "FunctionApplication":
+        expression.function = walk(expression.function);
+        walkList(expression.args);
+        break;
+      case "FieldAccess":
+        expression.record = walk(expression.record);
+        visitWords(expression.field);
+        break;
+      case "FunctionConstruction":
+        walkBounds(expression.bounds);
+        expression.body = walk(expression.body);
+        break;
+      case "Exists":
+        visitWords("\\E");
+        walkBounds(expression.bounds);
+        expression.body = walk(expression.body);
+        break;
+    }
+    return expression;
+  };
+  return walk(root);
+};
+
+const KINDS = new Map<Expression["kind"], number>(
+  (
+    [
+      "Number",
+      "String",
+      "Identifier",
+      "ExceptAt",
+      "Apply",
+      "If",
+      "Case",
+      "Let",
+      "Tuple",
+      "SetEnumeration",
+      "Record",
+      "Except",
+      "FunctionApplication",
+      "FieldAccess",
+      "FunctionConstruction",
+      "Exists",
+    ] as const
+  ).map((kind, index) => [kind, index]),
+);
+
+// The shapes of definitions as runs of numbers, one after another: each node's kind, placement,
+// words and counts, in the order that walkCode replaces the nodes in, which two definitions share
+// where their texts after their names are the same.
+export class CodeShapes {
+  items = new Int32Array(1 << 16);
+  length = 0;
+  readonly words = new Map<string, number>();
+
+  add(item: number) {
+    if (this.length === this.items.length) this.items = grow(this.items);
+    this.items[this.length] = item;
+    this.length += 1;
   }
+
+  addWord(word: string) {
+    const known = this.words.get(word);
+    const id = known ?? this.words.size;
+    if (known === undefined) this.words.set(word, id);
+    this.add(id);
+  }
+
+  addBounds(bounds: readonly Bound[]) {
+    this.add(bounds.length);
+    bounds.forEach((item) => {
+      const pattern = item.pattern;
+      if (pattern.kind === "Name") {
+        this.add(-1);
+        this.addWord(pattern.name);
+      } else {
+        this.add(pattern.names.length);
+        pattern.names.forEach((patternName) => this.addWord(patternName));
+      }
+    });
+  }
+
+  // A definition's placement and parameters, before the nodes of its body.
+  addHead(definition: OperatorDefinition) {
+    this.add(getPlacement(definition.location).id);
+    this.add(definition.params.length);
+    definition.params.forEach((param) => this.addWord(param.name));
+  }
+
+  addNode(expression: Expression) {
+    const kind = KINDS.get(expression.kind);
+    if (kind === undefined) {
+      throw new TlaUnsupportedError(`tla-ts can't print a ${expression.kind} expression of code`);
+    }
+    this.add(kind);
+    this.add(getPlacement(expression.location).id);
+    switch (expression.kind) {
+      case "Number":
+        this.addWord(expression.text ?? String(expression.value));
+        return;
+      case "String":
+        this.addWord(expression.value);
+        return;
+      case "Identifier":
+        this.addWord(expression.name);
+        return;
+      case "Apply":
+        this.addWord(expression.operator);
+        this.add(expression.args.length);
+        return;
+      case "Case":
+        this.add(expression.arms.length);
+        this.add(expression.other === undefined ? 0 : 1);
+        return;
+      case "Let":
+        this.add(expression.definitions.length);
+        expression.definitions.forEach((definition) => {
+          this.addWord(definition.name);
+          if (definition.kind === "Operator") this.addHead(definition);
+        });
+        return;
+      case "Tuple":
+      case "SetEnumeration":
+        this.add(expression.elements.length);
+        return;
+      case "Record":
+        this.add(expression.fields.length);
+        expression.fields.forEach((field) => this.addWord(field.name));
+        return;
+      case "Except":
+        this.add(expression.updates.length);
+        expression.updates.forEach((update) => {
+          this.add(update.path.length);
+          update.path.forEach((step) => {
+            if (step.kind === "Field") {
+              this.add(-1);
+              this.addWord(step.name);
+            } else this.add(step.args.length);
+          });
+        });
+        return;
+      case "FunctionApplication":
+        this.add(expression.args.length);
+        return;
+      case "FieldAccess":
+        this.addWord(expression.field);
+        return;
+      case "FunctionConstruction":
+      case "Exists":
+        this.addBounds(expression.bounds);
+        return;
+      default:
+        return;
+    }
+  }
+
+  getHash(start: number) {
+    let hash = 0x811c9dc5;
+    for (let index = start; index < this.length; index++) {
+      hash = Math.imul(hash ^ this.items[index], 0x01000193);
+    }
+    return hash;
+  }
+
+  // Whether the shape that runs from start to end is the one that runs from otherStart.
+  isSame(start: number, end: number, otherStart: number, otherEnd: number) {
+    if (end - start !== otherEnd - otherStart) return false;
+    for (let index = 0; index < end - start; index++) {
+      if (this.items[start + index] !== this.items[otherStart + index]) return false;
+    }
+    return true;
+  }
+}
+
+const keepExpression = (expression: Expression) => expression;
+
+// Each capitalized word of an expression's text, as walkCode visits them.
+export const forEachCodeName = (
+  expression: Expression,
+  visit: (name: string, isInString: boolean) => void,
+) => {
+  walkCode(expression, keepExpression, visit);
 };
 
 // Each capitalized word of a text, as forEachCodeName gives an expression's.
@@ -855,99 +1303,6 @@ export const forEachTextName = (
   for (const match of text.matchAll(/"[^"\\]*(?:\\.[^"\\]*)*"|\b[A-Z]\w*\b/g)) {
     if (!match[0].startsWith('"')) visit(match[0], false);
     else for (const name of match[0].matchAll(CAPITALIZED)) visit(name[0], true);
-  }
-};
-
-// The children of an expression, in the order its text has them, each replaced in place by what
-// replace gives for it.
-export const replaceCodeChildren = (
-  expression: Expression,
-  replace: (child: Expression) => Expression,
-): void => {
-  const replaceAll = (items: Expression[]) => {
-    for (let position = 0; position < items.length; position++) {
-      items[position] = replace(items[position]);
-    }
-  };
-  const replaceBounds = (bounds: Bound[]) =>
-    bounds.forEach((item) => {
-      item.set = replace(item.set);
-    });
-  switch (expression.kind) {
-    case "Apply":
-      replaceAll(expression.args);
-      return;
-    case "And":
-    case "Or":
-      replaceAll(expression.operands);
-      return;
-    case "Tuple":
-    case "SetEnumeration":
-      replaceAll(expression.elements);
-      return;
-    case "If":
-      expression.condition = replace(expression.condition);
-      expression.consequent = replace(expression.consequent);
-      expression.alternative = replace(expression.alternative);
-      return;
-    case "Case":
-      expression.arms.forEach((arm) => {
-        arm.condition = replace(arm.condition);
-        arm.body = replace(arm.body);
-      });
-      if (expression.other !== undefined) expression.other = replace(expression.other);
-      return;
-    case "Let":
-      expression.definitions.forEach((definition) => {
-        definition.body = replace(definition.body);
-      });
-      expression.body = replace(expression.body);
-      return;
-    case "Record":
-    case "RecordSet":
-      expression.fields.forEach((field) => {
-        field.value = replace(field.value);
-      });
-      return;
-    case "Except":
-      expression.function = replace(expression.function);
-      expression.updates.forEach((update) => {
-        update.path.forEach((step) => {
-          if (step.kind === "Index") replaceAll(step.args);
-        });
-        update.value = replace(update.value);
-      });
-      return;
-    case "FunctionApplication":
-      expression.function = replace(expression.function);
-      replaceAll(expression.args);
-      return;
-    case "FieldAccess":
-      expression.record = replace(expression.record);
-      return;
-    case "FunctionConstruction":
-    case "Forall":
-    case "Exists":
-      replaceBounds(expression.bounds);
-      expression.body = replace(expression.body);
-      return;
-    case "SetMap":
-      expression.expression = replace(expression.expression);
-      replaceBounds(expression.bounds);
-      return;
-    case "SetFilter":
-      expression.bound.set = replace(expression.bound.set);
-      expression.predicate = replace(expression.predicate);
-      return;
-    case "Choose":
-      if (expression.set !== undefined) expression.set = replace(expression.set);
-      expression.body = replace(expression.body);
-      return;
-    case "Lambda":
-      expression.body = replace(expression.body);
-      return;
-    default:
-      return;
   }
 };
 

@@ -20,18 +20,18 @@ import type { Expression } from "../../ast";
 import {
   apply,
   type CodeDefinition,
+  CodeShapes,
   defineOperator,
   forEachBodyName,
   forEachTextName,
   getCodeLength,
   layOutModule,
   num,
-  printCodeDefinition,
   printCodeExpression,
   ref,
-  replaceCodeChildren,
   string,
   tuple,
+  walkCode,
 } from "./code-tree";
 import { getPatchedUnits, isTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
@@ -161,46 +161,31 @@ const getUnitsDefinition = (unitsName: string, sequence: string) => {
   );
 };
 
-// The names of the hooks, which the program's code takes the place of, as the program's own, and
-// each literal N or SV of a string, its units, as foldNames makes them.
-const foldTree = (expression: Expression): Expression => {
+// A node with the name of a hook, which the program's code takes the place of, as the program's
+// own, or a literal N or SV of a string as its units, as foldNames makes them.
+const foldNode = (expression: Expression): Expression => {
   if (expression.kind === "Identifier" && HOOKS.has(expression.name)) {
     expression.name = `Program${expression.name}`;
   }
-  if (expression.kind === "Apply") {
-    const literal = expression.args[0];
-    if (
-      (expression.operator === "N" || expression.operator === "SV") &&
-      expression.args.length === 1 &&
-      literal.kind === "String"
-    ) {
-      const units = tuple(
-        Array.from({ length: literal.value.length }, (_, index) =>
-          num(literal.value.charCodeAt(index)),
-        ),
-      );
-      return expression.operator === "N" ? units : apply("Str", [units]);
-    }
-    if (HOOKS.has(expression.operator)) expression.operator = `Program${expression.operator}`;
+  if (expression.kind !== "Apply") return expression;
+  const literal = expression.args[0];
+  if (
+    (expression.operator === "N" || expression.operator === "SV") &&
+    expression.args.length === 1 &&
+    literal.kind === "String"
+  ) {
+    const units = tuple(
+      Array.from({ length: literal.value.length }, (_, index) =>
+        num(literal.value.charCodeAt(index)),
+      ),
+    );
+    return expression.operator === "N" ? units : apply("Str", [units]);
   }
-  replaceCodeChildren(expression, foldTree);
+  if (HOOKS.has(expression.operator)) expression.operator = `Program${expression.operator}`;
   return expression;
 };
 
 const HOOK_NAMES = new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g");
-
-const foldDefinition = (definition: CodeDefinition): CodeDefinition => {
-  const name = HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name;
-  if (definition.tree === undefined) {
-    return {
-      name,
-      arity: definition.arity,
-      text: foldNames((definition.text ?? "").replace(HOOK_NAMES, (hook) => `Program${hook}`)),
-    };
-  }
-  definition.tree.body = foldTree(definition.tree.body);
-  return { name, arity: definition.arity, tree: { ...definition.tree, name } };
-};
 
 // Whether an expression is a literal sequence of numbers, which compact makes a definition of its
 // own.
@@ -209,58 +194,127 @@ const isUnits = (expression: Expression) =>
   expression.elements.length > 0 &&
   expression.elements.every((element) => element.kind === "Number");
 
-const compact = (definitions: readonly CodeDefinition[]): CodeDefinition[] => {
+// A definition of the program's code with the capitalized words that name definitions in its text,
+// and those of its body outside strings, which it reads.
+interface NamedDefinition {
+  definition: CodeDefinition;
+  names: string[];
+  reads: string[];
+}
+
+// The words of a definition of a tree whose body walkCode visits.
+const getTreeWords = (definition: CodeDefinition) => {
+  const named: NamedDefinition = { definition, names: [], reads: [] };
+  const tree = definition.tree;
+  if (tree === undefined) return named;
+  forEachTextName([definition.name, ...tree.params.map((param) => param.name)].join(" "), (name) =>
+    named.names.push(name),
+  );
+  return named;
+};
+
+const visitWord = (named: NamedDefinition) => (name: string, isInString: boolean) => {
+  named.names.push(name);
+  if (!isInString) named.reads.push(name);
+};
+
+// The words of a definition of text.
+const getTextWords = (definition: CodeDefinition) => {
+  const named: NamedDefinition = { definition, names: [], reads: [] };
+  forEachTextName(definition.text ?? "", (name) => named.names.push(name));
+  forEachBodyName(definition, (name, isInString) => {
+    if (!isInString) named.reads.push(name);
+  });
+  return named;
+};
+
+// The program's definitions with their hooks and literals folded, each that reads the same as one
+// before it merged into that one, and each literal sequence of numbers made a definition of its own:
+// the trees' in one walk to fold, rename and record their shapes, and in another to rename again,
+// replace their sequences and read their words.
+const compact = (definitions: readonly CodeDefinition[]): NamedDefinition[] => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
+  const shapes = new CodeShapes();
+  // The trees that come first with their shape, by its hash, and where their shapes run.
+  const firstTrees = new Map<number, { name: string; start: number; end: number }[]>();
   const rename = (text: string) =>
     text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
-  const renameTree = (expression: Expression): Expression => {
+  const renameNode = (expression: Expression) => {
     if (expression.kind === "Identifier")
       expression.name = merged.get(expression.name) ?? expression.name;
     if (expression.kind === "Apply") {
       expression.operator = merged.get(expression.operator) ?? expression.operator;
     }
-    replaceCodeChildren(expression, renameTree);
     return expression;
   };
-  for (const definition of definitions) {
-    if (HOOKS.has(definition.name.replace(/^Program/, ""))) continue;
-    if (definition.tree !== undefined) renameTree(definition.tree.body);
-    const text =
-      definition.tree === undefined
-        ? rename(definition.text ?? "")
-        : printCodeDefinition(definition.tree);
-    const key = `${definition.arity} ${text.slice(definition.name.length)}`;
-    const first = firsts.get(key);
-    if (first === undefined) firsts.set(key, definition.name);
-    else merged.set(definition.name, first);
-  }
+  const foldAndShape = (expression: Expression) => {
+    const node = renameNode(foldNode(expression));
+    shapes.addNode(node);
+    return node;
+  };
+  const folded = definitions.map((definition): CodeDefinition => {
+    const name = HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name;
+    if (definition.tree === undefined) {
+      const text = foldNames(
+        (definition.text ?? "").replace(HOOK_NAMES, (hook) => `Program${hook}`),
+      );
+      if (!HOOKS.has(name.replace(/^Program/, ""))) {
+        const key = `${definition.arity} ${rename(text).slice(name.length)}`;
+        const first = firsts.get(key);
+        if (first === undefined) firsts.set(key, name);
+        else merged.set(name, first);
+      }
+      return { name, arity: definition.arity, text };
+    }
+    const tree = { ...definition.tree, name };
+    if (HOOKS.has(name.replace(/^Program/, ""))) {
+      tree.body = walkCode(tree.body, foldNode);
+      return { name, arity: definition.arity, tree };
+    }
+    const start = shapes.length;
+    shapes.addHead(tree);
+    tree.body = walkCode(tree.body, foldAndShape);
+    const hash = shapes.getHash(start);
+    const candidates = firstTrees.get(hash);
+    const first = candidates?.find((candidate) =>
+      shapes.isSame(candidate.start, candidate.end, start, shapes.length),
+    );
+    if (first !== undefined) {
+      merged.set(name, first.name);
+      shapes.length = start;
+    } else {
+      const shape = { name, start, end: shapes.length };
+      if (candidates === undefined) firstTrees.set(hash, [shape]);
+      else candidates.push(shape);
+    }
+    return { name, arity: definition.arity, tree };
+  });
   const sequences = new Map<string, string>();
   const getUnitsName = (sequence: string) => {
     const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
     sequences.set(sequence, name);
     return name;
   };
-  // An expression with each of its literal sequences of numbers replaced by its definition's name.
-  const replaceUnits = (expression: Expression): Expression => {
-    if (isUnits(expression) && expression.kind === "Tuple") {
-      return ref(
-        getUnitsName(
-          `<<${expression.elements.map((element) => (element.kind === "Number" ? (element.text ?? String(element.value)) : "")).join(", ")}>>`,
-        ),
-      );
-    }
-    replaceCodeChildren(expression, replaceUnits);
-    return expression;
-  };
-  const kept = definitions
+  // A node renamed, or, for a literal sequence of numbers, its definition's name.
+  const renameUnits = (expression: Expression) =>
+    isUnits(expression) && expression.kind === "Tuple"
+      ? ref(
+          getUnitsName(
+            `<<${expression.elements.map((element) => (element.kind === "Number" ? (element.text ?? String(element.value)) : "")).join(", ")}>>`,
+          ),
+        )
+      : renameNode(expression);
+  const kept = folded
     .filter((definition) => !merged.has(definition.name))
     .map((definition) => {
-      if (definition.tree !== undefined) {
-        definition.tree.body = replaceUnits(renameTree(definition.tree.body));
-        return definition;
+      const tree = definition.tree;
+      if (tree !== undefined) {
+        const named = getTreeWords(definition);
+        tree.body = walkCode(tree.body, renameUnits, visitWord(named));
+        return named;
       }
-      return {
+      return getTextWords({
         ...definition,
         // The parts of a long sequence are split rather than matched by a repeated group, whose
         // backtracking runs out of stack.
@@ -272,44 +326,43 @@ const compact = (definitions: readonly CodeDefinition[]): CodeDefinition[] => {
             ? getUnitsName(sequence)
             : sequence,
         ),
-      };
+      });
     });
   return [
-    ...[...sequences].map((entry) => ({
-      name: entry[1],
-      arity: 0,
-      tree: getUnitsDefinition(entry[1], entry[0]),
-    })),
+    ...[...sequences].map((entry) => {
+      const tree = getUnitsDefinition(entry[1], entry[0]);
+      const named = getTreeWords({ name: entry[1], arity: 0, tree });
+      walkCode(tree.body, keepNode, visitWord(named));
+      return named;
+    }),
     ...kept,
   ];
 };
 
+const keepNode = (expression: Expression) => expression;
+
 // A program's definitions in an order where each comes after those that it reads, unless they read
 // each other, and the names of the ones that a definition reads before they come, which TLA+ needs
 // declared RECURSIVE.
-const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
-  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+const sortDefinitions = (definitions: readonly NamedDefinition[]) => {
+  const byName = new Map(definitions.map((named) => [named.definition.name, named]));
   const isVisited = new Map<string, boolean>();
   const sorted: CodeDefinition[] = [];
   const recursive = new Set<string>();
-  const visit = (definition: CodeDefinition) => {
-    isVisited.set(definition.name, false);
+  const visit = (named: NamedDefinition) => {
+    isVisited.set(named.definition.name, false);
     // A name inside a string, such as SourceText's, is text rather than a read.
-    const reads: string[] = [];
-    forEachBodyName(definition, (name, isInString) => {
-      if (!isInString) reads.push(name);
-    });
-    for (const name of reads) {
+    for (const name of named.reads) {
       const read = byName.get(name);
       if (read === undefined) continue;
       if (isVisited.get(name) === false) recursive.add(name);
       else if (!isVisited.has(name)) visit(read);
     }
-    isVisited.set(definition.name, true);
-    sorted.push(definition);
+    isVisited.set(named.definition.name, true);
+    sorted.push(named.definition);
   };
-  definitions.forEach((definition) => {
-    if (!isVisited.has(definition.name)) visit(definition);
+  definitions.forEach((named) => {
+    if (!isVisited.has(named.definition.name)) visit(named);
   });
   return { sorted, recursive };
 };
@@ -1077,7 +1130,7 @@ export const compileToEscore = (
     files.map((file) => file.sourceFile),
     runtime.realm.getLocale === undefined ? new Set<string>() : program.words,
   );
-  const definitions = compact(
+  const named = compact(
     suspendDefinitions(
       [
         ...program.definitions,
@@ -1199,8 +1252,9 @@ export const compileToEscore = (
         },
       ],
       runtime.resumableSteps,
-    ).map(foldDefinition),
+    ),
   );
+  const definitions = named.map((item) => item.definition);
   const length = definitions.reduce(
     (total, definition) =>
       total +
@@ -1238,16 +1292,7 @@ export const compileToEscore = (
   // runtime's view keeps the definitions.
   const names = new Set<string>();
   const addName = (name: string) => names.add(name);
-  definitions.forEach((definition) => {
-    if (definition.tree === undefined) forEachTextName(definition.text ?? "", addName);
-    else {
-      forEachTextName(
-        [definition.name, ...definition.tree.params.map((param) => param.name)].join(" "),
-        addName,
-      );
-      forEachBodyName(definition, addName);
-    }
-  });
+  named.forEach((item) => item.names.forEach(addName));
   forEachTextName(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
   const view = runtime.getView(
     [...names],
@@ -1255,7 +1300,7 @@ export const compileToEscore = (
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
   const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
-  const ordered = sortDefinitions(definitions);
+  const ordered = sortDefinitions(named);
   // The module's parts in order: its text and the trees of its definitions.
   const parts = [
     "---- MODULE ProgramCode ----",

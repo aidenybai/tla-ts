@@ -8,10 +8,12 @@ import {
   apply,
   boundIn,
   caseOf,
+  CodeShapes,
   defineOperator,
   except,
   exceptAt,
   functionOf,
+  getCodeLength,
   ifThen,
   layOutModule,
   letIn,
@@ -26,6 +28,7 @@ import {
   string,
   subscript,
   tuple,
+  walkCode,
   withInnerLines,
 } from "../../src/typescript/spec/code-tree";
 import { getPatchedUnits, getPatches } from "../../src/typescript/spec/units";
@@ -231,6 +234,37 @@ describe("the layout of a program's code", () => {
           ? value.map(getShape)
           : Object.entries(value).map((entry) => [entry[0], getShape(entry[1])]);
     expect(getShape(laidOut.module.units)).toEqual(getShape(parseModule(text).units));
+  });
+
+  it("measures each definition's text as it prints it", () => {
+    const trees = getModuleParts().filter((part) => typeof part !== "string");
+    expect(trees.map(getCodeLength)).toEqual(
+      trees.map((definition) => printCodeDefinition(definition).length),
+    );
+  });
+
+  it("gives definitions that print the same text after their names the same shape", () => {
+    const shapes = new CodeShapes();
+    const getShape = (definition: Definition) => {
+      const start = shapes.length;
+      if (definition.kind !== "Operator") return [];
+      shapes.addHead(definition);
+      walkCode(definition.body, (expression) => {
+        shapes.addNode(expression);
+        return expression;
+      });
+      return Array.from(shapes.items.subarray(start, shapes.length));
+    };
+    const renamed = getSourceUnits();
+    renamed.name = "Renamed";
+    const indented = defineOperator("SourceUnits", ["t"], onLine(apply("StringUnits", ["t"]), 4));
+    expect(getShape(renamed)).toEqual(getShape(getSourceUnits()));
+    expect(getShape(indented)).not.toEqual(
+      getShape(defineOperator("SourceUnits", ["t"], onLine(apply("StringUnits", ["t"]), 2))),
+    );
+    expect(getShape(defineOperator("D", ["x"], apply("F", ["x"])))).not.toEqual(
+      getShape(defineOperator("D", ["x"], apply("F", [string("x")]))),
+    );
   });
 
   it("places a node of a tree at another line than its text puts it", () => {
