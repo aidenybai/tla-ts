@@ -2400,6 +2400,8 @@ describe("the CLI checks with -workers as TLC does with one worker", () => {
     ["Fallback", "Fallback", 4, 0],
     ["Fallback", "FallbackInvariant", 1, 12],
     ["Fallback", "FallbackInvariant", 4, 12],
+    ["Grid", "Grid", 1, 0],
+    ["Grid", "Grid", 4, 0],
   ])("checks %s with %s.cfg and -workers %i", (name, config, workers, status) => {
     const result = runCli("tier-workers", name, [
       "-config",
