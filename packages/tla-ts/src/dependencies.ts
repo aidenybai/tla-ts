@@ -573,20 +573,29 @@ const collectVaryingBodies = (
         addValue([node.body], scope, isEffectful);
         return visit(node.body, bindNames(scope, node.params, PARAMETER_REACH), isEffectful);
       case "Let": {
-        const expressions = node.definitions.flatMap(getDefinitionExpressions);
-        const reach = getReach(expressions, scope, isEffectful);
-        const inner =
-          reach === 0
-            ? scope
-            : new Map([
-                ...scope,
-                ...node.definitions.map((definition): [string, number] => [
-                  definition.name,
-                  isParameterized(definition) ? reach | OPERATOR_NAME : reach,
-                ]),
-              ]);
-        node.definitions.forEach((definition) => visitDefinition(definition, inner, isEffectful));
-        return visit(node.body, inner, isEffectful);
+        const isRecursive = node.definitions.some((definition) => definition.isRecursive);
+        const sharedReach = isRecursive
+          ? getReach(node.definitions.flatMap(getDefinitionExpressions), scope, isEffectful)
+          : 0;
+        let inner: Map<string, number> | undefined;
+        node.definitions.forEach((definition) => {
+          const reach = isRecursive
+            ? sharedReach
+            : getReach(getDefinitionExpressions(definition), inner ?? scope, isEffectful);
+          // Tool#getNextStates evaluates a LET definition at each use, so one that reaches an effect through another varies too.
+          if ((reach & EFFECT_REACH) !== 0 && definition.kind === "Operator") {
+            varyingBodies.add(definition.body);
+          }
+          if (reach !== 0) {
+            inner ??= new Map(scope);
+            inner.set(definition.name, isParameterized(definition) ? reach | OPERATOR_NAME : reach);
+          }
+        });
+        const bodyScope = inner ?? scope;
+        node.definitions.forEach((definition) =>
+          visitDefinition(definition, bodyScope, isEffectful),
+        );
+        return visit(node.body, bodyScope, isEffectful);
       }
       case "FunctionConstruction":
         addBody([node.body], node.body, scope, isEffectful);
@@ -667,6 +676,10 @@ export const isImpureDefinition = (
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS = "any",
 ) => (getRow(definition, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+
+export const isDefinitionVarying = (definition: Definition, environment: Environment) =>
+  environment.facts.varyingBodies.has(definition.body) ||
+  isImpureDefinition(definition, environment, "varying");
 
 export const isTlcEvalReached = (expression: Expression, environment: Environment) =>
   (getExpressionsRow([expression], environment)[0] & TLC_EVAL) !== 0;

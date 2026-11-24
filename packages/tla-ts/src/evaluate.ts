@@ -57,6 +57,7 @@ import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   hasEffectfulDefinition,
   isBodyVarying,
+  isDefinitionVarying,
   isEvaluatedAtStartup,
   isExpressionImpure,
   isImpureDefinition,
@@ -1655,8 +1656,7 @@ export const getReevaluatedDefinitions = (
     definitions.filter(
       // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
       (definition) =>
-        environment.coverage !== undefined ||
-        isImpureDefinition(definition, environment, "varying"),
+        environment.coverage !== undefined || isDefinitionVarying(definition, environment),
     ),
   ),
   streamed: new Set(

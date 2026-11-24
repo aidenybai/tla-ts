@@ -7786,6 +7786,92 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a sibling in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "two siblings in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 F == E + 1 IN x\' = x + 1 /\\ F >= 0 /\\ F >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an enclosing LET in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "two enclosing LETs in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN LET F == E + 1 IN x\' = x + 1 /\\ F >= 0 /\\ F >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an operator in Next",
+      'LET P(a) == IF PrintT(<<"p", a>>) THEN a ELSE 0 E == P(x) + 1 IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "an operator that reads it in Next",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 Q(a) == D + a E == Q(1) IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "a recursive operator in Next",
+      'LET RECURSIVE R(_) R(n) == IF n = 0 THEN PrintT(<<"r", x>>) ELSE R(n - 1) E == R(2) IN x\' = x + 1 /\\ E /\\ E',
+      "TRUE",
+      4,
+    ],
+    [
+      "a function in Next",
+      'LET f[i \\in {1}] == IF PrintT(<<"f", x>>) THEN i ELSE 0 E == f[1] IN x\' = x + 1 /\\ E >= 0 /\\ E >= 0',
+      "TRUE",
+      4,
+    ],
+    [
+      "a sibling in an IF condition of Next",
+      "LET D == IF PrintT(<<\"d\", x>>) THEN x ELSE 0 E == D + 1 IN IF E >= 0 THEN x' = x + 1 ELSE x' = x + 1 /\\ E >= 0",
+      "TRUE",
+      2,
+    ],
+    [
+      "a sibling in an invariant",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN E >= 0 /\\ E >= 0',
+      3,
+    ],
+    [
+      "an enclosing LET in an invariant",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 IN LET E == D + 1 IN E >= 0 /\\ E >= 0',
+      3,
+    ],
+    [
+      "a sibling under ENABLED",
+      "x' = x + 1",
+      'LET D == IF PrintT(<<"d", x>>) THEN x ELSE 0 E == D + 1 IN ENABLED (x\' = x + 1 /\\ E >= 0 /\\ E >= 0)',
+      3,
+    ],
+  ])(
+    "evaluates a LET definition that reaches a printing one through %s as often as TLC does",
+    async (_name, next, inv, count) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\nBound == x < 2\nInv == ${inv}\n====`,
+        config: "INIT Init\nNEXT Next\nCONSTRAINT Bound\nINVARIANT Inv",
+        onPrint: (text) => prints.push(text),
+      });
+      expect([result.status, result.generatedStates, prints.length]).toEqual(["success", 3, count]);
+    },
+  );
+
   it("builds a function a LET of the next-state relation defines at each reference, so TLC fails to fingerprint a set of it", async () => {
     const result = await check({
       source:
