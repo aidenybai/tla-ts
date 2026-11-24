@@ -1333,12 +1333,27 @@ interface ActionShape {
   next: string;
 }
 
+const NESTED_MODULES = new Map([
+  [
+    "Mid",
+    "---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANTS MK, MLoop\nVARIABLE y\nINSTANCE Inner WITH K <- MK, Loop <- MLoop, x <- y\n====",
+  ],
+  [
+    "MidE",
+    "---- MODULE MidE ----\nEXTENDS Naturals\nCONSTANT MK\nVARIABLE y\nINSTANCE Inner WITH K <- MK, Loop <- (MK > 2), x <- y\n====",
+  ],
+  [
+    "MidD",
+    "---- MODULE MidD ----\nEXTENDS Naturals\nCONSTANTS MK, MLoop\nVARIABLE y\nMLoopDef == MLoop /\\ TRUE\nINSTANCE Inner WITH K <- MK, Loop <- MLoopDef, x <- y\n====",
+  ],
+]);
+
 const getShapeModuleLoader = (next: string) => (name: string) =>
   name === "Inner"
     ? `---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANTS K, Loop\nVARIABLE x\nInit == x = 0\nStep == x < K /\\ x' = x + 1\n${next}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====`
     : name === "Lib"
       ? "---- MODULE Lib ----\nEXTENDS Naturals\nBump(v, k) == v < k /\\ v' = v + 1\nReset(v, k, b) == b /\\ v = k /\\ v' = 0\nCycle(v, k) == v' = IF v < k THEN v + 1 ELSE 0\n===="
-      : undefined;
+      : NESTED_MODULES.get(name);
 
 const checkActionShape = async (shape: ActionShape) => {
   const variable = shape.names[2];
@@ -1669,6 +1684,63 @@ describe("coverage through an instance matches TLC", () => {
           "|line 7, col 44 to line 7, col 69 of module Inner: 7",
           "||line 7, col 47 to line 7, col 51 of module Inner: 7",
           "||line 7, col 58 to line 7, col 62 of module Inner: 6",
+        ],
+      ],
+    });
+  });
+
+  it.each([
+    {
+      shape: "an expression a nested instance substitutes",
+      lines: "INSTANCE MidE WITH MK <- K, y <- x",
+      specification: "SPECIFICATION Spec",
+      relations: [
+        "Init line 5, col 1 to line 5, col 4 of module Inner (5 1 5 34) 1:1",
+        "Action line 5, col 1 to line 5, col 34 of module Outer 3:6",
+      ],
+      printed: '{<<"Init", 5, 1, 5, 34, "Outer">>}',
+    },
+    {
+      shape: "a LET instance of a module that instances another",
+      lines: "OSpec == LET J == INSTANCE Mid WITH MK <- K, MLoop <- Loop, y <- x IN J!Spec",
+      specification: "SPECIFICATION OSpec",
+      relations: [
+        "Init line 5, col 1 to line 5, col 4 of module Inner (5 14 5 66) 1:1",
+        "Action line 5, col 14 to line 5, col 66 of module Outer 3:6",
+      ],
+      printed: '{<<"Init", 5, 14, 5, 66, "Outer">>}',
+    },
+  ])("checks $shape with coverage as TLC does", async (row) => {
+    const covered = await getShapeCoverage(row.lines, NEXT_KINDS[0].next, row.specification);
+    expect({
+      printed: covered.printed,
+      relations: covered.coverage?.map((relation) => relation[0]),
+    }).toEqual({ printed: [row.printed], relations: row.relations });
+  });
+
+  it("counts a definition a nested instance substitutes at its substitution, as TLC enters the definition the reference names", async () => {
+    expect(
+      await getShapeCoverage(
+        "INSTANCE MidD WITH MK <- K, MLoop <- Loop, y <- x",
+        NEXT_KINDS[0].next,
+        "SPECIFICATION Spec",
+      ),
+    ).toEqual({
+      printed: ['{<<"Init", 5, 1, 5, 49, "Outer">>}'],
+      coverage: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module Inner (5 1 5 49) 1:1",
+          "line 5, col 9 to line 5, col 13 of module Inner: 1",
+        ],
+        [
+          "Action line 5, col 1 to line 5, col 49 of module Outer 3:6",
+          "line 5, col 26 to line 5, col 26 of module Outer: 8",
+          "line 5, col 38 to line 5, col 41 of module Outer: 3",
+          "line 5, col 49 to line 5, col 49 of module Outer: 17",
+          "line 6, col 26 to line 6, col 27 of module MidD: 8",
+          "line 6, col 38 to line 6, col 45 of module MidD: 3",
+          "line 6, col 53 to line 6, col 53 of module MidD: 17",
+          ...DISJUNCTION_LINES,
         ],
       ],
     });
