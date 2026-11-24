@@ -103,6 +103,7 @@ import {
 } from "./mpf";
 import { Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
+import { UINT_MAX } from "./sat/clause";
 
 type Result = number | Rewrite | undefined;
 
@@ -403,10 +404,11 @@ const mkIsInfOfInt = (
           ? mkCompare(OP_LE, -threshold)
           : manager.falseExpr;
   }
-  // Deviation from Z3: it runs out of memory from an exponent width of 31, so this gives up as Z3 does from 34.
-  if (ebits > 30) return -1;
+  const halfUlpExp = maxExp - sbits;
+  if (halfUlpExp > UINT_MAX) return -1;
   const maxFinite = mpfToRational(mkMaxValue(ebits, sbits, false)).num;
-  const halfUlp = 1n << BigInt(maxExp - sbits);
+  // Deviation from Z3: its power_of_two keeps every smaller power, which runs out of memory from an exponent width of 18 at 1 GB.
+  const halfUlp = 1n << BigInt(halfUlpExp);
   return rm === MPF_ROUND_NEAREST_TEVEN || rm === MPF_ROUND_NEAREST_TAWAY
     ? mkAbsGe(maxFinite + halfUlp)
     : rm === MPF_ROUND_TOWARD_POSITIVE

@@ -1031,31 +1031,54 @@ describe("the floating-point conversions round as Z3 does", () => {
     expect([convert(5n), convert(6n), convert(7n)]).toEqual([towardZero, towardZero, towardZero]);
   });
 
-  // Z3 runs out of memory on a numeral of 2^30 bits here, and the port leaves the term.
-  it("leaves the infinity test of an integer conversion with a 31-bit exponent", () => {
+  it.each([31, 32, 33])(
+    "runs out of memory on the infinity test of an integer conversion to a %i-bit exponent",
+    (ebits) => {
+      expect(
+        run([
+          "(declare-const x Int)",
+          `(simplify (fp.isInfinite ((_ to_fp ${ebits} 8) RNE (to_real x))))`,
+          '(echo "after")',
+        ]),
+      ).toEqual(['(error "out of memory")']);
+    },
+  );
+
+  it("leaves the infinity test of an integer conversion to a 34-bit exponent", () => {
     expect(
       run([
         "(declare-const x Int)",
-        "(simplify (fp.isInfinite ((_ to_fp 31 8) RNE (to_real x))))",
-        "(simplify (fp.isNormal ((_ to_fp 33 8) RTP (to_real x))))",
         "(simplify (fp.isInfinite ((_ to_fp 34 8) RNE (to_real x))))",
+        "(simplify (fp.isNormal ((_ to_fp 34 8) RTP (to_real x))))",
       ]),
     ).toEqual([
-      "(fp.isInfinite ((_ to_fp 31 8) roundNearestTiesToEven (to_real x)))",
-      "(fp.isNormal ((_ to_fp 33 8) roundTowardPositive (to_real x)))",
       "(fp.isInfinite ((_ to_fp 34 8) roundNearestTiesToEven (to_real x)))",
+      "(fp.isNormal ((_ to_fp 34 8) roundTowardPositive (to_real x)))",
     ]);
   });
 
-  // Z3 runs out of memory here too, and the port answers unknown as at its other limits.
-  it("answers unknown for a symbolic conversion to a 31-bit exponent", () => {
+  // Deviation from Z3: its power_of_two runs out of memory on the bound at 1 GB.
+  it("decides the infinity test of an integer conversion to a 22-bit exponent", () => {
     expect(
       run([
         "(declare-const x Int)",
-        "(assert (fp.isInfinite ((_ to_fp 31 3) RTP (to_real x))))",
+        "(assert (fp.isInfinite ((_ to_fp 22 8) RNE (to_real x))))",
         "(check-sat)",
       ]),
-    ).toEqual(["unknown"]);
+    ).toEqual(["sat"]);
+  });
+
+  it.each([31, 32])("runs out of memory on a symbolic conversion to a %i-bit exponent", (ebits) => {
+    expect(
+      run([
+        "(declare-const r Real)",
+        `(declare-const f (_ FloatingPoint ${ebits} 4))`,
+        `(assert (= f ((_ to_fp ${ebits} 4) RNE r)))`,
+        "(assert (> r 1.0))",
+        "(check-sat)",
+        '(echo "after")',
+      ]),
+    ).toEqual(['(error "out of memory")']);
   });
 
   it.each([

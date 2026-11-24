@@ -6,6 +6,7 @@ import {
   SmtMemoryOutError,
   type SmtParseError,
   SmtUnsupportedError,
+  toSmtMemoryOutError,
 } from "../../../errors";
 import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
@@ -234,7 +235,8 @@ export const decideSmt = (
 ): Verdict => {
   try {
     return checkSmt(text, options, report).verdict;
-  } catch (error) {
+  } catch (caught) {
+    const error = toSmtMemoryOutError(caught);
     if (
       error instanceof SmtUnsupportedError ||
       error instanceof SmtCanceledError ||

@@ -74,6 +74,17 @@ describe("decideSmt", () => {
     expect(["unsat", "unknown"]).toContain(decide(getDeepProblem(20000)));
   });
 
+  it("answers unknown where a number outgrows V8's BigInt, as Z3 runs out of memory", () => {
+    const problem = [
+      "(declare-fun r () Real)",
+      "(declare-fun f () (_ FloatingPoint 31 4))",
+      "(assert (= f ((_ to_fp 31 4) RNE r)))",
+      "(assert (> r 1.0))",
+      "(check-sat)",
+    ].join("\n");
+    expect(decide(problem)).toBe("unknown");
+  });
+
   it("tells apart numerals past 2^53", () => {
     const problem = [
       "(declare-fun x () Int)",
