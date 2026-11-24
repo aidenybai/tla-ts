@@ -310,6 +310,7 @@ export const CORE_OPERATORS: Builtin[] = [
     };
     if (isMixedSet(outer) || sets.some(isMixedSet)) return getUnionLikeTlc();
     if (sets.length === 0) return EMPTY_SET;
+    // eslint-disable-next-line unicorn/no-new-array
     const convertedSets = new Array<SetValue>(sets.length);
     for (let index = 0; index < sets.length; index++)
       convertedSets[index] = toFiniteSet(sets[index]);

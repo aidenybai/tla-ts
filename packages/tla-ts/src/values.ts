@@ -299,6 +299,7 @@ export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] 
   const keys = getWrittenKeys(functionValue);
   const domain = functionValue.domain;
   const range = functionValue.range;
+  // eslint-disable-next-line unicorn/no-new-array
   const pairs = new Array<[Value, Value]>(keys.length);
   for (let index = 0; index < keys.length; index++) {
     pairs[index] = [keys[index], range[keys === domain ? index : domain.indexOf(keys[index])]];
@@ -1771,6 +1772,7 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
 };
 
 const getPairKeys = (pairs: [Value, Value][]) => {
+  // eslint-disable-next-line unicorn/no-new-array
   const keys = new Array<Value>(pairs.length);
   for (let index = 0; index < pairs.length; index++) keys[index] = pairs[index][0];
   return keys;
@@ -1790,6 +1792,7 @@ const createSortedWrittenFunction = (pairs: [Value, Value][]) =>
   setWrittenPairsOrder(createFunction(pairs), pairs);
 
 const getPairRange = (pairs: [Value, Value][]) => {
+  // eslint-disable-next-line unicorn/no-new-array
   const range = new Array<Value>(pairs.length);
   for (let index = 0; index < pairs.length; index++) range[index] = pairs[index][1];
   return range;
