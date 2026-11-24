@@ -16,6 +16,7 @@ import {
   type RecordField,
   type SourceLocation,
   type SourceRange,
+  type TuplePattern,
 } from "./ast";
 import { getKindString } from "./builtins";
 import {
@@ -479,12 +480,12 @@ const bindSelf = (scope: Scope | undefined, name: string, value: Value): Scope =
   parent: scope,
 });
 
-const describeArgumentMismatch = (pattern: BoundPattern & { kind: "Tuple" }) => {
+const describeArgumentMismatch = (pattern: TuplePattern) => {
   const range = pattern.ranges?.[0];
   return `Argument mismatch in operator application.${range ? formatRange(range) : ""}`;
 };
 
-const describeNonTupleFilterElement = (pattern: BoundPattern & { kind: "Tuple" }, element: Value) =>
+const describeNonTupleFilterElement = (pattern: TuplePattern, element: Value) =>
   `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`;
 
 // Deviation from TLC: ContextEnumerator#nextElement rejects a function on 1..n bound to a tuple pattern, and Tool's {<<a, b>> \in S : P} and FcnLambdaValue#toFcnRcd fail to cast it to TupleValue.
@@ -492,10 +493,7 @@ export const bindPattern = (
   scope: Scope | undefined,
   pattern: BoundPattern,
   value: Value,
-  describeMismatch: (
-    pattern: BoundPattern & { kind: "Tuple" },
-    value: Value,
-  ) => string = describeArgumentMismatch,
+  describeMismatch: (pattern: TuplePattern, value: Value) => string = describeArgumentMismatch,
 ) => {
   if (pattern.kind === "Name") return bindValue(scope, pattern.name, value);
   const elements = getSequenceElements(value);

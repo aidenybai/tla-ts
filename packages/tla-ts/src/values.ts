@@ -1056,15 +1056,15 @@ interface TlcFunction {
 const getIntervalLow = (value: Value, domain: Value[]) =>
   domain.length === 0 || getFunctionClass(value) === "tuple" ? 1 : getDomainInterval(domain)?.low;
 
-const chargeFunctionConversion = (value: FunctionValue) => {
-  const costModel = value.costModel;
-  if (costModel === undefined || value.functionClass === undefined) return;
-  stopFirstAttempt();
-  costModel.secondary[costModel.node] += value.range.length;
-};
-
 export const toFunctionRecord = (value: FunctionValue | LazyFunctionValue) => {
-  if (value.kind === "Function") chargeFunctionConversion(value);
+  if (
+    value.kind === "Function" &&
+    value.costModel !== undefined &&
+    value.functionClass !== undefined
+  ) {
+    stopFirstAttempt();
+    value.costModel.secondary[value.costModel.node] += value.range.length;
+  }
   return toFiniteFunction(value);
 };
 
@@ -1811,7 +1811,7 @@ const setCostModel = (value: FunctionValue, costModel: ValueCostModel | undefine
   return value;
 };
 
-const getElementCostModel = (cost: SetCost | undefined): ValueCostModel | undefined =>
+const getElementCostModel = (cost: SetCost | undefined) =>
   cost?.node === undefined || cost.charges === undefined
     ? undefined
     : cost.charges.costModels[cost.node];
