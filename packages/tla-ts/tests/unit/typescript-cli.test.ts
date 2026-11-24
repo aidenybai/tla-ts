@@ -1820,7 +1820,8 @@ describe("the CLI with TypeScript files", () => {
       120_000,
     );
 
-    // A mapped type's fields come in the order of its keys' union, so they read by their names.
+    // A mapped type's fields come in the order of its keys' union, which their ids give, so they
+    // follow the union as a.ts writes it, which here is by their names.
     it("prints the fields of a record of a mapped type by their names", () => {
       const directory = writeModules(copyFixtures("passing"), 'last === "x"');
       writeFileSync(
@@ -1835,6 +1836,32 @@ describe("the CLI with TypeScript files", () => {
       const after = runCli(directory, [...options, "b.ts", "a.ts"]);
       expect(getOutput(after.stdout)).toBe(getOutput(alone.stdout));
     }, 120_000);
+
+    // TLC enumerates a \cup operand by operand and stops at the first state that violates an
+    // invariant, so the frame lists a union's members in the order that a.ts writes them, rather
+    // than by their text, and the check reports the first that a.ts writes.
+    it.each([
+      ['{ fruit: "pear" } | { fruit: "apple" }', '"pear"', '"apple"'],
+      ['{ fruit: "apple" } | { fruit: "pear" }', '"apple"', '"pear"'],
+    ])(
+      "enumerates the union %s in the order that a.ts writes it",
+      (union, first, second) => {
+        const directory = writeModules(copyFixtures("passing"), 'last === "x"');
+        writeFileSync(
+          join(directory, "a.ts"),
+          `type Order = ${union};\nlet last: Order | undefined = undefined;\nexport const order = (next: Order) => {\n  last = next;\n};\nexport const isUnset = () => last === undefined;\n`,
+        );
+        const alone = runCli(directory, [...options, "a.ts"]);
+        expect(alone.stdout).toContain(
+          `Next == \\E next \\in ([fruit : ({${first}})]) \\cup ([fruit : ({${second}})]) : order(next)`,
+        );
+        expect(alone.stdout).toContain("Error: Invariant isUnset is violated.");
+        expect(alone.stdout).toContain(`State 2: <order([fruit |-> ${first}])`);
+        const after = runCli(directory, [...options, "b.ts", "a.ts"]);
+        expect(getOutput(after.stdout)).toBe(getOutput(alone.stdout));
+      },
+      120_000,
+    );
   });
 
   // A file of thousands of function declarations, as react-dom's client build has, instantiates
