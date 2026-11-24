@@ -1370,15 +1370,20 @@ const callOperatorWithValues = (operator: Operator, args: Value[], context: Cont
   return evaluate(operator.body, withScope(context, scope));
 };
 
-const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
-  operator.kind === "Operator"
-    ? operator
-    : {
-        kind: "Operator",
-        name: operator.name,
-        arity: getArity(operator),
-        call: (args) => callOperatorWithValues(operator, args, context),
-      };
+const toOperatorValue = (operator: Operator, context: Context): OperatorValue => {
+  if (operator.kind === "Operator") return operator;
+  const coverage = context.environment.coverage;
+  return {
+    kind: "Operator",
+    name: operator.name,
+    arity: getArity(operator),
+    // TLC's OpLambdaValue#eval, which a Java override calls, evaluates the operator's body without a cost model.
+    call: coverage
+      ? (args) =>
+          runAtCoverageNode(coverage, -1, () => callOperatorWithValues(operator, args, context))
+      : (args) => callOperatorWithValues(operator, args, context),
+  };
+};
 
 const isOperatorArgument = (expression: Expression, context: Context) => {
   if (expression.kind === "Lambda" || expression.kind === "OperatorReference") return true;
