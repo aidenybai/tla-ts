@@ -305,6 +305,7 @@ const getInstanceActions = (
       scope,
     },
   ];
+  if (called && isConstantDefinition(called, expression, scope, environment)) return callAction();
   if (called && args.length === 0) {
     return [
       { ...instanceAction, parameters: [], context, expression: called.body, scope: called.scope },

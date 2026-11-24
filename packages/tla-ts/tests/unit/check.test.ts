@@ -13450,6 +13450,117 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const STP_LINES = [
+    "line 4, col 37 to line 4, col 37 of module M: 5",
+    "line 9, col 8 to line 9, col 12 of module T10: 2",
+    "|line 9, col 8 to line 9, col 8 of module T10: 3",
+    "line 9, col 17 to line 9, col 26 of module T10: 2",
+  ];
+
+  it.each([
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!NxOpen",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        [
+          "L!NxOpen line 4, col 1 to line 4, col 1 of module M",
+          "line 4, col 37 to line 4, col 37 of module M: 5",
+          "line 7, col 12 to line 7, col 16 of module T10: 5",
+          "|line 7, col 12 to line 7, col 12 of module T10: 3",
+          "|line 7, col 16 to line 7, col 16 of module T10: 3",
+          ...STP_LINES.slice(1),
+        ],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!Never \\/ L!Stp",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        ["L!Stp line 4, col 1 to line 4, col 1 of module M", ...STP_LINES],
+        ["L!Never line 4, col 1 to line 4, col 1 of module M (6 9 6 15)"],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+    {
+      behavior: "INIT Init\nNEXT Next",
+      definition: "Next == L!Stp",
+      invariant: "L!EnNever \\/ L!EnEver \\/ x = 2",
+      relations: [
+        [
+          "Init line 5, col 1 to line 5, col 4 of module M",
+          "line 5, col 9 to line 5, col 13 of module M: 1",
+        ],
+        ["L!Stp line 4, col 1 to line 4, col 1 of module M", ...STP_LINES],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 37 of module M: 3",
+          "|line 7, col 8 to line 7, col 28 of module M: 3",
+          "||line 7, col 8 to line 7, col 16 of module M: 3",
+          "|||line 12, col 12 to line 12, col 33 of module T10: 3",
+          "||||line 9, col 8 to line 9, col 12 of module T10: 3",
+          "||||line 9, col 17 to line 9, col 26 of module T10: 2",
+          "||line 7, col 21 to line 7, col 28 of module M: 1",
+          "|||line 4, col 37 to line 4, col 37 of module M: 4",
+          "|||line 13, col 11 to line 13, col 31 of module T10: 1",
+          "|line 7, col 33 to line 7, col 37 of module M: 1",
+        ],
+      ],
+    },
+    {
+      behavior: "SPECIFICATION Spec",
+      definition: "Spec == L!SpNever",
+      invariant: "x < 3",
+      relations: [
+        [
+          "Action line 4, col 1 to line 4, col 37 of module M",
+          "line 11, col 12 to line 11, col 16 of module T10: 1",
+        ],
+        ["Action line 4, col 1 to line 4, col 37 of module M", ...STP_LINES],
+        [
+          "Inv line 7, col 1 to line 7, col 3 of module M",
+          "line 7, col 8 to line 7, col 12 of module M: 3",
+        ],
+      ],
+    },
+  ])(
+    "evaluates T10's own definitions at each reference for $definition and Inv == $invariant, as TLC's SpecProcessor#processConstantDefns precomputes none in an instantiated module with parameters, though it does precompute L!Never",
+    async (item) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T10 WITH N <- 2, v <- x\nInit == x = 0\n${item.definition}\nInv == ${item.invariant}\n====`,
+        config: `${item.behavior}\nINVARIANT Inv\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+        loadModule: (name) =>
+          name === "T10"
+            ? "---- MODULE T10 ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE v\nNever == FALSE\nEver == TRUE\nGate(k) == k = N\nOpen == Gate(2)\nStp == v < 2 /\\ v' = v + 1\nNxOpen == Open /\\ Stp\nSpNever == v = 0 /\\ [][Never \\/ Stp]_v\nEnNever == ENABLED (Never \\/ Stp)\nEnEver == ENABLED (Ever /\\ Stp)\n===="
+            : undefined,
+      });
+      const lines = formatCoverage(result);
+      expect(
+        result.coverage?.relations.map((relation, index) => [
+          relation.label,
+          ...(lines?.[index] ?? []),
+        ]),
+      ).toEqual(item.relations);
+    },
+  );
+
   it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(

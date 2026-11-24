@@ -2,7 +2,6 @@ import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
 import { formatRange, TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
-import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   chargeEquality,
@@ -34,6 +33,7 @@ import {
   getChargedBounds,
   getContextElements,
   getLazyFunction,
+  getLookupValue,
   getMissingArgumentDescriber,
   getQuantifierElements,
   getSubstituteClosure,
@@ -680,7 +680,7 @@ const visitDefined = (
       operator?.kind === "Closure" &&
       operator.params.length === 0 &&
       !replay.environment.variableIndex.has(expression.name) &&
-      !(definition && isConstantLevel(definition, replay.environment))
+      !(definition && getLookupValue(definition, replay.environment) !== undefined)
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
     }
