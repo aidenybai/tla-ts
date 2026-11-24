@@ -13409,6 +13409,44 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a module that instances C under two names",
+      "INSTANCE Twice WITH w <- x",
+      "L!D1!Start",
+      "line 4, col 48 to line 4, col 66 of module M: 1",
+    ],
+    [
+      "a module that extends C and instances it",
+      "INSTANCE Both WITH v <- x",
+      "L!Start",
+      "line 4, col 47 to line 4, col 62 of module M: 1",
+    ],
+  ])(
+    "lists each definition of C once for a LET instance of %s, as SANY shares C's body between the copies",
+    async (_name, instance, start, body) => {
+      const modules = new Map([
+        ["C", COUNTER_MODULE],
+        [
+          "Twice",
+          "---- MODULE Twice ----\nVARIABLE w\nD1 == INSTANCE C WITH v <- w\nD2 == INSTANCE C WITH v <- w\n====",
+        ],
+        ["Both", "---- MODULE Both ----\nEXTENDS C\nD1 == INSTANCE C\n===="],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == LET L == ${instance} IN ${start} /\\ y = 0\nNext == x' = (x + 1) % 3 /\\ y' = y\nInv == ~(x = 2 /\\ y = 2)\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) => modules.get(name),
+      });
+      expect(formatCoverage(result)?.[0]).toEqual([
+        "line 8, col 9 to line 8, col 19 of module C: 0",
+        "line 9, col 12 to line 9, col 26 of module C: 0",
+        body,
+      ]);
+    },
+  );
+
+  it.each([
+    [
       "ENABLED L!Act",
       [
         "line 7, col 8 to line 7, col 24 of module Pure5: 3",

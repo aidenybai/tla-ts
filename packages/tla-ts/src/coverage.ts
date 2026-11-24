@@ -397,18 +397,18 @@ const getChildNodes = (coverage: Coverage, node: number) => {
 
 // CostModelNode#children is keyed by SemanticNode, and the instances of one module share SANY's instanced body, so TLC keeps one node for the copies of each expression in it.
 const pairTwins = (coverage: Coverage, sources: number[], copies: number[]) => {
-  let next = 0;
+  const paired = new Set<number>();
   copies.forEach((copy) => {
     const range = coverage.ranges[copy];
-    const index = sources.findIndex(
-      (source, position) =>
-        position >= next &&
-        (coverage.ranges[source] === range || isSameRange(coverage.ranges[source], range)),
+    const source = sources.find(
+      (candidate) =>
+        !paired.has(candidate) &&
+        (coverage.ranges[candidate] === range || isSameRange(coverage.ranges[candidate], range)),
     );
-    if (index === -1) return;
-    next = index + 1;
-    coverage.twins[copy] = sources[index];
-    pairTwins(coverage, getChildNodes(coverage, sources[index]), getChildNodes(coverage, copy));
+    if (source === undefined) return;
+    paired.add(source);
+    coverage.twins[copy] = source;
+    pairTwins(coverage, getChildNodes(coverage, source), getChildNodes(coverage, copy));
   });
 };
 
@@ -608,25 +608,23 @@ export const buildCoverage = (
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
         if (!environment.boundSubstitutions.lets.has(expression)) {
-          const walked = new Map<string, number[]>();
+          const instanced: number[] = [];
           getHashtableOrder(expression.definitions).forEach((definition) => {
             // SANY's LetInNode holds the definitions a LET instance exports, not the copies they call.
             if (definition.name === SELECTION_NAME || isCalledCopy(definition)) return;
             const start = coverage.expressions.length;
             walkDefinition({ definition, scope: inner });
             if (!isInstantiated(definition)) return;
-            const nested = new Set<number>();
-            for (let node = start; node < coverage.expressions.length; node++) {
-              getChildNodes(coverage, node).forEach((child) => nested.add(child));
+            const tops: number[] = [];
+            for (
+              let node = start;
+              node !== -1 && node < coverage.expressions.length;
+              node = coverage.nextSibling[node]
+            ) {
+              tops.push(node);
             }
-            const tops = Array.from(
-              { length: coverage.expressions.length - start },
-              (_value, index) => start + index,
-            ).filter((node) => !nested.has(node));
-            const exportedName = definition.name.slice(definition.name.indexOf("!") + 1);
-            const source = walked.get(exportedName);
-            if (source === undefined) walked.set(exportedName, tops);
-            else pairTwins(coverage, source, tops);
+            pairTwins(coverage, instanced, tops);
+            instanced.push(...tops.filter((node) => coverage.twins[node] === -1));
           });
         }
         walk(expression.body, inner);
