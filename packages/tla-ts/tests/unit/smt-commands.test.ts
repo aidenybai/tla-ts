@@ -4033,9 +4033,24 @@ describe("the time limit, which Z3's timer applies at the next resource count", 
           "(get-info :reason-unknown)",
           "(get-info :rlimit)",
         ],
-        300,
+        200,
       ),
     ).toEqual(["unknown", '(:reason-unknown "canceled")', "(:rlimit 558)"]);
+  });
+
+  it("stops at the first count once the signal has aborted", () => {
+    const output: string[] = [];
+    runSmtlibScript(
+      [
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ].join("\n"),
+      { timeLimitMs: 5000, signal: AbortSignal.abort() },
+      (line) => output.push(line),
+    );
+    expect(output).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 });
 
