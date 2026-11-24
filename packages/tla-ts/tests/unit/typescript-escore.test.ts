@@ -836,6 +836,166 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // MergeElements merges by index into chunks of 64 values, so the sizes around a chunk and a
+  // comparator that throws partway pin the order and the arguments of its calls.
+  describe("calls a typed array's sort comparator on the pairs that V8's merge sort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [1, 3, 7, 63, 64, 65, 129]) {
+        const array = Int16Array.from({ length: size }, (_, index) => ((index * 7919) % 101) - 50);
+        let calls = 0;
+        let hash = 0;
+        array.sort((left, right) => {
+          calls += 1;
+          hash = (hash * 31 + (left + 50) * 101 + (right + 50)) % 1000003;
+          return left - right;
+        });
+        text += \`\${size}:\${calls}:\${hash}:\${array[0]}:\${array[size - 1]};\`;
+      }
+      const thrown = Int16Array.from({ length: 65 }, (_, index) => ((index * 7919) % 101) - 50);
+      let calls = 0;
+      try {
+        thrown.sort((left, right) => {
+          calls += 1;
+          if (calls === 50) throw new Error(\`at \${left},\${right}\`);
+          return left - right;
+        });
+      } catch (error) {
+        text += \`\${(error as Error).message}:\${thrown[0]}:\${thrown[64]}\`;
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "1:0:0:-50:-50;3:2:130954:-50:32;7:13:117066:-50:32;63:308:764496:-50:50;64:317:878231:-50:50;65:321:94865:-50:50;129:769:469886:-50:50;at -19,22:-50:49";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:769:469886", "129:769:469887");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // JSON.parse reads a string's units, an array's items and an object's members into chunks, and
+  // evaluates the items by index, so the sizes around a chunk and a reviver that logs its calls pin
+  // what it reads and the order in which it evaluates and revives them.
+  describe("parses JSON arrays, strings and objects across chunks, reviving in order", () => {
+    const getSource = (expected: string) => `
+      const quote = String.fromCharCode(34);
+      const slash = String.fromCharCode(92);
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const items = Array.from({ length: size }, (_, index) =>
+          index % 3 === 0 ? quote + "s" + index + slash + "n" + slash + "u0041" + quote : String(index * 7),
+        );
+        const array = JSON.parse("[" + items.join(", ") + "]") as unknown[];
+        const value = ("ab" + slash + quote).repeat(size) + slash + "u00e9" + "c".repeat(size);
+        const string = JSON.parse(quote + value + quote) as string;
+        const members = Array.from({ length: size }, (_, index) => quote + "k" + (index % 50) + quote + ": " + index);
+        const last = array.at(-1);
+        const object = JSON.parse("{" + members.join(",") + "}") as Record<string, number>;
+        text += [size, array.length, typeof last === "string" ? last.length + "/" + last.charCodeAt(last.length - 2) : String(last), string.length, string.charCodeAt(size * 3), Object.keys(object).length, object.k0].join(":") + ";";
+      }
+      let hash = 0;
+      let calls = 0;
+      const records = Array.from({ length: 70 }, (_, index) => "{" + quote + "a" + quote + ": " + index + ", " + quote + "b" + quote + ": [" + index + "]}");
+      JSON.parse("[" + records.join(",") + "]", (key, value) => {
+        calls += 1;
+        hash = (hash * 31 + key.length * 101 + (typeof value === "number" ? value : 7)) % 1000003;
+        return value;
+      });
+      text += calls + ":" + hash;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:undefined:1:233:0:;1:1:4/10:5:233:1:0;63:63:434:253:233:50:50;64:64:5/10:257:233:50:50;65:65:448:261:233:50:50;129:129:896:517:233:50:100;281:4386";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("281:4386", "281:4387");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // Array.prototype.join collects each element's units, and each separator, as parts in chunks,
+  // so the sizes around a chunk and elements that log their toString pin the text and the order.
+  describe("joins arrays across chunks of parts, converting the elements in order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129, 300]) {
+        const values = Array.from({ length: size }, (_, index) => (index % 7 === 0 ? null : index % 5 === 0 ? undefined : index * 3));
+        const joined = values.join(size % 2 === 0 ? "--" : "");
+        const sparse = new Array(size);
+        sparse[size >> 1] = "x";
+        let hash = 0;
+        for (let index = 0; index < joined.length; index++) hash = (hash * 31 + joined.charCodeAt(index)) % 1000003;
+        text += [size, joined.length, hash, sparse.join().length, String(values)].map((part) => String(part).length > 40 ? String(part).length : part).join(":") + ";";
+      }
+      const order: number[] = [];
+      const logged = Array.from({ length: 70 }, (_, index) => ({ toString: () => (order.push(index), String(index % 10)) }));
+      text += logged.join("") + ":" + order.join(",").length + ":" + order.slice(60).join(",");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:0:1:;1:0:0:1:;63:103:126117:63:165;64:229:330458:64:166;65:106:189182:65:170;129:238:86159:129:366;300:1190:686128:300:891;0123456789012345678901234567890123456789012345678901234567890123456789:199:60,61,62,63,64,65,66,67,68,69";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("300:1190:686128", "300:1190:686129");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  // ReadThrough reads an array's elements into chunks and SetElements writes them by index, so the
+  // sizes around a chunk pin what toReversed, toSpliced, with, sort and push read and write.
+  describe("reads and writes an array's elements across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const values = Array.from({ length: size }, (_, index) => (index * 37) % 101);
+        const reversed = values.toReversed();
+        const spliced = values.toSpliced(size >> 1, 2, -1, -2, -3);
+        const replaced = size === 0 ? [] : values.with(size - 1, -9);
+        const sorted = [...values, undefined].sort((left, right) => (left as number) - (right as number));
+        const pushed = [...values];
+        pushed.push(...values.slice(0, 5));
+        let hash = 0;
+        for (const list of [reversed, spliced, replaced, sorted, pushed]) {
+          for (const value of list) hash = (hash * 31 + (value === undefined ? 7 : (value as number) + 50)) % 1000003;
+        }
+        text += [size, reversed.length, spliced.length, sorted.length, pushed.length, hash].join(":") + ";";
+      }
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:3:1:0:507348;1:1:3:2:2:962946;63:63:64:64:68:688589;64:64:65:65:69:172146;65:65:66:66:70:13726;129:129:130:130:134:539989;";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:129:130:130:134:539989", "129:129:130:130:134:539988");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

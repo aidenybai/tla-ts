@@ -90,6 +90,16 @@ FoldLeftSeq(seqs) ==
     [] Len(seqs) = 1 -> seqs[1]
     [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
+\* A sequence built a value at a time: its full chunks of ChunkSize values, then the chunk being
+\* filled. Adding a value copies that chunk, and the list of chunks once a chunk fills, rather than
+\* every value so far, so that building n values copies about n * ChunkSize + (n \div ChunkSize)^2.
+ChunkSize == 64
+NoChunks == [chunks |-> <<>>, chunk |-> <<>>]
+ChunkAppend(c, x) ==
+  IF Len(c.chunk) = ChunkSize - 1 THEN [chunks |-> Append(c.chunks, Append(c.chunk, x)), chunk |-> <<>>]
+  ELSE [chunks |-> c.chunks, chunk |-> Append(c.chunk, x)]
+ChunkValues(c) == FoldLeftSeq(c.chunks) \o c.chunk
+ChunkLen(c) == Len(c.chunks) * ChunkSize + Len(c.chunk)
 
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
