@@ -1544,9 +1544,12 @@ export const planModel = (
       ...steps,
       ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
     ].join("\n");
-  const assumptions = module.assumptions.flatMap((assumption) =>
-    assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
-  );
+  const assumptions = [
+    ...module.assumptions.flatMap((assumption) =>
+      assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
+    ),
+    ...(isStateless ? config.invariants.map((name) => `ASSUME ${name}`) : []),
+  ];
   const assumed = `${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`;
   // The model's spec of the compiled program: its steps in the program's own module, or, in a
   // program shared with other files, in a module of their own that extends it.
@@ -1556,7 +1559,10 @@ export const planModel = (
       config.specification === undefined
         ? "INIT Init\nNEXT Next"
         : `SPECIFICATION ${config.specification}`,
-      ...config.invariants.map((name) => `INVARIANT ${name}`),
+      // A model without state checks its boolean exports once, as ASSUMEs, which TLC recommends
+      // for constant-level invariants: an invariant that TLC evaluates as it starts and that
+      // throws is left unevaluated, where a spec without state has no initial state to check it in.
+      ...(isStateless ? [] : config.invariants.map((name) => `INVARIANT ${name}`)),
       ...config.properties.map((name) => `PROPERTY ${name}`),
       ...config.constraints.map((name) => `CONSTRAINT ${name}`),
       ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),

@@ -350,10 +350,21 @@ CreateArrayFromList(s, values) ==
   Ok(SetO(a.s, Val(a),
           [AddIndexProps(o, values, 1) EXCEPT !.props[NamedBucket][SV("length")].value = IntV(Len(values))]),
      Val(a))
+\* o with values[i] onwards as its data properties from index i - 1, writable, enumerable and
+\* configurable, as PutProp would write them one at a time, but making each bucket they reach once
+\* rather than copying the list of buckets at each value.
 AddIndexProps(o, values, i) ==
-  IF i > Len(values) THEN o
-  ELSE AddIndexProps(PutProp(o, Str(NumToString(NumFromInt(i - 1))),
-                             DataDesc(values[i], TRUE, TRUE, TRUE)), values, i + 1)
+  LET first == i - 1
+      last == Len(values) - 1
+      reached == (first \div 100)..(last \div 100)
+      Bucket(b) ==
+        [k \in {Str(NumToString(NumFromInt(j))) : j \in IntegerMax(b * 100, first)..IntegerMin(b * 100 + 99, last)} |->
+           DataDesc(values[UnitsValue(k.value) + 1], TRUE, TRUE, TRUE)]
+  IN IF first > last THEN o
+     ELSE [o EXCEPT !.props = [b \in DOMAIN o.props \cup reached |->
+             IF b \notin reached THEN o.props[b]
+             ELSE IF b \in DOMAIN o.props THEN Bucket(b) @@ o.props[b]
+             ELSE Bucket(b)]]
 
 \* ArrayCreate (§10.4.2.2) with a length that fits a TLA+ integer.
 ArrayCreate(s, length, proto) ==
@@ -373,13 +384,15 @@ CreateListFromArrayLike(s, v, types) ==
   ELSE LET l == LengthOfArrayLike(s, v) IN
   IF IsAbrupt(l) THEN l
   ELSE IF NumLess(NumFromInt(10000000), Val(l).value) THEN ThrowError(l.s, "RangeError")
-  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, <<>>, types)
+  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, NoChunks, types)
+\* The elements from index i, after those so far, in chunks, so that reading n elements copies each
+\* a few times rather than n.
 ListFromArrayLike(s, v, n, i, acc, types) ==
-  IF i = n THEN Ok(s, acc)
+  IF i = n THEN Ok(s, ChunkValues(acc))
   ELSE LET e == Get(s, v, Str(NumToString(NumFromInt(i)))) IN
        IF IsAbrupt(e) THEN e
        ELSE IF types = "property-key" /\ ~IsPropertyKey(Val(e)) THEN ThrowTypeError(e.s)
-       ELSE ListFromArrayLike(e.s, v, n, i + 1, Append(acc, Val(e)), types)
+       ELSE ListFromArrayLike(e.s, v, n, i + 1, ChunkAppend(acc, Val(e)), types)
 
 \* Invoke (§7.3.21).
 Invoke(s, v, k, args) ==

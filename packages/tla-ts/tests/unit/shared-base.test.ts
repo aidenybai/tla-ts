@@ -108,12 +108,8 @@ describe("checks of the files of a group from its base", () => {
       expect(shared).toEqual(await checkInput(input));
       results.push(typeof shared === "string" ? shared : shared.status);
     }
-    expect(results).toEqual([
-      "success",
-      "success",
-      "The invariant of isFirst is equal to FALSE",
-      "success",
-    ]);
+    // late.ts has no state, so its check reads isFirst as an ASSUME.
+    expect(results).toEqual(["success", "success", "assumption-violation", "success"]);
     expect(getBaseState(base)).toEqual(before);
   }, 300_000);
 });

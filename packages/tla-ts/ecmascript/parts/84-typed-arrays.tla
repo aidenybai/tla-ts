@@ -370,16 +370,15 @@ ReduceFrom(s, ta, len, k, step, callback, accumulator) ==
   ELSE LET r == Call(s, callback, Undefined, <<accumulator, TypedArrayGetElement(s, ta, NumFromInt(k)), IntV(k), ta>>) IN
        IF IsAbrupt(r) THEN r ELSE ReduceFrom(r.s, ta, len, k + step, step, callback, Val(r))
 
-\* Stores values[k + 1] onwards into ta from index k. StoreRun stores at most 2^depth values nested
-\* depth deep, so a long list needs no frame per element.
-StoreElements(s, ta, values, k) == StoreFrom(s, ta, values, k, 0)
-StoreRun(s, ta, values, k, depth) ==
-  CASE k >= Len(values) -> [s |-> s, k |-> k]
-    [] depth = 0 -> [s |-> TypedArrayStore(s, ta, NumFromInt(k), values[k + 1]), k |-> k + 1]
-    [] OTHER -> LET r == StoreRun(s, ta, values, k, depth - 1) IN StoreRun(r.s, ta, values, r.k, depth - 1)
-StoreFrom(s, ta, values, k, depth) ==
-  IF k >= Len(values) THEN s
-  ELSE LET r == StoreRun(s, ta, values, k, depth) IN StoreFrom(r.s, ta, values, r.k, depth + 1)
+\* Stores values[k + 1] onwards, Numbers or BigInts, into ta from index k, as TypedArrayStore would
+\* one at a time. No code runs between the stores, so those that IsValidIntegerIndex allows are the
+\* ones below ta's length, and their bytes store at once.
+StoreElements(s, ta, values, k) ==
+  LET end == IF IsTypedArrayOutOfBounds(s, ta) THEN 0 ELSE IntegerMin(Len(values), TypedArrayLength(s, ta))
+      type == TypedArrayType(s, ta)
+  IN IF end <= k THEN s
+     ELSE SetBufferBytes(s, O(s, ta).slots.buffer, k * TypedArraySize(s, ta) + O(s, ta).slots.byteOffset,
+                         FoldLeftSeq([i \in 1..end - k |-> NumericToRawBytes(type, values[k + i], LittleEndian)]))
 TypedArrayElements(s, ta, len) == [i \in 1..len |-> TypedArrayGetElement(s, ta, NumFromInt(i - 1))]
 
 \* The first index from k up, or the last from k down, of an element strictly equal to target,
@@ -391,22 +390,22 @@ StrictIndexFrom(s, ta, target, k, len, step) ==
   ELSE StrictIndexFrom(s, ta, target, k + step, len, step)
 
 \* JoinIndexedProperties (§23.1.3.18.1) on a TypedArray, whose elements convert to strings without
-\* running code.
-JoinElements(s, ta, k, len, separator) ==
-  IF k >= len THEN <<>>
-  ELSE LET e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
-          JoinElements(s, ta, k + 1, len, separator)
+\* running code, so that each element's units, after the separator but the first, join in halves.
+JoinElements(s, ta, len, separator) ==
+  FoldLeftSeq([k \in 1..len |->
+    LET e == TypedArrayGetElement(s, ta, NumFromInt(k - 1))
+    IN (IF k > 1 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e))])
 
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc, args) ==
-  IF k >= len THEN Ok(s, Str(acc))
-  ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, collecting
+\* the parts in chunks, so that joining n elements copies each element's units a few times, not n.
+LocaleJoin(s, ta, k, len, parts, args) ==
+  IF k >= len THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET prefix == IF k > 0 THEN ChunkAppend(parts, N(",")) ELSE parts
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
        IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
           ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, ChunkAppend(prefix, Val(str).value), args)
 
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
@@ -514,7 +513,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
                                            len, -1)))
     [] m = "join" ->
          LET separator == IF a1 = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, a1) IN IF IsAbrupt(separator) THEN separator
-         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, 0, len, Val(separator).value)))
+         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, len, Val(separator).value)))
     [] m = "map" ->
          LET r == TypedArraySpeciesCreate(s, ta, <<IntV(len)>>, TRUE) IN IF IsAbrupt(r) THEN r
          ELSE MapFromTypedArray(r.s, ta, Val(r), 0, len, a1, a2)
@@ -550,7 +549,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, NoChunks, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))

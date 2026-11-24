@@ -57,7 +57,8 @@ export interface EscoreRuntime {
   // The runtime with the definitions that a text reads, and the leaves given without what they
   // read.
   getView: (text: string, leaves: readonly string[]) => PreparedModule;
-  // The names that the runtime's modules define, which a program's own definitions avoid.
+  // The names that the runtime's modules declare or define, which a program's own definitions
+  // avoid.
   names: ReadonlySet<string>;
   families: Family[];
   gates: Gate[];
@@ -533,7 +534,11 @@ const prepareLibraryRuntime = (
     getView,
     names: new Set(
       modules.flatMap((prepared) =>
-        prepared.module.definitions.map((definition) => definition.name),
+        [
+          ...prepared.module.constants,
+          ...prepared.module.variables,
+          ...prepared.module.definitions,
+        ].map((declared) => declared.name),
       ),
     ),
     families: library.families,

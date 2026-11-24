@@ -697,9 +697,10 @@ RECURSIVE JSONNumberEnd(_, _)
 RECURSIVE JSONDigitsEnd(_, _)
 RECURSIVE JSONObject(_, _, _)
 RECURSIVE JSONArray(_, _, _)
-RECURSIVE JSONEvaluate(_, _)
-RECURSIVE JSONEvaluateItems(_, _, _, _, _)
-RECURSIVE JSONEvaluateMembers(_, _, _, _)
+RECURSIVE JSONEvaluate(_, _, _)
+RECURSIVE JSONEvaluateItems(_, _, _, _, _, _)
+RECURSIVE JSONEvaluateMembers(_, _, _, _, _, _)
+RECURSIVE JSONEntries(_)
 RECURSIVE InternalizeJSONProperty(_, _, _, _, _)
 RECURSIVE InternalizeJSONElements(_, _, _, _, _, _)
 RECURSIVE InternalizeJSONKeys(_, _, _, _, _)
@@ -718,8 +719,8 @@ RECURSIVE SerializeJSONElements(_, _, _, _, _, _)
 RECURSIVE ThisStringValue(_, _)
 RECURSIVE StringBuiltin(_, _, _, _, _, _)
 RECURSIVE StringConstructor(_, _, _)
-RECURSIVE StringFromCharCode(_, _, _)
-RECURSIVE StringFromCodePoint(_, _, _)
+RECURSIVE StringFromCharCode(_, _, _, _)
+RECURSIVE StringFromCodePoint(_, _, _, _)
 RECURSIVE StringRaw(_, _, _)
 RECURSIVE StringRawFrom(_, _, _, _, _, _)
 RECURSIVE StringMethod(_, _, _, _)
@@ -1276,7 +1277,7 @@ RECURSIVE BlockOf(_)
 RECURSIVE BlockByte(_, _)
 RECURSIVE BlockBytes(_, _, _)
 RECURSIVE BlockStore(_, _, _)
-RECURSIVE BlockStoreFrom(_, _, _)
+RECURSIVE PageStore(_, _, _)
 RECURSIVE ArrayBufferByteLength(_, _)
 RECURSIVE SetBufferData(_, _, _)
 RECURSIVE BufferBytes(_, _, _, _)
@@ -1350,11 +1351,9 @@ RECURSIVE FilterFrom(_, _, _, _, _, _, _)
 RECURSIVE MapFromTypedArray(_, _, _, _, _, _, _)
 RECURSIVE ReduceFrom(_, _, _, _, _, _, _)
 RECURSIVE StoreElements(_, _, _, _)
-RECURSIVE StoreRun(_, _, _, _, _)
-RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
-RECURSIVE JoinElements(_, _, _, _, _)
+RECURSIVE JoinElements(_, _, _, _)
 RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
@@ -6468,10 +6467,21 @@ CreateArrayFromList(s, values) ==
   Ok(SetO(a.s, Val(a),
           [AddIndexProps(o, values, 1) EXCEPT !.props[NamedBucket][SV("length")].value = IntV(Len(values))]),
      Val(a))
+\* o with values[i] onwards as its data properties from index i - 1, writable, enumerable and
+\* configurable, as PutProp would write them one at a time, but making each bucket they reach once
+\* rather than copying the list of buckets at each value.
 AddIndexProps(o, values, i) ==
-  IF i > Len(values) THEN o
-  ELSE AddIndexProps(PutProp(o, Str(NumToString(NumFromInt(i - 1))),
-                             DataDesc(values[i], TRUE, TRUE, TRUE)), values, i + 1)
+  LET first == i - 1
+      last == Len(values) - 1
+      reached == (first \div 100)..(last \div 100)
+      Bucket(b) ==
+        [k \in {Str(NumToString(NumFromInt(j))) : j \in IntegerMax(b * 100, first)..IntegerMin(b * 100 + 99, last)} |->
+           DataDesc(values[UnitsValue(k.value) + 1], TRUE, TRUE, TRUE)]
+  IN IF first > last THEN o
+     ELSE [o EXCEPT !.props = [b \in DOMAIN o.props \cup reached |->
+             IF b \notin reached THEN o.props[b]
+             ELSE IF b \in DOMAIN o.props THEN Bucket(b) @@ o.props[b]
+             ELSE Bucket(b)]]
 \* ArrayCreate (§10.4.2.2) with a length that fits a TLA+ integer.
 ArrayCreate(s, length, proto) ==
   LET o == PutProp(MakeObject(proto, "array", [none |-> TRUE]), SV("length"),
@@ -6488,13 +6498,15 @@ CreateListFromArrayLike(s, v, types) ==
   ELSE LET l == LengthOfArrayLike(s, v) IN
   IF IsAbrupt(l) THEN l
   ELSE IF NumLess(NumFromInt(10000000), Val(l).value) THEN ThrowError(l.s, "RangeError")
-  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, <<>>, types)
+  ELSE ListFromArrayLike(l.s, v, NumToSmallInt(Val(l).value), 0, NoChunks, types)
+\* The elements from index i, after those so far, in chunks, so that reading n elements copies each
+\* a few times rather than n.
 ListFromArrayLike(s, v, n, i, acc, types) ==
-  IF i = n THEN Ok(s, acc)
+  IF i = n THEN Ok(s, ChunkValues(acc))
   ELSE LET e == Get(s, v, Str(NumToString(NumFromInt(i)))) IN
        IF IsAbrupt(e) THEN e
        ELSE IF types = "property-key" /\ ~IsPropertyKey(Val(e)) THEN ThrowTypeError(e.s)
-       ELSE ListFromArrayLike(e.s, v, n, i + 1, Append(acc, Val(e)), types)
+       ELSE ListFromArrayLike(e.s, v, n, i + 1, ChunkAppend(acc, Val(e)), types)
 \* Invoke (§7.3.21).
 Invoke(s, v, k, args) ==
   LET f == GetValueProperty(s, v, k) IN
@@ -9838,7 +9850,7 @@ JSONParse(s, text, reviver) ==
   LET str == ToStr(s, text) IN IF IsAbrupt(str) THEN str ELSE
   LET tree == ParseJSON(Val(str).value) IN
   IF tree = None THEN ThrowError(str.s, "SyntaxError")
-  ELSE LET result == JSONEvaluate(str.s, tree) IN
+  ELSE LET result == JSONEvaluate(str.s, tree, IsCallable(str.s, reviver)) IN
        IF ~IsCallable(result.s, reviver) THEN Ok(result.s, result.v)
        ELSE LET root == OrdinaryObjectCreate(result.s, Intrinsic(result.s, "ObjectPrototype")) IN
             LET c == CreateDataPropertyOrThrow(root.s, Val(root), EmptyStr, result.v) IN
@@ -9919,31 +9931,45 @@ JSONArray(units, i, items) ==
   IF j = 0 THEN JSONFail ELSE
   LET value == JSONValue(units, j) IN IF ~value.ok THEN value ELSE JSONArray(units, value.i, ChunkAppend(items, value.node))
 \* Evaluates a parse tree to [s, v, record], with the JSON Parse Record (§25.5.1.2) that
-\* CreateJSONParseRecord would make for it: [value, source, elements, entries], where entries maps
-\* each key to the record of its last member.
-JSONEvaluate(s, tree) ==
+\* CreateJSONParseRecord would make for it where a reviver reads it, isRevived, or None:
+\* [value, source, elements, entries], where entries maps each key to the record of its last member.
+JSONEvaluate(s, tree, isRevived) ==
   CASE tree.type = "value" ->
          [s |-> s, v |-> tree.value,
-          record |-> [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]]
+          record |-> IF isRevived THEN [value |-> tree.value, source |-> tree.source, elements |-> <<>>, entries |-> <<>>]
+                     ELSE None]
     [] tree.type = "array" ->
-         LET items == JSONEvaluateItems(s, tree.items, 1, NoChunks, NoChunks)
+         LET items == JSONEvaluateItems(s, tree.items, isRevived, 1, NoChunks, NoChunks)
              a == CreateArrayFromList(items.s, items.values)
-         IN [s |-> a.s, v |-> Val(a), record |-> [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]]
+         IN [s |-> a.s, v |-> Val(a),
+             record |-> IF isRevived THEN [value |-> Val(a), source |-> <<>>, elements |-> items.records, entries |-> <<>>]
+                        ELSE None]
     [] OTHER ->
          LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-             members == JSONEvaluateMembers(o.s, Val(o), tree.members, <<>>)
-         IN [s |-> members.s, v |-> Val(o), record |-> [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]]
+             members == JSONEvaluateMembers(o.s, Val(o), tree.members, isRevived, 1, NoChunks)
+         IN [s |-> members.s, v |-> Val(o),
+             record |-> IF isRevived THEN [value |-> Val(o), source |-> <<>>, elements |-> <<>>, entries |-> members.entries]
+                        ELSE None]
 \* The items from k, after the values and the records of those evaluated so far, in chunks.
-JSONEvaluateItems(s, items, k, values, records) ==
+JSONEvaluateItems(s, items, isRevived, k, values, records) ==
   IF k > Len(items) THEN [s |-> s, values |-> ChunkValues(values), records |-> ChunkValues(records)]
-  ELSE LET r == JSONEvaluate(s, items[k]) IN
-       JSONEvaluateItems(r.s, items, k + 1, ChunkAppend(values, r.v), ChunkAppend(records, r.record))
-JSONEvaluateMembers(s, o, members, entries) ==
-  IF members = <<>> THEN [s |-> s, entries |-> entries]
-  ELSE LET key == Str(Head(members)[1])
-           r == JSONEvaluate(s, Head(members)[2])
+  ELSE LET r == JSONEvaluate(s, items[k], isRevived) IN
+       JSONEvaluateItems(r.s, items, isRevived, k + 1, ChunkAppend(values, r.v),
+                         IF isRevived THEN ChunkAppend(records, r.record) ELSE records)
+\* The members from k, after the keys and the records of those evaluated so far, in chunks.
+JSONEvaluateMembers(s, o, members, isRevived, k, pairs) ==
+  IF k > Len(members) THEN [s |-> s, entries |-> JSONEntries(ChunkValues(pairs))]
+  ELSE LET key == Str(members[k][1])
+           r == JSONEvaluate(s, members[k][2], isRevived)
            c == CreateDataProperty(r.s, o, key, r.v)
-       IN JSONEvaluateMembers(c.s, o, Tail(members), (key :> r.record) @@ entries)
+       IN JSONEvaluateMembers(c.s, o, members, isRevived, k + 1,
+                              IF isRevived THEN ChunkAppend(pairs, <<key, r.record>>) ELSE pairs)
+\* The function from each key to the record of its last pair, as joining (key :> record) @@ entries
+\* from the first pair to the last would make it, joined in halves.
+JSONEntries(pairs) ==
+  CASE pairs = <<>> -> <<>>
+    [] Len(pairs) = 1 -> pairs[1][1] :> pairs[1][2]
+    [] OTHER -> JSONEntries(SubSeq(pairs, Len(pairs) \div 2 + 1, Len(pairs))) @@ JSONEntries(SubSeq(pairs, 1, Len(pairs) \div 2))
 \* InternalizeJSONProperty (§25.5.1.3), with the parse record of the value or Absent.
 InternalizeJSONProperty(s, holder, name, reviver, record) ==
   LET val == Get(s, holder, name) IN IF IsAbrupt(val) THEN val ELSE
@@ -10123,8 +10149,8 @@ ThisStringValue(s, v) ==
 StringBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> StringConstructor(s, args, nt)
     [] m \in {"toString", "valueOf"} -> ThisStringValue(s, this)
-    [] m = "fromCharCode" -> StringFromCharCode(s, args, <<>>)
-    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, <<>>)
+    [] m = "fromCharCode" -> StringFromCharCode(s, args, 1, NoChunks)
+    [] m = "fromCodePoint" -> StringFromCodePoint(s, args, 1, NoChunks)
     [] m = "raw" -> StringRaw(s, Arg(args, 1), Rest(args, 2))
     [] m \in {"match", "matchAll", "replace", "replaceAll", "search", "split"} ->
          LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)
@@ -10140,19 +10166,21 @@ StringConstructor(s, args, nt) ==
   IN IF IsAbrupt(str) \/ nt = Undefined THEN str
      ELSE LET p == GetPrototypeFromConstructor(str.s, nt, "StringPrototype") IN
           IF IsAbrupt(p) THEN p ELSE StringCreate(p.s, Val(str), Val(p))
-\* String.fromCharCode (§22.1.2.1).
-StringFromCharCode(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n
-       ELSE StringFromCharCode(n.s, Tail(args), Append(acc, NumToUint16(Val(n).value)))
-\* String.fromCodePoint (§22.1.2.2).
-StringFromCodePoint(s, args, acc) ==
-  IF args = <<>> THEN Ok(s, Str(acc))
-  ELSE LET n == ToNumber(s, Head(args)) IN IF IsAbrupt(n) THEN n ELSE
+\* String.fromCharCode (§22.1.2.1), from the kth argument, with the code units so far in chunks, so
+\* that n arguments copy each code unit a few times rather than n.
+StringFromCharCode(s, args, k, units) ==
+  IF k > Len(args) THEN Ok(s, Str(ChunkValues(units)))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n
+       ELSE StringFromCharCode(n.s, args, k + 1, ChunkAppend(units, NumToUint16(Val(n).value)))
+\* String.fromCodePoint (§22.1.2.2), from the kth argument, with each code point's units so far in
+\* chunks.
+StringFromCodePoint(s, args, k, parts) ==
+  IF k > Len(args) THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET n == ToNumber(s, args[k]) IN IF IsAbrupt(n) THEN n ELSE
        LET x == Val(n).value IN
        IF ~NumIsFinite(x) \/ ~NumIsIntegral(x) THEN ThrowError(n.s, "RangeError")
        ELSE IF NumLess(x, PosZero) \/ NumLess(NumFromInt(1114111), x) THEN ThrowError(n.s, "RangeError")
-       ELSE StringFromCodePoint(n.s, Tail(args), acc \o UTF16EncodeCodePoint(NumToSmallInt(x)))
+       ELSE StringFromCodePoint(n.s, args, k + 1, ChunkAppend(parts, UTF16EncodeCodePoint(NumToSmallInt(x))))
 \* String.raw (§22.1.2.4).
 StringRaw(s, template, substitutions) ==
   LET cooked == ToObject(s, template) IN IF IsAbrupt(cooked) THEN cooked ELSE
@@ -10440,11 +10468,13 @@ StringSplit(s, units, separator, limit) ==
             LET count == IF NumLess(n, NumFromInt(Len(units))) THEN NumToSmallInt(n) ELSE Len(units) IN
             CreateArrayFromList(sep.s, [i \in 1..count |-> Str(<<units[i]>>)])
        [] units = <<>> -> CreateArrayFromList(sep.s, <<Str(units)>>)
-       [] OTHER -> CreateArrayFromList(sep.s, SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), <<>>))
+       [] OTHER -> CreateArrayFromList(sep.s, ChunkValues(SplitFrom(units, r, n, 0, StringIndexOf(units, r, 0), NoChunks)))
+\* The substrings from i, after those so far, in chunks, so that splitting into n substrings copies
+\* each a few times rather than n.
 SplitFrom(units, sep, lim, i, j, acc) ==
-  IF j = -1 THEN Append(acc, Str(SubSeq(units, i + 1, Len(units))))
-  ELSE LET substrings == Append(acc, Str(SubSeq(units, i + 1, j))) IN
-       IF NumEqual(NumFromInt(Len(substrings)), lim) THEN substrings
+  IF j = -1 THEN ChunkAppend(acc, Str(SubSeq(units, i + 1, Len(units))))
+  ELSE LET substrings == ChunkAppend(acc, Str(SubSeq(units, i + 1, j))) IN
+       IF NumEqual(NumFromInt(ChunkLen(substrings)), lim) THEN substrings
        ELSE SplitFrom(units, sep, lim, j + Len(sep), StringIndexOf(units, sep, j + Len(sep)), substrings)
 \* CreateHTML (§B.2.2.2.1) for the HTML method m, after ToString of the this value.
 CreateHTML(s, units, m, value) ==
@@ -15263,16 +15293,21 @@ BlockOf(bytes) ==
 BlockByte(block, byteIndex) == block.pages[byteIndex \div BlockPageSize + 1][(byteIndex % BlockPageSize) + 1]
 \* The count bytes of a block from byteIndex.
 BlockBytes(block, byteIndex, count) == [i \in 1..count |-> BlockByte(block, byteIndex + i - 1)]
-\* A block with bytes stored from byteIndex, one page entry at a time for a few bytes.
+\* A block with bytes stored from byteIndex, which replaces each page the bytes reach once: through
+\* EXCEPT on its one page when they reach one, so that the list of pages is copied once a store.
 BlockStore(block, byteIndex, bytes) ==
-  IF Len(bytes) > BlockPageSize
-  THEN BlockOf([i \in 1..block.size |->
-                  IF i > byteIndex /\ i <= byteIndex + Len(bytes) THEN bytes[i - byteIndex] ELSE BlockByte(block, i - 1)])
-  ELSE BlockStoreFrom(block, byteIndex, bytes)
-BlockStoreFrom(block, byteIndex, bytes) ==
-  IF bytes = <<>> THEN block
-  ELSE BlockStoreFrom([block EXCEPT !.pages[byteIndex \div BlockPageSize + 1][(byteIndex % BlockPageSize) + 1] = Head(bytes)],
-                      byteIndex + 1, Tail(bytes))
+  LET first == byteIndex \div BlockPageSize + 1
+      last == (byteIndex + Len(bytes) - 1) \div BlockPageSize + 1
+  IN IF bytes = <<>> THEN block
+     ELSE IF first = last THEN [block EXCEPT !.pages[first] = PageStore(@, byteIndex - (first - 1) * BlockPageSize, bytes)]
+     ELSE [block EXCEPT !.pages = [p \in DOMAIN block.pages |->
+             IF p < first \/ p > last THEN block.pages[p]
+             ELSE PageStore(block.pages[p], byteIndex - (p - 1) * BlockPageSize, bytes)]]
+\* A page with bytes stored from its offset start, which is negative where they start before it.
+PageStore(page, start, bytes) ==
+  LET from == IntegerMax(start, 0)
+      to == IntegerMin(start + Len(bytes), Len(page))
+  IN SubSeq(page, 1, from) \o SubSeq(bytes, from - start + 1, to - start) \o SubSeq(page, to + 1, Len(page))
 ArrayBufferByteLength(s, b) == O(s, b).slots.data.size
 SetBufferData(s, b, bytes) == SetO(s, b, [O(s, b) EXCEPT !.slots.data = BlockOf(bytes)])
 \* The count bytes of b's block from byteIndex.
@@ -15835,16 +15870,15 @@ ReduceFrom(s, ta, len, k, step, callback, accumulator) ==
   IF k < 0 \/ k >= len THEN Ok(s, accumulator)
   ELSE LET r == Call(s, callback, Undefined, <<accumulator, TypedArrayGetElement(s, ta, NumFromInt(k)), IntV(k), ta>>) IN
        IF IsAbrupt(r) THEN r ELSE ReduceFrom(r.s, ta, len, k + step, step, callback, Val(r))
-\* Stores values[k + 1] onwards into ta from index k. StoreRun stores at most 2^depth values nested
-\* depth deep, so a long list needs no frame per element.
-StoreElements(s, ta, values, k) == StoreFrom(s, ta, values, k, 0)
-StoreRun(s, ta, values, k, depth) ==
-  CASE k >= Len(values) -> [s |-> s, k |-> k]
-    [] depth = 0 -> [s |-> TypedArrayStore(s, ta, NumFromInt(k), values[k + 1]), k |-> k + 1]
-    [] OTHER -> LET r == StoreRun(s, ta, values, k, depth - 1) IN StoreRun(r.s, ta, values, r.k, depth - 1)
-StoreFrom(s, ta, values, k, depth) ==
-  IF k >= Len(values) THEN s
-  ELSE LET r == StoreRun(s, ta, values, k, depth) IN StoreFrom(r.s, ta, values, r.k, depth + 1)
+\* Stores values[k + 1] onwards, Numbers or BigInts, into ta from index k, as TypedArrayStore would
+\* one at a time. No code runs between the stores, so those that IsValidIntegerIndex allows are the
+\* ones below ta's length, and their bytes store at once.
+StoreElements(s, ta, values, k) ==
+  LET end == IF IsTypedArrayOutOfBounds(s, ta) THEN 0 ELSE IntegerMin(Len(values), TypedArrayLength(s, ta))
+      type == TypedArrayType(s, ta)
+  IN IF end <= k THEN s
+     ELSE SetBufferBytes(s, O(s, ta).slots.buffer, k * TypedArraySize(s, ta) + O(s, ta).slots.byteOffset,
+                         FoldLeftSeq([i \in 1..end - k |-> NumericToRawBytes(type, values[k + i], LittleEndian)]))
 TypedArrayElements(s, ta, len) == [i \in 1..len |-> TypedArrayGetElement(s, ta, NumFromInt(i - 1))]
 \* The first index from k up, or the last from k down, of an element strictly equal to target,
 \* or -1.
@@ -15854,21 +15888,21 @@ StrictIndexFrom(s, ta, target, k, len, step) ==
   THEN k
   ELSE StrictIndexFrom(s, ta, target, k + step, len, step)
 \* JoinIndexedProperties (§23.1.3.18.1) on a TypedArray, whose elements convert to strings without
-\* running code.
-JoinElements(s, ta, k, len, separator) ==
-  IF k >= len THEN <<>>
-  ELSE LET e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
-          JoinElements(s, ta, k + 1, len, separator)
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc, args) ==
-  IF k >= len THEN Ok(s, Str(acc))
-  ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
+\* running code, so that each element's units, after the separator but the first, join in halves.
+JoinElements(s, ta, len, separator) ==
+  FoldLeftSeq([k \in 1..len |->
+    LET e == TypedArrayGetElement(s, ta, NumFromInt(k - 1))
+    IN (IF k > 1 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e))])
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, collecting
+\* the parts in chunks, so that joining n elements copies each element's units a few times, not n.
+LocaleJoin(s, ta, k, len, parts, args) ==
+  IF k >= len THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET prefix == IF k > 0 THEN ChunkAppend(parts, N(",")) ELSE parts
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
        IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
           ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, ChunkAppend(prefix, Val(str).value), args)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -15972,7 +16006,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
                                            len, -1)))
     [] m = "join" ->
          LET separator == IF a1 = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, a1) IN IF IsAbrupt(separator) THEN separator
-         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, 0, len, Val(separator).value)))
+         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, len, Val(separator).value)))
     [] m = "map" ->
          LET r == TypedArraySpeciesCreate(s, ta, <<IntV(len)>>, TRUE) IN IF IsAbrupt(r) THEN r
          ELSE MapFromTypedArray(r.s, ta, Val(r), 0, len, a1, a2)
@@ -16008,7 +16042,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, NoChunks, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))
