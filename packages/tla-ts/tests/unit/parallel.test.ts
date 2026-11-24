@@ -253,6 +253,100 @@ describe("check with workers matches TLC", () => {
     },
   );
 
+  const randomHead =
+    "---- MODULE M ----\nEXTENDS Naturals, FiniteSets, Randomization\nVARIABLE x, n\n";
+  const drawsInNext = {
+    name: "the next-state relation",
+    source: `${randomHead}Init == x = 0 /\\ n = 0\nNext == n < 8 /\\ n' = n + 1 /\\ x' \\in RandomSubset(2, 0..5)\n====`,
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+  };
+  const drawsInInit = {
+    name: "the initial predicate and a constraint",
+    source: `${randomHead}Init == x \\in 0..3 /\\ n \\in RandomSubset(2, 0..12)\nNext == n < 14 /\\ n' = n + 1 /\\ x' = x\nC == n > 10 \\/ x \\in RandomSubset(3, 0..3)\n====`,
+    config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+  };
+  const drawsInChecks = {
+    name: "the next-state relation and a constraint",
+    source: `${randomHead}Init == x = 0 /\\ n = 0\nNext == n < 6 /\\ n' = n + 1 /\\ x' \\in RandomSubset(3, 0..5)\nC == n = 0 \\/ x \\in RandomSubset(4, 0..5)\n====`,
+    config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+  };
+  const drawsInConstant = {
+    name: "a constant definition",
+    source: `${randomHead}S == RandomSubset(2, 1..6)\nInit == x = 0 /\\ n = 0\nNext == x < 12 /\\ x' \\in {x + k : k \\in S} /\\ n' = n\n====`,
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+  };
+  it.each(
+    [
+      { ...drawsInNext, seed: 4n, counts: [59, 35, 9] },
+      { ...drawsInNext, seed: 7n, counts: [57, 33, 9] },
+      { ...drawsInInit, seed: 4n, counts: [42, 38, 13] },
+      { ...drawsInInit, seed: 7n, counts: [31, 25, 14] },
+      { ...drawsInChecks, seed: 4n, counts: [67, 28, 7] },
+      { ...drawsInChecks, seed: 7n, counts: [67, 27, 7] },
+      { ...drawsInConstant, seed: 4n, counts: [11, 8, 4] },
+      { ...drawsInConstant, seed: 7n, counts: [13, 8, 5] },
+    ].flatMap((row) => [1, 2, 4].map((workers) => ({ ...row, workers }))),
+  )(
+    "draws random values in $name with seed $seed and $workers workers as TLC does",
+    async (row) => {
+      const result = await tlaTs.check({
+        source: row.source,
+        config: row.config,
+        seed: row.seed,
+        workers: row.workers,
+      });
+      expect(getCounts(result)).toEqual(row.counts);
+    },
+  );
+
+  const exceptWarning =
+    "The EXCEPT was applied to non-existing fields of the value at\nline 4, col 10 to line 4, col 10 of module M";
+  it.each([1, 2, 4])(
+    "reports the warnings a constant and the search raise like one worker with %i workers",
+    async (workers) => {
+      const reported: string[] = [];
+      const result = await tlaTs.check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\nF(s) == [s EXCEPT !.b = 1]\nC == F([a |-> 0])\nInit == x = 0 /\\ r = C\nNext == x < 20 /\\ x' = x + 1 /\\ r' = IF x % 5 = 0 THEN F(r) ELSE r\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers,
+        onProgress: (progress) =>
+          reported.push(progress.kind === "warning" ? progress.text : progress.kind),
+      });
+      expect(getCounts(result)).toEqual([21, 21, 21]);
+      expect(reported).toEqual([
+        "parsed",
+        exceptWarning,
+        "initial-states-started",
+        "initial-states-computed",
+        ...Array.from({ length: 4 }, () => exceptWarning),
+      ]);
+    },
+  );
+
+  it.each([1, 2, 4])(
+    "fails on a warning the search raises that -messagesAsErrors names like TLC with %i workers",
+    async (workers) => {
+      const options = {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\nInit == x = 0 /\\ r = [a |-> 0]\nNext == x < 20 /\\ x' = x + 1 /\\ r' = IF x = 10 THEN [r EXCEPT !.b = 1] ELSE r\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers,
+        errorCodes: [2144],
+      };
+      const result = await tlaTs.check(options);
+      expect([
+        result.failure?.exitCode,
+        result.failure?.message,
+        result.failure?.trace?.length,
+      ]).toEqual([
+        75,
+        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The EXCEPT was applied to non-existing fields of the value at\nline 5, col 54 to line 5, col 54 of module M",
+        11,
+      ]);
+    },
+  );
+
   it("hands a worker a converted function over SUBSET as the FcnLambdaValue it is", async () => {
     const result = await check({
       source:

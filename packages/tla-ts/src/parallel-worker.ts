@@ -1,3 +1,4 @@
+import { evaluateStartupDefinitions } from "./evaluate";
 import {
   createFingerprintTable,
   createSharedFingerprintsFromBuffers,
@@ -36,12 +37,13 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const classes = new Map(start.classes);
   const created = createCheckEnvironment(
     start.config,
-    { ...start, loadModule, loadClass: (name) => classes.get(name), seed: undefined },
+    { ...start, loadModule, loadClass: (name) => classes.get(name) },
     () => {},
     true,
   );
   const specification = created.specification;
   const environment = specification.environment;
+  evaluateStartupDefinitions(specification.startupModules, environment);
   const search = createSearch(
     start.config,
     environment,
@@ -67,7 +69,12 @@ const runWorker = (start: StartMessage, parent: Port) => {
     port?.addEventListener("message", (event) => receiveLoot(event.data as EncodedStates));
     port?.start?.();
   });
-  let frontier = decode(start.seed).map(canonicalize);
+  let frontier = decode(start.frontier).map(canonicalize);
+  let isDrawnAfterNext = false;
+  let isWarned = false;
+  environment.runtime.warn = () => {
+    isWarned = true;
+  };
   const takeBreak = createBreak();
 
   const answerRequest = (expansion: Expansion, request: number) => {
@@ -181,6 +188,10 @@ const runWorker = (start: StartMessage, parent: Port) => {
       fingerprintStates: [],
       breakAt: performance.now() + BREAK_INTERVAL,
     };
+    environment.runtime.getCurrentState = () => {
+      if (expansion.successors !== undefined) isDrawnAfterNext = true;
+      return expansion.states[expansion.origin];
+    };
     for (;;) {
       const status = expand(expansion);
       if (status === undefined) return undefined;
@@ -200,6 +211,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
       }
       if (!(await steal(expansion))) break;
     }
+    if (isDrawnAfterNext || isWarned) return { type: "abort" };
     const unorderedString = getUnorderedString();
     if (unorderedString !== undefined) return { type: "abort", string: unorderedString };
     frontier = expansion.next;

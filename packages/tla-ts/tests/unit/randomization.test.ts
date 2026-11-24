@@ -93,6 +93,36 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     },
   );
 
+  const drawingChecks =
+    "---- MODULE M ----\nEXTENDS Naturals, FiniteSets, Randomization, TLC\nVARIABLE x, y, n\nInit == x = 0 /\\ y = 0 /\\ n = 0\n";
+
+  it.each([
+    [4n, 5, [0, 3]],
+    [7n, 3, [0, 1]],
+    [11n, 6, [0, 0, 0]],
+  ])(
+    "draws for an invariant at a state that keeps the variables it reads with seed %s, as TLC does",
+    async (seed, generated, trace) => {
+      const result = await check({
+        source: `${drawingChecks}Next == n < 8 /\\ n' = n + 1 /\\ x' \\in 0..3 /\\ y' = y\nInv == x \\in RandomSubset(3, 0..3)\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        seed,
+      });
+      expect([result.generatedStates, result.violation?.trace.map((step) => step.state.x)]).toEqual(
+        [generated, trace],
+      );
+    },
+  );
+
+  it("draws for a constraint at a state that keeps the variables it reads, as TLC does", async () => {
+    const result = await check({
+      source: `${drawingChecks}Next == n < 6 /\\ n' = n + 1 /\\ x' \\in 0..3 /\\ y' \\in 0..1\nC == x \\in RandomSubset(2, 0..3)\n====`,
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+      seed: 11n,
+    });
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([273, 42, 7]);
+  });
+
   it("reseeds from the tokens TLC interns model values with", async () => {
     const result = await checkWithSeed("RandomModelValue", 1n);
     expect(result.violation?.trace.map((step) => formatValue(step.state.owner))).toEqual([
