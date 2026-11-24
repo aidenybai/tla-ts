@@ -16,12 +16,10 @@ import {
   type SourceLocation,
   type Theorem,
 } from "./ast";
-import { TlaSyntaxError } from "./errors";
 import {
   copyResolution,
   getArity,
   getBoundNames,
-  getKeyName,
   getPatternNames,
   hasNoOperands,
   isBefore,
@@ -953,11 +951,6 @@ const substituteExpression = (
         },
         location: { line: expression.location.line, column: expression.location.column },
       };
-    }
-    if (replacement) {
-      throw new TlaSyntaxError(
-        `The operator ${getKeyName(expression.operator)} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
-      );
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) {

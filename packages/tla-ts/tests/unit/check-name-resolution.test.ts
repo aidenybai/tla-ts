@@ -2507,6 +2507,104 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const checkOperatorSubstitute = (instance: string, other: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nAp2(F(_, _)) == F(1, 2)\nD9(k) == Ap2(LAMBDA a, b : a + b + k)\nJ == INSTANCE Pure\nP(n) == INSTANCE Pure\n${instance}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        new Map([
+          [
+            "Pure",
+            "---- MODULE Pure ----\nEXTENDS Naturals\nE28(a, b) == a + b\nAp2(F(_, _)) == F(1, 2)\nD8 == Ap2(LAMBDA a, b : a + b)\nD9(k) == Ap2(LAMBDA a, b : a + b + k)\n====",
+          ],
+          ["Inner", "---- MODULE Inner ----\nCONSTANT Op(_, _)\nUseOp == Op(5, 6)\n===="],
+          ["Other", other],
+        ]).get(name),
+    });
+
+  const OPERATOR_USES =
+    "---- MODULE Other ----\nCONSTANT Op2(_, _)\nAp(F(_, _)) == F(3, 4)\nUse == Op2(1, 2)\nPass == Ap(Op2)\nLam == Ap(LAMBDA a, b : Op2(b, a))\nInLet == LET G(a) == Op2(a, a) IN G(1)\nN == INSTANCE Inner WITH Op <- Op2\n====";
+
+  const OPERATOR_ARITY_ERROR = {
+    location: "In module --TLA+ BUILTINS--",
+    message: "An operator must be substituted for symbol 'Op2', and it must have arity 2.",
+  };
+
+  it.each([
+    ["D9(5)!1", "line 7, col 33 to line 7, col 34", "Selector `D9' should not have argument(s)."],
+    ["J!D9(5)!1", "line 7, col 35 to line 7, col 36", "Selector `D9' should not have argument(s)."],
+    ["P(1)!E28", "line 7, col 33 to line 7, col 33", "Selector `P' should not have argument(s)."],
+    ["P(1)!D8!1", "line 7, col 33 to line 7, col 33", "Selector `P' should not have argument(s)."],
+    [
+      "1 + 2",
+      "line 7, col 33 to line 7, col 37",
+      "Arity 2 operator (not an expression) is expected \nto substitute for CONSTANT 'Op2'.",
+    ],
+  ])(
+    "reports SANY's errors for the module-level substitute %s of an operator constant that the instanced module applies, passes and instances",
+    async (substitute, location, message) => {
+      await expect(
+        checkOperatorSubstitute(`O == INSTANCE Other WITH Op2 <- ${substitute}`, OPERATOR_USES),
+      ).rejects.toThrow(
+        createSanyError([{ location: `${location} of module M`, message }, OPERATOR_ARITY_ERROR]),
+      );
+    },
+  );
+
+  it("reports every error of a module with rejected operator substitutes, as SANY does", async () => {
+    await expect(
+      checkOperatorSubstitute(
+        "Bad == 1 + before\nO == INSTANCE Other WITH Op2 <- D9(5)!1\nO2 == INSTANCE Other WITH Op2 <- P(2)!E28\nINSTANCE Other WITH Op2 <- D9(6)!1\nTotal == O!Use + after",
+        OPERATOR_USES,
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 7, col 12 to line 7, col 17 of module M",
+          message: "Unknown operator: `before'.",
+        },
+        {
+          location: "line 8, col 33 to line 8, col 34 of module M",
+          message: "Selector `D9' should not have argument(s).",
+        },
+        OPERATOR_ARITY_ERROR,
+        {
+          location: "line 9, col 34 to line 9, col 34 of module M",
+          message: "Selector `P' should not have argument(s).",
+        },
+        {
+          location: "line 10, col 28 to line 10, col 29 of module M",
+          message: "Selector `D9' should not have argument(s).",
+        },
+        {
+          location: "line 11, col 18 to line 11, col 22 of module M",
+          message: "Unknown operator: `after'.",
+        },
+      ]),
+    );
+  });
+
+  it("reports a rejected operator substitute after the instanced module's own arity error, as SANY does", async () => {
+    await expect(
+      checkOperatorSubstitute(
+        "O == INSTANCE Other WITH Op2 <- D9(5)!1",
+        "---- MODULE Other ----\nCONSTANT Op2(_, _)\nUse == Op2(1, 2)\nWrong == Op2(1)\n====",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 13 to line 4, col 15 of module Other",
+          message: "The operator Op2 requires 2 arguments.",
+        },
+        {
+          location: "line 7, col 33 to line 7, col 34 of module M",
+          message: "Selector `D9' should not have argument(s).",
+        },
+        OPERATOR_ARITY_ERROR,
+      ]),
+    );
+  });
+
   it.each([
     ["c(G(_)) == G(1)\nI == INSTANCE Other", "line 3, col 1 to line 3, col 19"],
     [
