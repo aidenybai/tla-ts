@@ -1,3 +1,9 @@
+import {
+  SmtMemoryOutError,
+  SmtUnsupportedError,
+  TlaError,
+  toSmtMemoryOutError,
+} from "../../../errors";
 import { mkArrayApp } from "./array-decl-plugin";
 import { ArrayRewriter } from "./array-rewriter";
 import { mkRecFunApp } from "./recfun-rewriter";
@@ -172,8 +178,16 @@ export class Rewriter extends RewriterTpl {
   rewrite(expr: number) {
     try {
       return super.rewrite(expr);
-    } catch (error) {
-      if (this.manager.limit.inc()) throw error;
+    } catch (caught) {
+      const error = toSmtMemoryOutError(caught);
+      // The z3 shell exits where it runs out of memory, so th_rewriter's catch never sees it.
+      if (
+        !(error instanceof TlaError) ||
+        error instanceof SmtMemoryOutError ||
+        error instanceof SmtUnsupportedError ||
+        this.manager.limit.inc()
+      )
+        throw error;
       this.manager.incRef(expr);
       return expr;
     }
