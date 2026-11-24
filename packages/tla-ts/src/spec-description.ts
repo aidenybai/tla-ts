@@ -447,6 +447,17 @@ const getActions = (
   const letDefinition = getLocalDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {
+    // Tool#getActionsAppl makes the call an action of its own where the lookup of a LET definition finds its literal body's value.
+    if (getBodyLiteral(thunk.expression, environment) !== undefined) {
+      return [
+        {
+          ...createSplitAction(),
+          name: letDefinition.name,
+          ...getDefinitionRanges(letDefinition),
+          parameters: [],
+        },
+      ];
+    }
     return getActions(
       thunk.expression,
       thunk.scope,

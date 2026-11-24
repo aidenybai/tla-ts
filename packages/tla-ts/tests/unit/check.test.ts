@@ -14834,6 +14834,95 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "LET LK == 1 IN Stp \\/ LK",
+      "1",
+      "line 8, col 31 to line 8, col 32 of module M",
+      ["M 8:31-8:32"],
+    ],
+    [
+      'LET LK == "a" IN Stp \\/ LK',
+      '"a"',
+      "line 8, col 33 to line 8, col 34 of module M",
+      ["M 8:33-8:34"],
+    ],
+    [
+      "LET LK == 1 IN LK \\/ Stp",
+      "1",
+      "line 8, col 24 to line 8, col 25 of module M",
+      ["M 8:24-8:25"],
+    ],
+    [
+      "LET LK == 1 IN LET LJ == LK IN Stp \\/ LJ",
+      "1",
+      "line 8, col 34 to line 8, col 35 of module M",
+      ["M 8:34-8:35"],
+    ],
+    [
+      "LET LK == 1 IN Stp \\/ (LET LJ == 2 IN LJ)",
+      "2",
+      "line 8, col 47 to line 8, col 48 of module M",
+      ["M 8:47-8:48"],
+    ],
+    [
+      "LET LK == 1 IN LK = 1 /\\ (Stp \\/ LK)",
+      "1",
+      "line 8, col 42 to line 8, col 43 of module M",
+      ["M 8:24-8:44", "M 8:24-8:29", "M 8:35-8:43", "M 8:42-8:43"],
+    ],
+    [
+      "L!NxLet",
+      "1",
+      "line 5, col 32 to line 5, col 33 of module T",
+      ["M 4:1-4:27", "T 5:10-5:33", "T 5:25-5:33", "T 5:32-5:33"],
+    ],
+  ])(
+    "takes the literal body of a LET definition in Next == %s as its value, as TLC's Tool#getNextStatesAppl looks up its OpDefNode",
+    async (next, value, location, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const failure = (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL == INSTANCE T WITH v <- x\nStp == x < 2 /\\ x' = x + 1\nOp(p) == Stp \\/ p\nInit == x = 0\nNext == ${next}\n====`,
+            config: "INIT Init\nNEXT Next",
+            coverage,
+            loadModule: (name) =>
+              name === "T"
+                ? "---- MODULE T ----\nEXTENDS Naturals\nVARIABLE v\nStp == v < 2 /\\ v' = v + 1\nNxLet == LET LK == 1 IN Stp \\/ LK\n===="
+                : undefined,
+          })
+        ).failure;
+        return [
+          failure?.message,
+          failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [
+                  `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+                ]
+              : [];
+          }),
+        ];
+      };
+      const expected = [
+        `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found ${value}.\n${location}`,
+        positions,
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it("enters the literal body of a LET definition under ENABLED, as TLC's Tool#enabled binds it to a LazyValue", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nStp == x < 2 /\\ x' = x + 1\nInit == x = 0\nNext == Stp\nInv == ENABLED (LET LK == 1 IN Stp \\/ LK)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.failure?.message).toBe(
+      "Evaluating invariant Inv failed.\nAttempted to compute ENABLED on a non-boolean expression.\n1",
+    );
+  });
+
+  it.each([
+    [
       "LET I2 == Init IN I2",
       "I2",
       "6, col 13 to line 6, col 14",

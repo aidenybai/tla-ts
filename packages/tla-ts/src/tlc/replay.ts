@@ -671,10 +671,13 @@ const visitDefined = (
   const context = getContext(replay, scope, partial);
   if (expression.kind === "Identifier") {
     const binding = lookupScope(scope, expression.name);
-    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value.
+    // Tool#enabledApplImpl visits a LazyValue's expression even when it holds a value, where Tool#getNextStatesAppl takes the value, as it takes a LET definition's literal body.
     if (
       binding?.kind === "Thunk" &&
-      (replay.isEnabled ? !binding.isReleased : binding.cache === undefined)
+      (replay.isEnabled
+        ? !binding.isReleased
+        : binding.cache === undefined &&
+          getBodyLiteral(binding.expression, replay.environment) === undefined)
     ) {
       const thunkNode = replay.coverage?.values.get(binding) ?? node;
       return visit(replay, binding.expression, items, binding.scope, partial, thunkNode);
@@ -682,7 +685,8 @@ const visitDefined = (
     if (
       binding?.kind === "Operator" &&
       binding.operator.kind === "Closure" &&
-      binding.operator.params.length === 0
+      binding.operator.params.length === 0 &&
+      getBodyLiteral(binding.operator.body, replay.environment) === undefined
     ) {
       return visit(replay, binding.operator.body, items, binding.operator.scope, partial, node);
     }
