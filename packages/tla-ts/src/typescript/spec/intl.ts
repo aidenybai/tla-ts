@@ -382,7 +382,12 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       const name = getCalleeName(node);
       const values = (node.arguments ?? []).map((argument) => getLiteralValue(argument));
       const isDate = ts.isNewExpression(node) ? name === "Date" : name === "UTC";
-      if (isDate && values.every((value) => value !== undefined && value.value !== undefined)) {
+      // A Date of no arguments reads the host's clock, so its time isn't a literal's.
+      if (
+        isDate &&
+        values.length > 0 &&
+        values.every((value) => value !== undefined && value.value !== undefined)
+      ) {
         const args = values.map((value) => value?.value) as [number];
         const time = attempt(() =>
           ts.isNewExpression(node) ? new Date(...args).getTime() : Date.UTC(...args),
