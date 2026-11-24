@@ -1343,6 +1343,10 @@ const sortLikeTlc = (elements: Value[]) => {
   return sorted;
 };
 
+// SetEnumValue#normalize binary-inserts each element of a product toSetEnum leaves unsorted, which sets what its comparisons convert.
+const createConvertedSet = (elements: Value[], isSorted: boolean) =>
+  createSortedSet(isSorted ? elements : sortLikeTlc(elements));
+
 const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
   const sets = setTrace.sets;
   if (sets === undefined) return method();
@@ -2265,7 +2269,7 @@ const getUnboundedElements = (value: Value): Value[] => {
   } finally {
     isSortingLiteral = isOuterSorting;
   }
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (elements.length <= getMaximumSetSize()) value.enumerated = set;
   return set.elements;
 };
@@ -2431,7 +2435,7 @@ const convertSet = (
     isSortingLiteral = isOuterSorting;
   }
   if (!isFramedAsOpened) sets?.pop();
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (lazy) lazy.enumerated = set;
   return set;
 };
@@ -3651,7 +3655,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     undefined,
     setTrace.sets ? openOperandStream(value, false) : undefined,
   );
-  const set = isSorted ? createSortedSet(elements) : createSet(elements);
+  const set = createConvertedSet(elements, isSorted);
   if (!isRepeated) value.enumerated = set;
   return set.elements;
 };
