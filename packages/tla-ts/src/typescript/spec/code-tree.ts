@@ -240,6 +240,14 @@ export const defineOperator = (
   location: INLINE,
 });
 
+// A definition of a program's code: its syntax tree, or, for one that a template writes, its text.
+export interface CodeDefinition {
+  name: string;
+  arity: number;
+  tree?: OperatorDefinition;
+  text?: string;
+}
+
 // Where the tokens of a printed tree go: each with the gap before it.
 interface TokenWriter {
   write: (text: string, gap: number) => void;
@@ -526,4 +534,146 @@ export const printCodeExpression = (expression: Expression) => {
   const text = createTextWriter();
   writeExpression(expression, NO_GAP, text.writer);
   return text.getText();
+};
+
+const WORD = /\b[A-Za-z_]\w*\b/g;
+
+const NAME = /^[A-Za-z_]\w*$/;
+
+// Each word of an expression's text, as \b[A-Za-z_]\w*\b finds them in it, in order, and whether
+// it's in a string.
+export const forEachCodeWord = (
+  expression: Expression,
+  visit: (word: string, isInString: boolean) => void,
+) =>
+  writeExpression(expression, NO_GAP, {
+    writeBlankLine: () => undefined,
+    write: (text) => {
+      if (NAME.test(text)) {
+        visit(text, false);
+        return;
+      }
+      const isInString = text.startsWith('"');
+      for (const match of text.matchAll(WORD)) visit(match[0], isInString);
+    },
+  });
+
+// Each word of a text, as forEachCodeWord gives an expression's.
+export const forEachTextWord = (
+  text: string,
+  visit: (word: string, isInString: boolean) => void,
+) => {
+  for (const match of text.matchAll(/"[^"\\]*(?:\\.[^"\\]*)*"|\b[A-Za-z_]\w*\b/g)) {
+    if (!match[0].startsWith('"')) visit(match[0], false);
+    else for (const word of match[0].matchAll(WORD)) visit(word[0], true);
+  }
+};
+
+// The children of an expression, in the order its text has them, each replaced in place by what
+// replace gives for it.
+export const replaceCodeChildren = (
+  expression: Expression,
+  replace: (child: Expression) => Expression,
+): void => {
+  const replaceAll = (items: Expression[]) => {
+    for (let position = 0; position < items.length; position++) {
+      items[position] = replace(items[position]);
+    }
+  };
+  const replaceBounds = (bounds: Bound[]) =>
+    bounds.forEach((item) => {
+      item.set = replace(item.set);
+    });
+  switch (expression.kind) {
+    case "Apply":
+      replaceAll(expression.args);
+      return;
+    case "And":
+    case "Or":
+      replaceAll(expression.operands);
+      return;
+    case "Tuple":
+    case "SetEnumeration":
+      replaceAll(expression.elements);
+      return;
+    case "If":
+      expression.condition = replace(expression.condition);
+      expression.consequent = replace(expression.consequent);
+      expression.alternative = replace(expression.alternative);
+      return;
+    case "Case":
+      expression.arms.forEach((arm) => {
+        arm.condition = replace(arm.condition);
+        arm.body = replace(arm.body);
+      });
+      if (expression.other !== undefined) expression.other = replace(expression.other);
+      return;
+    case "Let":
+      expression.definitions.forEach((definition) => {
+        definition.body = replace(definition.body);
+      });
+      expression.body = replace(expression.body);
+      return;
+    case "Record":
+    case "RecordSet":
+      expression.fields.forEach((field) => {
+        field.value = replace(field.value);
+      });
+      return;
+    case "Except":
+      expression.function = replace(expression.function);
+      expression.updates.forEach((update) => {
+        update.path.forEach((step) => {
+          if (step.kind === "Index") replaceAll(step.args);
+        });
+        update.value = replace(update.value);
+      });
+      return;
+    case "FunctionApplication":
+      expression.function = replace(expression.function);
+      replaceAll(expression.args);
+      return;
+    case "FieldAccess":
+      expression.record = replace(expression.record);
+      return;
+    case "FunctionConstruction":
+    case "Forall":
+    case "Exists":
+      replaceBounds(expression.bounds);
+      expression.body = replace(expression.body);
+      return;
+    case "SetMap":
+      expression.expression = replace(expression.expression);
+      replaceBounds(expression.bounds);
+      return;
+    case "SetFilter":
+      expression.bound.set = replace(expression.bound.set);
+      expression.predicate = replace(expression.predicate);
+      return;
+    case "Choose":
+      if (expression.set !== undefined) expression.set = replace(expression.set);
+      expression.body = replace(expression.body);
+      return;
+    case "Lambda":
+      expression.body = replace(expression.body);
+      return;
+    default:
+      return;
+  }
+};
+
+// A definition's text, as a module holds it on lines of its own.
+export const getCodeText = (definition: CodeDefinition) =>
+  definition.text ?? (definition.tree === undefined ? "" : printCodeDefinition(definition.tree));
+
+// Each word of a definition's body, as forEachCodeWord gives them.
+export const forEachBodyWord = (
+  definition: CodeDefinition,
+  visit: (word: string, isInString: boolean) => void,
+) => {
+  if (definition.tree !== undefined) forEachCodeWord(definition.tree.body, visit);
+  else {
+    const text = definition.text ?? "";
+    forEachTextWord(text.slice(text.indexOf("==")), visit);
+  }
 };

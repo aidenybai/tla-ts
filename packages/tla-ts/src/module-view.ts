@@ -272,13 +272,13 @@ const readModule = (prepared: PreparedModule) => {
 // the lines kept, and so are its facts.
 export const createModuleView = (prepared: PreparedModule) => {
   const tables = readModule(prepared);
-  return (text: string, leaves: readonly string[] = []): PreparedModule => {
+  return (names: readonly string[], leaves: readonly string[] = []): PreparedModule => {
     const isLeaf = new Uint8Array(tables.nameIds.size);
     getNameIds(tables.nameIds, [...leaves]).forEach((name) => {
       isLeaf[name] = 1;
     });
     const keptNames = new Uint8Array(tables.nameIds.size);
-    const pending = [...getNameIds(tables.nameIds, getReadNames(text)), ...tables.rootReadIds];
+    const pending = [...getNameIds(tables.nameIds, [...names]), ...tables.rootReadIds];
     while (pending.length > 0) {
       const name = pending.pop() ?? 0;
       if (keptNames[name] === 1) continue;

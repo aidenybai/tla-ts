@@ -358,7 +358,7 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
       Promise.all(["/typescript/spec/prepare.ts", "/tlc/order.ts", "/config.ts"].map((path) => import(workerData.source + path))).then(([prepare, order, config]) => {
         const getModules = (runtime) => [
           ...runtime.modules,
-          runtime.getView([...runtime.names].join("\\n"), []),
+          runtime.getView([...runtime.names], []),
           runtime.getExtension("ESCanonical"),
           runtime.getExtension("ESNative"),
         ].map((prepared) => prepared.module);
@@ -369,8 +369,8 @@ describe("reads each body of the recorded graph as the live runtime parsed it", 
         // A view that the recorded tables give is the one the live runtime's text gives, and TLC's
         // orders of a spec that extends it are the ones the live runtime's lexed view gives.
         const getViewShape = (runtime) =>
-          ["ToString(x) Completed(x) HeapGet(h, i)", [...runtime.names].join("\\n")].map((text) => {
-            const view = runtime.getView(text, []);
+          [["ToString", "Completed", "HeapGet"], [...runtime.names]].map((names) => {
+            const view = runtime.getView(names, []);
             const tlcOrder = order.createTlcOrder(
               "---- MODULE Root ----\\nEXTENDS ESRuntime\\n====",
               () => undefined,

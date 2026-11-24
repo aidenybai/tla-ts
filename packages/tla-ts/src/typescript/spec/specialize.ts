@@ -2,12 +2,12 @@ import ts from "@typescript/typescript6";
 import { type Expression, getChildren, type OperatorDefinition } from "../../ast";
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
-import type { GeneratedDefinition } from "./library";
 import { getLocals, type Locals } from "./locals";
 import {
   afterBlankLine,
   apply,
   boundIn,
+  type CodeDefinition,
   defineOperator,
   dot,
   except,
@@ -21,7 +21,6 @@ import {
   type Operand,
   parenthesized,
   pathTo,
-  printCodeDefinition,
   printCodeExpression,
   recordOf,
   ref,
@@ -125,7 +124,7 @@ export interface ProgramRegion {
 }
 
 export interface SpecializedProgram {
-  definitions: GeneratedDefinition[];
+  definitions: CodeDefinition[];
   regions: ProgramRegion[];
   words: Set<string>;
   // The names the program's identifiers resolve, which may be the global object's.
@@ -1007,7 +1006,7 @@ export const specialize = (
       return throws.map((node, index) => [node, index + 1] as const);
     }),
   );
-  const definitions: GeneratedDefinition[] = [];
+  const definitions: CodeDefinition[] = [];
   const words = new Set<string>();
   const identifiers = new Set<string>();
   const codes: { id: number; definition?: OperatorDefinition }[] = [];
@@ -1205,11 +1204,7 @@ export const specialize = (
   };
 
   const addDefinition = (definition: OperatorDefinition) => {
-    definitions.push({
-      name: definition.name,
-      arity: definition.params.length,
-      text: printCodeDefinition(definition),
-    });
+    definitions.push({ name: definition.name, arity: definition.params.length, tree: definition });
   };
   // An operator of the next number with the prefix, whose body starts a line of its own.
   const define = (prefix: string, parameters: string[], body: Operand) => {
@@ -5589,76 +5584,54 @@ export const specialize = (
   // reads as t[2] + (offset - 1), as - binds tighter than +.
   const getSourcePosition = (offset: string) =>
     apply("+", [subscript("t", [num(2)]), apply("-", [offset, num(1)])]);
-  return {
-    definitions: [
-      ...sources.map((source, position) => ({
-        name: `SourceText${position + 1}`,
-        arity: 0,
-        text: printCodeDefinition(
-          defineOperator(`SourceText${position + 1}`, [], string(source.value)),
-        ),
-      })),
-      {
-        name: "SourcePatches",
-        arity: 0,
-        text: printCodeDefinition(
-          defineOperator(
-            "SourcePatches",
-            [],
-            tuple(sources.map((source) => getPatches(source.patches))),
-          ),
-        ),
-      },
-      {
-        name: "SourceUnits",
-        arity: 1,
-        text: printCodeDefinition(
-          defineOperator(
-            "SourceUnits",
-            ["t"],
-            onLine(
-              withInnerLines(
-                letIn(
-                  [
-                    defineOperator(
-                      "u",
-                      [],
-                      apply("StringUnits", [
-                        apply("SubSeq", [
-                          subscript(
-                            tuple(sources.map((_, position) => `SourceText${position + 1}`)),
-                            [subscript("t", [num(1)])],
-                          ),
-                          subscript("t", [num(2)]),
-                          subscript("t", [num(3)]),
-                        ]),
-                      ]),
-                    ),
-                    onLine(
-                      defineOperator(
-                        "p",
-                        [],
-                        subscript("SourcePatches", [subscript("t", [num(1)])]),
-                      ),
-                      6,
-                    ),
-                  ],
-                  functionOf(
-                    [boundIn("i", apply("DOMAIN", ["u"]))],
-                    ifThen(
-                      apply("\\in", [getSourcePosition("i"), apply("DOMAIN", ["p"])]),
-                      subscript("p", [getSourcePosition("i")]),
-                      subscript("u", ["i"]),
-                    ),
-                  ),
-                ),
-                2,
+  const sourceDefinitions = [
+    ...sources.map((source, position) =>
+      defineOperator(`SourceText${position + 1}`, [], string(source.value)),
+    ),
+    defineOperator("SourcePatches", [], tuple(sources.map((source) => getPatches(source.patches)))),
+    defineOperator(
+      "SourceUnits",
+      ["t"],
+      onLine(
+        withInnerLines(
+          letIn(
+            [
+              defineOperator(
+                "u",
+                [],
+                apply("StringUnits", [
+                  apply("SubSeq", [
+                    subscript(tuple(sources.map((_, position) => `SourceText${position + 1}`)), [
+                      subscript("t", [num(1)]),
+                    ]),
+                    subscript("t", [num(2)]),
+                    subscript("t", [num(3)]),
+                  ]),
+                ]),
               ),
-              2,
+              onLine(
+                defineOperator("p", [], subscript("SourcePatches", [subscript("t", [num(1)])])),
+                6,
+              ),
+            ],
+            functionOf(
+              [boundIn("i", apply("DOMAIN", ["u"]))],
+              ifThen(
+                apply("\\in", [getSourcePosition("i"), apply("DOMAIN", ["p"])]),
+                subscript("p", [getSourcePosition("i")]),
+                subscript("u", ["i"]),
+              ),
             ),
           ),
+          2,
         ),
-      },
+        2,
+      ),
+    ),
+  ];
+  return {
+    definitions: [
+      ...sourceDefinitions.map((tree) => ({ name: tree.name, arity: tree.params.length, tree })),
       ...definitions,
     ],
     regions,

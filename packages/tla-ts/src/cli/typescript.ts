@@ -592,7 +592,7 @@ export type SharedProgram =
       characters: number;
       config: string;
       code: string;
-      view: { text: string; leaves: readonly string[] };
+      view: { names: readonly string[]; leaves: readonly string[] };
       files: (SharedFile | undefined)[];
       shown: string[];
     };
@@ -648,16 +648,16 @@ export const compileSharedProgram = async (
   const numbered: string[] = [];
   // The text and leaves of the runtime's view that the code extends, from which the group's worker
   // makes the view again.
-  const views: { text: string; leaves: readonly string[] }[] = [];
+  const views: { names: readonly string[]; leaves: readonly string[] }[] = [];
   try {
     const spec = compileToEscore(
       members.map((path) => `import ${JSON.stringify(realpathSync(path))};`).join("\n"),
       join(dirname(realpathSync(members[0])), "tla-ts-shared.mjs"),
       {
         ...runtime,
-        getView: (text, leaves) => {
-          views.push({ text, leaves });
-          return runtime.getView(text, leaves);
+        getView: (names, leaves) => {
+          views.push({ names, leaves });
+          return runtime.getView(names, leaves);
         },
       },
       true,
@@ -829,7 +829,7 @@ export const compileSharedFiles = async (
     return undefined;
   };
   try {
-    const shared = [...runtime.modules, runtime.getView(program.view.text, program.view.leaves)];
+    const shared = [...runtime.modules, runtime.getView(program.view.names, program.view.leaves)];
     const loadProgram = (name: string) => (name === "ProgramCode" ? program.code : undefined);
     const preparedModules = [
       ...shared,

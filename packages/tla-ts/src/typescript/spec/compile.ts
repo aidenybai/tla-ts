@@ -16,12 +16,19 @@ import {
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
+import type { Expression } from "../../ast";
 import {
   apply,
+  type CodeDefinition,
   defineOperator,
+  forEachBodyWord,
+  forEachTextWord,
+  getCodeText,
   num,
   printCodeDefinition,
   printCodeExpression,
+  ref,
+  replaceCodeChildren,
   string,
   tuple,
 } from "./code-tree";
@@ -68,12 +75,6 @@ export interface EscoreSteps {
   // from a file in its directory loads it, and of a name that no file of the directory has
   // rejects.
   candidates?: readonly string[];
-}
-
-interface CodeDefinition {
-  name: string;
-  arity: number;
-  text: string;
 }
 
 // The most characters of a program's TLA+ code that a check parses, past which parsing alone would
@@ -146,58 +147,134 @@ const getLongUnits = (units: readonly number[], sequence: string) => {
 // The units of a literal sequence of numbers, as the definition of its own that reads them.
 const getUnitsDefinition = (unitsName: string, sequence: string) => {
   const units = (sequence.match(/\d+/g) ?? []).map(Number);
-  return printCodeDefinition(
-    defineOperator(
-      unitsName,
-      [],
-      getStringUnits(units) ??
-        getUnitRuns(units) ??
-        getLongUnits(units, sequence) ??
-        tuple(units.map(num)),
-    ),
+  return defineOperator(
+    unitsName,
+    [],
+    getStringUnits(units) ??
+      getUnitRuns(units) ??
+      getLongUnits(units, sequence) ??
+      tuple(units.map(num)),
   );
 };
 
-const compact = (definitions: readonly CodeDefinition[]) => {
+// The names of the hooks, which the program's code takes the place of, as the program's own, and
+// each literal N or SV of a string, its units, as foldNames makes them.
+const foldTree = (expression: Expression): Expression => {
+  if (expression.kind === "Identifier" && HOOKS.has(expression.name)) {
+    expression.name = `Program${expression.name}`;
+  }
+  if (expression.kind === "Apply") {
+    const literal = expression.args[0];
+    if (
+      (expression.operator === "N" || expression.operator === "SV") &&
+      expression.args.length === 1 &&
+      literal.kind === "String"
+    ) {
+      const units = tuple(
+        Array.from({ length: literal.value.length }, (_, index) =>
+          num(literal.value.charCodeAt(index)),
+        ),
+      );
+      return expression.operator === "N" ? units : apply("Str", [units]);
+    }
+    if (HOOKS.has(expression.operator)) expression.operator = `Program${expression.operator}`;
+  }
+  replaceCodeChildren(expression, foldTree);
+  return expression;
+};
+
+const HOOK_NAMES = new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g");
+
+const foldDefinition = (definition: CodeDefinition): CodeDefinition => {
+  const name = HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name;
+  if (definition.tree === undefined) {
+    return {
+      name,
+      arity: definition.arity,
+      text: foldNames((definition.text ?? "").replace(HOOK_NAMES, (hook) => `Program${hook}`)),
+    };
+  }
+  definition.tree.body = foldTree(definition.tree.body);
+  return { name, arity: definition.arity, tree: { ...definition.tree, name } };
+};
+
+// Whether an expression is a literal sequence of numbers, which compact makes a definition of its
+// own.
+const isUnits = (expression: Expression) =>
+  expression.kind === "Tuple" &&
+  expression.elements.length > 0 &&
+  expression.elements.every((element) => element.kind === "Number");
+
+const compact = (definitions: readonly CodeDefinition[]): CodeDefinition[] => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
   const rename = (text: string) =>
     text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
+  const renameTree = (expression: Expression): Expression => {
+    if (expression.kind === "Identifier")
+      expression.name = merged.get(expression.name) ?? expression.name;
+    if (expression.kind === "Apply") {
+      expression.operator = merged.get(expression.operator) ?? expression.operator;
+    }
+    replaceCodeChildren(expression, renameTree);
+    return expression;
+  };
   for (const definition of definitions) {
     if (HOOKS.has(definition.name.replace(/^Program/, ""))) continue;
-    const key = `${definition.arity} ${rename(definition.text).slice(definition.name.length)}`;
+    if (definition.tree !== undefined) renameTree(definition.tree.body);
+    const text =
+      definition.tree === undefined
+        ? rename(definition.text ?? "")
+        : printCodeDefinition(definition.tree);
+    const key = `${definition.arity} ${text.slice(definition.name.length)}`;
     const first = firsts.get(key);
     if (first === undefined) firsts.set(key, definition.name);
     else merged.set(definition.name, first);
   }
   const sequences = new Map<string, string>();
+  const getUnitsName = (sequence: string) => {
+    const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
+    sequences.set(sequence, name);
+    return name;
+  };
+  // An expression with each of its literal sequences of numbers replaced by its definition's name.
+  const replaceUnits = (expression: Expression): Expression => {
+    if (isUnits(expression) && expression.kind === "Tuple") {
+      return ref(
+        getUnitsName(
+          `<<${expression.elements.map((element) => (element.kind === "Number" ? (element.text ?? String(element.value)) : "")).join(", ")}>>`,
+        ),
+      );
+    }
+    replaceCodeChildren(expression, replaceUnits);
+    return expression;
+  };
   const kept = definitions
     .filter((definition) => !merged.has(definition.name))
-    .map((definition) => ({
-      ...definition,
-      text: /^SourceText\d+$/.test(definition.name)
-        ? definition.text
-        : // The parts of a long sequence are split rather than matched by a repeated group,
-          // whose backtracking runs out of stack.
-          rename(definition.text).replace(/<<[\d, ]+>>/g, (sequence) => {
-            if (
-              !sequence
-                .slice(2, -2)
-                .split(", ")
-                .every((part) => /^\d+$/.test(part))
-            ) {
-              return sequence;
-            }
-            const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
-            sequences.set(sequence, name);
-            return name;
-          }),
-    }));
+    .map((definition) => {
+      if (definition.tree !== undefined) {
+        definition.tree.body = replaceUnits(renameTree(definition.tree.body));
+        return definition;
+      }
+      return {
+        ...definition,
+        // The parts of a long sequence are split rather than matched by a repeated group, whose
+        // backtracking runs out of stack.
+        text: rename(definition.text ?? "").replace(/<<[\d, ]+>>/g, (sequence) =>
+          sequence
+            .slice(2, -2)
+            .split(", ")
+            .every((part) => /^\d+$/.test(part))
+            ? getUnitsName(sequence)
+            : sequence,
+        ),
+      };
+    });
   return [
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: getUnitsDefinition(entry[1], entry[0]),
+      tree: getUnitsDefinition(entry[1], entry[0]),
     })),
     ...kept,
   ];
@@ -214,10 +291,11 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   const visit = (definition: CodeDefinition) => {
     isVisited.set(definition.name, false);
     // A name inside a string, such as SourceText's, is text rather than a read.
-    for (const name of definition.text
-      .slice(definition.text.indexOf("=="))
-      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, "")
-      .match(/\b[A-Z]\w*/g) ?? []) {
+    const reads: string[] = [];
+    forEachBodyWord(definition, (word, isInString) => {
+      if (!isInString && /^[A-Z]/.test(word)) reads.push(word);
+    });
+    for (const name of reads) {
       const read = byName.get(name);
       if (read === undefined) continue;
       if (isVisited.get(name) === false) recursive.add(name);
@@ -1075,21 +1153,13 @@ export const compileToEscore = (
         },
       ],
       runtime.resumableSteps,
-    ).map((definition) => ({
-      name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
-      arity: definition.arity,
-      text: foldNames(
-        definition.text.replace(
-          new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g"),
-          (name) => `Program${name}`,
-        ),
-      ),
-    })),
+    ).map(foldDefinition),
   );
-  const code = definitions.map((definition) => definition.text).join("\n");
-  if (code.length > MOST_CODE_CHARACTERS) {
+  const texts = new Map(definitions.map((definition) => [definition, getCodeText(definition)]));
+  const length = [...texts.values()].reduce((total, text) => total + text.length + 1, -1);
+  if (length > MOST_CODE_CHARACTERS) {
     throw new TlaTypeScriptError(
-      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${code.length}, which a check would parse and run past Node's default heap`,
+      `tla-ts can't check a program whose TLA+ spec has more than ${MOST_CODE_CHARACTERS} characters: this program's has ${length}, which a check would parse and run past Node's default heap`,
     );
   }
   const steps = typeof model.steps === "string" ? model.steps : model.steps(files);
@@ -1111,8 +1181,22 @@ export const compileToEscore = (
       `tla-ts can't name ${twice} in TLA+, which the program's spec defines twice or its runtime declares`,
     );
   }
+  // The names that the code, its steps, the modules they extend and the root read, of which the
+  // runtime's view keeps the definitions.
+  const names = new Set<string>();
+  const addName = (word: string) => {
+    if (/^[A-Z]/.test(word)) names.add(word);
+  };
+  definitions.forEach((definition) => {
+    if (definition.tree === undefined) forEachTextWord(definition.text ?? "", addName);
+    else {
+      [definition.name, ...definition.tree.params.map((param) => param.name)].forEach(addName);
+      forEachBodyWord(definition, addName);
+    }
+  });
+  forEachTextWord(`${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`, addName);
   const view = runtime.getView(
-    `${code}\n${steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
+    [...names],
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
@@ -1127,7 +1211,7 @@ export const compileToEscore = (
         (definition) =>
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
-    ...ordered.sorted.map((definition) => definition.text),
+    ...ordered.sorted.map((definition) => texts.get(definition) ?? ""),
     ...stubs.map(
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
