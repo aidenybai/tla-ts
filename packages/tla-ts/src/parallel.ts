@@ -224,11 +224,10 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
           }
         }
         isSeeded =
-          !search.findViolatedInvariant(state) && !search.findFailedInitialPredicate(state);
-        if (!isSeeded) return true;
-        if (!isInModel) return false;
-        isSeeded = frontiers[seeded.length % workerCount].encode(state);
-        if (!isSeeded) return true;
+          !search.findViolatedInvariant(state) &&
+          !search.findFailedInitialPredicate(state) &&
+          (!isInModel || frontiers[seeded.length % workerCount].encode(state));
+        if (!isSeeded || !isInModel) return !isSeeded;
         seeded.push(state);
         statistics.distinctStates++;
         return false;
