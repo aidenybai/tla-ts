@@ -1143,6 +1143,28 @@ export const createCheckBase = (
     throw new TlaSharedBaseError("base-output", `their shared modules show output as they start`);
   }
   const startupValues = environment.startupValues.slice(0, facts.definitions.length);
+  const contexts = created.order.getSharedContexts(ownModule);
+  // The definitions of each start's entries that a file's check evaluates as it starts.
+  const starts = new Map(
+    [...contexts.starts].flatMap((entry) => {
+      const definitions = specification.getStartupDefinitions(
+        entry[0] === "" ? undefined : entry[0],
+        entry[1].table.inserted
+          .filter((item) => item.kind === "definition")
+          .map((item) => item.name),
+      );
+      return definitions === undefined
+        ? []
+        : [
+            [
+              entry[0],
+              getPendingStartup([{ substitutes: [], definitions }], environment).flatMap(
+                (module) => module.definitions,
+              ),
+            ],
+          ];
+    }),
+  );
   return {
     // A file's check walks the startup of the base's modules again, which evaluates only what the
     // base's walk left pending.
@@ -1150,11 +1172,11 @@ export const createCheckBase = (
       link,
       facts,
       startupValues,
-      startup: { ...startup, modules: getPendingStartup(startup.modules, environment) },
+      startup: { ...startup, modules: getPendingStartup(startup.modules, environment), starts },
     },
     strings: getRankedStrings(),
     valueStrings: getValueStrings(startupValues),
-    contexts: created.order.getSharedContexts(ownModule),
+    contexts,
   };
 };
 

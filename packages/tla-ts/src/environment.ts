@@ -41,6 +41,7 @@ import {
   type Context,
   type Environment,
   type Scope,
+  type StartupDefinition,
   type StartupModule,
   type StartupSubstitute,
 } from "./evaluate";
@@ -197,10 +198,13 @@ export interface EnvironmentBase {
 }
 
 // The definitions of the base's modules that a check evaluates as it starts, in TLC's order, and the
-// module that each definition comes from.
+// module that each definition comes from. starts holds, by module name, the root's under "", the
+// definitions of the entries that the contexts of the root and the own module take from their
+// group's start, which a check evaluates as it starts.
 export interface BaseStartup {
   modules: readonly StartupModule[];
   origins: ReadonlyMap<string, LinkedModule>;
+  starts: ReadonlyMap<string, readonly StartupDefinition[]>;
 }
 
 export interface RuntimeInvariant {
@@ -225,7 +229,13 @@ export interface Specification {
   runtimeInvariants: RuntimeInvariant[];
   rootName: string;
   linkedBase: LinkedBase | undefined;
-  baseStartup: BaseStartup | undefined;
+  baseStartup: Omit<BaseStartup, "starts"> | undefined;
+  // The startup definitions of the module, the root where undefined, for the names of its context,
+  // or undefined where no module of the name links.
+  getStartupDefinitions: (
+    module: string | undefined,
+    names: readonly string[],
+  ) => StartupDefinition[] | undefined;
 }
 
 export interface InstanceAction {
@@ -2298,6 +2308,29 @@ export const createEnvironment = (
   const baseStartup = options.base?.startup;
   const ownModules = linkOrder.slice(base?.linkOrder.length ?? 0);
   const getOwnDefinitionOrder = order.createDefinitionOrder();
+  const getStartupDefinitions = (linked: LinkedModule, names: readonly string[]) =>
+    names.flatMap((name) => {
+      const key = getDefinitionKey(linked, name);
+      const isOverride = substitutions.has(key);
+      const definition = isOverride ? getSubstitute(key) : definitions.get(key);
+      return definition && isProcessedAtStartup(origins.get(key) ?? linked) && !constants.has(key)
+        ? [{ definition, isOverride }]
+        : [];
+    });
+  // A module of a group's file whose context starts from its group's start takes the definitions
+  // of the start's entries from the base, where its file's own modules instance none, so that each
+  // module processes at startup as in the base.
+  const isStartShared =
+    ownModules.every((linked) => linked.module.instances.length === 0) &&
+    locallyInstantiated.size === 0;
+  const getModuleDefinitions = (linked: LinkedModule) => {
+    const name = getModuleName(linked);
+    const started = baseStartup?.starts.get(name ?? "");
+    const after = order.getDefinitionsAfterStart(name);
+    return isStartShared && started !== undefined && after !== undefined
+      ? [...started, ...getStartupDefinitions(linked, after)]
+      : getStartupDefinitions(linked, order.getDefinitionOrder(name));
+  };
   const getOrigins = (modules: readonly LinkedModule[]) =>
     modules.flatMap((linked) =>
       getOwnDefinitionOrder(getModuleName(linked)).map((name): [string, LinkedModule] => [
@@ -2325,16 +2358,7 @@ export const createEnvironment = (
               : order
                   .getDeclarationOrder("constant", getModuleName(linked))
                   .flatMap((name) => moduleSubstitutes.get(name) ?? []),
-          definitions: order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
-            const key = getDefinitionKey(linked, name);
-            const isOverride = substitutions.has(key);
-            const definition = isOverride ? getSubstitute(key) : definitions.get(key);
-            return definition &&
-              isProcessedAtStartup(origins.get(key) ?? linked) &&
-              !constants.has(key)
-              ? [{ definition, isOverride }]
-              : [];
-          }),
+          definitions: getModuleDefinitions(linked),
         };
       });
   return {
@@ -2350,6 +2374,10 @@ export const createEnvironment = (
     baseStartup: linkedBase && {
       modules: getStartupModuleList(linkedBase.linkOrder),
       origins: new Map(getOrigins(linkedBase.linkOrder)),
+    },
+    getStartupDefinitions: (module, names) => {
+      const linked = module === undefined ? linkedRoot : linkedModules.get(module);
+      return linked && getStartupDefinitions(linked, names);
     },
   };
 };

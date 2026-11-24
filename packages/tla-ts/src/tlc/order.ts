@@ -736,6 +736,8 @@ const createContexts = (
   };
 
   const contexts = new Map<string, SymbolTable>();
+  // The number of entries that each context took from its group's start, by module name.
+  const startLengths = new Map<string, number>();
   // SANY copies the builtins into a file module's context, but an inner module's context starts
   // empty, and then the contexts of the modules it extends.
   const putStart = (table: SymbolTable, unit: ParsedModule, extended: readonly string[]) => {
@@ -763,14 +765,20 @@ const createContexts = (
       start.extended.every((other, index) => extended[index] === other && shared.tables.has(other));
     const table = isStarted ? start.table.fork() : createSymbolTable();
     contexts.set(name ?? "", table);
-    if (isStarted) putStart(table, unit, extended.slice(start.extended.length));
-    else putStart(table, unit, extended);
+    if (isStarted) {
+      startLengths.set(name ?? "", table.inserted.length);
+      putStart(table, unit, extended.slice(start.extended.length));
+    } else putStart(table, unit, extended);
     table.ownStart = table.inserted.length;
     getUnits(unit).forEach((item) => item.apply(table));
     return table;
   };
   return {
     getContext,
+    getStartLength: (name: string | undefined) => {
+      getContext(name);
+      return startLengths.get(name ?? "");
+    },
     // The contexts that the check of each file of a group whose base this is reads: those of the
     // modules but the root and ownModule, and the starts of those two, from their builtins and the
     // modules they extend before ownModule.
@@ -951,6 +959,9 @@ export interface TlcOrder {
   ) => string[];
   getDeclarationOrder: (kind: "variable" | "constant", module?: string) => string[];
   getDefinitionOrder: (module: string | undefined) => string[];
+  // The definitions of a module's context after those it took from its group's start, or undefined
+  // where it took none.
+  getDefinitionsAfterStart: (module: string | undefined) => string[] | undefined;
   getInstanceDeclarations: (module: string) => string[];
   getInstanceDefinitions: (module: string) => string[];
   getInnerModuleOrder: (module: string | undefined) => string[];
@@ -990,6 +1001,17 @@ export const createTlcOrder = (
         .getContext(module)
         .inserted.filter((entry) => entry.kind === "definition")
         .map((entry) => entry.name),
+    getDefinitionsAfterStart: (module) => {
+      const moduleContexts = getContexts();
+      const length = moduleContexts.getStartLength(module);
+      return length === undefined
+        ? undefined
+        : moduleContexts
+            .getContext(module)
+            .inserted.slice(length)
+            .filter((entry) => entry.kind === "definition")
+            .map((entry) => entry.name);
+    },
     getInstanceDeclarations: (module) =>
       getContexts()
         .getContext(module)
