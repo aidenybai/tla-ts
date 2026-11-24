@@ -15,7 +15,7 @@ import {
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
 import { getEscoreRuntime } from "../compile";
-import { TlaStrippingError } from "../errors";
+import { TlaError, TlaStrippingError } from "../errors";
 import { parseModule } from "../parser";
 import { foldNames } from "../typescript/spec/library";
 import { getPatchedUnits } from "../typescript/spec/units";
@@ -526,3 +526,118 @@ export const compileTypeScriptFile = (path: string, setBound?: number): Promise<
   compileEscoreEntry(path, setBound).catch((error: unknown) =>
     error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
   );
+
+// The definitions of a program shared by several files' models: what its entry's run leaves, which
+// each model starts from, and whether the run threw.
+const SHARED_STEPS = `SharedRun == ApplyTo(RunProgram, InitialState)
+SharedThrew == SharedRun.c.type = "throw"`;
+
+// The steps of a file of a shared program whose functions its model calls none of, which hold
+// where the program runs without a throw, as a script's do.
+const SHARED_SCRIPT = `---- MODULE ProgramModel ----
+EXTENDS ProgramCode
+VARIABLE programDone
+Init == ~SharedThrew /\\ programDone = TRUE
+Next == UNCHANGED programDone
+====
+`;
+
+// The TypeScript files of a run, compiled to share one program: an entry that imports them in
+// their order, which compiles, passes SANY's checks and runs once, and each file's model, which
+// starts from the state that the run leaves, with its own checks, frame and trace. A file without
+// a model that can start there, or every file where the run throws, has none, and compiles alone.
+export const compileSharedFiles = async (
+  paths: readonly string[],
+  setBound?: number,
+): Promise<(CompiledInput | undefined)[]> => {
+  const ts = (await import("@typescript/typescript6")).default;
+  const { compileToEscore } = await import("../typescript/spec/compile");
+  const { planModel } = await import("../typescript/spec/model");
+  const { prepareProgram } = await import("../typescript/spec/prepare");
+  const { isScript } = await import("../typescript/context");
+  const { getJsxText } = await import("../typescript/program");
+  const { getModuleFormat } = await import("../typescript/spec/resolve");
+  const runtime = await getEscoreRuntime();
+  const plans = paths.map((path) => {
+    const source = readFileSync(path, "utf8");
+    const text = getJsxText(path, source);
+    const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+    if (isScript(sourceFile)) return undefined;
+    // A file whose model stops compiles alone, which reports the stop as the file's.
+    try {
+      const plan = planModel(source, path, runtime, undefined, true, setBound);
+      // An ES module whose functions the model calls none of checks that the program runs.
+      if (plan.isScript) return getModuleFormat(path, text) === "module" ? plan : undefined;
+      return plan.isShareable ? plan : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const members = paths.filter((_path, index) => plans[index] !== undefined);
+  if (members.length < 2) return paths.map(() => undefined);
+  const models = plans.flatMap((plan) => (plan === undefined || plan.isScript ? [] : [plan]));
+  const numbered: string[] = [];
+  // The program that the files share, prepared, or undefined where it stops or its run throws.
+  const getProgram = () => {
+    const spec = compileToEscore(
+      members.map((path) => `import ${JSON.stringify(realpathSync(path))};`).join("\n"),
+      join(dirname(realpathSync(members[0])), "tla-ts-shared.mjs"),
+      runtime,
+      true,
+      {
+        steps: (files) => {
+          numbered.push(...files.map((file) => file.path));
+          return SHARED_STEPS;
+        },
+        entries: [...new Set(models.flatMap((plan) => [...plan.entries]))],
+        reads: models.flatMap((plan) => [plan.reads, plan.getSteps(1)]).join("\n"),
+      },
+    );
+    const program = prepareProgram(spec);
+    const threw = [...(program.values ?? [])].find((entry) => entry[0].name === "SharedThrew");
+    if (threw?.[1] !== false) {
+      console.log("tla-ts checks each file alone, as their shared program throws as it loads");
+      return undefined;
+    }
+    return { ...spec, preparedModules: [...spec.preparedModules, program] };
+  };
+  const shared = (() => {
+    try {
+      return getProgram();
+    } catch (error) {
+      if (!(error instanceof TlaError)) throw error;
+      console.log(`tla-ts checks each file alone, as their shared program stops: ${error.message}`);
+      return undefined;
+    }
+  })();
+  return paths.map((path, index): CompiledInput | undefined => {
+    const plan = plans[index];
+    if (shared === undefined || plan === undefined) return undefined;
+    if (plan.isScript) {
+      return {
+        path,
+        specPath: join(dirname(path), `${shared.name}.tla`),
+        source: parseModule(shared.source.replace(", ProgramCode\n", ", ProgramModel\n")),
+        config: shared.config,
+        loadModule: (name) => (name === "ProgramModel" ? SHARED_SCRIPT : shared.loadModule(name)),
+        preparedModules: shared.preparedModules,
+        isScript: true,
+        notes: plan.notes,
+      };
+    }
+    const target = realpathSync(path);
+    const file = numbered.findIndex((other) => existsSync(other) && realpathSync(other) === target);
+    const model = plan.finish(shared, file + 1);
+    return {
+      path,
+      specPath: join(dirname(path), `${model.name}.tla`),
+      source: parseModule(model.source),
+      config: model.config,
+      loadModule: model.loadModule,
+      preparedModules: model.preparedModules,
+      isScript: false,
+      notes: model.notes,
+      frame: model.frame,
+    };
+  });
+};

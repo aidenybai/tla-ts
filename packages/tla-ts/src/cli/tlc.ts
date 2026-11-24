@@ -90,6 +90,7 @@ import {
   type JavaProperties,
 } from "./shared";
 import {
+  compileSharedFiles,
   compileTypeScriptFile,
   getNodeExit,
   isProgramPath,
@@ -680,6 +681,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? (await import("../typescript/program")).shareParsedFiles
       : <T>(run: () => Promise<T>) => run();
   await shareFiles(async () => {
+    // With -shared, the TypeScript files share one program, which runs once, and each file's
+    // model starts from the state it leaves.
+    const programPaths = paths.filter(isProgramPath);
+    const sharedInputs =
+      parsed.isShared && programPaths.length > 1
+        ? await compileSharedFiles(programPaths, parsed.maxSetSize)
+        : [];
     for (const [index, path] of paths.entries()) {
       if (index > 0) console.log("");
       const printer = createMessagePrinter({
@@ -707,7 +715,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
           // A stack overflow that nothing caught ends the check as one that the check caught does.
           try {
             const compiled = isTypeScript
-              ? await compileTypeScriptFile(path, parsed.maxSetSize)
+              ? (sharedInputs[programPaths.indexOf(path)] ??
+                (await compileTypeScriptFile(path, parsed.maxSetSize)))
               : undefined;
             compiled?.notes.forEach((note) => console.log(note));
             if (parsed.isFramePrinted && compiled?.frame !== undefined) console.log(compiled.frame);

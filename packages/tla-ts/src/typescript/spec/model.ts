@@ -272,6 +272,20 @@ interface Converter {
   lowered: string | undefined;
 }
 
+// A model's code and its steps, which a spec checks once a program of its code compiles: the
+// program of its file, or a program shared with other files, where the model's file is the one
+// numbered file.
+export interface ModelPlan {
+  isScript: false;
+  code: string;
+  isModule: boolean;
+  entries: ReadonlySet<string>;
+  reads: string;
+  isShareable: boolean;
+  getSteps: (file: number) => string;
+  finish: (compiled: EscoreSpec, shared?: number) => EscoreModel;
+}
+
 // The model of a TypeScript module, checked on ESCore: one variable holds ESCore's state after the
 // module's top level, as model, the module's bindings lowered out of ESCore's heap (see
 // lowered.ts), where the module lets it, or else as heap, the canonical state. Each exported
@@ -279,7 +293,7 @@ interface Converter {
 // arguments that today's compiler chooses, natively where it can (see native.ts). Invariants,
 // properties, and the other checks call the functions they name. A trace shows each state
 // variable as today's compiler does.
-export const compileModelToEscore = (
+export const planModel = (
   source: string,
   fileName: string,
   runtime: EscoreRuntime,
@@ -288,7 +302,7 @@ export const compileModelToEscore = (
   isLowerable = true,
   // The most values that TLC puts in a set, as its -maxSetSize sets it.
   setBound?: number,
-): EscoreModel | EscoreScript => {
+): ModelPlan | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
   const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
@@ -1488,117 +1502,148 @@ export const compileModelToEscore = (
       `EndlessCount == TLCGet("level") <= ${ENDLESS_STEPS + 1} \\/ Assert(FALSE, ${JSON.stringify(`tla-ts can't check a model whose states never end: an action counts ${today.endlessCount} on at each step, and the check stopped after every state within ${ENDLESS_STEPS} steps`)})`,
     );
   }
-  const modelSteps = [
-    "CONSTANTS TsNull, TsUndefined",
-    ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
-    "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
-    settle,
-    // The scope that a step reads the module's bindings in: the script's, the module's own, or the
-    // one of Node's wrapper of a CommonJS module, which the function it exports first closes over.
-    isModule
-      ? "ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, 1>>]).env)"
-      : isCommonJs
-        ? `ModelContext(s) == ModuleContext(O(s, Val(Get(s, Val(Get(s, s.required[1].module, Str(${getUnits("exports")}))), Str(${getUnits(commonJsExported)})))).slots.env)`
-        : "ModelContext(s) == ScriptContext(s)",
-    MODEL_DEFINITIONS,
-    "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
-    ...(lowered === undefined
-      ? [
-          "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
-          "StartState(s) == StepEnd(ModelStart(s))",
-        ]
-      : [
-          ...getSymmetricDefinitions(symmetric),
-          ...getLoweredSteps(lowered),
-          // The lowered value of a converter's [s, v], an argument of a native call.
-          "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
-          ...(native?.definitions ?? []),
-        ]),
-    // The state the module's top level leaves, a constant, which a check evaluates once, as TLC
-    // evaluates a constant definition once as it starts, rather than at each value of a call.
-    "ModelStartState == ApplyTo(StartState, InitialState)",
-    STEP_OF,
-    ...steps,
-    ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
-  ].join("\n");
-  // The module runs as an ES module does, in strict mode.
-  const compiled = compileToEscore(
-    isModule || isCommonJs ? augmented : `"use strict";\n${augmented}`,
-    fileName,
-    runtime,
-    isModule || isCommonJs,
-    {
-      steps: modelSteps,
-      entries: [...entries],
-      reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
-    },
-  );
-  const configLines = [
-    ...compiled.config
-      .trimEnd()
-      .split("\n")
-      .filter((line) => !/^(INIT|NEXT) /.test(line))
-      .map((line) =>
-        line === "CONSTANT CallBuiltin <- ProgramCallBuiltin"
-          ? "CONSTANT CallBuiltin <- ModelCallBuiltin"
-          : line,
-      ),
-    "CONSTANTS TsNull = Null TsUndefined = Undefined",
-    config.specification === undefined
-      ? "INIT Init\nNEXT Next"
-      : `SPECIFICATION ${config.specification}`,
-    ...config.invariants.map((name) => `INVARIANT ${name}`),
-    ...config.properties.map((name) => `PROPERTY ${name}`),
-    ...config.constraints.map((name) => `CONSTRAINT ${name}`),
-    ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
-    ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
-    ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
-    ...(view === undefined ? [] : [`VIEW ${view}`]),
-    ...symmetric.flatMap((values, set) =>
-      values.map(
-        (_, index) => `CONSTANT ${getSymmetricName(set, index)} = ${getSymmetricName(set, index)}`,
-      ),
-    ),
-    ...(symmetric.length === 0 ? [] : ["SYMMETRY SymmetricPerms"]),
-    // A model without actions takes no step, so its every state is a deadlock that tells nothing,
-    // and TLC checks none, as it checks none where a spec has no variables. A model with actions
-    // keeps the check, even where none is ever enabled, as a deadlock there is a finding.
-    ...(config.checkDeadlock && actions.length > 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
-    ...(isStateless ? [] : ["ALIAS ModelAlias"]),
-    "",
-  ];
+  const getModelSteps = (file: number, start: string) =>
+    [
+      "CONSTANTS TsNull, TsUndefined",
+      ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
+      "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
+      settle,
+      // The scope that a step reads the module's bindings in: the script's, the module's own, or the
+      // one of Node's wrapper of a CommonJS module, which the function it exports first closes over.
+      isModule
+        ? `ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, ${file}>>]).env)`
+        : isCommonJs
+          ? `ModelContext(s) == ModuleContext(O(s, Val(Get(s, Val(Get(s, s.required[1].module, Str(${getUnits("exports")}))), Str(${getUnits(commonJsExported)})))).slots.env)`
+          : "ModelContext(s) == ScriptContext(s)",
+      MODEL_DEFINITIONS,
+      `ModelStart(s) == ${start}`,
+      ...(lowered === undefined
+        ? [
+            "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
+            "StartState(s) == StepEnd(ModelStart(s))",
+          ]
+        : [
+            ...getSymmetricDefinitions(symmetric),
+            ...getLoweredSteps(lowered),
+            // The lowered value of a converter's [s, v], an argument of a native call.
+            "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
+            ...(native?.definitions ?? []),
+          ]),
+      // The state the module's top level leaves, a constant, which a check evaluates once, as TLC
+      // evaluates a constant definition once as it starts, rather than at each value of a call.
+      "ModelStartState == ApplyTo(StartState, InitialState)",
+      STEP_OF,
+      ...steps,
+      ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
+    ].join("\n");
   const assumptions = module.assumptions.flatMap((assumption) =>
     assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
   );
-  const finalCode = (compiled.loadModule("ProgramCode") ?? "")
-    .replace(
-      "\nEXTENDS ESRuntime\n",
-      `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
-    )
-    .replace(
-      /\n====\n$/,
-      `\n${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`,
-    );
-  return {
-    ...compiled,
-    config: configLines.join("\n"),
-    preparedModules: [
-      ...compiled.preparedModules,
-      ...["ESCanonical", ...(lowered === undefined ? [] : ["ESNative"])].flatMap(
-        (name) => runtime.getExtension(name) ?? [],
+  const assumed = `${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`;
+  // The model's spec of the compiled program: its steps in the program's own module, or, in a
+  // program shared with other files, in a module of their own that extends it.
+  const finish = (compiled: EscoreSpec, shared?: number): EscoreModel => {
+    const configLines = [
+      ...compiled.config
+        .trimEnd()
+        .split("\n")
+        .filter((line) => !/^(INIT|NEXT) /.test(line))
+        .map((line) =>
+          line === "CONSTANT CallBuiltin <- ProgramCallBuiltin"
+            ? "CONSTANT CallBuiltin <- ModelCallBuiltin"
+            : line,
+        ),
+      "CONSTANTS TsNull = Null TsUndefined = Undefined",
+      config.specification === undefined
+        ? "INIT Init\nNEXT Next"
+        : `SPECIFICATION ${config.specification}`,
+      ...config.invariants.map((name) => `INVARIANT ${name}`),
+      ...config.properties.map((name) => `PROPERTY ${name}`),
+      ...config.constraints.map((name) => `CONSTRAINT ${name}`),
+      ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
+      ...config.actionConstraints.map((name) => `ACTION_CONSTRAINT ${name}`),
+      ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
+      ...(view === undefined ? [] : [`VIEW ${view}`]),
+      ...symmetric.flatMap((values, set) =>
+        values.map(
+          (_, index) =>
+            `CONSTANT ${getSymmetricName(set, index)} = ${getSymmetricName(set, index)}`,
+        ),
       ),
-    ],
-    loadModule: (name) =>
-      name === "ProgramCode"
-        ? finalCode
-        : name === "ESCanonical"
-          ? CANONICAL_MODULE
-          : name === "ESNative" && lowered !== undefined
-            ? NATIVE_MODULE
-            : undefined,
-    isScript: false,
-    variables: today.variables,
-    notes,
-    frame: `${today.text}\n${today.config}`,
+      ...(symmetric.length === 0 ? [] : ["SYMMETRY SymmetricPerms"]),
+      // A model without actions takes no step, so its every state is a deadlock that tells nothing,
+      // and TLC checks none, as it checks none where a spec has no variables. A model with actions
+      // keeps the check, even where none is ever enabled, as a deadlock there is a finding.
+      ...(config.checkDeadlock && actions.length > 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
+      ...(isStateless ? [] : ["ALIAS ModelAlias"]),
+      "",
+    ];
+    const modelCode =
+      shared === undefined
+        ? (compiled.loadModule("ProgramCode") ?? "")
+            .replace(
+              "\nEXTENDS ESRuntime\n",
+              `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
+            )
+            .replace(/\n====\n$/, `\n${assumed}`)
+        : `---- MODULE ProgramModel ----\nEXTENDS ProgramCode, ESCanonical\n${getModelSteps(shared, "Completed(SharedRun).s")}\n${assumed}`;
+    return {
+      ...compiled,
+      source:
+        shared === undefined
+          ? compiled.source
+          : compiled.source.replace(", ProgramCode\n", ", ProgramModel\n"),
+      config: configLines.join("\n"),
+      preparedModules: [
+        ...compiled.preparedModules,
+        ...["ESCanonical", ...(lowered === undefined ? [] : ["ESNative"])].flatMap(
+          (name) => runtime.getExtension(name) ?? [],
+        ),
+      ],
+      loadModule: (name) =>
+        name === (shared === undefined ? "ProgramCode" : "ProgramModel")
+          ? modelCode
+          : name === "ESCanonical"
+            ? CANONICAL_MODULE
+            : name === "ESNative" && lowered !== undefined
+              ? NATIVE_MODULE
+              : compiled.loadModule(name),
+      isScript: false,
+      variables: today.variables,
+      notes,
+      frame: `${today.text}\n${today.config}`,
+    };
   };
+  return {
+    isScript: false,
+    // The module runs as an ES module does, in strict mode.
+    code: isModule || isCommonJs ? augmented : `"use strict";\n${augmented}`,
+    isModule: isModule || isCommonJs,
+    entries,
+    reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
+    // A module whose model keeps its code as it is and starts from the one state its top level
+    // leaves reads that state the same in a program of other files that import it.
+    isShareable: isModule && lowered === undefined && choose.length === 0 && appended.length === 0,
+    getSteps: (file: number) => getModelSteps(file, "Completed(ApplyTo(RunProgram, s)).s"),
+    finish,
+  };
+};
+
+export const compileModelToEscore = (
+  source: string,
+  fileName: string,
+  runtime: EscoreRuntime,
+  library?: Library,
+  isLowerable = true,
+  setBound?: number,
+): EscoreModel | EscoreScript => {
+  const plan = planModel(source, fileName, runtime, library, isLowerable, setBound);
+  if (plan.isScript) return plan;
+  return plan.finish(
+    compileToEscore(plan.code, fileName, runtime, plan.isModule, {
+      steps: plan.getSteps(1),
+      entries: [...plan.entries],
+      reads: plan.reads,
+    }),
+  );
 };

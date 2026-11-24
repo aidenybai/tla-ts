@@ -1416,6 +1416,85 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // With -shared, the files' modules run once, as an entry that imports them in their order does,
+  // and each file's model starts from the state that leaves, where the second module to bump the
+  // counter both import sees 2, as Node sees it once it imports both.
+  describe("checks each file's model from the state that importing the files in order leaves", () => {
+    const writeModules = (directory: string) => {
+      writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+      writeFileSync(
+        join(directory, "counter.ts"),
+        "export const state = { count: 0 };\nexport const bump = () => {\n  state.count += 1;\n  return state.count;\n};\n",
+      );
+      writeFileSync(
+        join(directory, "first.ts"),
+        'import { bump } from "./counter.ts";\nconst seen = bump();\nexport const isFirst = () => seen === 1;\n',
+      );
+      writeFileSync(
+        join(directory, "second.ts"),
+        'import { bump } from "./counter.ts";\nconst seen = bump();\nexport const isSecond = () => seen === 2;\n',
+      );
+      writeFileSync(
+        join(directory, "replay.mjs"),
+        'await import("./first.ts");\nconst second = await import("./second.ts");\nif (!second.isSecond()) throw new Error("isSecond");\n',
+      );
+      writeFileSync(
+        join(directory, "alone.mjs"),
+        'const second = await import("./second.ts");\nif (second.isSecond()) throw new Error("isSecond");\n',
+      );
+      return directory;
+    };
+    const getChecks = (output: string) =>
+      output
+        .split(/^Checking /m)
+        .slice(1)
+        .map((check) =>
+          check.includes("Model checking completed. No error has been found.")
+            ? "pass"
+            : (/^Error: .*$/m.exec(check)?.[0] ?? check),
+        );
+
+    it("agrees with Node", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      expect(runNode(directory, "replay.mjs").status).toBe(0);
+      const result = runCli(directory, ["-shared", "first.ts", "second.ts"]);
+      expect(getChecks(result.stdout)).toEqual(["pass", "pass"]);
+      expect(result.status).toBe(0);
+    }, 120_000);
+
+    // A module whose functions the model calls none of checks that the shared program runs, and
+    // where the program throws as it loads, as third.ts does where it bumps the counter third, each
+    // file checks alone, as Node runs it.
+    it.each([
+      ["runs", "", ["pass", "pass", "pass"]],
+      ["throws", 'if (seen === 3) throw new Error("shared");\n', ["pass", "fail", "pass"]],
+    ])(
+      "checks a module without calls where the shared program %s",
+      (_kind, line, expected) => {
+        const directory = writeModules(copyFixtures("passing"));
+        writeFileSync(
+          join(directory, "third.ts"),
+          `import { bump } from "./counter.ts";\nconst seen = bump();\n${line}export const apply = (f: (n: number) => number) => f(seen);\n`,
+        );
+        const result = runCli(directory, ["-shared", "first.ts", "second.ts", "third.ts"]);
+        expect(
+          getChecks(result.stdout).map((check) => (check === "pass" ? check : "fail")),
+        ).toEqual(expected);
+      },
+      120_000,
+    );
+
+    it("checks each file alone without it, as Node runs it alone", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      expect(runNode(directory, "alone.mjs").status).toBe(0);
+      const result = runCli(directory, ["first.ts", "second.ts"]);
+      expect(getChecks(result.stdout)).toEqual([
+        "pass",
+        "Error: The invariant of isSecond is equal to FALSE",
+      ]);
+    }, 120_000);
+  });
+
   // A file of thousands of function declarations, as react-dom's client build has, instantiates
   // them in a loop, in their order, rather than in a chain of states that overflows the stack. A
   // check of it takes 8 to 11 s on an idle machine, and up to 46 s on a loaded one.
