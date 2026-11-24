@@ -316,6 +316,18 @@ describe("a malformed application or indexed constant, as Z3 5.3.2 reports it", 
   });
 });
 
+describe("a bit-vector numeral of 2^30 bits or more, as Z3 5.3.2 reads it", () => {
+  it("compares two numerals whose sort is wider than V8's largest BigInt", () => {
+    expect(
+      run([
+        "(simplify (= (_ bv5 1073741824) (_ bv6 1073741824)))",
+        "(simplify (= (_ bv5 4294967295) (_ bv6 4294967295)))",
+        '(echo "after")',
+      ]),
+    ).toEqual(["false", "false", "after"]);
+  });
+});
+
 describe("a qualified constant, as Z3 5.3.2 reports it", () => {
   it("reports one that is unknown at the token after it", () => {
     expect(

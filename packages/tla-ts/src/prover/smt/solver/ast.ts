@@ -1765,8 +1765,7 @@ export class AstManager {
   }
 
   mkBvNumeral(value: bigint, width: number) {
-    const modulus = 1n << BigInt(width);
-    const normalized = ((value % modulus) + modulus) % modulus;
+    const normalized = BigInt.asUintN(width, value);
     const sort = this.mkBvSort(width);
     const key = `b${width}:${normalized.toString(16)}`;
     const existing = this.table.get(key);
