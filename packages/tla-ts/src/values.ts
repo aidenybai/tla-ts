@@ -1334,8 +1334,8 @@ const callTracedMethod = <Result>(receiver: Value, method: () => Result) => {
   return result;
 };
 
-// FcnLambdaValue#toFcnRcd normalizes the function it builds, and FcnRcdValue#sort compares the first key with each other key, then insertion-sorts the rest.
-export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
+// FcnRcdValue#sort compares the first key with each other key, then insertion-sorts the rest.
+const sortPairsLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
   for (let index = 1; index < domain.length; index++) {
     const first = domain[0];
     const key = domain[index];
@@ -1362,6 +1362,11 @@ export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
     domain[position] = key;
     range[position] = value;
   }
+};
+
+// FcnLambdaValue#toFcnRcd normalizes the function it builds.
+export const sortLikeFcnRcdValue = (domain: Value[], range: Value[]) => {
+  sortPairsLikeFcnRcdValue(domain, range);
   return createSortedFunction(domain, range);
 };
 
@@ -5521,7 +5526,11 @@ const finishFunctionCopy = (
     return;
   }
   const range = copier.copies.splice(copier.copies.length - value.range.length);
-  const copied = { ...value, range, writtenKeys };
+  // FcnRcdValue#deepCopy builds its copy unnormalized, so FcnRcdValue#deepNormalize sorts it again.
+  const isSettled = value.domain.every(isSettledValue);
+  const domain = isSettled ? value.domain : [...value.domain];
+  if (!isSettled) sortPairsLikeFcnRcdValue(domain, range);
+  const copied = { ...value, domain, range, writtenKeys };
   copier.copies.push(lazy ? { ...lazy, enumerated: copied } : copied);
 };
 

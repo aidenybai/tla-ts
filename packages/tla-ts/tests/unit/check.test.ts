@@ -12968,6 +12968,75 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "0",
+      "LET g == [n \\in {F, {9}} |-> 1] IN PrintT(g)",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "({9} :> 1 @@ {{}, {1}} :> 1)"],
+    ],
+    [
+      "0",
+      "PrintT(<<[n \\in {F, {9}} |-> 1]>>)",
+      [
+        '"n"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "<<({9} :> 1 @@ {{}, {1}} :> 1)>>",
+      ],
+    ],
+    [
+      "0",
+      'LET g == [n \\in {F, {9}} |-> 1] IN PrintT("a") /\\ g # <<>> /\\ PrintT("b") /\\ PrintT(g)',
+      [
+        '"n"',
+        '"a"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        '"b"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "({9} :> 1 @@ {{}, {1}} :> 1)",
+      ],
+    ],
+    [
+      "0",
+      "Print([n \\in {F, {9}} |-> 1], TRUE)",
+      [
+        '"n"',
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "{}",
+        "{1}",
+        "({9} :> 1 @@ {{}, {1}} :> 1)  TRUE",
+      ],
+    ],
+    [
+      "[n \\in {F, {9}} |-> 1]",
+      "PrintT(K)",
+      ["{}", "{1}", "{}", "{1}", '"n"', "{}", "{1}", "{}", "{1}", "({9} :> 1 @@ {{}, {1}} :> 1)"],
+    ],
+    ["0", 'ToString([n \\in {F, {9}} |-> 1]) # ""', ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}"]],
+  ])(
+    "sorts again the function K == %s for %s copies to print, as FcnRcdValue#deepCopy builds the copy unnormalized",
+    async (definition, next, expected) => {
+      expect(await getPrintedFilterPasses(definition, next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "a product compared with itself",
       "LET F == {u \\in (0..1) \\X {1} : u[2] = 1} IN LET P == F \\X {1} IN P = P /\\ \\E t \\in F \\cup {9} : t = t",
       [
