@@ -274,7 +274,12 @@ const checkSpec = async (
     return EXIT_STATUS.configParseError;
   }
   const fileName = basename(specPath, ".tla");
-  const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
+  const timing: Timing = {
+    startTime: Date.now(),
+    livenessStartTime: undefined,
+    isParsed: false,
+    lastProgress: undefined,
+  };
   const printFinished = () => {
     const runtime = Date.now() - timing.startTime;
     printer.print(

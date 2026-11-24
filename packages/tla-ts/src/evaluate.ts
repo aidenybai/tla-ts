@@ -26,6 +26,7 @@ import {
   TlaEvaluationError,
   TlaSetBoundError,
   TlaUnassignedError,
+  TlaWarningAsError,
   formatRange,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -1847,7 +1848,9 @@ const traceEvaluator =
     } catch (error) {
       const failed = error instanceof Error ? callStack.failures.get(error) : undefined;
       if (error instanceof Error) callStack.failures.set(error, expression);
-      const receiver = getReceiver(expression, callStack.values);
+      // Tool#evalApplImpl raises EXCEPT's warning itself, outside the value methods whose FingerprintException blames their receiver.
+      const receiver =
+        error instanceof TlaWarningAsError ? undefined : getReceiver(expression, callStack.values);
       const received =
         receiver && !getChildren(expression).some((child) => child === failed)
           ? callStack.values.get(receiver)

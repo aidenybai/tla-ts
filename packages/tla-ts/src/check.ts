@@ -76,6 +76,7 @@ import {
   withNextStateExitCode,
   type CliSettings,
   type CoveredAction,
+  type Search,
 } from "./search";
 import {
   getActionLabel,
@@ -362,14 +363,23 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
 
 const STOP_REPLAY = new Error("The replay stopped");
 
-export const checkSequentially = (options: CheckOptions): CheckResult => {
+export type ParallelCheck = (
+  search: Search,
+  description: SpecDescription,
+) => Promise<CheckResult> | undefined;
+
+export const checkSequentially = (
+  options: CheckOptions,
+  checkInParallel?: ParallelCheck,
+  isTypedTierSkipped = false,
+): CheckResult | Promise<CheckResult> => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
   const livenessDump = options.dump?.dot
     ? createLivenessDump(options.dump, options.writeFile, options.version)
     : undefined;
   try {
-    return searchStates(options, stateWriter, livenessDump);
+    return searchStates(options, stateWriter, livenessDump, checkInParallel, isTypedTierSkipped);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -379,8 +389,8 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   }
 };
 
-const PERIODIC_START = 3000;
-const PROGRESS_INTERVAL = 60_000;
+export const PERIODIC_START = 3000;
+export const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
@@ -388,7 +398,9 @@ const searchStates = (
   options: CheckOptions & CliSettings,
   stateWriter: StateWriter | undefined,
   livenessDump: LivenessDump | undefined,
-): CheckResult => {
+  checkInParallel: ParallelCheck | undefined,
+  isTypedTierSkipped: boolean,
+): CheckResult | Promise<CheckResult> => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -1314,7 +1326,10 @@ const searchStates = (
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  let isTypedInitialReported = false;
+  let typedProgressAt = Infinity;
   const typedChecks =
+    !isTypedTierSkipped &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
@@ -1331,12 +1346,37 @@ const searchStates = (
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
+      reportInitialStates: (initialStates) => {
+        if (isTypedInitialReported) return;
+        isTypedInitialReported = true;
+        for (let count = 2; count < initialStates.generated; count *= 2) {
+          reportInitialStatesProgress(count, options.onProgress);
+        }
+        options.onProgress?.({ kind: "initial-states-computed", initialStates });
+        typedProgressAt = performance.now() + PERIODIC_START;
+      },
+      reportProgress:
+        options.onProgress &&
+        ((generatedStates, distinctStates, queuedStates, depth) => {
+          const now = performance.now();
+          if (now < typedProgressAt) return;
+          typedProgressAt = now + PROGRESS_INTERVAL;
+          options.onProgress?.({
+            kind: "progress",
+            statistics: {
+              generatedStates,
+              distinctStates,
+              queuedStates,
+              depth,
+              coverage: undefined,
+            },
+          });
+        }),
     });
+  const parallel = typed === undefined ? checkInParallel?.(search, getDescription()) : undefined;
+  if (parallel) return parallel;
+  const onInitialProgress = isTypedInitialReported ? undefined : options.onProgress;
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
-    for (let count = 2; count < typed.initialStates.generated; count *= 2) {
-      reportInitialStatesProgress(count, options.onProgress);
-    }
-    options.onProgress?.({ kind: "initial-states-computed", initialStates: typed.initialStates });
     const statistics = {
       ...createResult("success"),
       generatedStates: typed.generatedStates,
@@ -1379,7 +1419,7 @@ const searchStates = (
     };
     try {
       const onInitialState = (state: Value[]) => {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        reportInitialStatesProgress(runtime.initialStates, onInitialProgress);
         if (overflowState) {
           runtime.generatedStates++;
           runtime.initialStates++;
@@ -1420,7 +1460,7 @@ const searchStates = (
       }
     } catch (error) {
       if (error instanceof TlaIllegalStateError) {
-        reportInitialStatesProgress(runtime.initialStates, options.onProgress);
+        reportInitialStatesProgress(runtime.initialStates, onInitialProgress);
         runtime.generatedStates++;
         runtime.initialStates++;
         const state = error.state.map((value) => value ?? createModelValue("null"));
@@ -1458,7 +1498,7 @@ const searchStates = (
     generated: runtime.initialStates,
     distinct: runtime.distinctStates,
   };
-  options.onProgress?.({
+  onInitialProgress?.({
     kind: "initial-states-computed",
     initialStates: computedInitialStates,
   });
@@ -2036,7 +2076,12 @@ const searchStates = (
       const progress = createResult("success");
       options.onProgress?.({
         kind: "progress",
-        statistics: { ...progress, coverage: isCoverageDue ? progress.coverage : undefined },
+        statistics: {
+          ...progress,
+          // TLC reports progress while its worker expands the next state, which has left the queue.
+          queuedStates: Math.max(progress.queuedStates - 1, 0),
+          coverage: isCoverageDue ? progress.coverage : undefined,
+        },
       });
     }
   }

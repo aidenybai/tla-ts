@@ -2081,6 +2081,23 @@ describe("the CLI prints messages for a program to read like TLC", () => {
   });
 });
 
+describe("the CLI reports where an EXCEPT warning that -messagesAsErrors names fails, as TLC does", () => {
+  it.each(["InitExcept", "OperatorExcept", "NextExcept", "LazyExcept"])("reports %s", (name) => {
+    const result = runCli("warning-errors", name, [
+      "-workers",
+      "1",
+      "-deadlock",
+      "-messagesAsErrors",
+      "2144",
+      "-noGenerateSpecTE",
+    ]);
+    expect(result.status).toBe(75);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "warning-errors", `${name}.out`), "utf8").split("\n"),
+    );
+  });
+});
+
 describe("the CLI reports an ACTION_CONSTRAINT that is not a boolean like TLC", () => {
   const getError = (args: string[]) => {
     const lines = runCliWith("tool-output", ["ActionConstraintValue.tla", ...args]).stdout.split(
@@ -2369,6 +2386,33 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
     expect(result.stdout).toContain("\nError: This was a Java StackOverflowError.");
     expect(result.stdout).toContain(
       "\n31 states generated, 31 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 31.\n",
+    );
+  });
+});
+
+describe("the CLI checks with -workers as TLC does with one worker", () => {
+  it.each([
+    ["Admitted", "Admitted", 1, 0],
+    ["Admitted", "Admitted", 4, 0],
+    ["Interpreted", "Interpreted", 1, 0],
+    ["Interpreted", "Interpreted", 4, 0],
+    ["Fallback", "Fallback", 1, 0],
+    ["Fallback", "Fallback", 4, 0],
+    ["Fallback", "FallbackInvariant", 1, 12],
+    ["Fallback", "FallbackInvariant", 4, 12],
+    ["Grid", "Grid", 1, 0],
+    ["Grid", "Grid", 4, 0],
+  ])("checks %s with %s.cfg and -workers %i", (name, config, workers, status) => {
+    const result = runCli("tier-workers", name, [
+      "-config",
+      `${config}.cfg`,
+      "-workers",
+      String(workers),
+      "-noGenerateSpecTE",
+    ]);
+    expect(result.status).toBe(status);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "tier-workers", `${config}.out`), "utf8").split("\n"),
     );
   });
 });

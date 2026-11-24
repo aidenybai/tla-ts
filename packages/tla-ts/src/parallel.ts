@@ -1,15 +1,17 @@
 import type { Expression } from "./ast";
 import {
   checkSequentially,
+  PERIODIC_START,
+  PROGRESS_INTERVAL,
   type CheckOptions,
   type CheckProgress,
   type CheckResult,
   type InitialStates,
+  type SearchStatistics,
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
 import type { RuntimeInvariant } from "./environment";
-import { isImpure } from "./evaluate";
 import {
   createSharedFingerprints,
   getSharedFingerprintBuffers,
@@ -56,6 +58,7 @@ export interface StartMessage extends Pick<
   fingerprints: SharedFingerprintBuffers;
   requests: Int32Array;
   remaining: Int32Array;
+  counts: BigInt64Array;
 }
 
 interface LevelMessage {
@@ -76,6 +79,11 @@ export type CoordinatorMessage =
   | { type: "level" }
   | { type: "resize"; fingerprints: SharedFingerprintBuffers };
 
+interface Attempt {
+  onPrint: (text: string) => void;
+  onProgress: (progress: CheckProgress) => void;
+}
+
 /** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config =
@@ -92,27 +100,44 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       "text" in progress ? progress.text : "",
     ].join(" ");
   const reported = new Map<string, number>();
-  const report = (progress: CheckProgress) => {
-    const key = getKey(progress);
-    reported.set(key, (reported.get(key) ?? 0) + 1);
-    options.onProgress?.(progress);
+  let reportedStatistics: SearchStatistics | undefined;
+  const createAttempt = (): Attempt => {
+    let printCount = 0;
+    const counts = new Map<string, number>();
+    return {
+      onPrint: (text) => {
+        printCount++;
+        if (printCount <= printedCount) return;
+        printedCount = printCount;
+        print(text);
+      },
+      onProgress: (progress) => {
+        if (progress.kind === "progress") {
+          const statistics = progress.statistics;
+          if (
+            reportedStatistics &&
+            (statistics.generatedStates < reportedStatistics.generatedStates ||
+              statistics.distinctStates < reportedStatistics.distinctStates)
+          ) {
+            return;
+          }
+          reportedStatistics = statistics;
+        } else {
+          const key = getKey(progress);
+          const count = (counts.get(key) ?? 0) + 1;
+          counts.set(key, count);
+          if (count <= (reported.get(key) ?? 0)) return;
+          reported.set(key, count);
+        }
+        options.onProgress?.(progress);
+      },
+    };
   };
   const fallBack = (createdString?: string) => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    let skippedCount = printedCount;
-    return checkSequentially({
-      ...options,
-      config,
-      onPrint: (text) => (skippedCount-- > 0 ? undefined : print(text)),
-      onProgress: (progress) => {
-        const key = getKey(progress);
-        const count = reported.get(key) ?? 0;
-        if (count === 0) options.onProgress?.(progress);
-        else reported.set(key, count - 1);
-      },
-    });
+    return checkSequentially({ ...options, config, ...createAttempt() }, undefined, true);
   };
   const workerCount = options.workers ?? 1;
   const isSequential =
@@ -125,7 +150,26 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;
-  if (isSequential) return fallBack();
+  if (isSequential) return checkSequentially({ ...options, config, ...createAttempt() });
+  return checkSequentially({ ...options, config, ...createAttempt() }, (search, description) =>
+    search.spec.init === undefined ||
+    search.spec.next === undefined ||
+    search.properties.liveness.length > 0 ||
+    description.isNextOverlapping ||
+    search.isImpure()
+      ? undefined
+      : checkWithWorkers(config, options, createAttempt(), fallBack),
+  );
+};
+
+const checkWithWorkers = async (
+  config: ModelConfig,
+  options: CheckOptions,
+  attempt: Attempt,
+  fallBack: (createdString?: string) => CheckResult | Promise<CheckResult>,
+): Promise<CheckResult> => {
+  const workerCount = options.workers ?? 1;
+  const report = attempt.onProgress;
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
     const source = options.loadModule?.(name);
@@ -141,10 +185,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const created = createCheckEnvironment(
     config,
     { ...options, loadModule, loadClass, moduleOperators: undefined },
-    (text) => {
-      printedCount++;
-      print(text);
-    },
+    attempt.onPrint,
     true,
   );
   const specification = created.specification;
@@ -159,17 +200,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     specification.runtimeInvariants,
   );
   // Tool's constructor describes the specification before TLC creates the checker.
-  const description = getSpecDescription(config, environment, specification.instanceActions);
+  getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
-  if (
-    search.spec.init === undefined ||
-    search.spec.next === undefined ||
-    search.properties.liveness.length > 0 ||
-    description.isNextOverlapping ||
-    isImpure(environment)
-  ) {
-    return fallBack();
-  }
+  if (search.spec.init === undefined) return fallBack();
 
   const canonicalize = createCanonicalizer();
   let sharedFingerprints = createSharedFingerprints();
@@ -255,6 +288,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   };
   report({ kind: "initial-states-computed", initialStates: statistics.initialStates });
   if (statistics.distinctStates === 0) return createSuccess();
+  statistics.queuedStates = statistics.distinctStates;
 
   const reports: WorkerMessage[] = [];
   let pendingCount = workerCount;
@@ -273,6 +307,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const ready = waitForReports(workerCount);
   const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
   const remaining = new Int32Array(new SharedArrayBuffer(workerCount * 4));
+  const counts = new BigInt64Array(new SharedArrayBuffer(workerCount * 3 * 8));
   const workers = await Promise.all(
     Array.from({ length: workerCount }, () =>
       spawnWorker(
@@ -282,7 +317,33 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       ),
     ),
   );
-  const terminate = () => workers.forEach((worker) => worker.terminate());
+  const reportProgress = () => {
+    let generated = 0;
+    let added = 0;
+    let expanded = 0;
+    for (let index = 0; index < counts.length; index += 3) {
+      generated += Number(Atomics.load(counts, index));
+      added += Number(Atomics.load(counts, index + 1));
+      expanded += Number(Atomics.load(counts, index + 2));
+    }
+    report({
+      kind: "progress",
+      statistics: {
+        generatedStates: statistics.generatedStates + generated,
+        distinctStates: statistics.distinctStates + added,
+        // TLC reports progress while each worker expands a state that has left the queue.
+        queuedStates: Math.max(statistics.queuedStates + added - expanded - workerCount, 0),
+        depth: added > 0 ? statistics.depth + 1 : statistics.depth,
+        coverage: undefined,
+      },
+    });
+    progressTimer = setTimeout(reportProgress, PROGRESS_INTERVAL);
+  };
+  let progressTimer = options.onProgress ? setTimeout(reportProgress, PERIODIC_START) : undefined;
+  const terminate = () => {
+    clearTimeout(progressTimer);
+    workers.forEach((worker) => worker.terminate());
+  };
   const channels = new Map<string, MessageChannel>();
   const getPort = (from: number, to: number) => {
     const key = from < to ? `${from}:${to}` : `${to}:${from}`;
@@ -316,6 +377,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       fingerprints: getSharedFingerprintBuffers(sharedFingerprints),
       requests,
       remaining,
+      counts,
     };
     worker.postMessage(message, [
       ...ports.filter((port) => port !== undefined),
@@ -342,6 +404,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   for (;;) {
     const levelReports = waitForReports(workerCount);
     requests.forEach((_request, index) => Atomics.store(requests, index, 0));
+    counts.forEach((_count, index) => Atomics.store(counts, index, 0n));
     send({ type: "level" });
     const messages = await collectLevels(await levelReports);
     if (isAborted(messages)) {
@@ -355,6 +418,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     const added = levels.reduce((sum, message) => sum + message.added, 0);
     statistics.generatedStates += levels.reduce((sum, message) => sum + message.generated, 0);
     statistics.distinctStates += added;
+    statistics.queuedStates = added;
     levels.forEach((message) => {
       message.outDegrees.forEach(
         (degreeCount, degree) => (statistics.outDegrees[degree] += degreeCount),

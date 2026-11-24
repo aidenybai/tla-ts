@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { check, type CheckProgress } from "../../src";
+import type { SearchStatistics } from "../../src/check";
 import { getActualProbability } from "../../src/tlc/summary";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
@@ -25,6 +26,10 @@ const checkFixture = (
     isWarningEnabled,
     maxSetSize,
   });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("typed tier matches TLC", () => {
   it.each([
@@ -345,6 +350,118 @@ describe("typed tier matches TLC", () => {
     expect(await getCounts(true)).toEqual(expected);
     expect(await getCounts(false)).toEqual(expected);
   });
+
+  const checkCounter = async (init: string, next: string, isTyped: boolean) => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    const reported: (CheckProgress["kind"] | SearchStatistics)[] = [];
+    const result = await check({
+      source: `---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == ${init}\nNext == x < 1000 /\\ x' = ${next}\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      maxSetSize: isTyped ? undefined : INTERPRETED_SET_SIZE,
+      onProgress: (progress) =>
+        reported.push(progress.kind === "progress" ? progress.statistics : progress.kind),
+    });
+    return { status: result.status, reported };
+  };
+
+  it.each([true, false])(
+    "reports its progress every minute after the initial states when isTyped is %s, as TLC does",
+    async (isTyped) => {
+      const checked = await checkCounter("x = 0", "x + 1", isTyped);
+      const progress = checked.reported.filter((entry) => typeof entry !== "string");
+      expect(checked.reported.slice(0, 3)).toEqual([
+        "parsed",
+        "initial-states-started",
+        "initial-states-computed",
+      ]);
+      expect(progress.length).toBeGreaterThan(0);
+      progress.forEach((statistics) =>
+        expect([statistics.distinctStates, statistics.depth, statistics.queuedStates]).toEqual([
+          statistics.generatedStates,
+          statistics.generatedStates,
+          0,
+        ]),
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "leaves the state it expands off the queue it reports when isTyped is %s, as TLC's worker does",
+    async (isTyped) => {
+      const checked = await checkCounter("x \\in 0..9", "x + 10", isTyped);
+      const progress = checked.reported.filter((entry) => typeof entry !== "string");
+      const searched = progress.filter((statistics) => statistics.generatedStates < 1010);
+      expect(searched.length).toBeGreaterThan(0);
+      searched.forEach((statistics) => expect(statistics.queuedStates).toBe(9));
+    },
+  );
+
+  it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+    const reported: SearchStatistics[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\nInit == x = 0 /\\ r = [i \\in 1..3 |-> i]\nNext == x < 1000 /\\ x' = x + 1 /\\ r' = IF x = 900 THEN [r EXCEPT ![x] = 0] ELSE r\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onProgress: (progress) => {
+        if (progress.kind === "progress") reported.push(progress.statistics);
+      },
+    });
+    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      1001, 1001, 1001,
+    ]);
+    expect(reported.length).toBeGreaterThan(1);
+    reported.forEach((statistics, index) => {
+      const previous = reported[index - 1] ?? statistics;
+      expect([
+        statistics.generatedStates >= previous.generatedStates,
+        statistics.distinctStates >= previous.distinctStates,
+      ]).toEqual([true, true]);
+    });
+  });
+
+  it("reports the initial states once when the interpreter checks again what the tier searched", async () => {
+    const checked = await checkCounter("x = 0", "x + 1 + 0 \\div (500 - x)", true);
+    expect([
+      checked.status,
+      checked.reported.filter((entry) => entry === "initial-states-computed").length,
+      checked.reported.some((entry) => typeof entry !== "string"),
+    ]).toEqual(["error", 1, true]);
+  });
+
+  it.each([
+    [
+      "the same EXCEPT",
+      "F(s) == [s EXCEPT !.b = 1]\nInit == x = 0 /\\ r = F([a |-> 0])\nNext == x < 20 /\\ x' = x + 1 /\\ r' = IF x % 5 = 0 THEN F(r) ELSE r",
+      4,
+    ],
+    [
+      "different EXCEPTs",
+      "Init == x = 0 /\\ r = [[a |-> 0] EXCEPT !.b = 1]\nNext == x < 3 /\\ x' = x + 1 /\\ r' = [r EXCEPT !.c = x]",
+      3,
+    ],
+  ])(
+    "raises a warning in Init once when Init and Next warn through %s, as TLC does",
+    async (_name, body, nextWarnings) => {
+      const reported: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, r\n${body}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onProgress: (progress) => {
+          if (progress.kind === "warning" || progress.kind === "initial-states-computed") {
+            reported.push(progress.kind);
+          }
+        },
+      });
+      expect(reported).toEqual([
+        "warning",
+        "initial-states-computed",
+        ...Array.from({ length: nextWarnings }, () => "warning"),
+      ]);
+    },
+  );
 
   it.each([
     ["c < 3 /\\ c' = c + 1", 4],

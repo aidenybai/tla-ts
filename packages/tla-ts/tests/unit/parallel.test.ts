@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { check } from "../../src";
 import { getJavaClassName } from "../../src/builtins";
+import { PROGRESS_INTERVAL, type SearchStatistics } from "../../src/check";
 import {
   createSharedFingerprintsFromBuffers,
   getSharedFingerprintBuffers,
@@ -17,11 +18,14 @@ const DIST = join(import.meta.dirname, "../../dist/index.js");
 
 const tlaTs: typeof import("../../src") = await import(DIST);
 
+const INTERPRETED_SET_SIZE = 1_000_000;
+
 const checkFixtureInParallel = (directory: string, name: string, workers: number) =>
   tlaTs.check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
     workers,
+    maxSetSize: INTERPRETED_SET_SIZE,
   });
 
 const getCounts = (result: { generatedStates: number; distinctStates: number; depth: number }) => [
@@ -29,6 +33,11 @@ const getCounts = (result: { generatedStates: number; distinctStates: number; de
   result.distinctStates,
   result.depth,
 ];
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("check with workers matches TLC", () => {
   it.each([2, 3, 4])("explores the commit protocol with %i workers", async (workers) => {
@@ -56,7 +65,7 @@ describe("check with workers matches TLC", () => {
     };
     const [sequential, parallel] = await Promise.all([
       tlaTs.check(options),
-      tlaTs.check({ ...options, workers: 3 }),
+      tlaTs.check({ ...options, workers: 3, maxSetSize: INTERPRETED_SET_SIZE }),
     ]);
     expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
     expect(parallel.fingerprintDistance).toBeDefined();
@@ -164,6 +173,7 @@ describe("check with workers matches TLC", () => {
         "---- MODULE Grid ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 99 /\\ x' = x + 1 /\\ y' = y\n        \\/ y < 99 /\\ y' = y + 1 /\\ x' = x\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       workers: 4,
+      maxSetSize: INTERPRETED_SET_SIZE,
     });
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([19801, 10000, 199]);
@@ -176,9 +186,111 @@ describe("check with workers matches TLC", () => {
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     };
     const sequential = await tlaTs.check(options);
-    const parallel = await tlaTs.check({ ...options, workers: 3 });
+    const parallel = await tlaTs.check({
+      ...options,
+      workers: 3,
+      maxSetSize: INTERPRETED_SET_SIZE,
+    });
     expect(parallel.status).toBe("success");
     expect(getCounts(parallel)).toEqual(getCounts(sequential));
+  });
+
+  it("reports its progress every minute while workers expand a level", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const reported: SearchStatistics[] = [];
+    let isDone = false;
+    const checked = tlaTs
+      .check({
+        source:
+          "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers: 3,
+        maxSetSize: INTERPRETED_SET_SIZE,
+        onProgress: (progress) => {
+          if (progress.kind === "progress") reported.push(progress.statistics);
+        },
+      })
+      .finally(() => {
+        isDone = true;
+      });
+    while (!isDone) {
+      vi.advanceTimersByTime(PROGRESS_INTERVAL);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const result = await checked;
+    expect(getCounts(result)).toEqual([8000, 8000, 2]);
+    expect(reported.length).toBeGreaterThan(0);
+    reported.forEach((statistics, index) => {
+      const previous = reported[index - 1] ?? statistics;
+      expect(statistics.distinctStates).toBeGreaterThanOrEqual(previous.distinctStates);
+      expect(statistics.generatedStates).toBeGreaterThanOrEqual(previous.generatedStates);
+      expect(statistics.depth).toBeGreaterThanOrEqual(previous.depth);
+      expect([
+        statistics.distinctStates >= 4000 && statistics.distinctStates <= 8000,
+        statistics.generatedStates >= 4000 && statistics.generatedStates <= 8000,
+        statistics.queuedStates >= 0 && statistics.queuedStates <= 4000 - 3,
+        statistics.depth >= 1 && statistics.depth <= 2,
+      ]).toEqual([true, true, true, true]);
+    });
+  });
+
+  it.each([
+    [
+      "a spec the typed tier doesn't take",
+      readFileSync(join(FIXTURES, "tier-workers", "Interpreted.tla"), "utf8"),
+      readFileSync(join(FIXTURES, "tier-workers", "Interpreted.cfg"), "utf8"),
+      [177, 143, 10],
+    ],
+    [
+      "a property of an instance",
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 1\nNext == x < 512 /\\ x' \\in {2 * x, 2 * x + 1}\nI == INSTANCE Inner WITH y <- 2 * x\nProp == I!Grows\n====",
+      "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      [1023, 1023, 10],
+    ],
+  ])(
+    "checks %s with workers while it records the trace for the trace spec, as the CLI does by default",
+    async (_name, source, config, counts) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let progressCount = 0;
+      let isDone = false;
+      const checked = tlaTs
+        .check({
+          source,
+          config,
+          loadModule: (name) =>
+            name === "Inner"
+              ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE y\nGrows == [][y' > y]_y\n===="
+              : undefined,
+          workers: 2,
+          traceSpec: { module: "M_TTrace", traceFile: "M_TTrace.bin" },
+          onProgress: (progress) => {
+            if (progress.kind === "progress") progressCount++;
+          },
+        })
+        .finally(() => {
+          isDone = true;
+        });
+      while (!isDone) {
+        vi.advanceTimersByTime(PROGRESS_INTERVAL);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect([getCounts(await checked), progressCount > 0]).toEqual([counts, true]);
+    },
+  );
+
+  it("prints what the next-state relation prints in TLC's order", async () => {
+    const printed: string[] = [];
+    const result = await tlaTs.check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nUnused(v) == PrintT(<<"unused", v>>)\nInit == x \\in 1..4\nNext == x < 20 /\\ PrintT(x) /\\ x\' = x + 4\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([getCounts(result), printed]).toEqual([
+      [23, 23, 6],
+      Array.from({ length: 19 }, (_value, index) => String(index + 1)),
+    ]);
   });
 
   it("explores a queue that only grows to its bound", async () => {
@@ -231,6 +343,7 @@ describe("check with workers matches TLC", () => {
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = [s \\in SUBSET (1..2) |-> 0]\nNext == \\E q \\in 1..2 :\n          /\\ x' = (x + q) % 5\n          /\\ y' = [s \\in SUBSET (1..2) |-> IF q \\in s THEN (y[s] + 1) % 3 ELSE y[s]]\n====",
       config: "INIT Init\nNEXT Next",
       workers: 2,
+      maxSetSize: INTERPRETED_SET_SIZE,
     });
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([91, 45, 11]);
@@ -346,6 +459,46 @@ describe("check with workers matches TLC", () => {
       ]);
     },
   );
+
+  it.each([1, 4])(
+    "checks from Init with %i workers after the typed tier gives up partway, reporting the initial states once",
+    async (workers) => {
+      const kinds: string[] = [];
+      const result = await tlaTs.check({
+        source: readFileSync(join(FIXTURES, "tier-workers", "Fallback.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "tier-workers", "Fallback.cfg"), "utf8"),
+        workers,
+        onProgress: (progress) => kinds.push(progress.kind),
+      });
+      expect([getCounts(result), kinds]).toEqual([
+        [310, 310, 31],
+        [
+          "parsed",
+          "initial-states-started",
+          "initial-states-progress",
+          "initial-states-progress",
+          "initial-states-progress",
+          "initial-states-computed",
+        ],
+      ]);
+    },
+  );
+
+  it("checks again without the typed tier when workers stop after it gives up partway, reading the clock as one worker does", async () => {
+    const getClockReads = async (workers: number) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+      const result = await tlaTs.check({
+        source:
+          "---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1 + 0 \\div (500 - x)\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        workers,
+        onProgress: () => {},
+      });
+      return [result.status, result.generatedStates, now / 1000];
+    };
+    expect(await getClockReads(4)).toEqual(await getClockReads(1));
+  });
 
   it("hands a worker a converted function over SUBSET as the FcnLambdaValue it is", async () => {
     const result = await check({

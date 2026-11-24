@@ -1,0 +1,16 @@
+Starting... (_)
+Computing initial states...
+Error: The EXCEPT was applied to non-existing fields of the value at
+line 4, col 10 to line 4, col 10 of module OperatorExcept
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 33 in OperatorExcept
+1. Line 5, column 9 to line 5, column 13 in OperatorExcept
+2. Line 5, column 18 to line 5, column 33 in OperatorExcept
+3. Line 5, column 22 to line 5, column 33 in OperatorExcept
+4. Line 4, column 9 to line 4, column 26 in OperatorExcept
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+Finished in _ at (_)
