@@ -1350,7 +1350,7 @@ RECURSIVE StoreRun(_, _, _, _, _)
 RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
-RECURSIVE JoinElements(_, _, _, _, _)
+RECURSIVE JoinElements(_, _, _, _)
 RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
@@ -15831,21 +15831,21 @@ StrictIndexFrom(s, ta, target, k, len, step) ==
   THEN k
   ELSE StrictIndexFrom(s, ta, target, k + step, len, step)
 \* JoinIndexedProperties (§23.1.3.18.1) on a TypedArray, whose elements convert to strings without
-\* running code.
-JoinElements(s, ta, k, len, separator) ==
-  IF k >= len THEN <<>>
-  ELSE LET e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
-          JoinElements(s, ta, k + 1, len, separator)
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc, args) ==
-  IF k >= len THEN Ok(s, Str(acc))
-  ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
+\* running code, so that each element's units, after the separator but the first, join in halves.
+JoinElements(s, ta, len, separator) ==
+  FoldLeftSeq([k \in 1..len |->
+    LET e == TypedArrayGetElement(s, ta, NumFromInt(k - 1))
+    IN (IF k > 1 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e))])
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, collecting
+\* the parts in chunks, so that joining n elements copies each element's units a few times, not n.
+LocaleJoin(s, ta, k, len, parts, args) ==
+  IF k >= len THEN Ok(s, Str(FoldLeftSeq(ChunkValues(parts))))
+  ELSE LET prefix == IF k > 0 THEN ChunkAppend(parts, N(",")) ELSE parts
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
        IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
           ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, ChunkAppend(prefix, Val(str).value), args)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -15949,7 +15949,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
                                            len, -1)))
     [] m = "join" ->
          LET separator == IF a1 = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, a1) IN IF IsAbrupt(separator) THEN separator
-         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, 0, len, Val(separator).value)))
+         ELSE Ok(separator.s, Str(JoinElements(separator.s, ta, len, Val(separator).value)))
     [] m = "map" ->
          LET r == TypedArraySpeciesCreate(s, ta, <<IntV(len)>>, TRUE) IN IF IsAbrupt(r) THEN r
          ELSE MapFromTypedArray(r.s, ta, Val(r), 0, len, a1, a2)
@@ -15985,7 +15985,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, NoChunks, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))

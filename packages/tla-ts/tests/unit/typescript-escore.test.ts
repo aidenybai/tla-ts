@@ -1078,6 +1078,56 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // A TypedArray's join builds its parts in halves and its toLocaleString in chunks, so sizes around
+  // a chunk, a logging separator and a toLocaleString that throws partway pin their calls and order.
+  describe("joins a typed array's elements across chunks", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      const getHash = (value: string) => {
+        let hash = 0;
+        for (const unit of value.split("")) hash = (hash * 31 + unit.charCodeAt(0)) % 1000003;
+        return hash;
+      };
+      const calls: string[] = [];
+      const original = Number.prototype.toLocaleString;
+      Number.prototype.toLocaleString = function (this: number, ...args: unknown[]) {
+        calls.push(\`\${this}/\${args.length}\`);
+        if (calls.length === 400) throw new Error(\`at \${this}\`);
+        return \`<\${this}>\`;
+      };
+      for (const size of [0, 1, 63, 64, 65, 129]) {
+        const values = Int16Array.from({ length: size }, (_, index) => ((index * 7919) % 2001) - 1000);
+        const separator = { toString: () => { calls.push("separator"); return "; "; } };
+        const joined = values.join(separator as unknown as string);
+        const local = values.toLocaleString();
+        text += [size, joined.length, getHash(joined), local.length, getHash(local), calls.length, getHash(calls.join())].join(":") + ";";
+      }
+      try {
+        Int16Array.from({ length: 129 }, (_, index) => index).toLocaleString();
+      } catch (error) {
+        text += \`\${(error as Error).message}:\${calls.length}\`;
+      }
+      Number.prototype.toLocaleString = original;
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected = [
+      "0:0:0:0:0:1:167319;1:5:65739:7:99075:3:99678;63:336:817088:400:599327:67:198855;",
+      "64:342:260352:407:213189:132:710292;65:348:227341:414:549646:198:961919;",
+      "129:692:512630:822:449920:328:683678;at 71:400",
+    ].join("");
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("129:692:512630", "129:692:512631");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
