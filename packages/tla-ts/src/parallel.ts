@@ -307,7 +307,7 @@ const checkWithWorkers = async (
   const ready = waitForReports(workerCount);
   const requests = new Int32Array(new SharedArrayBuffer(workerCount * 4));
   const remaining = new Int32Array(new SharedArrayBuffer(workerCount * 4));
-  const counts = new BigInt64Array(new SharedArrayBuffer(workerCount * 3 * 8));
+  const counts = new BigInt64Array(new SharedArrayBuffer(workerCount * 4 * 8));
   const workers = await Promise.all(
     Array.from({ length: workerCount }, () =>
       spawnWorker(
@@ -321,10 +321,20 @@ const checkWithWorkers = async (
     let generated = 0;
     let added = 0;
     let expanded = 0;
-    for (let index = 0; index < counts.length; index += 3) {
-      generated += Number(Atomics.load(counts, index));
-      added += Number(Atomics.load(counts, index + 1));
-      expanded += Number(Atomics.load(counts, index + 2));
+    for (let index = 0; index < counts.length; index += 4) {
+      let sequence = -1n;
+      let workerGenerated = 0n;
+      let workerAdded = 0n;
+      let workerExpanded = 0n;
+      while (sequence % 2n !== 0n || Atomics.load(counts, index) !== sequence) {
+        sequence = Atomics.load(counts, index);
+        workerGenerated = Atomics.load(counts, index + 1);
+        workerAdded = Atomics.load(counts, index + 2);
+        workerExpanded = Atomics.load(counts, index + 3);
+      }
+      generated += Number(workerGenerated);
+      added += Number(workerAdded);
+      expanded += Number(workerExpanded);
     }
     report({
       kind: "progress",

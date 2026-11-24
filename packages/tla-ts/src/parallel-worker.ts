@@ -176,9 +176,12 @@ const runWorker = (start: StartMessage, parent: Port) => {
 
   const publishCounts = (expansion: Expansion) => {
     const expanded = expansion.outDegrees.reduce((sum, count) => sum + count, 0);
-    Atomics.store(counts, workerIndex * 3, BigInt(expansion.generated));
-    Atomics.store(counts, workerIndex * 3 + 1, BigInt(expansion.next.length));
-    Atomics.store(counts, workerIndex * 3 + 2, BigInt(expanded));
+    const offset = workerIndex * 4;
+    Atomics.add(counts, offset, 1n);
+    Atomics.store(counts, offset + 1, BigInt(expansion.generated));
+    Atomics.store(counts, offset + 2, BigInt(expansion.next.length));
+    Atomics.store(counts, offset + 3, BigInt(expanded));
+    Atomics.add(counts, offset, 1n);
   };
 
   const report = (message: WorkerMessage) =>
