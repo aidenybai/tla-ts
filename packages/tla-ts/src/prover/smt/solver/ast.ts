@@ -655,6 +655,7 @@ export const isDeclared = (funcDecl: FuncDecl) =>
   funcDecl.family === FAMILY_USER ||
   funcDecl.family === FAMILY_RECFUN ||
   funcDecl.family === FAMILY_ARRAY ||
+  funcDecl.family === FAMILY_FPA ||
   funcDecl.op === OP_PB_AUX_BOOL;
 
 export class AstManager {
@@ -947,14 +948,20 @@ export class AstManager {
     if (op === OP_EQ) return 8 * decl + SIGNATURE_EQ;
     if (op === OP_ITE) return 8 * decl + SIGNATURE_ITE;
     if (op === OP_DISTINCT) return 8 * decl + SIGNATURE_DISTINCT;
-    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
+    const declSignature = this.getDeclSignature(decl);
+    if (declSignature !== null) return declSignature;
     if (decl === OP_POWER0)
       return 8 * (decl + 64 * this.sorts[this.getArg(expr, 0)]) + SIGNATURE_DIV0;
     if (decl === OP_ALGEBRAIC_NUM) return 8 * this.getAlgebraicId(expr) + SIGNATURE_ALGEBRAIC;
     if (decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
-    if (funcDecl.family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
     if (UNCACHED_BV_OPS.has(op)) return `bv${decl}`;
+    return null;
+  }
+
+  private getDeclSignature(decl: number) {
+    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
+    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
     return null;
   }
 
@@ -968,11 +975,19 @@ export class AstManager {
   private holdDecl(expr: number) {
     const decl = this.decls[expr];
     if (isDeclared(this.funcDecls[decl])) {
-      this.incDeclRef(decl);
+      this.holdDeclared(decl);
       return;
     }
     const key = this.getSignature(expr);
-    if (key === null) return;
+    if (key !== null) this.holdSignature(key, decl);
+  }
+
+  private holdDeclared(decl: number) {
+    this.reviveDecl(decl);
+    this.declRefCounts[decl]++;
+  }
+
+  private holdSignature(key: number | string, decl: number) {
     const signatureDecl = this.signatureDecls.get(key);
     if (signatureDecl !== undefined) {
       signatureDecl.refCount++;
@@ -988,14 +1003,19 @@ export class AstManager {
 
   private releaseDecl(expr: number) {
     const decl = this.decls[expr];
-    if (isDeclared(this.funcDecls[decl])) {
-      this.declRefCounts[decl]--;
-      if (this.declRefCounts[decl] > 0) return -1;
-      this.deletedDecls.add(decl);
-      return this.funcDecls[decl].smallId;
-    }
+    if (isDeclared(this.funcDecls[decl])) return this.releaseDeclared(decl);
     const key = this.getSignature(expr);
-    if (key === null) return -1;
+    return key === null ? -1 : this.releaseSignature(key);
+  }
+
+  private releaseDeclared(decl: number) {
+    this.declRefCounts[decl]--;
+    if (this.declRefCounts[decl] > 0) return -1;
+    this.deletedDecls.add(decl);
+    return this.funcDecls[decl].smallId;
+  }
+
+  private releaseSignature(key: number | string) {
     const signatureDecl = this.getSignatureDecl(key);
     signatureDecl.refCount--;
     if (signatureDecl.refCount > 0) return -1;
@@ -1003,42 +1023,33 @@ export class AstManager {
     return signatureDecl.smallId;
   }
 
+  private reviveDecl(decl: number) {
+    if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
+  }
+
   incRef(expr: number) {
     this.refCounts[expr]++;
   }
 
   incDeclRef(decl: number) {
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
-      const signatureDecl = this.signatureDecls.get(key);
-      if (signatureDecl !== undefined) {
-        signatureDecl.refCount++;
-        return;
-      }
-      const smallId = this.mkSmallId();
-      this.signatureDecls.set(key, { smallId, refCount: 1 });
-      this.funcDecls[decl].smallId = smallId;
+    const key = this.getDeclSignature(decl);
+    if (key !== null) {
+      this.holdSignature(key, decl);
       return;
     }
-    if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
-    this.declRefCounts[decl]++;
+    if (isDeclared(this.funcDecls[decl])) this.holdDeclared(decl);
   }
 
   decDeclRef(decl: number) {
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
-      const signatureDecl = this.getSignatureDecl(key);
-      signatureDecl.refCount--;
-      if (signatureDecl.refCount > 0) return;
-      this.freeSmallIds.push(signatureDecl.smallId);
-      this.signatureDecls.delete(key);
-      this.numDecls--;
-      return;
-    }
-    this.declRefCounts[decl]--;
-    if (this.declRefCounts[decl] > 0) return;
-    this.deletedDecls.add(decl);
-    this.freeSmallIds.push(this.funcDecls[decl].smallId);
+    const key = this.getDeclSignature(decl);
+    const smallId =
+      key !== null
+        ? this.releaseSignature(key)
+        : isDeclared(this.funcDecls[decl])
+          ? this.releaseDeclared(decl)
+          : -1;
+    if (smallId === -1) return;
+    this.freeSmallIds.push(smallId);
     this.numDecls--;
   }
 
@@ -1322,7 +1333,10 @@ export class AstManager {
   mkFpaDecl(op: number, name: string, parameters: number[], domain: number[], range: number) {
     const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.fpaDecls.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      this.reviveDecl(existing);
+      return existing;
+    }
     const decl = this.addDecl(
       name,
       FAMILY_FPA,
@@ -1332,6 +1346,7 @@ export class AstManager {
       parameters,
       getInfoHash(Z3_FPA_FAMILY, op - FPA_OP_BASE, parameters),
     );
+    this.declRefCounts[decl] = 0;
     this.fpaDecls.set(key, decl);
     return decl;
   }
@@ -1644,7 +1659,7 @@ export class AstManager {
     const key = `${op}:${parameters.join(",")}:${domain.join(",")}`;
     const existing = this.arrayDecls.get(key);
     if (existing !== undefined) {
-      if (this.deletedDecls.delete(existing)) this.funcDecls[existing].smallId = this.mkSmallId();
+      this.reviveDecl(existing);
       return existing;
     }
     const parameterHashes = parameters.map((parameter) =>
