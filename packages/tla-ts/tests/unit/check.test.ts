@@ -15250,6 +15250,61 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "\\E i \\in {1} : Op(i)",
+      "1",
+      "9, col 34 to line 9, col 34",
+      ["9:8-9:35", "9:16-9:35", "9:31-9:35", "5:10-5:31", "5:31-5:31", "9:34-9:34"],
+    ],
+    [
+      "\\E i \\in {1} : Op2(i)",
+      "1",
+      "9, col 35 to line 9, col 35",
+      [
+        "9:8-9:36",
+        "9:16-9:36",
+        "9:31-9:36",
+        "6:11-6:15",
+        "5:10-5:31",
+        "5:31-5:31",
+        "6:14-6:14",
+        "9:35-9:35",
+      ],
+    ],
+    [
+      "Op(K)",
+      "3",
+      "9, col 19 to line 9, col 19",
+      ["9:8-9:20", "9:16-9:20", "5:10-5:31", "5:31-5:31", "9:19-9:19"],
+    ],
+  ])(
+    "enters the identifier argument of ENABLED %s in an initial state's invariant, as TLC's Tool#enabled enters a LazyValue",
+    async (call, found, node, positions) => {
+      const getFailure = async (coverage: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nOp(p) == (x < 0 /\\ x' = x) \\/ p\nOp2(q) == Op(q)\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == ENABLED ${call}\n====`,
+          config: "CONSTANT K = 3\nINIT Init\nNEXT Next\nINVARIANT Inv",
+          coverage,
+        });
+        return [
+          result.failure?.message,
+          result.failure?.callStack?.flatMap((expression, index, expressions) => {
+            const range = expression.location.range;
+            return range && expression !== expressions[index - 1]
+              ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+              : [];
+          }),
+        ];
+      };
+      const expected = [
+        `In computing ENABLED, TLC expected a boolean expression,\nbut instead found ${found}.\nline ${node} of module M`,
+        ["7:9-7:13", ...positions],
+      ];
+      expect([await getFailure(undefined), await getFailure(1)]).toEqual([expected, expected]);
+    },
+  );
+
+  it.each([
+    [
       "x < 9 /\\ Pre(1)",
       "TRUE",
       `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n1`,

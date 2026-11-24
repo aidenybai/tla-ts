@@ -900,7 +900,12 @@ const searchStates = (
     failureOptions: FailureOptions = {},
     postcondition?: Postcondition,
   ) => {
-    const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
+    // TLC enters an argument's LazyValue where the argument was written, which only the replay mirrors.
+    const error = isStackOverflow(failed)
+      ? new TlaStackOverflowError()
+      : failed instanceof TlaBoundValueError && failureOptions.replayError
+        ? failureOptions.replayError
+        : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
     return {
       ...createResult("error", undefined, {
@@ -1610,11 +1615,8 @@ const searchStates = (
     if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
     const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
-    const replayError = replay.result.replayError;
-    // TLC enters an argument's LazyValue where the argument was written, which only the replay mirrors.
-    const failure = error instanceof TlaBoundValueError && replayError ? replayError : error;
     return createFailureResult(
-      withNextStateExitCode(failure),
+      withNextStateExitCode(error),
       appendTraceOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
       checked.postcondition,
