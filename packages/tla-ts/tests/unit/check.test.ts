@@ -6104,6 +6104,19 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("reports an operator argument's body into a CASE that ENABLED applies it under, as TLC's Tool#enabled evaluates the CASE in its own CostModel", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nFoo(F(_)) == CASE F(x) -> x' = x + 1 [] OTHER -> x' = x + 2\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x >= 3 \\/ ENABLED Foo(LAMBDA y : y < 2)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 8 to line 7, col 46 of module M: 4",
+      "|line 7, col 8 to line 7, col 13 of module M: 4",
+      "|line 7, col 18 to line 7, col 46 of module M: 3",
+      "||line 7, col 26 to line 7, col 46 of module M: 18",
+    ]);
+  });
+
   it("counts the body of an operator argument the config substitutes, or of an instance's operator, into its parameter's application, as TLC's CostModelCreator connects neither", async () => {
     const result = await check({
       source:

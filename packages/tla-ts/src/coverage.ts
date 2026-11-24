@@ -963,6 +963,11 @@ export const runReportedInto = <Result>(
 ): Result => {
   const substitutions = new Set(coverage.substitutionNodes.get(coverage.roots[node])?.values());
   const snapshot: number[] = [];
+  const addDescendant = (descendant: number) => {
+    if (!substitutions.has(descendant)) {
+      snapshot.push(descendant, coverage.primary[descendant], coverage.secondary[descendant]);
+    }
+  };
   for (let index = -3; index < snapshot.length; index += 3) {
     const parent = index === -3 ? node : snapshot[index];
     for (
@@ -970,10 +975,9 @@ export const runReportedInto = <Result>(
       child !== -1;
       child = coverage.nextSibling[child]
     ) {
-      if (!substitutions.has(child)) {
-        snapshot.push(child, coverage.primary[child], coverage.secondary[child]);
-      }
+      addDescendant(child);
     }
+    coverage.appliedBodies[parent]?.forEach((body) => addDescendant(body.node));
   }
   try {
     return run();
