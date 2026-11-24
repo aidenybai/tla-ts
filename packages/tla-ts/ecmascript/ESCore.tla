@@ -1347,8 +1347,6 @@ RECURSIVE FilterFrom(_, _, _, _, _, _, _)
 RECURSIVE MapFromTypedArray(_, _, _, _, _, _, _)
 RECURSIVE ReduceFrom(_, _, _, _, _, _, _)
 RECURSIVE StoreElements(_, _, _, _)
-RECURSIVE StoreRun(_, _, _, _, _)
-RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
 RECURSIVE JoinElements(_, _, _, _)
@@ -15845,16 +15843,15 @@ ReduceFrom(s, ta, len, k, step, callback, accumulator) ==
   IF k < 0 \/ k >= len THEN Ok(s, accumulator)
   ELSE LET r == Call(s, callback, Undefined, <<accumulator, TypedArrayGetElement(s, ta, NumFromInt(k)), IntV(k), ta>>) IN
        IF IsAbrupt(r) THEN r ELSE ReduceFrom(r.s, ta, len, k + step, step, callback, Val(r))
-\* Stores values[k + 1] onwards into ta from index k. StoreRun stores at most 2^depth values nested
-\* depth deep, so a long list needs no frame per element.
-StoreElements(s, ta, values, k) == StoreFrom(s, ta, values, k, 0)
-StoreRun(s, ta, values, k, depth) ==
-  CASE k >= Len(values) -> [s |-> s, k |-> k]
-    [] depth = 0 -> [s |-> TypedArrayStore(s, ta, NumFromInt(k), values[k + 1]), k |-> k + 1]
-    [] OTHER -> LET r == StoreRun(s, ta, values, k, depth - 1) IN StoreRun(r.s, ta, values, r.k, depth - 1)
-StoreFrom(s, ta, values, k, depth) ==
-  IF k >= Len(values) THEN s
-  ELSE LET r == StoreRun(s, ta, values, k, depth) IN StoreFrom(r.s, ta, values, r.k, depth + 1)
+\* Stores values[k + 1] onwards, Numbers or BigInts, into ta from index k, as TypedArrayStore would
+\* one at a time. No code runs between the stores, so those that IsValidIntegerIndex allows are the
+\* ones below ta's length, and their bytes store at once.
+StoreElements(s, ta, values, k) ==
+  LET end == IF IsTypedArrayOutOfBounds(s, ta) THEN 0 ELSE IntegerMin(Len(values), TypedArrayLength(s, ta))
+      type == TypedArrayType(s, ta)
+  IN IF end <= k THEN s
+     ELSE SetBufferBytes(s, O(s, ta).slots.buffer, k * TypedArraySize(s, ta) + O(s, ta).slots.byteOffset,
+                         FoldLeftSeq([i \in 1..end - k |-> NumericToRawBytes(type, values[k + i], LittleEndian)]))
 TypedArrayElements(s, ta, len) == [i \in 1..len |-> TypedArrayGetElement(s, ta, NumFromInt(i - 1))]
 \* The first index from k up, or the last from k down, of an element strictly equal to target,
 \* or -1.
