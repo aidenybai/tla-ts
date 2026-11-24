@@ -916,6 +916,40 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  // Array.prototype.join collects each element's units, and each separator, as parts in chunks,
+  // so the sizes around a chunk and elements that log their toString pin the text and the order.
+  describe("joins arrays across chunks of parts, converting the elements in order", () => {
+    const getSource = (expected: string) => `
+      let text = "";
+      for (const size of [0, 1, 63, 64, 65, 129, 300]) {
+        const values = Array.from({ length: size }, (_, index) => (index % 7 === 0 ? null : index % 5 === 0 ? undefined : index * 3));
+        const joined = values.join(size % 2 === 0 ? "--" : "");
+        const sparse = new Array(size);
+        sparse[size >> 1] = "x";
+        let hash = 0;
+        for (let index = 0; index < joined.length; index++) hash = (hash * 31 + joined.charCodeAt(index)) % 1000003;
+        text += [size, joined.length, hash, sparse.join().length, String(values)].map((part) => String(part).length > 40 ? String(part).length : part).join(":") + ";";
+      }
+      const order: number[] = [];
+      const logged = Array.from({ length: 70 }, (_, index) => ({ toString: () => (order.push(index), String(index % 10)) }));
+      text += logged.join("") + ":" + order.join(",").length + ":" + order.slice(60).join(",");
+      if (text !== "${expected}") throw new Error(text);
+    `;
+    const expected =
+      "0:0:0:1:;1:0:0:1:;63:103:126117:63:165;64:229:330458:64:166;65:106:189182:65:170;129:238:86159:129:366;300:1190:686128:300:891;0123456789012345678901234567890123456789012345678901234567890123456789:199:60,61,62,63,64,65,66,67,68,69";
+
+    it("agrees with Node", async () => {
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(expected)))).not.toThrow();
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      const wrong = expected.replace("300:1190:686128", "300:1190:686129");
+      expect(() => runInNewContext(stripTypeScriptTypes(getSource(wrong)))).toThrow(expected);
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];

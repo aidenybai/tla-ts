@@ -399,7 +399,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, Val(sep).value, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -493,7 +493,7 @@ ArrayMethod(s, o, len, m, args) ==
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
     \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, N(","), LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -579,19 +579,24 @@ LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <
 \* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
 \* element's toLocaleString the arguments locale, where they aren't Empty. More than 64 elements
 \* join in halves, so that thousands of them nest log n deep rather than n.
-JoinFrom(s, o, len, k, sep, acc, locale) ==
-  IF ~NumLess(k, len) THEN Ok(s, Str(acc))
+JoinFrom(s, o, len, sep, locale) ==
+  LET r == JoinParts(s, o, len, PosZero, sep, NoChunks, locale)
+  IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Str(FoldLeftSeq(ChunkValues(Val(r)))))
+\* The units of the elements from k, each after the separator but the first, after the parts so
+\* far, in chunks, so that joining n elements copies each element's units a few times, not n.
+JoinParts(s, o, len, k, sep, parts, locale) ==
+  IF ~NumLess(k, len) THEN Ok(s, parts)
   ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
        LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
-           first == JoinFrom(s, o, middle, k, sep, acc, locale)
-       IN IF IsAbrupt(first) THEN first ELSE JoinFrom(first.s, o, len, middle, sep, Val(first).value, locale)
+           first == JoinParts(s, o, middle, k, sep, parts, locale)
+       IN IF IsAbrupt(first) THEN first ELSE JoinParts(first.s, o, len, middle, sep, Val(first), locale)
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
                    ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
-          ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
+          ELSE JoinParts(next.s, o, len, NumAdd(k, OneNum), sep,
+                         ChunkAppend(IF NumIsZero(k) THEN parts ELSE ChunkAppend(parts, sep), Val(next).value), locale)
 
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
