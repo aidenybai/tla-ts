@@ -1181,6 +1181,7 @@ describe("INSTANCE matches TLC", () => {
 const INNER_MODULES: Record<string, string> = {
   Stateful: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v) + c",
   Pure: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c) + c",
+  Holder: "CONSTANT Op(_)\nUse == Op(1)",
   Primed: "EXTENDS Naturals\nCONSTANT c, Op(_)\nUse == Op(c)' + c",
   Vars: "EXTENDS Naturals\nVARIABLE v, w\nUse == v + w",
   Applied: "CONSTANT c, Op(_)\nUse == Op(c)",
@@ -1482,6 +1483,16 @@ describe("Leibniz checks where tla-ts deviates from SANY", () => {
     "accepts an operator argument that a recursive operator cannot name, as TLC does, beside %s",
     async (definition) => {
       const body = `RECURSIVE R(_)\n${definition}\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1)\nH(K(_)) == R(1)\nF(a) == H(LAMBDA b : a')\nI == INSTANCE Pure WITH c <- 1, Op <- F`;
+      expect((await checkSubstitution(body)).status).toBe("success");
+    },
+  );
+
+  // The ENABLED of R(1) makes its parameters non-Leibniz in F, among them X's i, which reaches R
+  // from Q, but F's i is another parameter of the same name, so TLC accepts F as Op.
+  it.each(["i", "j"])(
+    "accepts an operator whose formal shares a recursive member's parameter's name, as TLC does, where X's is %s",
+    async (name) => {
+      const body = `RECURSIVE R(_)\nX(${name}) == LET RECURSIVE Q(_)\n            Q(k) == IF k = 0 THEN ${name} ELSE Q(k - 1)\n        IN Q(1)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1)\nF(i) == ENABLED (x' = R(1))\nI == INSTANCE Holder WITH Op <- F`;
       expect((await checkSubstitution(body)).status).toBe("success");
     },
   );

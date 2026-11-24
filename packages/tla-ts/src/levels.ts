@@ -157,8 +157,10 @@ export interface InstanceLevelCheck {
   substitutesCheck: "Definition" | "Theorem" | "Instance";
 }
 
+// A formal parameter's binder is the definition or LAMBDA whose parameter it is, the same object
+// wherever the analysis binds it, and a bound name has none.
 type ScopeEntry =
-  | { kind: "Formal"; arity: number; level: number }
+  | { kind: "Formal"; arity: number; level: number; binder?: object }
   | { kind: "Let"; definition: Definition; scope: Scope }
   | { kind: "ExceptAt"; parts: LevelData[] };
 
@@ -182,7 +184,12 @@ interface RecursiveSection {
   members: SectionMember[];
 }
 
-type ScopeFrame = Definition | LetExpression | string[];
+interface BoundFrame {
+  names: string[];
+  binder: object | undefined;
+}
+
+type ScopeFrame = Definition | LetExpression | BoundFrame;
 
 type Operand =
   | { kind: "Value"; data: LevelData }
@@ -408,14 +415,14 @@ const SF_LEVELS = createSignature("$SF", 3, [1, 2], [0, 0]);
 export const getSignatureLevels = (name: string) =>
   CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
 
-const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
+const bindFormals = (scope: Scope, formals: OperatorParam[], binder?: object) =>
   formals.length === 0
     ? scope
     : new Map([
         ...scope,
         ...formals.map((formal): [string, ScopeEntry] => [
           formal.name,
-          { kind: "Formal", arity: formal.arity, level: CONSTANT_LEVEL },
+          { kind: "Formal", arity: formal.arity, level: CONSTANT_LEVEL, binder },
         ]),
       ]);
 
@@ -550,13 +557,14 @@ const getRecursiveSections = (
     let scope = scopes[start - 1] ?? base;
     for (let index = start; index < frames.length; index++) {
       const frame = frames[index];
-      scope = Array.isArray(frame)
-        ? bindFormals(scope, toFormals(frame))
-        : frame.kind === "Let"
-          ? createLetScope(frame, scope)
-          : frame.kind === "Function"
-            ? bindFormals(scope, toFormals(getBoundNames(frame.bounds)))
-            : bindFormals(scope, frame.params);
+      scope =
+        "names" in frame
+          ? bindFormals(scope, toFormals(frame.names), frame.binder)
+          : frame.kind === "Let"
+            ? createLetScope(frame, scope)
+            : frame.kind === "Function"
+              ? bindFormals(scope, toFormals(getBoundNames(frame.bounds)))
+              : bindFormals(scope, frame.params, frame);
       scopes[index] = scope;
     }
     return scope;
@@ -570,11 +578,17 @@ const getRecursiveSections = (
     scopes.pop();
   };
 
-  const visitChild = (child: Expression, bound: string[]) =>
-    bound.length === 0 ? walkExpression(child) : walkInFrame(bound, child);
-
   const walkExpression = (expression: Expression): void => {
-    if (expression.kind !== "Let") return forEachChild(expression, visitChild);
+    if (expression.kind !== "Let") {
+      return forEachChild(expression, (child, bound) =>
+        bound.length === 0
+          ? walkExpression(child)
+          : walkInFrame(
+              { names: bound, binder: expression.kind === "Lambda" ? expression : undefined },
+              child,
+            ),
+      );
+    }
     frames.push(expression);
     scopes.push(undefined);
     depth++;
@@ -703,6 +717,48 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   let labelChecks = 0;
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
+  // A recursive section's parameters as SANY's nodes keep them: a formal or bound parameter that
+  // one member names reaches another member, and a definition that applies one, under a name of
+  // its own, the parameter's name where a scope binds it alike, as its binder's region does.
+  const foreignParams = new Map<string, { name: string; binder: object }>();
+  const binderNumbers = new Map<object, number>();
+
+  const getForeignName = (name: string, entry: ScopeEntry & { kind: "Formal" }) => {
+    const binder = entry.binder ?? entry;
+    const number = binderNumbers.get(binder) ?? binderNumbers.size;
+    binderNumbers.set(binder, number);
+    const foreign = `${name}#${number}`;
+    foreignParams.set(foreign, { name, binder });
+    return foreign;
+  };
+
+  const localizeParams = <Params extends ReadonlySet<string>>(params: Params, scope: Scope) => {
+    let local: Set<string> | undefined;
+    params.forEach((param) => {
+      const foreign = foreignParams.get(param);
+      if (foreign === undefined) return;
+      const entry = scope.get(foreign.name);
+      if (entry?.kind !== "Formal" || entry.binder !== foreign.binder) return;
+      local ??= new Set(params);
+      local.delete(param);
+      local.add(foreign.name);
+    });
+    return local ?? params;
+  };
+
+  const localize = (levels: OperatorLevels, scope: Scope): OperatorLevels => {
+    if (foreignParams.size === 0) return levels;
+    const params = localizeParams(levels.params, scope);
+    const allParams = localizeParams(levels.allParams, scope);
+    const nonLeibnizParams = localizeParams(levels.nonLeibnizParams, scope);
+    const appliedParams = levels.appliedParams && localizeParams(levels.appliedParams, scope);
+    return params === levels.params &&
+      allParams === levels.allParams &&
+      nonLeibnizParams === levels.nonLeibnizParams &&
+      appliedParams === levels.appliedParams
+      ? levels
+      : { ...levels, params, allParams, nonLeibnizParams, appliedParams };
+  };
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
@@ -710,14 +766,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       return { kind: "Declared", name, level: entry.level, arity: entry.arity };
     }
     if (entry?.kind === "Let") {
-      return { kind: "Defined", levels: analyzeDefinition(entry.definition, entry.scope) };
+      return {
+        kind: "Defined",
+        levels: localize(analyzeDefinition(entry.definition, entry.scope), scope),
+      };
     }
     const arity = context.constants.get(name);
     if (arity !== undefined) return { kind: "Declared", name, level: 0, arity };
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {
-      const levels = context.getPreparedLevels?.(name) ?? analyzeDefinition(definition, new Map());
+      const levels = localize(
+        context.getPreparedLevels?.(name) ?? analyzeDefinition(definition, new Map()),
+        scope,
+      );
       const qualifiedName = context.getQualifiedName?.(name);
       return {
         kind: "Defined",
@@ -1009,6 +1071,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           toFormals(expression.params),
           expression.body,
           scope,
+          expression,
         );
       lambdaLevels.set(expression, operator);
       return { kind: "Operator", data: operator };
@@ -1568,7 +1631,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     formals: OperatorParam[],
     body: Expression,
     scope: Scope,
-  ) => toOperatorLevels(name, formals, analyze(body, bindFormals(scope, formals)));
+    binder: object,
+  ) => toOperatorLevels(name, formals, analyze(body, bindFormals(scope, formals, binder)));
 
   const substitutes = new WeakMap<Map<string, Expression>, Map<string, Operand>>();
 
@@ -1962,6 +2026,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             getFormals(definition),
             getDefinitionBody(definition),
             scope,
+            definition,
           );
     const isInSection = sectionBodies.has(definition);
     if (isInSection) sectionBodies.set(definition, levels);
@@ -2108,15 +2173,41 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       (maximum, levels) => Math.max(maximum, levels.level),
       CONSTANT_LEVEL,
     );
-    const params = firstPass.flatMap((levels) => [...levels.params]);
-    const allParams = firstPass.flatMap((levels) => [...levels.allParams]);
+    // The recursive members' parameters, each with the entry of the scope that binds it, if one
+    // does, which a member names as its own where its scope binds the name alike.
+    const getBound = (names: (levels: OperatorLevels) => ReadonlySet<string>) =>
+      recursive.flatMap((member, index) =>
+        [...names(firstPass[index])].map((name) => ({ name, entry: member.scope.get(name) })),
+      );
+    const params = getBound((levels) => levels.params);
+    const allParams = getBound((levels) => levels.allParams);
+    const getMemberParams = (
+      member: SectionMember,
+      own: ReadonlySet<string>,
+      bound: typeof params,
+    ) => {
+      const memberParams = new Set(own);
+      bound.forEach((param) => {
+        const local = member.scope.get(param.name);
+        memberParams.add(
+          param.entry?.kind !== "Formal" ||
+            local === param.entry ||
+            (local?.kind === "Formal" &&
+              local.binder !== undefined &&
+              local.binder === param.entry.binder)
+            ? param.name
+            : getForeignName(param.name, param.entry),
+        );
+      });
+      return memberParams;
+    };
     members.forEach((member) => {
       const levels = analyzeDefinition(member.definition, member.scope);
       definitionLevels.set(member.definition, {
         ...levels,
         level: Math.max(levels.level, level),
-        params: new Set([...levels.params, ...params]),
-        allParams: new Set([...levels.allParams, ...allParams]),
+        params: getMemberParams(member, levels.params, params),
+        allParams: getMemberParams(member, levels.allParams, allParams),
       });
       if (member.isRechecked && !member.definition.isRecursive) {
         staleDefinitions.add(member.definition);

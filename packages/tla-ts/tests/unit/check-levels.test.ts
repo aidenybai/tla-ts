@@ -50,6 +50,25 @@ describe("level checking matches SANY", () => {
 
   // A string's code units as a tuple, as a compiled program writes a long one, has more elements
   // than a call's arguments can spread.
+  // SANY gives every member of a recursive section the parameters of its RECURSIVE operators, as
+  // nodes: X's own i weighs on X, which applies R, so TLC rejects X(x') in an invariant, but G's i,
+  // another parameter of the same name, doesn't, so TLC checks G(x').
+  const getSectionSpec = (invariant: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE R(_)\nX(i) == LET RECURSIVE Q(_)\n            Q(k) == IF k = 0 THEN i ELSE Q(k - 1)\n        IN R(1)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1)\nG(i) == R(1)\nInv == ${invariant}(x') = 0\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+
+  it("weighs a formal that a recursive section's member names on its own definition, as TLC does", async () => {
+    await expect(getSectionSpec("X")).rejects.toThrow(
+      "The invariant Inv is not a state predicate (one with no primes or temporal operators).",
+    );
+  });
+
+  it("weighs no formal of the same name that a recursive section's member can't name, as TLC does", async () => {
+    expect((await getSectionSpec("G")).status).toBe("success");
+  });
+
   it("levels a tuple of half a million elements", async () => {
     const result = await checkDefinition(
       `<<${Array.from({ length: 500_000 }, () => "1").join(", ")}>>`,
