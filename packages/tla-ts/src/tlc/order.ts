@@ -176,8 +176,10 @@ const createSymbolTable = (
       return entries;
     },
     fork: () => {
-      sharedKeys = [...sharedKeys, keys];
-      keys = new Set();
+      if (keys.size > 0) {
+        sharedKeys = [...sharedKeys, keys];
+        keys = new Set();
+      }
       ownBuckets.fill(0);
       return createSymbolTable({
         buckets: buckets.slice(),
