@@ -13877,6 +13877,7 @@ ASSUME TLCFP(a) = -887695703
       "T16",
       "---- MODULE T16 ----\nEXTENDS Naturals, TLC\nCONSTANT k\nVARIABLE y\nSt == y' = y + k\n====",
     ],
+    ["T19", "---- MODULE T19 ----\nEXTENDS TLC\nTwo == 2\n===="],
   ]);
 
   it.each([
@@ -13998,6 +13999,60 @@ ASSUME TLCFP(a) = -887695703
         "success",
         Array.from({ length: count }, () => '"a"  TRUE'),
       ]);
+    },
+  );
+
+  it.each([
+    [
+      "Naturals, TLC",
+      "S == INSTANCE TLC\nJ == INSTANCE T16 WITH k <- 1, y <- x\nJ2 == INSTANCE T16 WITH k <- 1, y <- x\nP == INSTANCE T19",
+      'Next == Up \\/ Print("a", FALSE) \\/ S!Print("b", FALSE) \\/ J!Print("c", FALSE) \\/ J2!Print("d", FALSE) \\/ P!Print("e", FALSE)',
+      [
+        "Init line 8, col 1 to line 8, col 4 of module M: 1:1",
+        "Up line 9, col 1 to line 9, col 2 of module M: 2:2",
+        "Print line 17, col 1 to line 17, col 15 of module TLC (10 15 10 31): 0:0",
+        "S!Print line 4, col 1 to line 4, col 1 of module M (10 36 10 54): 0:0",
+        "J!Print line 5, col 1 to line 5, col 1 of module M (10 59 10 77): 0:0",
+        "J2!Print line 6, col 1 to line 6, col 2 of module M (10 82 10 101): 0:0",
+        "P!Print line 7, col 1 to line 7, col 1 of module M (10 106 10 124): 0:0",
+      ],
+    ],
+    [
+      "Naturals, TLC",
+      "J == INSTANCE T16 WITH k <- 1, y <- x",
+      'Next == Up \\/ (LET R == INSTANCE TLC IN R!Print("a", FALSE)) \\/ (LET R2 == INSTANCE T16 WITH k <- 1, y <- x IN R2!Print("b", FALSE))',
+      [
+        "Init line 5, col 1 to line 5, col 4 of module M: 1:1",
+        "Up line 6, col 1 to line 6, col 2 of module M: 2:2",
+        "R!Print line 7, col 20 to line 7, col 20 of module M (7 41 7 59): 0:0",
+        "R2!Print line 7, col 70 to line 7, col 71 of module M (7 112 7 131): 0:0",
+      ],
+    ],
+    [
+      "Naturals",
+      "INSTANCE T16 WITH k <- 1, y <- x\nJ == INSTANCE T16 WITH k <- 1, y <- x",
+      'Next == Up \\/ Print("a", FALSE) \\/ J!Print("b", FALSE)',
+      [
+        "Init line 6, col 1 to line 6, col 4 of module M: 1:1",
+        "Up line 7, col 1 to line 7, col 2 of module M: 2:2",
+        "Print line 17, col 1 to line 17, col 15 of module TLC (8 15 8 31): 0:0",
+        "J!Print line 5, col 1 to line 5, col 1 of module M (8 36 8 54): 0:0",
+      ],
+    ],
+  ])(
+    "names the action of a standard operator by the instance the call names, as TLC does, with EXTENDS %s and %j",
+    async (extended, instances, next, relations) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS ${extended}\nVARIABLE x\n${instances}\nInit == x = 0\nUp == x < 2 /\\ x' = x + 1\n${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+        loadModule: (name) => OVERRIDDEN_INSTANCES.get(name),
+      });
+      expect(
+        result.coverage?.relations.map(
+          (relation) => `${relation.label}: ${relation.distinct}:${relation.generated}`,
+        ),
+      ).toEqual(relations);
     },
   );
 
