@@ -2373,6 +2373,31 @@ describe("the CLI reports a stack overflow while it prints a trace and keeps the
   });
 });
 
+describe("the CLI checks with -workers as TLC does with one worker", () => {
+  it.each([
+    ["Admitted", "Admitted", 1, 0],
+    ["Admitted", "Admitted", 4, 0],
+    ["Interpreted", "Interpreted", 1, 0],
+    ["Interpreted", "Interpreted", 4, 0],
+    ["Fallback", "Fallback", 1, 0],
+    ["Fallback", "Fallback", 4, 0],
+    ["Fallback", "FallbackInvariant", 1, 12],
+    ["Fallback", "FallbackInvariant", 4, 12],
+  ])("checks %s with %s.cfg and -workers %i", (name, config, workers, status) => {
+    const result = runCli("tier-workers", name, [
+      "-config",
+      `${config}.cfg`,
+      "-workers",
+      String(workers),
+      "-noGenerateSpecTE",
+    ]);
+    expect(result.status).toBe(status);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "tier-workers", `${config}.out`), "utf8").split("\n"),
+    );
+  });
+});
+
 describe("the CLI checks deeply nested values, as TLC does", () => {
   it("checks a variable that holds sets nested 2,000 deep", () => {
     const directory = mkdtempSync(join(tmpdir(), "deep-set-"));

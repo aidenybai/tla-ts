@@ -79,6 +79,11 @@ export type CoordinatorMessage =
   | { type: "level" }
   | { type: "resize"; fingerprints: SharedFingerprintBuffers };
 
+interface Attempt {
+  onPrint: (text: string) => void;
+  onProgress: (progress: CheckProgress) => void;
+}
+
 /** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const config =
@@ -95,27 +100,33 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       "text" in progress ? progress.text : "",
     ].join(" ");
   const reported = new Map<string, number>();
-  const report = (progress: CheckProgress) => {
-    const key = getKey(progress);
-    reported.set(key, (reported.get(key) ?? 0) + 1);
-    options.onProgress?.(progress);
+  const createAttempt = (): Attempt => {
+    let printCount = 0;
+    const counts = new Map<string, number>();
+    return {
+      onPrint: (text: string) => {
+        printCount++;
+        if (printCount <= printedCount) return;
+        printedCount = printCount;
+        print(text);
+      },
+      onProgress: (progress: CheckProgress) => {
+        if (progress.kind !== "progress") {
+          const key = getKey(progress);
+          const count = (counts.get(key) ?? 0) + 1;
+          counts.set(key, count);
+          if (count <= (reported.get(key) ?? 0)) return;
+          reported.set(key, count);
+        }
+        options.onProgress?.(progress);
+      },
+    };
   };
   const fallBack = (createdString?: string) => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    let skippedCount = printedCount;
-    return checkSequentially({
-      ...options,
-      config,
-      onPrint: (text) => (skippedCount-- > 0 ? undefined : print(text)),
-      onProgress: (progress) => {
-        const key = getKey(progress);
-        const count = reported.get(key) ?? 0;
-        if (count === 0) options.onProgress?.(progress);
-        else reported.set(key, count - 1);
-      },
-    });
+    return checkSequentially({ ...options, config, ...createAttempt() });
   };
   const workerCount = options.workers ?? 1;
   const isSequential =
@@ -129,6 +140,27 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;
   if (isSequential) return fallBack();
+  return checkSequentially(
+    { ...options, config, ...createAttempt() },
+    (search, description, environment) =>
+      search.spec.init === undefined ||
+      search.spec.next === undefined ||
+      search.properties.liveness.length > 0 ||
+      description.isNextOverlapping ||
+      isImpure(environment)
+        ? undefined
+        : checkWithWorkers(config, options, createAttempt(), fallBack),
+  );
+};
+
+const checkWithWorkers = async (
+  config: ModelConfig,
+  options: CheckOptions,
+  attempt: Attempt,
+  fallBack: (createdString?: string) => CheckResult | Promise<CheckResult>,
+): Promise<CheckResult> => {
+  const workerCount = options.workers ?? 1;
+  const report = attempt.onProgress;
   const modules = new Map<string, string | undefined>();
   const loadModule = (name: string) => {
     const source = options.loadModule?.(name);
@@ -144,10 +176,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   const created = createCheckEnvironment(
     config,
     { ...options, loadModule, loadClass, moduleOperators: undefined },
-    (text) => {
-      printedCount++;
-      print(text);
-    },
+    attempt.onPrint,
     true,
   );
   const specification = created.specification;
@@ -162,17 +191,9 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     specification.runtimeInvariants,
   );
   // Tool's constructor describes the specification before TLC creates the checker.
-  const description = getSpecDescription(config, environment, specification.instanceActions);
+  getSpecDescription(config, environment, specification.instanceActions);
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
-  if (
-    search.spec.init === undefined ||
-    search.spec.next === undefined ||
-    search.properties.liveness.length > 0 ||
-    description.isNextOverlapping ||
-    isImpure(environment)
-  ) {
-    return fallBack();
-  }
+  if (search.spec.init === undefined) return fallBack();
 
   const canonicalize = createCanonicalizer();
   let sharedFingerprints = createSharedFingerprints();

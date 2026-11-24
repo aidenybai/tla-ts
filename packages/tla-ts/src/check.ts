@@ -76,6 +76,7 @@ import {
   withNextStateExitCode,
   type CliSettings,
   type CoveredAction,
+  type Search,
 } from "./search";
 import {
   getActionLabel,
@@ -362,14 +363,23 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
 
 const STOP_REPLAY = new Error("The replay stopped");
 
-export const checkSequentially = (options: CheckOptions): CheckResult => {
+export type ParallelCheck = (
+  search: Search,
+  description: SpecDescription,
+  environment: Environment,
+) => Promise<CheckResult> | undefined;
+
+export const checkSequentially = (
+  options: CheckOptions,
+  checkInParallel?: ParallelCheck,
+): CheckResult | Promise<CheckResult> => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
   const livenessDump = options.dump?.dot
     ? createLivenessDump(options.dump, options.writeFile, options.version)
     : undefined;
   try {
-    return searchStates(options, stateWriter, livenessDump);
+    return searchStates(options, stateWriter, livenessDump, checkInParallel);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -388,7 +398,8 @@ const searchStates = (
   options: CheckOptions & CliSettings,
   stateWriter: StateWriter | undefined,
   livenessDump: LivenessDump | undefined,
-): CheckResult => {
+  checkInParallel: ParallelCheck | undefined,
+): CheckResult | Promise<CheckResult> => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -1360,6 +1371,9 @@ const searchStates = (
           });
         }),
     });
+  const parallel =
+    typed === undefined ? checkInParallel?.(search, getDescription(), environment) : undefined;
+  if (parallel) return parallel;
   const onInitialProgress = isTypedInitialReported ? undefined : options.onProgress;
   if (typed && !typed.deadlock && !typed.violation && !typed.lasso) {
     const statistics = {

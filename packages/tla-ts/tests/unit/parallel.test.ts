@@ -18,11 +18,15 @@ const DIST = join(import.meta.dirname, "../../dist/index.js");
 
 const tlaTs: typeof import("../../src") = await import(DIST);
 
+// TLC's default set bound, given explicitly, keeps the search off the typed tier, so workers run it.
+const INTERPRETED_SET_SIZE = 1_000_000;
+
 const checkFixtureInParallel = (directory: string, name: string, workers: number) =>
   tlaTs.check({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
     workers,
+    maxSetSize: INTERPRETED_SET_SIZE,
   });
 
 const getCounts = (result: { generatedStates: number; distinctStates: number; depth: number }) => [
@@ -57,7 +61,7 @@ describe("check with workers matches TLC", () => {
     };
     const [sequential, parallel] = await Promise.all([
       tlaTs.check(options),
-      tlaTs.check({ ...options, workers: 3 }),
+      tlaTs.check({ ...options, workers: 3, maxSetSize: INTERPRETED_SET_SIZE }),
     ]);
     expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
     expect(parallel.fingerprintDistance).toBeDefined();
@@ -165,6 +169,7 @@ describe("check with workers matches TLC", () => {
         "---- MODULE Grid ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 99 /\\ x' = x + 1 /\\ y' = y\n        \\/ y < 99 /\\ y' = y + 1 /\\ x' = x\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       workers: 4,
+      maxSetSize: INTERPRETED_SET_SIZE,
     });
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([19801, 10000, 199]);
@@ -177,7 +182,11 @@ describe("check with workers matches TLC", () => {
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     };
     const sequential = await tlaTs.check(options);
-    const parallel = await tlaTs.check({ ...options, workers: 3 });
+    const parallel = await tlaTs.check({
+      ...options,
+      workers: 3,
+      maxSetSize: INTERPRETED_SET_SIZE,
+    });
     expect(parallel.status).toBe("success");
     expect(getCounts(parallel)).toEqual(getCounts(sequential));
   });
@@ -192,6 +201,7 @@ describe("check with workers matches TLC", () => {
           "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
         config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
         workers: 3,
+        maxSetSize: INTERPRETED_SET_SIZE,
         onProgress: (progress) => {
           if (progress.kind === "progress") reported.push(progress.statistics);
         },
@@ -271,6 +281,7 @@ describe("check with workers matches TLC", () => {
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = [s \\in SUBSET (1..2) |-> 0]\nNext == \\E q \\in 1..2 :\n          /\\ x' = (x + q) % 5\n          /\\ y' = [s \\in SUBSET (1..2) |-> IF q \\in s THEN (y[s] + 1) % 3 ELSE y[s]]\n====",
       config: "INIT Init\nNEXT Next",
       workers: 2,
+      maxSetSize: INTERPRETED_SET_SIZE,
     });
     expect(result.status).toBe("success");
     expect(getCounts(result)).toEqual([91, 45, 11]);
@@ -383,6 +394,30 @@ describe("check with workers matches TLC", () => {
         75,
         "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The EXCEPT was applied to non-existing fields of the value at\nline 5, col 54 to line 5, col 54 of module M",
         11,
+      ]);
+    },
+  );
+
+  it.each([1, 4])(
+    "checks from Init with %i workers after the typed tier gives up partway, reporting the initial states once",
+    async (workers) => {
+      const kinds: string[] = [];
+      const result = await tlaTs.check({
+        source: readFileSync(join(FIXTURES, "tier-workers", "Fallback.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "tier-workers", "Fallback.cfg"), "utf8"),
+        workers,
+        onProgress: (progress) => kinds.push(progress.kind),
+      });
+      expect([getCounts(result), kinds]).toEqual([
+        [310, 310, 31],
+        [
+          "parsed",
+          "initial-states-started",
+          "initial-states-progress",
+          "initial-states-progress",
+          "initial-states-progress",
+          "initial-states-computed",
+        ],
       ]);
     },
   );

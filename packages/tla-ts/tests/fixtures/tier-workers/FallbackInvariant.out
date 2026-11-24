@@ -1,0 +1,39 @@
+Starting... (_)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Finished computing initial states: 10 distinct states generated at _.
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 3
+/\ y = 0
+
+State 5: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 4
+/\ y = 0
+
+State 6: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 5
+/\ y = 0
+
+State 7: <Next line 5, col 9 to line 5, col 81 of module Fallback>
+/\ x = 6
+/\ y = 0
+
+61 states generated, 61 distinct states found, 9 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in _ at (_)
