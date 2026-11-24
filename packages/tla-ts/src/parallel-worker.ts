@@ -1,5 +1,6 @@
 import {
   createFingerprintTable,
+  createSharedFingerprintsFromBuffers,
   insertSharedFingerprint,
   isSharedFingerprintsFull,
   writeStateFingerprint,
@@ -55,7 +56,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
   const workerIndex = start.index;
   const canonicalize = createCanonicalizer();
   const decode = createStateDecoder(environment.variables.length);
-  let sharedFingerprints = start.fingerprints;
+  let sharedFingerprints = createSharedFingerprintsFromBuffers(start.fingerprints);
   const requests = start.requests;
   const remaining = start.remaining;
   const generatedStates = search.isSymmetric ? createFingerprintTable() : undefined;
@@ -222,7 +223,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
     const message = event.data as CoordinatorMessage;
     if (message.type === "level") startLevel();
     if (message.type === "resize") {
-      sharedFingerprints = message.fingerprints;
+      sharedFingerprints = createSharedFingerprintsFromBuffers(message.fingerprints);
       resumeLevel();
     }
   });

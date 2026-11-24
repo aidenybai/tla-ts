@@ -1,8 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { getJavaClassName } from "../../src/builtins";
+import {
+  createSharedFingerprintsFromBuffers,
+  getSharedFingerprintBuffers,
+  insertSharedFingerprint,
+} from "../../src/fingerprints";
 import { createStateDecoder, createStateEncoder } from "../../src/transfer";
 import { formatValue } from "../../src/values";
 
@@ -260,5 +266,24 @@ describe("check with workers matches TLC", () => {
       isEncoded,
       decoded.map((innerValue) => [getJavaClassName(innerValue), formatValue(innerValue)]),
     ]).toEqual([true, [["FcnLambdaValue", "({} :> 0 @@ {1} :> 0 @@ {2} :> 0 @@ {1, 2} :> 0)"]]]);
+  });
+});
+
+describe("the shared fingerprint table", () => {
+  it("reaches a worker whole when it holds 4 GiB", () => {
+    const table = {
+      slots: new BigInt64Array(new SharedArrayBuffer(2 ** 32)),
+      used: new Int32Array(new SharedArrayBuffer(4)),
+    };
+    const channel = new MessageChannel();
+    channel.port1.postMessage(getSharedFingerprintBuffers(table));
+    const received = createSharedFingerprintsFromBuffers(
+      receiveMessageOnPort(channel.port2)?.message,
+    );
+    channel.port1.close();
+    expect(received.slots.length).toBe(2 ** 29);
+    expect(insertSharedFingerprint(received, -1, 7)).toBe(true);
+    expect(insertSharedFingerprint(table, -1, 7)).toBe(false);
+    expect(table.used[0]).toBe(1);
   });
 });
