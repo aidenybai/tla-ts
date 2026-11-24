@@ -553,7 +553,7 @@ export const createEnvironment = (
     return symbols;
   };
 
-  const rejectModuleLiterals = (module: Module): Module => {
+  const rejectModuleLiterals = (module: Module): void => {
     rejectLiterals([
       ...module.definitions.flatMap(getDefinitionExpressions),
       ...module.assumptions.map((assumption) => assumption.expression),
@@ -563,9 +563,8 @@ export const createEnvironment = (
       ...getSubstitutions(module.instances),
     ]);
     module.modules.forEach(rejectModuleLiterals);
-    return module;
   };
-  rejectModuleLiterals(root);
+  const uncheckedModules = [root];
 
   const loadModule = (name: string, importer: string) => {
     const source =
@@ -585,7 +584,8 @@ export const createEnvironment = (
         true,
       );
     }
-    return rejectModuleLiterals(module);
+    uncheckedModules.push(module);
+    return module;
   };
 
   const linkTopLevel = (parsed: Module, isHidden = false) => {
@@ -647,6 +647,7 @@ export const createEnvironment = (
     if (linking.length === 0 && semanticErrors.length > 0) {
       throw createSanyError(semanticErrors, false, undefined, warnings);
     }
+    if (linking.length === 0) uncheckedModules.splice(0).forEach(rejectModuleLiterals);
     return { linked, closure };
   };
 

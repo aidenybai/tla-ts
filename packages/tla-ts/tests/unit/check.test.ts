@@ -14,7 +14,7 @@ import {
   TlaSyntaxError,
 } from "../../src";
 import type { CheckResult, OutputLine } from "../../src/check";
-import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { createSanyError, UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
 import {
@@ -17204,7 +17204,7 @@ describe("rejecting literals matches TLC", () => {
 
   it.each([
     ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0"],
-    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
+    ["an assumption", "EXTENDS Naturals\nVARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
     ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648"],
     [
       "an unused nested module",
@@ -17221,6 +17221,22 @@ describe("rejecting literals matches TLC", () => {
       `TLC can't handle a number this big.\n${literal}`,
     );
   });
+
+  it.each([
+    ["1.5 + y", "line 4, col 12 to line 4, col 12"],
+    ["99999999999999999999 + y", "line 4, col 29 to line 4, col 29"],
+  ])(
+    "reports SANY's semantic error in X == %s before its literal, as TLC does",
+    async (body, location) => {
+      await expect(
+        checkLiterals(`EXTENDS Naturals\nVARIABLE x\nX == ${body}\nInit == x = 0`),
+      ).rejects.toThrow(
+        createSanyError([
+          { location: `${location} of module M`, message: "Unknown operator: `y'." },
+        ]),
+      );
+    },
+  );
 
   it("reads based numerals", async () => {
     const result = await checkLiterals(
