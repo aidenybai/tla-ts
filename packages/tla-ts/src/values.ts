@@ -50,7 +50,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
-  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL and
+  // VALUE_KEYS_ORDERLESS bits.
   flags: number;
 }
 
@@ -231,6 +232,8 @@ const VALUE_DEEPLY_NORMALIZED = 8;
 // A record of ESCore's heap that CanonicalStateOf made, which it keeps as it is where its
 // numbering leaves the record and what it refers to where they are (see escore-canonical.ts).
 const VALUE_CANONICAL = 16;
+// A function each key of whose domain isOrderless, which a key stays once it is.
+const VALUE_KEYS_ORDERLESS = 32;
 
 export const markCanonical = (value: FunctionValue) => {
   value.flags |= VALUE_CANONICAL;
@@ -1618,6 +1621,13 @@ const isOrderless = (value: Value): boolean =>
 
 const isOrderlessKey = (key: Value) => !isModelValue(key) && isOrderless(key);
 
+const hasOrderlessKeys = (functionValue: FunctionValue) => {
+  if ((functionValue.flags & VALUE_KEYS_ORDERLESS) !== 0) return true;
+  if (!functionValue.domain.every(isOrderless)) return false;
+  functionValue.flags |= VALUE_KEYS_ORDERLESS;
+  return true;
+};
+
 // The keys and values of two sorted domains, merged by searching the longer for each key of the
 // shorter, or undefined where two keys compare equal.
 const mergeSorted = (
@@ -1676,6 +1686,7 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
     return createWrittenFunction([...leftPairs, ...addedPairs]);
   }
   const combined = createSortedFunction(merged[0], merged[1]);
+  combined.flags |= VALUE_KEYS_ORDERLESS;
   return keys.every((key, index) => key === combined.domain[index])
     ? combined
     : setWrittenOrder(combined, keys);
@@ -1685,7 +1696,7 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
 // no key holds a written order to forget, as TLC's equality loop finds them; or undefined, for the
 // loop to find them, where a comparison fails.
 const findDroppedKeys = (left: FunctionValue, right: FunctionValue) => {
-  if (!left.domain.every(isOrderless) || !right.domain.every(isOrderless)) return undefined;
+  if (!hasOrderlessKeys(left) || !hasOrderlessKeys(right)) return undefined;
   const dropped = new Set<Value>();
   try {
     left.domain.forEach((key) => {
@@ -1707,7 +1718,12 @@ const mergeCombined = (left: FunctionValue, right: FunctionValue, dropped: Set<V
     dropped.size === 0
       ? right.range
       : right.range.filter((_, index) => !dropped.has(right.domain[index]));
-  if (!left.domain.every(isOrderless) || !addedDomain.every(isOrderless)) return undefined;
+  if (
+    !hasOrderlessKeys(left) ||
+    !(dropped.size === 0 ? hasOrderlessKeys(right) : addedDomain.every(isOrderless))
+  ) {
+    return undefined;
+  }
   try {
     return mergeSorted(left.domain, left.range, addedDomain, addedRange);
   } catch (error) {
