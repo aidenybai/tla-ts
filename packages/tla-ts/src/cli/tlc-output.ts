@@ -178,21 +178,21 @@ export interface Timing {
   startTime: number;
   isParsed: boolean;
   livenessStartTime: number | undefined;
+  lastProgress: SearchStatistics | undefined;
 }
 
 const printProgress = (
   printer: MessagePrinter,
   statistics: SearchStatistics,
-  startTime?: number,
+  rates?: [generated: number, distinct: number],
 ) => {
-  const minutes = Math.max(Date.now() - (startTime ?? 0), 1) / 60_000;
   const formatCount = (count: number) => count.toLocaleString("en-US");
-  const getRate = (count: number, unit: string) =>
-    startTime === undefined ? "" : ` (${formatCount(Math.floor(count / minutes))} ${unit}/min)`;
+  const getRate = (rate: number | undefined, unit: string) =>
+    rate === undefined ? "" : ` (${formatCount(rate)} ${unit}/min)`;
   printer.print(
     MESSAGE_CODE.progress,
     MESSAGE_LEVEL.none,
-    `Progress(${Math.max(statistics.depth, 1)}) at ${formatTlcDate(new Date())}: ${formatCount(statistics.generatedStates)} states generated${getRate(statistics.generatedStates, "s")}, ${formatCount(statistics.distinctStates)} distinct states found${getRate(statistics.distinctStates, "ds")}, ${formatCount(statistics.queuedStates)} states left on queue.`,
+    `Progress(${Math.max(statistics.depth, 1)}) at ${formatTlcDate(new Date())}: ${formatCount(statistics.generatedStates)} states generated${getRate(rates?.[0], "s")}, ${formatCount(statistics.distinctStates)} distinct states found${getRate(rates?.[1], "ds")}, ${formatCount(statistics.queuedStates)} states left on queue.`,
   );
 };
 
@@ -318,12 +318,19 @@ export const printCheckProgress = (
     case "initial-states-computed":
       printInitialStates(printer, progress.initialStates);
       return;
-    case "progress":
-      printProgress(printer, progress.statistics, timing.startTime);
+    case "progress": {
+      const last = timing.lastProgress;
+      timing.lastProgress = progress.statistics;
+      // TLC divides the states since its last report by its progress interval, whatever the time since.
+      printProgress(printer, progress.statistics, [
+        progress.statistics.generatedStates - (last?.generatedStates ?? 0),
+        progress.statistics.distinctStates - (last?.distinctStates ?? 0),
+      ]);
       if (progress.statistics.coverage) {
         printCoverage(printer, progress.statistics.coverage, timing.startTime);
       }
       return;
+    }
     case "liveness-started": {
       timing.livenessStartTime = Date.now();
       if (progress.isComplete) printProgress(printer, progress.statistics);
@@ -587,7 +594,13 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
   if (result.failure?.isWithoutStatistics) return;
   if (result.status !== "success") printLivenessEnd(printer, timing);
   if (result.coverage) printCoverage(printer, result.coverage, timing.startTime);
-  if (printer.isTool) printProgress(printer, result, timing.startTime);
+  if (printer.isTool) {
+    const minutes = Math.max(Date.now() - timing.startTime, 1) / 60_000;
+    printProgress(printer, result, [
+      Math.floor(result.generatedStates / minutes),
+      Math.floor(result.distinctStates / minutes),
+    ]);
+  }
   print(
     MESSAGE_CODE.stats,
     MESSAGE_LEVEL.none,

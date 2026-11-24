@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
+import { printCheckProgress, type Timing } from "../../src/cli/tlc-output";
 import { simulate } from "../../src/simulate";
-import { MESSAGE_LEVEL } from "../../src/tlc/messages";
+import { MESSAGE_LEVEL, type MessagePrinter } from "../../src/tlc/messages";
 import { checkFixture } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-statistics");
@@ -459,4 +460,42 @@ it("prints the statistics of a simulation in the order TLC writes them", () => {
   expect(messages[0]).toBe(
     'Evaluating invariant Inv failed.\nAttempted to select nonexistent field "diameter" from the record\n[ traces |-> 1,\n  duration |-> 0,\n  generated |-> 6,\n  behavior |-> [actions |-> [Gamma |-> 2, Alpha |-> 2, Beta |-> 1], id |-> 1],\n  worker |-> 0,\n  distinct |-> -1,\n  distinctvalues |-> -1,\n  retries |-> -1,\n  actions |-> [],\n  levelmean |-> 0,\n  levelvariance |-> 0 ]\nline 10, col 18 to line 10, col 41 of module M',
   );
+});
+
+it("rates each periodic report by the states since the last one, as TLC does", () => {
+  const printed: string[] = [];
+  const printer: MessagePrinter = {
+    isTool: false,
+    isDiffTrace: false,
+    version: "master",
+    print: (_code, _level, text) => printed.push(text.replace(/ at [^:]+:\d\d:\d\d:/, " at _:")),
+    printOutput: () => {},
+  };
+  const timing: Timing = {
+    startTime: Date.now(),
+    isParsed: true,
+    livenessStartTime: undefined,
+    lastProgress: undefined,
+  };
+  [8133, 179_596, 382_442].forEach((count) =>
+    printCheckProgress(
+      printer,
+      {
+        kind: "progress",
+        statistics: {
+          generatedStates: count,
+          distinctStates: count,
+          queuedStates: 0,
+          depth: count,
+        },
+      },
+      timing,
+      ".",
+    ),
+  );
+  expect(printed).toEqual([
+    "Progress(8133) at _: 8,133 states generated (8,133 s/min), 8,133 distinct states found (8,133 ds/min), 0 states left on queue.",
+    "Progress(179596) at _: 179,596 states generated (171,463 s/min), 179,596 distinct states found (171,463 ds/min), 0 states left on queue.",
+    "Progress(382442) at _: 382,442 states generated (202,846 s/min), 382,442 distinct states found (202,846 ds/min), 0 states left on queue.",
+  ]);
 });
