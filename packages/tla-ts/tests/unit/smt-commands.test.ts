@@ -6457,6 +6457,67 @@ describe("smt.arith.propagate_eqs, as Z3 5.3.2 reads it into every smt kernel", 
   });
 });
 
+describe("ctx-solver-simplify, as Z3 5.3.2 reads the smt parameters into its kernel", () => {
+  const script = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(declare-const z Int)",
+    "(declare-const w Int)",
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(assert (or (not q) (not p)))",
+    "(assert (or (not q) (not p)))",
+    "(assert (or (= (ite (= 2 0) -3 z) z) (< (ite (< 2 (ite (< 1 x) w z)) (+ -3 z) 0) (+ w (ite (= y x) w w)))))",
+    "(assert (or (< 2 (ite q (ite (< -1 x) y y) (+ w y))) (<= -2 (+ (ite (< z y) 0 w) x))))",
+  ];
+  const goals = [
+    "(goals",
+    "(goal",
+    "  (or (not q) (not p))",
+    "  (let ((a!1 (ite (< 2 (ite (< 1 x) w z)) (+ (- 3) z) 0)))",
+    "  (let ((a!2 (< a!1 (+ w (ite (= y x) w w)))))",
+    "    (or (= (ite (= 2 0) (- 3) z) z) a!2)))",
+    "  (let ((a!1 (< 2 (ite q (ite (< (- 1) x) y y) (+ w y))))",
+    "        (a!2 (<= (- 2) (+ (ite (< z y) 0 w) x))))",
+    "    (or a!1 a!2))",
+    "  :precision precise :depth 1)",
+    ")",
+  ];
+
+  it("seeds the kernel from smt.random_seed", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 7)",
+        ...script,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1393)"]);
+  });
+
+  it("seeds the kernel from the tactic's random_seed over smt.random_seed", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 3)",
+        ...script,
+        "(apply (using-params ctx-solver-simplify :random_seed 7))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1393)"]);
+  });
+
+  it("stops the kernel propagating equalities", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.propagate_eqs false)",
+        ...script,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([...goals, "(:rlimit 1437)"]);
+  });
+});
+
 describe("model.compact, as Z3 5.3.2's display_model compresses a model", () => {
   it("prints the model uncompressed until get-value compresses it", () => {
     expect(

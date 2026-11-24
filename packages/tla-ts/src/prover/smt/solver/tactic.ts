@@ -395,6 +395,12 @@ const isEmatching = (environment: TacticEnvironment, params: TacticParams) =>
 const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
   getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
 
+const getSmtRandomSeed = (environment: TacticEnvironment, params: TacticParams) =>
+  getUint(params, "random_seed", Number(getParameter(environment, "smt.random_seed", "0")));
+
+const isArithPropagatingEqs = (environment: TacticEnvironment) =>
+  getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false";
+
 // smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
 const isAutoConfig = (environment: TacticEnvironment, params: TacticParams) =>
   getBool(
@@ -445,13 +451,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     restartStrategy: getSmtRestartStrategy(environment, params),
     restartFactor: getSmtDouble(environment, params, "restart_factor"),
     setup,
-    randomSeed: getUint(
-      params,
-      "random_seed",
-      Number(getParameter(environment, "smt.random_seed", "0")),
-    ),
+    randomSeed: getSmtRandomSeed(environment, params),
     intHammerPeriod: getHammerPeriod(environment.parameters),
-    isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
+    isArithPropagatingEqs: isArithPropagatingEqs(environment),
     qiCost: params.has("qi.cost")
       ? String(params.get("qi.cost"))
       : environment.parameters.get("smt.qi.cost"),
@@ -1055,6 +1057,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           phaseSelection: getSmtPhaseSelection(environment, tacticParams),
           restartStrategy: getSmtRestartStrategy(environment, tacticParams),
           restartFactor: getSmtDouble(environment, tacticParams, "restart_factor"),
+          randomSeed: getSmtRandomSeed(environment, tacticParams),
+          isArithPropagatingEqs: isArithPropagatingEqs(environment),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),
