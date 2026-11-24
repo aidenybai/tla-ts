@@ -936,6 +936,27 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    "\\E <<a, b>> \\in {[i \\in {1, 2} |-> i]} : a = 1",
+    "\\A <<a, b>> \\in {[i \\in {1, 2} |-> i]} : a = 1",
+    "\\E <<a, b>> \\in [1..2 -> {3}] : a = 3",
+    "{a + b : <<a, b>> \\in {[i \\in {1, 2} |-> i]}} = {3}",
+    "{<<a, b>> \\in {[i \\in {1, 2} |-> i]} : a = 1} = {<<1, 2>>}",
+    "[<<a, b>> \\in {[i \\in {1, 2} |-> i]} |-> a + b] = (<<1, 2>> :> 3)",
+  ])("binds a function on 1..n to the tuple pattern of the assumption %s", async (assumption) => {
+    const result = await checkModule(`ASSUME ${assumption}`);
+    expect([result.status, result.violation?.message]).toEqual(["success", undefined]);
+  });
+
+  it.each([
+    "\\E <<a, b>> \\in {[i \\in {1, 2} |-> i]} : x' = a + b",
+    "x' = 3 /\\ {<<a, b>> \\in {[i \\in {1, 2} |-> i]} : a = 1} # {}",
+    "x' = 3 /\\ ENABLED (\\E <<a, b>> \\in {[i \\in {1, 2} |-> i]} : x' = a)",
+  ])("binds a function on 1..n to the tuple pattern of the action %s", async (action) => {
+    const result = await checkSteps(`Step == ${action}`, "INIT Init\nNEXT Step");
+    expect([result.status, result.distinctStates]).toEqual(["success", 2]);
+  });
+
+  it.each([
     [
       "Step == <<1>>[1] /\\ UNCHANGED x",
       "INIT Init\nNEXT Step",

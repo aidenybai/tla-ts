@@ -487,6 +487,7 @@ const describeArgumentMismatch = (pattern: BoundPattern & { kind: "Tuple" }) => 
 const describeNonTupleFilterElement = (pattern: BoundPattern & { kind: "Tuple" }, element: Value) =>
   `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`;
 
+// Deviation from TLC: ContextEnumerator#nextElement rejects a function on 1..n bound to a tuple pattern, and Tool's {<<a, b>> \in S : P} and FcnLambdaValue#toFcnRcd fail to cast it to TupleValue.
 export const bindPattern = (
   scope: Scope | undefined,
   pattern: BoundPattern,
