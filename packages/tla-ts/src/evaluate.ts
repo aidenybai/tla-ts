@@ -1871,10 +1871,7 @@ export const freezeCallStack = (
   values: (Value | undefined)[],
   error: unknown,
 ) => {
-  const sources = [...new Set(values)].flatMap((item) => {
-    const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
-    return source ? [source] : [];
-  });
+  const sources = getValueSources(callStack, values);
   const isFingerprinted = sources.length > 0 && error instanceof TlaEvaluationError;
   // TLC's CallStackTool doesn't catch the WrongInvocationException of -maxSetSize, so it pops the frames.
   if (!isFingerprinted && error instanceof TlaSetBoundError) return;
@@ -1889,13 +1886,26 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
-const headFingerprint = (callStack: CallStack, source: Expression, error: unknown) => {
+const getValueSources = (callStack: CallStack, values: (Value | undefined)[]) =>
+  [...new Set(values)].flatMap((item) => {
+    const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
+    return source ? [source] : [];
+  });
+
+// FcnLambdaValue#toFcnRcd heads the frames that its domain's size() and elements() add.
+const headFingerprint = (
+  callStack: CallStack,
+  source: Expression,
+  error: unknown,
+  depth: number,
+) => {
   if (!(error instanceof TlaEvaluationError)) return;
-  if (!callStack.isFrozen) callStack.expressions.push(source);
+  const sources = [source, ...getValueSources(callStack, setTrace.sets?.splice(depth) ?? [])];
+  if (!callStack.isFrozen) callStack.expressions.push(...sources);
   callStack.isFrozen = true;
   const inner = callStack.fingerprint;
   callStack.fingerprint = {
-    sources: [source, ...(inner?.sources ?? [])],
+    sources: [...sources, ...(inner?.sources ?? [])],
     reason: inner?.reason ?? error.message,
   };
 };
@@ -2746,10 +2756,11 @@ export const getFunctionBuilder = (
           domain.factors.every(isReducibleSet);
     if (isLazy || context.isKeepLazy || !isReducibleDomain) return createLazy(domain, context);
     if (!callStack) return construct(domain, context);
+    const depth = setTrace.sets?.length ?? 0;
     try {
       return construct(domain, context);
     } catch (error) {
-      headFingerprint(callStack, expression, error);
+      headFingerprint(callStack, expression, error, depth);
       throw error;
     }
   };

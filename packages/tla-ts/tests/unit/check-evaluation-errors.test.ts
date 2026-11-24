@@ -311,6 +311,78 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      "PrintT([y \\in {{9}, 2} |-> 1] # [y \\in {{9}, 2} |-> 2])",
+      88,
+      [
+        [34, 88],
+        [41, 87],
+        [41, 62],
+        [48, 55],
+      ],
+    ],
+    [
+      "LET S == {{9}, 2} IN PrintT([y \\in S |-> 1] # [y \\in S |-> 1])",
+      95,
+      [
+        [34, 95],
+        [55, 95],
+        [62, 94],
+        [62, 76],
+        [43, 50],
+      ],
+    ],
+    [
+      "LET S == {{9}, 2} f == [y \\in S |-> 1] IN PrintT(f # [y \\in S |-> 2])",
+      102,
+      [
+        [34, 102],
+        [76, 102],
+        [83, 101],
+        [83, 83],
+        [57, 71],
+        [43, 50],
+      ],
+    ],
+    [
+      "LET S == {{9}, 2} IN PrintT(DOMAIN [y \\in S |-> 1] # {})",
+      89,
+      [
+        [34, 89],
+        [55, 89],
+        [62, 88],
+        [62, 83],
+        [69, 83],
+        [43, 50],
+      ],
+    ],
+  ])(
+    "frames the domain of the function in %s after the function, as FcnLambdaValue#toFcnRcd heads the frames of its domain's size()",
+    async (expression, end, frames) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC, FiniteSets, Sequences, Bags\nCONSTANT M1, M2\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ PrintT("n") /\\ ${expression}\n====`,
+        config: "CONSTANT M1 = M1\nCONSTANT M2 = M2\nINIT Init\nNEXT Next",
+      });
+      const getLine = (startColumn: number, endColumn: number) =>
+        `Line 6, column ${startColumn} to line 6, column ${endColumn} in M`;
+      expect([
+        result.failure?.fingerprint?.reason,
+        formatCallStackLines(result),
+        result.failure?.exitCode,
+      ]).toEqual([
+        "Attempted to compare integer 2 with non-integer:\n{9}",
+        [
+          getLine(9, end),
+          getLine(9, 29),
+          getLine(9, 14),
+          ...frames.map((frame) => getLine(frame[0], frame[1])),
+        ],
+        75,
+      ]);
+    },
+  );
+
+  it.each([
     ["x = [k \\in {1, 2} |-> k \\div 0]", "x' = x", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in 1..2 |-> k \\div 0]", ["FunctionConstruction"]],
     ["x = 0", "x' = [k \\in {1, 2} |-> <<1, 2>>[k + 1]]", ["FunctionConstruction", "Tuple"]],
