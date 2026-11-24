@@ -1032,7 +1032,33 @@ const canonicalizeElements = (elements: Value[], canonicalize: (value: Value) =>
   }
 };
 
-export const createCanonicalizer = () => {
+const hasUnhashedLazyPart = (value: Value): boolean => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "Set":
+      if (value.hash !== 0) return false;
+      for (let index = 0; index < value.elements.length; index++) {
+        if (hasUnhashedLazyPart(value.elements[index])) return true;
+      }
+      return false;
+    case "Function":
+      if (value.hash !== 0) return false;
+      for (let index = 0; index < value.domain.length; index++) {
+        if (hasUnhashedLazyPart(value.domain[index]) || hasUnhashedLazyPart(value.range[index])) {
+          return true;
+        }
+      }
+      return false;
+    case "ModelValue":
+    case "Interval":
+    case "InfiniteSet":
+      return false;
+    default:
+      return true;
+  }
+};
+
+export const createCanonicalizer = (isViewed = false) => {
   const canonicalValues = new Map<number, Value | Value[]>();
   const canonicalize = (value: Value): Value => {
     if (typeof value !== "object" || (value.kind !== "Set" && value.kind !== "Function")) {
@@ -1059,6 +1085,15 @@ export const createCanonicalizer = () => {
     else canonicalValues.set(hash, [bucket, value]);
     return value;
   };
+  // Under a VIEW, TLCStateMut#fingerPrint only deep-normalizes a state, which leaves its filters unconverted.
+  if (isViewed) {
+    return (state: Value[]) => {
+      for (let index = 0; index < state.length; index++) {
+        if (!hasUnhashedLazyPart(state[index])) state[index] = canonicalize(state[index]);
+      }
+      return state;
+    };
+  }
   return (state: Value[]) => {
     for (let index = 0; index < state.length; index++) state[index] = canonicalize(state[index]);
     return state;

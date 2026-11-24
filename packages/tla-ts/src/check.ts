@@ -805,7 +805,9 @@ const searchStates = (
     return -2 - position;
   };
   // TLC's states keep their own values, and coverage charges the cost model each value carries.
-  const canonicalizeState = coverage ? (state: Value[]) => state : createCanonicalizer();
+  const canonicalizeState = coverage
+    ? (state: Value[]) => state
+    : createCanonicalizer(search.isViewed);
 
   const toRecord = search.toRecord;
   // TLC's TLCGet("level") is 0 in the initial predicate and 1 in an initial state, also as TLC rebuilds one for a trace while it explores another state.

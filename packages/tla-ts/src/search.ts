@@ -883,6 +883,7 @@ export interface Search {
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
+  isViewed: boolean;
   isConstrained: boolean;
   isNextReplayed: boolean;
   isTraceRebuildShown: boolean;
@@ -1627,6 +1628,7 @@ export const createSearch = (
           : getAliasRecord(config.alias, state, undefined, isTool),
     }),
     isSymmetric: symmetryGroup !== undefined,
+    isViewed: view !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
     isNextReplayed:
       spec.next !== undefined &&
