@@ -182,6 +182,22 @@ describe("INSTANCE matches TLC", () => {
     expect([result.status, result.generatedStates]).toEqual(["success", 3]);
   });
 
+  it("evaluates a LET instance's substitute at each read under ENABLED with coverage, as TLC's Tool#enabled binds it uncached", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nInv == LET L(k) == INSTANCE Alias WITH c <- IF PrintT(<<"c", k>>) THEN k ELSE 0, v <- x IN ENABLED (L(0)!Act /\\ L(1)!Act)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+      loadModule: (name) => PRINTED_INSTANCE_MODULES.get(name),
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual([
+      "invariant-violation",
+      ['<<"c", 0>>', '<<"c", 0>>', '<<"c", 1>>'],
+    ]);
+  });
+
   it("evaluates each definition a named instance of a parameter-free module copies at startup, as SANY gives each its own OpDefNode", async () => {
     const prints: string[] = [];
     const result = await check({

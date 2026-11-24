@@ -584,7 +584,9 @@ const visitFramed = (
           ? runAtCoverageNode(replay.coverage, node, () =>
               bindDefinitions(definitions, context, {
                 impure: new Set(
-                  replay.isEnabled ? definitions.filter(isSubstitutionDefinition) : definitions,
+                  replay.isEnabled && !replay.environment.boundSubstitutions.lets.has(expression)
+                    ? definitions.filter(isSubstitutionDefinition)
+                    : definitions,
                 ),
                 streamed: new Set(),
               }),
