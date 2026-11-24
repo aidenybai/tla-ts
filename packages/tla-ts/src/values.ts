@@ -2176,7 +2176,7 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
   }
 };
 
-export const hasLazyPart = (value: Value) => {
+const findLazyPart = (value: Value, isAnyLazy: boolean) => {
   if (typeof value !== "object" || value.kind === "ModelValue") return false;
   const pending: Value[] = [value];
   for (let inner = pending.pop(); inner !== undefined; inner = pending.pop()) {
@@ -2192,9 +2192,11 @@ export const hasLazyPart = (value: Value) => {
           pending.push(inner.domain[index], inner.range[index]);
         }
         break;
+      case "InfiniteSet":
+        if (isAnyLazy && inner === ANY_SET) return true;
+        break;
       case "ModelValue":
       case "Interval":
-      case "InfiniteSet":
         break;
       default:
         return true;
@@ -2203,9 +2205,12 @@ export const hasLazyPart = (value: Value) => {
   return false;
 };
 
+export const hasLazyPart = (value: Value) => findLazyPart(value, false);
+
+// TLC's sort fails when it compares ANY, so a product holding ANY is sorted with TLC's comparisons.
 const hasLazyValue = (values: Value[]) => {
   for (let index = 0; index < values.length; index++) {
-    if (hasLazyPart(values[index])) return true;
+    if (findLazyPart(values[index], true)) return true;
   }
   return false;
 };
