@@ -13332,6 +13332,39 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "a set of records under \\subseteq",
+      "[a : {F}, b : {1, 2}] \\subseteq [a : {{{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a product under \\subseteq",
+      "{F} \\X {1, 2} \\subseteq {{{}, {1}}} \\X {1, 2}",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of functions under \\subseteq",
+      "[{1, 2} -> {F, {1}}] \\subseteq [{1, 2} -> {{1}, F}]",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of records under \\in SUBSET",
+      "[a : {F, {1}}, b : {1, 2}] \\in SUBSET [a : {{1}, {{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
+    ],
+    [
+      "a set of records that \\subseteq SUBSET tests",
+      "{[a : {F}, b : {1, 2}]} \\subseteq SUBSET [a : {{{}, {1}}}, b : {1, 2}]",
+      ['"n"', "{}", "{1}", "{}", "{1}"],
+    ],
+  ])(
+    "tests each element of %s with F unconverted, as TLC's elements() draws a product it hasn't converted",
+    async (_site, next, expected) => {
+      expect(await getPrintedFilterPasses("0", next)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "0",
       "LET g == [n \\in {F, {9}} |-> 1] IN PrintT(g)",
       ['"n"', "{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}", "({9} :> 1 @@ {{}, {1}} :> 1)"],

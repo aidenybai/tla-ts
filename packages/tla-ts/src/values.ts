@@ -2260,7 +2260,14 @@ const getUnboundedElements = (value: Value): Value[] => {
   }
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
-  const isSorted = value.kind === "FilteredSet" || isSortedLikeTlc(value);
+  return collectUnboundedSet(value, opened, value.kind === "FilteredSet" || isSortedLikeTlc(value));
+};
+
+const collectUnboundedSet = (
+  value: FunctionSetValue | RecordSetValue | ProductSetValue | FilteredSetValue,
+  opened: OpenedStream | undefined,
+  isSorted: boolean,
+) => {
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = false;
   let elements: Value[];
@@ -3784,6 +3791,18 @@ const someElementOfStream = (
     getCardinality(value.base) > MAXIMUM_BUILT_SUBSET_BASE
   ) {
     return someSubset(getSubsetBase(value), visit, value.cost?.node);
+  }
+  if (
+    (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
+    !value.enumerated
+  ) {
+    return isSortedLikeTlc(value)
+      ? collectUnboundedSet(
+          value,
+          setTrace.sets ? openOperandStream(value, false) : undefined,
+          true,
+        ).some(visit)
+      : somePulledElement(openProductStream(value), visit);
   }
   if (value.kind !== "SetOperation") return getUnboundedElements(value).some(visit);
   if (value.operator === "\\cup") {
