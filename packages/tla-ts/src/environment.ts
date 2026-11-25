@@ -2053,8 +2053,12 @@ export const createEnvironment = (
     overridden.values.forEach((value, name) => {
       const key = linked.visible.get(name)?.key;
       definitions.forEach((definition, definitionKey) => {
-        if (definition.kind === "Operator" && getSourceKey(definitionKey) === key) {
-          bodyValues.set(definition.body, value);
+        if (definition.kind !== "Operator" || getSourceKey(definitionKey) !== key) return;
+        let body = definition.body;
+        bodyValues.set(body, value);
+        while (body.kind === "Let" && boundSubstitutions.lets.has(body)) {
+          body = body.body;
+          bodyValues.set(body, value);
         }
       });
     });

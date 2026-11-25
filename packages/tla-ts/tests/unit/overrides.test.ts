@@ -113,6 +113,16 @@ describe("Java module overrides match TLC", () => {
     ).toEqual(["assumption-violation", "line 3, col 8 to line 3, col 11 of module Root", []]);
   });
 
+  it("overrides an instance's copy of an operator that reads a substitution", async () => {
+    expect(
+      await checkMatched(
+        "---- MODULE Root ----\nEXTENDS Overrides\nO == INSTANCE Overrides WITH N <- {1}\nASSUME O!G /\\ O!Flag /\\ \\A i \\in {1} : O!Flag\n====",
+        "CONSTANT N = {}",
+        new Map([["Overrides", PARAMETERIZED]]),
+      ),
+    ).toEqual(["success", undefined, ["Flag"]]);
+  });
+
   it("rejects an override whose method computes its value", async () => {
     await expect(
       check({
