@@ -958,7 +958,7 @@ it("stops simulating about 150 states after an error that -continue can't contin
 });
 
 const WORKERS =
-  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\n====';
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\nPosted == TLCSet(5, 1) /\\ TLCSet("s:k", 2) /\\ PrintT(<<"posted", TLCGet("all"), TLCGet("all:named")>>)\n====';
 
 const getWorkerLines = (
   config: string,
@@ -1107,6 +1107,14 @@ it("fails on a register that a worker never set in TLCGet(\"all\"), where TLC's 
   expect([simulated.status, simulated.lines[0].split("\n").at(-1)]).toEqual([
     10,
     "TLCGet(2) was undefined.",
+  ]);
+});
+
+it("sets the registers of every worker from a postcondition, as TLC's Simulator does from its own thread", () => {
+  const simulated = getWorkerLines("INIT Counting\nNEXT Next\nPOSTCONDITION Posted", 2, 2n, 2);
+  expect([simulated.status, simulated.lines[0]]).toEqual([
+    0,
+    '<<"posted", (1 :> <<0, 0>> @@ 5 :> <<1, 1>>), ("s:k" :> <<2, 2>>)>>',
   ]);
 });
 

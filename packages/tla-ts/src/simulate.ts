@@ -965,6 +965,12 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   runtime.getRandom = getSimulatorRandom;
   runtime.registers = registers[0];
   runtime.namedRegisters = namedRegisters[0];
+  runtime.setSimulationRegister = (key, value) => {
+    for (let index = 0; index < workers.length; index++) {
+      if (typeof key === "number") registers[index].set(key, value);
+      else namedRegisters[index].set(key, value);
+    }
+  };
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );

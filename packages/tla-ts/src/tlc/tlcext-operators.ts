@@ -128,7 +128,8 @@ export const setTlcValue = (
   if (typeof key === "number" && key >= 0) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    runtime.registers.set(key, value);
+    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    else runtime.registers.set(key, value);
     return;
   }
   // Deviation from TLC: TLCGetSet#TLCSet drops the exit, the pause and a named register's write before any checker exists, so each fails here as a numbered register's does.
@@ -150,7 +151,8 @@ export const setTlcValue = (
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    runtime.namedRegisters.set(key, value);
+    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    else runtime.namedRegisters.set(key, value);
     return;
   }
   if (typeof key === "string" && key.startsWith("-D")) {

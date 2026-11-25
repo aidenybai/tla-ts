@@ -22,6 +22,7 @@ export interface CheckerRuntime {
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
+  setSimulationRegister: ((key: number | string, value: Value) => void) | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
   readLine: (() => string | undefined) | undefined;
@@ -74,6 +75,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
+    setSimulationRegister: undefined,
     getRandom: () => {
       if (isStartup) return startupRandom;
       const state = isWorkerStateSet ? workerState : runtime.getCurrentState();
