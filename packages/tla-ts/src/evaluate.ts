@@ -1921,7 +1921,7 @@ export const freezeCallStack = (
   callStack.isFrozen = true;
 };
 
-const getValueSources = (callStack: CallStack, values: (Value | undefined)[]) =>
+export const getValueSources = (callStack: CallStack, values: (Value | undefined)[]) =>
   [...new Set(values)].flatMap((item) => {
     const source = typeof item === "object" ? callStack.sources.get(item) : undefined;
     return source ? [source] : [];
