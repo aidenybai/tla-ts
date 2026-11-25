@@ -146,14 +146,14 @@ const RL_ALPHA = 0.3;
 const RL_GAMMA = 0.7;
 const RL_REWARD = -10;
 
-const isUnequal = () => false;
+const isIdentical = (left: Value, right: Value) => left === right;
 
 // TLC's SimulationWorker#getTrace drops a step its TLCState#equals finds stuttering, which sorts the records it compares.
 const isRepeatedState = (state: Value[], predecessor: Value[], order: number[]) => {
   for (let position = 0; position < order.length; position++) {
     const index = order[position];
-    // Deviation from TLC: TLCState#equals fails on values it can't compare, so TLC's simulation reports that failure in place of the violation, or hangs.
-    if (!computeOnFailure(valuesEqual, isUnequal, state[index], predecessor[index])) {
+    // Deviation from TLC: TLCState#equals fails on values it can't compare, such as a filter of Nat, so TLC's simulation reports that failure in place of the violation, or hangs. Such a value equals only itself here.
+    if (!computeOnFailure(valuesEqual, isIdentical, state[index], predecessor[index])) {
       return false;
     }
   }
