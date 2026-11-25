@@ -505,6 +505,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       const variables = getUnchangedVariables(subscript, generator.environment);
       if (
         !variables ||
+        variables.length === 0 ||
         (subscript.kind === "Identifier" && generator.environment.variableIndex.has(subscript.name))
       ) {
         return evaluated;
