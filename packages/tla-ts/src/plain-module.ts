@@ -1,4 +1,10 @@
-import { isRecursiveConstruction, type Bound, type Expression, type Module } from "./ast";
+import {
+  isRecursiveConstruction,
+  type Bound,
+  type Definition,
+  type Expression,
+  type Module,
+} from "./ast";
 import {
   addArgumentParam,
   AND_LEVELS,
@@ -80,10 +86,13 @@ const PLAIN_KINDS = new Set(["Definition", "Builtin", "Constant"]);
 // error, and the pass finds the rest of each definition's levels as the full analysis does: its
 // weights, the maximum level of each parameter, and the parameters it reads, applies and passes to
 // the operators its callees apply. A module the pass doesn't take is checked in full,
-// which finds the errors the pass leaves to it.
+// which finds the errors the pass leaves to it. With isPrefix, the pass takes the definitions before
+// the first that isn't plain, whose levels it gives, and leaves that one and the rest to the full
+// checks.
 export const checkPlainModule = (
   module: Module,
   context: PlainContext,
+  isPrefix = false,
 ): { levels: OperatorLevels[]; isWide: boolean } | undefined => {
   if (
     module.constants.length > 0 ||
@@ -491,7 +500,8 @@ export const checkPlainModule = (
         return undefined;
     }
   };
-  for (const definition of module.definitions) {
+  // The levels of a definition, after those before it, or undefined where it isn't plain.
+  const getDefinitionLevels = (definition: Definition): OperatorLevels | undefined => {
     if (
       definition.kind !== "Operator" ||
       definition.isLocal ||
@@ -561,6 +571,19 @@ export const checkPlainModule = (
         formalBits.flatMap((bit, index) => ((body.nonLeibniz & (1 << bit)) !== 0 ? [index] : [])),
       ),
     };
+    return definitionLevels;
+  };
+  for (const definition of module.definitions) {
+    // A definition that isn't plain leaves its references and its strings to the full checks.
+    const referenceCount = references.length;
+    const wasWide = isWide;
+    const definitionLevels = getDefinitionLevels(definition);
+    if (definitionLevels === undefined && !isPrefix) return undefined;
+    if (definitionLevels === undefined) {
+      references.length = referenceCount;
+      isWide = wasWide;
+      break;
+    }
     own.set(definition.name, definitionLevels);
     levels.push(definitionLevels);
   }
