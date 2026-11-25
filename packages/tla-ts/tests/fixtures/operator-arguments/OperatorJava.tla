@@ -12,4 +12,5 @@ Compares == HasOp => {Op, Op} # {}
 HasMember == HasOp => 1 \in Op
 Applies == HasOp => Op[1] = 2
 Prints == HasOp => PrintT(Op)
+Pairs == HasOp => (Op \X {1}) = {}
 ====

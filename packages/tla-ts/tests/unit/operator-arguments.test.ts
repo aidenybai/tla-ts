@@ -357,6 +357,10 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
       76,
       ["Attempted to compute the number of elements in the operator <Operator Inc>."],
     ],
+    ["Pairs", 76, ["Should not normalize an operator."]],
+    ["Maps", 76, ["Should not normalize an operator."]],
+    ["Filters", 76, ["Should not normalize an operator."]],
+    ["Removes", 76, ["Should not normalize an operator."]],
   ])("fails %s in -simulate with TLC's message", (invariant, status, message) => {
     const run = simulateInvariant("OperatorValues", invariant);
     expect([run.status, getFailure(invariant, run.lines)]).toEqual([status, message]);
@@ -423,6 +427,14 @@ describe("an action with a Java override for an argument binds it as TLC's Metho
       expect([run.status, getFailure(invariant, run.lines)]).toEqual([76, message]);
     },
   );
+
+  it("fails to normalize the Java method with TLC's MethodValue message", () => {
+    const run = simulateInvariant("OperatorJava", "Pairs");
+    expect([run.status, getFailure("Pairs", run.lines)]).toEqual([
+      76,
+      ["It is a TLC bug: Attempted to normalize an operator."],
+    ]);
+  });
 });
 
 const SERIALIZE_ERROR = [

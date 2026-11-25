@@ -2243,6 +2243,12 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
       return value.sets.every(isNormalizedLikeTlc);
     case "ProductSet":
       return value.factors.every(isNormalizedLikeTlc);
+    case "Operator":
+      throw new TlaEvaluationError(
+        value.javaClass === "MethodValue"
+          ? "It is a TLC bug: Attempted to normalize an operator."
+          : "Should not normalize an operator.",
+      );
     default:
       return false;
   }
@@ -2286,14 +2292,14 @@ const hasLazyValue = (values: Value[]) => {
   return false;
 };
 
-const hasLazyComponent = (sets: Value[]) => {
+const hasLazyComponent = (sets: Value[], isConverted: boolean) => {
   for (let index = 0; index < sets.length; index++) {
-    if (hasLazyElements(sets[index])) return true;
+    if (hasLazyElements(sets[index], isConverted)) return true;
   }
   return false;
 };
 
-const hasLazyElements = (value: Value): boolean => {
+const hasLazyElements = (value: Value, isConverted: boolean): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Set":
@@ -2303,21 +2309,52 @@ const hasLazyElements = (value: Value): boolean => {
     case "FilteredSet":
     case "Subset":
     case "Union":
-      return hasLazyElements(value.base);
+      return hasLazyElements(value.base, isConverted);
     case "SetOperation":
-      return hasLazyElements(value.left) || hasLazyElements(value.right);
+      return hasLazyElements(value.left, isConverted) || hasLazyElements(value.right, isConverted);
     case "FunctionSet":
-      return hasLazyElements(value.domain) || hasLazyElements(value.range);
+      return (
+        hasLazyElements(value.domain, isConverted) || hasLazyElements(value.range, isConverted)
+      );
     case "RecordSet":
-      return hasLazyComponent(value.sets);
+      return hasLazyComponent(value.sets, isConverted);
     case "ProductSet":
-      return hasLazyComponent(value.factors);
+      return hasLazyComponent(value.factors, isConverted);
+    case "Operator":
+      // TLC's toSetEnum reads OpLambdaValue#isNormalized, which throws, where its elements() doesn't.
+      return isConverted;
     default:
       return false;
   }
 };
 
-const isSortedLikeTlc = (value: Value) => !hasLazyElements(value) || isNormalizedLikeTlc(value);
+const isSortedLikeTlc = (value: Value, isConverted: boolean) =>
+  !hasLazyElements(value, isConverted) || isNormalizedLikeTlc(value);
+
+// TLC's toSetEnum reads whether the sets it combines are normalized before it enumerates them.
+const isConvertedSortedLikeTlc = (value: Value) => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "ProductSet":
+    case "FunctionSet":
+    case "RecordSet":
+      return isSortedLikeTlc(value, true);
+    case "FilteredSet":
+      isNormalizedLikeTlc(value);
+      return true;
+    case "SetOperation":
+      if (value.operator !== "\\cup" && isNormalizedLikeTlc(value.left)) {
+        if (value.operator === "\\cap") isNormalizedLikeTlc(value.right);
+      }
+      return true;
+    case "MixedSet":
+    case "Union":
+    case "Subset":
+      return true;
+    default:
+      return false;
+  }
+};
 
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
@@ -2331,9 +2368,10 @@ const getUnboundedElements = (value: Value): Value[] => {
   ) {
     return toFiniteSet(value).elements;
   }
+  const isSorted = isConvertedSortedLikeTlc(value);
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
-  return collectUnboundedSet(value, opened, value.kind === "FilteredSet" || isSortedLikeTlc(value));
+  return collectUnboundedSet(value, opened, isSorted);
 };
 
 const collectUnboundedSet = (
@@ -2492,18 +2530,7 @@ const convertSet = (
   }
   const sets = setTrace.sets;
   if (!isFramedAsOpened) sets?.push(value);
-  const isSorted =
-    isSortedRead ??
-    (typeof value === "object" &&
-      (value.kind === "MixedSet" ||
-        value.kind === "Union" ||
-        value.kind === "SetOperation" ||
-        value.kind === "FilteredSet" ||
-        value.kind === "Subset" ||
-        ((value.kind === "ProductSet" ||
-          value.kind === "FunctionSet" ||
-          value.kind === "RecordSet") &&
-          isSortedLikeTlc(value))));
+  const isSorted = isSortedRead ?? isConvertedSortedLikeTlc(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
@@ -2604,9 +2631,7 @@ const toChargedSet = (
   const cost = value.cost;
   if (cost?.charges === undefined) return convert(value);
   // SetOfRcdsValue#toSetEnum reads whether its sets are normalized before elements() normalizes them, which charging here does first.
-  const isSortedRead =
-    (value.kind !== "ProductSet" && value.kind !== "FunctionSet" && value.kind !== "RecordSet") ||
-    isSortedLikeTlc(value);
+  const isSortedRead = isConvertedSortedLikeTlc(value);
   if (!isSortedRead) stopFirstAttempt();
   const set = cost.charges.convertCharged(value, convert, isSortedRead);
   if (isCached) cost.charges = undefined;
@@ -3726,8 +3751,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     return isBounded ? toBoundSet(value).elements : getUnboundedElements(value);
   }
   const isRepeated = (value.kind === "Union" || value.hasFilter) && hasObservedPass(value);
-  const isSorted =
-    value.kind === "SetOperation" || value.kind === "Union" || isSortedLikeTlc(value);
+  const isSorted = isConvertedSortedLikeTlc(value);
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   const elements = enumerateSet(
     value,
@@ -3869,7 +3893,7 @@ const someElementOfStream = (
     (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
     !value.enumerated
   ) {
-    return isSortedLikeTlc(value)
+    return isSortedLikeTlc(value, false)
       ? collectUnboundedSet(
           value,
           setTrace.sets ? openOperandStream(value, false) : undefined,
