@@ -497,4 +497,12 @@ describe("a trace file leaves out the operators a split action binds", () => {
     const start = run.lines.findIndex(isPostconditionError);
     expect(run.lines.slice(start, start + SERIALIZE_ERROR.length)).toEqual(SERIALIZE_ERROR);
   });
+
+  it("fails to write a state's own record whose context field holds an operator", () => {
+    const run = runSpec(["-simulate", "num=1", "-depth", "4", "-seed", "1"], "OperatorRecord", [
+      ["OperatorRecord.cfg", "INIT Init\nNEXT Next\n"],
+    ]);
+    const start = run.lines.findIndex(isPostconditionError);
+    expect(run.lines.slice(start, start + SERIALIZE_ERROR.length)).toEqual(SERIALIZE_ERROR);
+  });
 });
