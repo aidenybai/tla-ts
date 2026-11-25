@@ -461,6 +461,7 @@ interface Instantiation {
   addDefinition: (
     source: string,
     name: string,
+    isExported: boolean,
     create: (key: string) => Definition,
     reservedKey?: string,
   ) => string;
@@ -1047,7 +1048,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   const instantiation = rewrite.instantiation;
   const definition = instantiation.getDefinition(key);
   if (!definition) return key;
-  return instantiation.addDefinition(key, definition.name, (copyKey) => {
+  return instantiation.addDefinition(key, definition.name, false, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const unboundRewrite = getMode(rewrite, rewrite.mode);
@@ -1158,6 +1159,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
     return instantiation.addDefinition(
       key,
       definition.name,
+      true,
       () => {
         const operator = getOperatorDefinition(definition);
         return {
@@ -1181,6 +1183,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       return instantiation.addDefinition(
         key,
         definition.name,
+        true,
         () => withInstanceParams(definition, instantiation.params),
         reservedKey,
       );

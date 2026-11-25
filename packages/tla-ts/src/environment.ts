@@ -325,6 +325,7 @@ export const createEnvironment = (
   const parameterized = new Map<string, boolean>();
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
+  const exportedCopies = new Set<string>();
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
   const boundSubstitutions: BoundSubstitutions = {
@@ -913,7 +914,7 @@ export const createEnvironment = (
         );
       },
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (source, name, create, reservedKey) => {
+      addDefinition: (source, name, isExported, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
         const created = create(key);
         const definition =
@@ -930,6 +931,7 @@ export const createEnvironment = (
         }
         parameterized.set(key, !isParameterFree);
         copySources.set(key, { source, prefix: instance.params.length });
+        if (isExported) exportedCopies.add(key);
         return key;
       },
       createName,
@@ -1290,7 +1292,7 @@ export const createEnvironment = (
         substitutionDefinitions.find((definition) => definition.name === key),
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (source, name, create) => {
+      addDefinition: (source, name, isExported, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
         const override = getOverride(source, instance.params.length);
@@ -1308,6 +1310,8 @@ export const createEnvironment = (
             : createLocalFunction(definition, key);
         const isTheorem = theorems.has(source);
         copies.push(isTheorem ? { ...copy, theoremRange: getInstanceRange(instance) } : copy);
+        copySources.set(key, { source, prefix: instance.params.length });
+        if (isExported) exportedCopies.add(key);
         if (isTheorem) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
         if (instanceCopy) localCopies.set(key, instanceCopy);
@@ -2049,8 +2053,10 @@ export const createEnvironment = (
     ]),
     rootKeys,
     definitions,
+    assumptions,
     builtins,
     copySources,
+    exportedCopies,
     standardAliasBodies,
     operatorConstants: new Map(
       moduleOperators.flatMap((operator) =>

@@ -53,6 +53,11 @@ const PRINTED_INSTANCE = 'LET L == INSTANCE Pure4 WITH c <- IF PrintT(<<"c">>) T
 const PRINTED_PARAMETERIZED_INSTANCE =
   'LET L(k) == INSTANCE Pure4 WITH c <- IF PrintT(<<"c", k>>) THEN x + k ELSE 0 IN';
 
+const OVERRIDDEN_MODULES = new Map([
+  ["P", "---- MODULE P ----\nCONSTANT S\nNone == CHOOSE v \\in {1, 2} : v \\notin S\n===="],
+  ["Q", "---- MODULE Q ----\nEXTENDS P\nval == None\n===="],
+]);
+
 const PRINTED_ACTION_INSTANCE =
   'LET L == INSTANCE Pure3 WITH c <- IF PrintT(<<"c">>) THEN 1 ELSE 0, v <- x IN';
 
@@ -343,6 +348,51 @@ describe("INSTANCE matches TLC", () => {
     expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
       "success",
       2,
+      1,
+    ]);
+  });
+
+  it("overrides a root definition that an instance's copy names, but not the instance's own copy of it, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS P\nVARIABLE x\nI == INSTANCE Q\nInit == x = None\nNext == UNCHANGED x\nInv == I!val = x /\\ I!None = 2\n====",
+      config: "CONSTANTS S = {1} None = None\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
+      1,
+    ]);
+  });
+
+  it("overrides a root definition that a LET instance's copy in an ASSUME names, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS P\nVARIABLE x\nInit == x = None\nNext == UNCHANGED x\nInv == x = None\nASSUME LET J == INSTANCE Q IN J!val = None\n====",
+      config: "CONSTANTS S = {1} None = None\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
+      1,
+    ]);
+  });
+
+  it("redirects a root definition that a LET instance's copy names, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS P\nVARIABLE x\nOther == 7\nInit == x = 7\nNext == UNCHANGED x\nInv == LET J == INSTANCE Q WITH S <- {2} IN J!val = x /\\ J!None = 1\n====",
+      config: "CONSTANTS S = {1} None <- Other\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
       1,
     ]);
   });
