@@ -5,7 +5,8 @@ import { prettyPrint } from "./pretty-print";
 import { writeStateFingerprint } from "./fingerprints";
 import {
   applyFunction,
-  createCanonicalPage,
+  CanonicalPage,
+  changeEntryHash,
   createChangedFunction,
   createFunction,
   createRecord,
@@ -15,16 +16,17 @@ import {
   EDGE_STARTS,
   formatValue,
   getKeyPosition,
+  getPageRecord,
   getSequenceElements,
   getValueHash,
   isCanonical,
   isCanonicalPage,
+  isUnfingerprintableHash,
   markCanonical,
   PAGE_SIZE,
   setFunctionClass,
   toFiniteFunction,
   toFiniteSet,
-  type CanonicalPage,
   type FunctionValue,
   type Value,
   valuesEqual,
@@ -168,50 +170,133 @@ const except = (record: Value, changes: Record<string, (inner: Value, record: Va
     : createChangedFunction(functionValue, range ?? functionValue.range.slice());
 };
 
-// The record at each index of a heap, which reads each page's records once.
+// The record at each index of a heap, which reads each page's records once and makes only the
+// records it reads of a canonical page.
 const createHeapReader = (heap: Value) => {
   const pages = getList(get(heap, "pages"));
   const pageRecords: Value[][] = [];
   return (index: number) => {
-    const page = Math.floor((index - 1) / PAGE_SIZE);
-    pageRecords[page] ??= getList(pages[page]);
-    return pageRecords[page][(index - 1) % PAGE_SIZE];
+    const position = Math.floor((index - 1) / PAGE_SIZE);
+    const page = pages[position];
+    if (isCanonicalPage(page)) return getPageRecord(page, (index - 1) % PAGE_SIZE);
+    pageRecords[position] ??= getList(page);
+    return pageRecords[position][(index - 1) % PAGE_SIZE];
   };
 };
 
-// A heap of records, whose each page is the page of the heap before that a canonicalization made,
-// where that page holds the same records, or else a page of its own, which createPage makes.
-const createHeap = (
-  records: Value[],
-  before: Value,
-  isIncremental: boolean,
-  createPage: (records: Value[], page: number) => CanonicalPage,
-) => {
-  const pagesBefore = get(before, "pages");
-  const pages = getList(pagesBefore);
-  return toRecord(before, [
-    ["size", records.length],
+// A heap of size records whose pages makePage gives.
+const createHeap = (before: Value, size: number, makePage: (page: number) => Value) =>
+  toRecord(before, [
+    ["size", size],
     [
       "pages",
       toTuple(
-        pagesBefore,
-        Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, page) => {
-          const kept = records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-          const previous = pages[page];
-          const previousRecords = previous === undefined ? [] : getList(previous);
-          if (
-            isIncremental &&
-            isCanonical(previous) &&
-            previousRecords.length === kept.length &&
-            previousRecords.every((record, index) => record === kept[index])
-          ) {
-            return previous;
-          }
-          return createPage(kept, page);
-        }),
+        get(before, "pages"),
+        Array.from({ length: Math.ceil(size / PAGE_SIZE) }, (_, page) => makePage(page)),
       ),
     ],
   ]);
+
+// The object value [type |-> "object", id |-> number] that value becomes.
+const renameRef = (value: Value, number: number) => {
+  if (!isPlainOf(value, "record") || value.domain.length !== 2) {
+    return createRecord([
+      ["type", "object"],
+      ["id", number],
+    ]);
+  }
+  const position = findFieldIndex(value.domain, "id");
+  if (value.range[position] === number) return value;
+  const range = value.range.slice();
+  range[position] = number;
+  return createChangedFunction(value, range);
+};
+
+// The hash of renameRef(value, number).
+const getRenamedRefHash = (value: Value, number: number) => {
+  if (!isPlainOf(value, "record") || value.domain.length !== 2) {
+    return getValueHash(renameRef(value, number));
+  }
+  const id = value.range[findFieldIndex(value.domain, "id")];
+  return id === number
+    ? getValueHash(value)
+    : changeEntryHash(getValueHash(value), "id", getValueHash(id), getValueHash(number));
+};
+
+// The record at a slot of a canonical page: its source with the node of each of its edges at each
+// of its locations, which copies only the values on the paths to the nodes that it changes.
+const makeRecord = (page: CanonicalPage, slot: number): Value => {
+  const source = page.sources[slot];
+  const located = page.locations[slot];
+  if (located === undefined) return source;
+  const start = page.edges[EDGE_STARTS + slot];
+  const root = toFiniteFunction(source);
+  const openSources = [root];
+  const openRanges = [root.range.slice()];
+  const openSteps: number[] = [];
+  const openKinds = [0];
+  const closeLevel = (level: number) => {
+    const inner = openSources[level];
+    const range = openRanges[level];
+    if (isEveryKept(range, inner.range)) return;
+    openRanges[level - 1][openSteps[level - 1] >> 1] =
+      openKinds[level] === 1 ? createTuple(range) : createChangedFunction(inner, range);
+  };
+  let open = 0;
+  for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
+    const target = page.edges[start + located[at]];
+    const depth = located[at + 1] - 1;
+    let common = 0;
+    while (common < open && common < depth && openSteps[common] === located[at + 2 + common]) {
+      common++;
+    }
+    for (; open > common; open--) closeLevel(open);
+    for (; open < depth; open++) {
+      const step = located[at + 2 + open];
+      const inner = toFiniteFunction(openRanges[open][step >> 1]);
+      openSteps[open] = step;
+      openSources[open + 1] = inner;
+      openRanges[open + 1] = inner.range.slice();
+      openKinds[open + 1] = located[at + 3 + open] & 1;
+    }
+    const range = openRanges[open];
+    const position = located[at + 2 + depth] >> 1;
+    range[position] = target > 0 ? renameRef(range[position], target) : -target;
+  }
+  for (; open > 0; open--) closeLevel(open);
+  return isEveryKept(openRanges[0], root.range)
+    ? source
+    : markCanonical(createChangedFunction(root, openRanges[0]));
+};
+
+// The slots of a heap at its new numbers. A slot's record is the record that renaming made, or else
+// undefined, where its source with its edges by their new numbers at its locations makes it. A slot
+// is in place where it is the slot of the heap before at its number, as that was.
+interface Slots {
+  records: (Value | undefined)[];
+  sources: Value[];
+  hashes: Int32Array;
+  isInPlace: Uint8Array;
+}
+
+const createSlots = (size: number): Slots => ({
+  records: [],
+  sources: [],
+  hashes: new Int32Array(size),
+  isInPlace: new Uint8Array(size),
+});
+
+const pushSlot = (
+  slots: Slots,
+  record: Value | undefined,
+  source: Value,
+  hash: number,
+  isInPlace: boolean,
+) => {
+  slots.hashes[slots.sources.length] = hash;
+  slots.isInPlace[slots.sources.length] = isInPlace ? 1 : 0;
+  slots.records.push(record);
+  slots.sources.push(source);
 };
 
 // The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
@@ -818,22 +903,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (number === 0) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
-  const renameRef = (value: Value, id: number, number: number) => {
-    if (!isPlainOf(value, "record") || value.domain.length !== 2) {
-      return createRecord([
-        ["type", "object"],
-        ["id", number],
-      ]);
-    }
-    if (number === id) return value;
-    const range = value.range.slice();
-    range[findFieldIndex(value.domain, "id")] = number;
-    return createChangedFunction(value, range);
-  };
   const renameValue = (value: Value): Value => {
     if (getString(value, "type") !== "object") return value;
     const id = getNumber(value, "id");
-    return id <= realm.objects ? value : renameRef(value, id, getNew(id));
+    return id <= realm.objects ? value : renameRef(value, getNew(id));
   };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
@@ -1031,75 +1104,112 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     return true;
   };
-  const openSources: FunctionValue[] = [];
-  const openRanges: Value[][] = [];
-  const openSteps: number[] = [];
-  const openKinds: number[] = [];
-  const closeLevel = (level: number) => {
-    openRanges[level - 1][openSteps[level - 1] >> 1] =
-      openKinds[level] === 1
-        ? createTuple(openRanges[level])
-        : createChangedFunction(openSources[level], openRanges[level]);
-  };
+  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
   const getLocated = (node: number) =>
-    walkedLocations.has(node)
-      ? walkedLocations.get(node)
-      : getPage(node)?.locations[((node > 0 ? node : -node) - 1) % PAGE_SIZE];
-  // Renaming a canonical record copies only the values on the paths to its moved nodes.
-  const substitute = (node: number, record: Value, located: number[]) => {
+    walkedLocations.has(node) ? walkedLocations.get(node) : getPage(node)?.locations[getSlot(node)];
+  const hashValues: FunctionValue[] = [];
+  const hashSteps: number[] = [];
+  const levelHashes: number[] = [];
+  const closeHashLevel = (level: number) => {
+    const holder = hashValues[level - 1];
+    const position = hashSteps[level - 1] >> 1;
+    const previous = getValueHash(holder.range[position]);
+    if (previous === levelHashes[level]) return;
+    levelHashes[level - 1] = changeEntryHash(
+      levelHashes[level - 1],
+      holder.domain[position],
+      previous,
+      levelHashes[level],
+    );
+  };
+  // The hash of the record that makeRecord makes of source with node's edges, by their new numbers,
+  // at located.
+  const getMadeHash = (node: number, source: Value, located: number[] | undefined) => {
+    const root = toFiniteFunction(source);
+    levelHashes[0] = getValueHash(root);
+    if (located === undefined || isUnfingerprintableHash(levelHashes[0])) return levelHashes[0];
+    hashValues[0] = root;
     const start = getEdgeStart(node);
-    const root = toFiniteFunction(record);
-    openSources[0] = root;
-    openRanges[0] = root.range.slice();
     let open = 0;
     for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
       const target = edges[start + 1 + located[at]];
-      if (isUnmoved(target)) continue;
       const depth = located[at + 1] - 1;
       let common = 0;
-      while (common < open && common < depth && openSteps[common] === located[at + 2 + common]) {
+      while (common < open && common < depth && hashSteps[common] === located[at + 2 + common]) {
         common++;
       }
-      for (; open > common; open--) closeLevel(open);
+      for (; open > common; open--) closeHashLevel(open);
       for (; open < depth; open++) {
         const step = located[at + 2 + open];
-        const inner = toFiniteFunction(openRanges[open][step >> 1]);
-        openSteps[open] = step;
-        openSources[open + 1] = inner;
-        openRanges[open + 1] = inner.range.slice();
-        openKinds[open + 1] = located[at + 3 + open] & 1;
+        const inner = toFiniteFunction(hashValues[open].range[step >> 1]);
+        hashSteps[open] = step;
+        hashValues[open + 1] = inner;
+        levelHashes[open + 1] = getValueHash(inner);
       }
-      const range = openRanges[open];
+      const holder = hashValues[open];
       const position = located[at + 2 + depth] >> 1;
-      range[position] =
-        target > 0 ? renameRef(range[position], target, getNew(target)) : getNew(target);
+      const previous = holder.range[position];
+      const previousHash = getValueHash(previous);
+      const nextHash =
+        target > 0 ? getRenamedRefHash(previous, getNew(target)) : getValueHash(getNew(target));
+      if (nextHash === previousHash) continue;
+      levelHashes[open] = changeEntryHash(
+        levelHashes[open],
+        holder.domain[position],
+        previousHash,
+        nextHash,
+      );
     }
-    for (; open > 0; open--) closeLevel(open);
-    return createChangedFunction(root, openRanges[0]);
+    for (; open > 0; open--) closeHashLevel(open);
+    return levelHashes[0];
   };
   // Dropping an emptied bucket moves the values after it.
   let isEveryPositionKept = true;
-  // A record renamed, or as it is where renaming would give it back, whose source a weak record's
-  // renaming doesn't stand for, as the walk's other nodes decide which entries it keeps.
+  const getRecord = (node: number) => (node > 0 ? getObject(node) : getEnvironment(-node));
+  const keepSlot = (node: number, slots: Slots, isInPlace: boolean) => {
+    const page = getPage(node);
+    if (page === undefined) {
+      const record = getRecord(node);
+      pushSlot(slots, record, record, getValueHash(record), isInPlace);
+      return;
+    }
+    const slot = getSlot(node);
+    pushSlot(slots, page.records[slot], page.sources[slot], page.hashes[slot], isInPlace);
+  };
+  const makeLater = (node: number, source: Value, located: number[] | undefined, slots: Slots) =>
+    pushSlot(slots, undefined, source, getMadeHash(node, source, located), false);
+  // The slot of a node at a new number: as it is, where renaming would give it back, or renamed. A
+  // canonical record's renaming waits until a reader reads it.
   const rename = (
     node: number,
-    record: Value,
+    number: number,
     renameRecord: (inner: Value) => FunctionValue,
-    sources: (Value | undefined)[],
+    slots: Slots,
   ) => {
-    const isWeak = node > 0 && WEAK_CLASSES.has(getString(record, "class"));
-    sources.push(isWeak ? undefined : record);
-    const isKept = isIncremental && isCanonical(record) && !isWeak;
-    if (isKept && isEveryEdgeUnmoved(node)) return record;
+    const isInPlace = (node > 0 ? node : -node) === number;
+    const page = getPage(node);
+    const slot = getSlot(node);
+    if (page !== undefined && page.records[slot] === undefined) {
+      if (isEveryEdgeUnmoved(node)) return keepSlot(node, slots, isInPlace);
+      return makeLater(node, page.sources[slot], page.locations[slot], slots);
+    }
+    const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
+    const isKept =
+      isIncremental &&
+      isCanonical(record) &&
+      !(node > 0 && WEAK_CLASSES.has(getString(record, "class")));
+    if (isKept && isEveryEdgeUnmoved(node)) return keepSlot(node, slots, isInPlace);
     const located =
       isKept && (node < 0 || !ENTRY_CLASSES.has(getString(record, "class")))
         ? getLocated(node)
         : undefined;
-    if (located !== undefined) return markCanonical(substitute(node, record, located));
+    if (located !== undefined) {
+      return makeLater(node, page === undefined ? record : page.sources[slot], located, slots);
+    }
     isEveryPositionKept = true;
     const renamed = markCanonical(renameRecord(record));
     if (!isEveryPositionKept) walkedLocations.set(node, undefined);
-    return renamed;
+    pushSlot(slots, renamed, renamed, getValueHash(renamed), false);
   };
   // The node that each new number names, in each heap, where a realm's object that no step changed
   // names none.
@@ -1113,31 +1223,32 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
   }
-  const objectSources: (Value | undefined)[] = [];
-  const objects: Value[] = [];
+  const objectSlots = createSlots(objectNodes.length - 1);
   for (let number = 1; number < objectNodes.length; number++) {
     const node = objectNodes[number];
     if (node === 0) {
-      objectSources.push(undefined);
-      objects.push(getObject(number));
+      keepSlot(number, objectSlots, true);
       continue;
     }
-    objects.push(rename(node, getObject(node), renameObject, objectSources));
+    rename(node, number, renameObject, objectSlots);
   }
-  const environmentSources: (Value | undefined)[] = [];
-  const environments: Value[] = [];
+  const environmentSlots = createSlots(environmentNodes.length - 1);
   for (let number = 1; number < environmentNodes.length; number++) {
-    const node = environmentNodes[number];
-    environments.push(
-      rename(node, getEnvironment(-node), renameEnvironmentRecord, environmentSources),
-    );
+    rename(environmentNodes[number], number, renameEnvironmentRecord, environmentSlots);
   }
+  // A page of a heap, which is the page of the heap before where each of its slots is in place.
   const getPageMaker =
-    (nodes: Int32Array, sources: (Value | undefined)[]) => (records: Value[], page: number) => {
-      const count = records.length;
+    (nodes: Int32Array, slots: Slots, pagesBefore: Value[]) => (page: number) => {
+      const first = page * PAGE_SIZE;
+      const count = Math.min(PAGE_SIZE, slots.sources.length - first);
+      const previous = pagesBefore[page];
+      let isKept = isIncremental && isCanonicalPage(previous) && previous.domain.length === count;
+      for (let slot = 0; isKept && slot < count; slot++)
+        isKept = slots.isInPlace[first + slot] === 1;
+      if (isKept) return previous;
       let size = EDGE_NODES;
       for (let slot = 0; slot < count; slot++) {
-        const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
+        const start = getEdgeStart(nodes[first + slot + 1]);
         if (start !== -1) size += edges[start];
       }
       const pageEdges = new Int32Array(size);
@@ -1146,7 +1257,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       let at = EDGE_NODES;
       for (let slot = 0; slot < PAGE_SIZE; slot++) {
         pageEdges[EDGE_STARTS + slot] = at;
-        const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
+        const node = slot < count ? nodes[first + slot + 1] : 0;
         const start = getEdgeStart(node);
         if (start === -1) continue;
         for (let index = start + 1; index <= start + edges[start]; index++) {
@@ -1156,26 +1267,30 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
       }
       pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
-      return createCanonicalPage(
-        records,
+      const locations: (number[] | undefined)[] = [];
+      for (let slot = 0; slot < count; slot++) {
+        const node = nodes[first + slot + 1];
+        locations.push(getLocated(node === 0 ? first + slot + 1 : node));
+      }
+      return new CanonicalPage(
         pageEdges,
-        Array.from({ length: count }, (_, slot) => {
-          const node = nodes[page * PAGE_SIZE + slot + 1];
-          return node === 0 ? undefined : getLocated(node);
-        }),
-        sources.slice(page * PAGE_SIZE, page * PAGE_SIZE + count),
+        locations,
+        slots.sources.slice(first, first + count),
+        slots.records.slice(first, first + count),
+        slots.hashes.slice(first, first + count),
+        makeRecord,
       );
     };
   return except(state, {
-    objs: () => createHeap(objects, objs, isIncremental, getPageMaker(objectNodes, objectSources)),
+    objs: () =>
+      createHeap(objs, objectSlots.sources.length, getPageMaker(objectNodes, objectSlots, pages)),
     envs: () =>
       createHeap(
-        environments,
         envs,
-        isIncremental,
-        getPageMaker(environmentNodes, environmentSources),
+        environmentSlots.sources.length,
+        getPageMaker(environmentNodes, environmentSlots, environmentPages),
       ),
-    envsHeld: () => environments.length,
+    envsHeld: () => environmentSlots.sources.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
     hostHandler: renameMaybe,
