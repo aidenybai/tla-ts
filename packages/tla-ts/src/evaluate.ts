@@ -54,6 +54,7 @@ import {
   type Coverage,
   type NextStateMode,
 } from "./coverage";
+import { resolveSynonym } from "./tlc/jar-data";
 import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
@@ -1383,6 +1384,11 @@ const toOperatorValue = (operator: Operator, name: string, context: Context): Op
 
 export const evaluateOperatorValue = (expression: Expression, context: Context) => {
   const operator = evaluateOperatorArgument(expression, context);
+  const symbol =
+    expression.kind === "OperatorReference" || expression.kind === "Lambda"
+      ? expression.operator
+      : undefined;
+  if (symbol !== undefined) return toOperatorValue(operator, resolveSynonym(symbol), context);
   const instanceName =
     expression.kind === "Identifier" && !isLocallyResolved(expression)
       ? context.environment.instanceNames.get(expression.name)

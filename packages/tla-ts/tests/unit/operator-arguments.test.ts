@@ -241,6 +241,20 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
     ]);
   });
 
+  it("names a built-in operator argument by SANY's name for it", () => {
+    const run = runSpec(["-noGenerateSpecTE"], "OperatorBuiltins", [
+      ["OperatorBuiltins.cfg", "INIT Init\nNEXT Named\n"],
+    ]);
+    expect([run.status, run.lines.filter((line) => line.startsWith("State "))]).toEqual([
+      11,
+      [
+        "State 1: <Initial predicate>",
+        "State 2: <Skip(<Operator SUBSET>) line 4, col 15 to line 4, col 29 of module OperatorBuiltins>",
+        "State 3: <SkipPair(<Operator \\union>) line 5, col 22 to line 5, col 36 of module OperatorBuiltins>",
+      ],
+    ]);
+  });
+
   it("names an operator an instance imports by the instance, as SANY names its OpDefNode", () => {
     const run = runSpec(["-noGenerateSpecTE", "-config", "Instanced.cfg"], "Outer");
     const step = "<I!Step(<Operator I!Twice>) line 4, col 1 to line 4, col 31 of module Outer>";
