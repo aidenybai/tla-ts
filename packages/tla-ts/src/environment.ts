@@ -1862,10 +1862,10 @@ export const createEnvironment = (
     const plainLevels = plain?.levels;
     if (plain && !plain.isWide) parsed.definitions.forEach((item) => narrowDefinitions.add(item));
     // The definitions before the first unit of another kind of a prepared module that isn't plain,
-    // such as a program's code before its model's steps, which the same pass resolves and levels
-    // where they're plain, so that the full checks bind them without walking them. The pass finds
-    // none of the errors that the full checks report, which a prepared module's definitions have
-    // none of.
+    // such as a program's code before its model's steps, which the same pass resolves and levels up
+    // to the first that isn't plain, such as a step that passes an operator, so that the full checks
+    // bind them without walking them. The pass finds none of the errors that the full checks
+    // report, which a prepared module's definitions have none of.
     const leadingUnits = parsed.units.slice(
       0,
       parsed.units.findIndex((item) => item.kind !== "Definition"),
@@ -1892,11 +1892,13 @@ export const createEnvironment = (
               modules: [],
             },
             plainContext,
+            true,
           )
         : undefined;
-    const resolvedLeading = new Set(leadingPlain === undefined ? [] : leading);
+    const plainLeading = leading.slice(0, leadingPlain?.levels.length ?? 0);
+    const resolvedLeading = new Set(plainLeading);
     if (leadingPlain && !leadingPlain.isWide)
-      leading.forEach((item) => narrowDefinitions.add(item));
+      plainLeading.forEach((item) => narrowDefinitions.add(item));
     const isLinkedAsIs = isAccepted || plainLevels !== undefined;
     const module = isLinkedAsIs ? parsed : subexpressions.resolve();
     parsed.theorems
@@ -1941,7 +1943,9 @@ export const createEnvironment = (
           module.definitions.map((definition, position) => [definition, acceptedLevels[position]]),
         )
       : leadingPlain &&
-        new Map(leading.map((definition, position) => [definition, leadingPlain.levels[position]]));
+        new Map(
+          plainLeading.map((definition, position) => [definition, leadingPlain.levels[position]]),
+        );
     unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);

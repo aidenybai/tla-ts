@@ -3277,3 +3277,35 @@ describe("levels the constant definitions before a prepared module's other units
     );
   });
 });
+
+describe("levels a prepared module's constant definitions up to one that passes an operator as the full checks do", () => {
+  const checkPrepared = (assumption: string) => {
+    const library = "---- MODULE Library ----\nEXTENDS Naturals\nInc(a) == a + 1\n====";
+    const text = `---- MODULE Tree ----\nEXTENDS Library\nTwice(a) == LET b == Inc(a) IN Inc(b)\nApplyTo(F(_), a) == F(a)\nThrice(a) == Inc(ApplyTo(Twice, a))\nVARIABLE x\nInit == x = Thrice(0)\nNext == x' = IF x < 9 THEN Thrice(x) ELSE x\nASSUME ${assumption}\n====`;
+    return check({
+      source: "---- MODULE M ----\nEXTENDS Tree\n====",
+      config: "INIT Init\nNEXT Next",
+      preparedModules: [
+        {
+          name: "Library",
+          text: library,
+          tokens: [],
+          module: parseModule(library),
+          levels: undefined,
+        },
+        { name: "Tree", text, tokens: [], module: parseModule(text), levels: undefined },
+      ],
+    });
+  };
+
+  it("checks the steps that apply them and those after them", async () => {
+    const result = await checkPrepared("ApplyTo(Twice, 1) = 3");
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("gives the applications of those after them the levels of their arguments", async () => {
+    await expect(checkPrepared("Thrice(x) = 3")).rejects.toThrow(
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+    );
+  });
+});
