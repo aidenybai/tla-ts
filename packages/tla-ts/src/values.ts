@@ -5352,19 +5352,21 @@ export const createUnfingerprintableError = (value: Value) =>
     `TLC has found a state in which the value of a variable contains ${prettyPrint(formatValue(value))}`,
   );
 
-const getFingerprintedParts = (value: ObjectValue) => {
-  if (isSetValue(value)) return toFiniteSet(value).elements;
-  const functionValue = toFiniteFunction(value);
-  return functionValue.domain.flatMap((argument, index) => [argument, functionValue.range[index]]);
-};
-
 const fingerprintValue = (value: Value): void => {
   if (typeof value !== "object" || value.kind === "ModelValue") return;
   callTracedMethod(value, () => {
     if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
       throw createUnfingerprintableError(value);
     }
-    getFingerprintedParts(value).forEach(fingerprintValue);
+    if (isSetValue(value)) {
+      toFiniteSet(value).elements.forEach(fingerprintValue);
+      return;
+    }
+    const functionValue = toFiniteFunction(value);
+    functionValue.domain.forEach((argument, index) => {
+      fingerprintValue(argument);
+      fingerprintValue(functionValue.range[index]);
+    });
   });
 };
 
