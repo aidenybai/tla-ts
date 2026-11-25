@@ -194,10 +194,9 @@ describe("-loadTrace tlc matches TLC", () => {
   });
 
   it("loads TLC's trace of MissionariesAndCannibals, finding its model values by index", async () => {
-    const directory = "typescript/examples/missionaries-and-cannibals";
     const result = await loadTrace(
-      readText(`${directory}/MissionariesAndCannibals.tla`),
-      readText(`${directory}/MissionariesAndCannibals.cfg`),
+      readText("load-trace/MissionariesAndCannibals.tla"),
+      readText("load-trace/MissionariesAndCannibals.cfg"),
       readFixture("load-trace/MissionariesAndCannibals.bin"),
     );
     expect(getOutcome(result)).toEqual({
@@ -475,7 +474,7 @@ describe("-dumpTrace tlc writes each string's location as TLC does", () => {
       ["contents", "vars", "counterexample"],
     ],
     [
-      "typescript/examples/missionaries-and-cannibals/MissionariesAndCannibals",
+      "load-trace/MissionariesAndCannibals",
       "load-trace/MissionariesAndCannibals.bin",
       ["bank_of_boat", "who_is_on_bank", "vars", "counterexample"],
     ],

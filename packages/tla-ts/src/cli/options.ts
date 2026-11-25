@@ -82,7 +82,7 @@ export const TLAPM_COMMAND = defineCommand("tla-ts tlapm {options} <Module.tla|g
 ]);
 
 export const USAGE = [
-  "Usage: tla-ts <Spec.tla|Spec.cfg|spec.ts|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default|off>] [-maxSetSize <num>] [-metadir <directory>] [-nowarning] [-seed <num>] [-terse] [-tool] [-view] [-workers <count|auto>]",
+  "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default|off>] [-maxSetSize <num>] [-metadir <directory>] [-nowarning] [-seed <num>] [-terse] [-tool] [-view] [-workers <count|auto>]",
   `       ${TLAPM_COMMAND.usage}`,
   "       tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>",
   "       (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)",

@@ -84,7 +84,6 @@ import {
   toLibraryPath,
   type JavaProperties,
 } from "./shared";
-import { writeTypeScriptSpec } from "./typescript";
 
 const EXIT_CODES: Record<CheckStatus, number> = {
   success: EXIT_STATUS.success,
@@ -593,15 +592,14 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     .map((input) => ({
       ...input,
       path:
-        input.isGlobbed || /\.(tla|cfg|ts)$/.test(input.path)
+        input.isGlobbed || /\.(tla|cfg)$/.test(input.path)
           ? input.path.replace(/\.cfg$/, ".tla")
           : `${input.path}.tla`,
     }))
     .filter(
       (input) =>
-        input.path.endsWith(".ts") ||
-        (input.path.endsWith(".tla") &&
-          (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
+        input.path.endsWith(".tla") &&
+        (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg"))),
     )
     .map((input) => input.path);
   if (specPaths.length === 0) {
@@ -631,13 +629,12 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
         userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
     });
     exitCodes.push(
-      await reportErrors(async () => {
-        const specPath = path.endsWith(".ts") ? await writeTypeScriptSpec(path) : path;
+      await reportErrors(() => {
         // An extension: TLC refuses more than one spec, and tla-ts checks each one under its name.
         if (paths.length > 1) {
-          console.log(`Checking ${basename(specPath)} with ${basename(specPath, ".tla")}.cfg`);
+          console.log(`Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`);
         }
-        return checkSpec(specPath, drawSeeds(parsed), dump, java, printer);
+        return checkSpec(path, drawSeeds(parsed), dump, java, printer);
       }, printer),
     );
   }
