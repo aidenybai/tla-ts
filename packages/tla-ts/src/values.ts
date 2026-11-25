@@ -5541,7 +5541,8 @@ const expandLazySet = (value: LazySetValue) => {
 };
 
 const getExpandedLazySet = (value: LazySetValue, isStrict: boolean) => {
-  if (isStrict || value.kind === "Union") return expandLazySet(value);
+  // Deviation from TLC: UnionValue#toString lets the failure of toSetEnum through where its swallow asks for the lazy form, so TLC can't print a state, action or error message that holds UNION {Nat}.
+  if (isStrict) return expandLazySet(value);
   if (
     value.kind === "Subset" &&
     isFunctionValue(value.base) &&

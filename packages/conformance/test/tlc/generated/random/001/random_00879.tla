@@ -3,11 +3,20 @@ description: Evaluates a random set expression, seed 262, number 879.
 ref: tlc2/tool/impl/Tool.java#evalImpl
 features:
   - random-expression
+  - tlc-bug
 flags:
   - expression
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 10
+    transcript: |-
+      2144:3 The EXCEPT was applied to non-existing fields of the value at
+      line 23, col 32 to line 23, col 39 of module random_00879
+      2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_00879 failed.
+      Attempted to access tuple at a non integral index: UNION({Nat})
 ---*)
 ---- MODULE random_00879 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
@@ -19,7 +28,7 @@ all:
   exit: 10
   transcript: |-
     2144:3 The EXCEPT was applied to non-existing fields of the value at
-    line 14, col 32 to line 14, col 39 of module random_00879
-    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00879 failed.
+    line 23, col 32 to line 23, col 39 of module random_00879
+    2105:1 Evaluating assumption line 24, col 8 to line 24, col 11 of module random_00879 failed.
     Attempted to enumerate UNION(s), but some element of s is nonenumerable.
 ---*)
