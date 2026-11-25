@@ -245,6 +245,7 @@ export type CheckStatus =
   | "property-violation"
   | "liveness-violation"
   | "postcondition-violation"
+  | "periodic-violation"
   | "deadlock"
   | "error";
 
@@ -1928,6 +1929,8 @@ const searchStates = (
     );
   };
   const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
+  const hasPeriodicWork =
+    isPeriodic || config.periodic !== undefined || options.onProgress !== undefined;
   const periodic = {
     at: performance.now() + PERIODIC_START,
     checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
@@ -1947,26 +1950,39 @@ const searchStates = (
       (count, branch) =>
         (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
     );
-    if (periodic.runtimeRatio > LIVENESS_RATIO || !isGrown) {
+    if (periodic.runtimeRatio > LIVENESS_RATIO || (!isGrown && config.periodic === undefined)) {
       updateRuntimeRatio(0);
       return undefined;
     }
     // Here TLC checks below 0.2 and updates above it, so a ratio of exactly 0.2 stays.
     if (periodic.runtimeRatio === LIVENESS_RATIO) return undefined;
     const checkedAt = performance.now();
-    periodic.checkedCounts = counts;
-    options.onProgress?.({
-      kind: "liveness-started",
-      branches: checker.branches,
-      isComplete: false,
-      states: getGraphStates(checker),
-      statistics: createResult("success"),
-    });
-    const lasso = checker.findViolation();
-    if (lasso) return lasso;
-    options.onProgress?.({ kind: "liveness-finished" });
+    if (isGrown) {
+      periodic.checkedCounts = counts;
+      options.onProgress?.({
+        kind: "liveness-started",
+        branches: checker.branches,
+        isComplete: false,
+        states: getGraphStates(checker),
+        statistics: createResult("success"),
+      });
+      const lasso = checker.findViolation();
+      if (lasso) return lasso;
+      options.onProgress?.({ kind: "liveness-finished" });
+    }
     updateRuntimeRatio(performance.now() - checkedAt);
     return undefined;
+  };
+  const findPeriodicResult = (name: string) => {
+    try {
+      if (!search.isPeriodicFalse()) return undefined;
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      return createFailureResult(setExitCode(toUnexpectedError(error), EXIT_STATUS.error), {
+        trace: [],
+      });
+    }
+    return createResult("periodic-violation", { name, trace: [] });
   };
   const adoptTypedSearch = (searched: TypedResult) => {
     runtime.generatedStates = searched.generatedStates;
@@ -2093,9 +2109,12 @@ const searchStates = (
     if (outcome) return outcome;
     outDegrees[getOutDegreeBucket()]++;
     newStateCount = 0;
-    if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
+    if (hasPeriodicWork && performance.now() >= periodic.at) {
       const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
+      const periodicResult =
+        config.periodic === undefined ? undefined : findPeriodicResult(config.periodic);
+      if (periodicResult) return periodicResult;
       const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
       periodic.coverageCount = isCoverageDue
         ? Math.trunc(options.coverage ?? 0)

@@ -94,7 +94,12 @@ import {
   getSubstitutedName,
   substitutionFrames,
 } from "./instances";
-import { getPossibleCounts, getPossibleTotals, type CheckerRuntime } from "./runtime";
+import {
+  getPossibleCounts,
+  getPossibleTotals,
+  PERIODIC_STATE,
+  type CheckerRuntime,
+} from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
   getSpecDescription,
@@ -127,6 +132,7 @@ import {
   getModelValues,
   getWrittenPairs,
   hasLazyPart,
+  isEqualLikeTlc,
   isFunctionValue,
   isUpdatedElementOf,
   normalizeDeeply,
@@ -930,6 +936,7 @@ export interface Search {
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
   getReward: (state: Value[] | undefined, next: Value[], fallback: number) => number;
+  isPeriodicFalse: () => boolean;
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
@@ -1430,7 +1437,10 @@ export const createSearch = (
     config.rlReward === undefined
       ? undefined
       : createIdentifier(getRootKey(config.rlReward, environment));
-  if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
+  const periodic =
+    config.periodic === undefined
+      ? undefined
+      : getOperatorDefinition(getConfigOperator("periodic", config.periodic, environment)).body;
   const possible = getPossiblePredicates(config.possible, environment);
   const symmetryGroup =
     config.symmetry === undefined
@@ -1919,6 +1929,9 @@ export const createSearch = (
       }
       return value;
     },
+    isPeriodicFalse: () =>
+      periodic !== undefined &&
+      isEqualLikeTlc(false, evaluate(periodic, getContext(environment, PERIODIC_STATE, undefined))),
     findPostconditionViolation: (isAfterViolation = false) => {
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions

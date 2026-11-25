@@ -153,6 +153,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     options.coverage !== undefined ||
     options.isContinued === true ||
     config.view !== undefined ||
+    config.periodic !== undefined ||
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;

@@ -439,6 +439,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
         printer.isTool,
       ),
     },
+    // ModelChecker#doPeriodicWork returns TLC_ASSUMPTION_FALSE for a FALSE _PERIODIC without printing its message.
+    "periodic-violation": undefined,
   }[status];
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;

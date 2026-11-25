@@ -19,6 +19,7 @@ import {
   EMPTY_STATE,
   getNamedRegisters,
   NAMED_REGISTER_PREFIX,
+  PERIODIC_STATE,
   type CheckerRuntime,
 } from "../runtime";
 import { createActionRecord, createTlcRecord, setTlcValue } from "./tlcext-operators";
@@ -93,7 +94,11 @@ const getRuntimeValue = (
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
-      return state === undefined ? 0 : state === EMPTY_STATE ? 1 : runtime.getLevel(state);
+      return state === undefined
+        ? 0
+        : state === EMPTY_STATE || state === PERIODIC_STATE
+          ? 1
+          : runtime.getLevel(state);
     case "diameter":
       return runtime.diameter;
     case "generated":
