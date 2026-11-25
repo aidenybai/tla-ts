@@ -1331,9 +1331,9 @@ it("evaluates _PERIODIC after the summary of a behavior that violates an invaria
 
 it("stops at the progress report every minute that finds _PERIODIC FALSE and reports again, as TLC's Simulator does, and exits 10 as model checking does", () => {
   let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
   const progress =
-    "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)";
+    "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)";
   const error = "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.";
   expect(getSimulatedLines("NEXT Next\n_PERIODIC False", 10n)).toEqual([
     10,
@@ -1342,18 +1342,18 @@ it("stops at the progress report every minute that finds _PERIODIC FALSE and rep
       error,
       progress,
       error,
-      "The number of states generated: 101\nSimulation using seed 4 and aril 0",
+      "The number of states generated: 199\nSimulation using seed 4 and aril 0",
     ],
   ]);
 });
 
 it("reports no more progress once _PERIODIC fails to evaluate to a boolean, as TLC's ProgressReport dies, and exits 255 as model checking does", () => {
   let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
   expect(getSimulatedLines("NEXT Next\n_PERIODIC Number", 10n)).toEqual([
     255,
     [
-      "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
       "TLC Bug: Progress report thread died.",
       "The number of states generated: 201\nSimulation using seed 4 and aril 0",
     ],
@@ -1362,7 +1362,7 @@ it("reports no more progress once _PERIODIC fails to evaluate to a boolean, as T
 
 it("reads the first worker's register and sets every worker's in a progress report's _PERIODIC with -workers 2, as TLC's ProgressReport thread does", () => {
   let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
   const printed: string[] = [];
   const status = simulate({
     source:
@@ -1384,11 +1384,11 @@ it("reads the first worker's register and sets every worker's in a progress repo
 
 it("reads TLCGet(\"diameter\") as 0 in a progress report during a behavior, as TLC's ProgressReport thread isn't a SimulationWorker", () => {
   let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
   expect(getSimulatedLines("NEXT Next\n_PERIODIC Printed", 10n)).toEqual([
     0,
     [
-      "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
       '<<"periodic", 0>>',
       "Progress: 201 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
       '<<"periodic", 0>>',
@@ -1399,7 +1399,7 @@ it("reads TLCGet(\"diameter\") as 0 in a progress report during a behavior, as T
 
 it("prints the coverage with every second progress report under -coverage 2, as TLC's ProgressReport counts down", () => {
   let now = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
   const kinds: string[] = [];
   simulate({
     source: SIM,
@@ -1416,14 +1416,5 @@ it("prints the coverage with every second progress report under -coverage 2, as 
       if (output.kind !== "message") kinds.push(output.kind);
     },
   });
-  expect(kinds).toEqual([
-    "progress",
-    "progress",
-    "coverage",
-    "progress",
-    "progress",
-    "coverage",
-    "coverage",
-    "summary",
-  ]);
+  expect(kinds).toEqual(["progress", "progress", "coverage", "progress", "coverage", "summary"]);
 });

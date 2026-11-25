@@ -636,6 +636,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   // TLC's Simulator deep-normalizes the initial states, which sorts their records.
   initialStates.forEach((node) => node.state.forEach(markNormalized));
   let reportAt = performance.now() + PROGRESS_INTERVAL;
+  let stepsUntilClock = REPORT_CLOCK_STEPS;
   let coverageCount = Math.trunc(options.coverage ?? 0);
   let isReporterDead = false;
   let periodicStatus: number = EXIT_STATUS.success;
@@ -679,6 +680,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     runtime.setEveryWorkerRegister = undefined;
   };
   const isStoppedByReport = () => {
+    stepsUntilClock = REPORT_CLOCK_STEPS;
     if (isReporterDead || stoppedStates !== undefined || performance.now() < reportAt) {
       return false;
     }
@@ -835,7 +837,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     let currentActionId = initActions.length - 1;
     for (let depth = 0; depth < traceDepth; depth++) {
-      if (runtime.isStopped || (depth % REPORT_CLOCK_STEPS === 0 && isStoppedByReport())) {
+      if (runtime.isStopped || (--stepsUntilClock === 0 && isStoppedByReport())) {
         return "stopped";
       }
       let actionIndex = scheduler.getNextActionIndex(currentNode);
