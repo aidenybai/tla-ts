@@ -373,17 +373,39 @@ const KEY_TYPES = ["string", "symbol"];
 // string keys and the symbol keys in the order they were added.
 const getDescriptors = (object: Value) => {
   const props = toFiniteFunction(get(object, "props"));
-  const buckets: { bucket: Value; position: number }[] = [];
+  const positions: number[] = [];
   let named: Value | undefined;
+  let isAscending = true;
+  let previousBucket = -Infinity;
   for (let position = 0; position < props.domain.length; position++) {
     const bucket = props.domain[position];
-    if (bucket === NAMED_BUCKET) named = props.range[position];
-    else buckets.push({ bucket, position });
+    if (bucket === NAMED_BUCKET) {
+      named = props.range[position];
+      continue;
+    }
+    if (Number(bucket) < previousBucket) isAscending = false;
+    previousBucket = Number(bucket);
+    positions.push(position);
   }
-  buckets.sort((left, right) => Number(left.bucket) - Number(right.bucket));
+  if (!isAscending) {
+    positions.sort((left, right) => Number(props.domain[left]) - Number(props.domain[right]));
+  }
   const descriptors: Value[] = [];
-  for (let index = 0; index < buckets.length; index++) {
-    const bucket = toFiniteFunction(props.range[buckets[index].position]);
+  for (let index = 0; index < positions.length; index++) {
+    const bucket = toFiniteFunction(props.range[positions[index]]);
+    let previous = -Infinity;
+    let isInOrder = true;
+    for (let position = 0; position < bucket.domain.length && isInOrder; position++) {
+      const keyIndex = getIndex(bucket.domain[position]);
+      isInOrder = keyIndex >= previous;
+      previous = keyIndex;
+    }
+    if (isInOrder) {
+      for (let position = 0; position < bucket.range.length; position++) {
+        descriptors.push(bucket.range[position]);
+      }
+      continue;
+    }
     bucket.domain
       .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
       .sort((left, right) => left.index - right.index)
@@ -502,11 +524,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
   });
   // The nodes that each walked record refers to, an object by its id and an environment by its
-  // number negated: from where edgeStarts has a node, its count and then the nodes.
+  // number negated: from where a node's edges start, its count and then the nodes.
   const edges: number[] = [];
-  const edgeStarts = new Map<number, number>();
+  const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
+  const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
   const collect = (node: number, refs: number[], start: number) => {
-    edgeStarts.set(node, edges.length);
+    if (node > 0) objectEdgeStarts[node] = edges.length;
+    else environmentEdgeStarts[-node] = edges.length;
     edges.push(refs.length - start);
     for (let index = start; index < refs.length; index++) edges.push(refs[index]);
   };
@@ -536,22 +560,28 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   maybeRef(get(state, "hostImport"), realm, queue);
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
-  const numbers = new Map<number, number>();
+  const objectNumbers = new Int32Array(objectEdgeStarts.length);
+  const environmentNumbers = new Int32Array(environmentEdgeStarts.length);
+  const isNumbered = (node: number) =>
+    (node > 0 ? objectNumbers[node] : environmentNumbers[-node]) !== 0;
   const order: number[] = [];
+  const weakMaps: number[] = [];
   let objectCount = 0;
   let environmentCount = 0;
   const walk = (walked: number[]) => {
     for (let head = 0; head < walked.length; head++) {
       const node = walked[head];
-      if (numbers.has(node)) continue;
+      if (isNumbered(node)) continue;
       const start = walked.length;
       if (node > 0) {
         objectCount++;
-        numbers.set(node, realm.objects + objectCount);
-        objectRefs(getObject(node), realm, walked);
+        objectNumbers[node] = realm.objects + objectCount;
+        const object = getObject(node);
+        objectRefs(object, realm, walked);
+        if (getString(object, "class") === "weakMap") weakMaps.push(node);
       } else {
         environmentCount++;
-        numbers.set(node, realm.environments + environmentCount);
+        environmentNumbers[-node] = realm.environments + environmentCount;
         environmentRefs(getEnvironment(-node), realm, walked);
       }
       collect(node, walked, start);
@@ -564,34 +594,30 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getWeakKeyNumber = (key: Value) => {
     if (getString(key, "type") !== "object") stop("a weak collection keyed by a symbol");
     const id = getNumber(key, "id");
-    return id <= realm.objects ? id : numbers.get(id);
+    return id <= realm.objects ? id : objectNumbers[id] === 0 ? undefined : objectNumbers[id];
   };
   // The walk again from the objects that the values of the walked WeakMaps' reached entries refer
   // to, by the walk's order of the WeakMaps and each one's keys by their new numbers, until it
   // reaches no more.
   for (;;) {
     const more: number[] = [];
-    order
-      .filter((node) => node > 0)
-      .forEach((node) => {
-        const object = getObject(node);
-        if (getString(object, "class") !== "weakMap") return;
-        const data = toFiniteFunction(get(get(object, "slots"), "weakMapData"));
-        data.domain
-          .flatMap((key, position) => {
-            const number = getWeakKeyNumber(key);
-            return number === undefined ? [] : [{ number, value: data.range[position] }];
-          })
-          .sort((left, right) => left.number - right.number)
-          .forEach((entry) => maybeRef(entry.value, realm, more));
-      });
-    const fresh = more.filter((node) => !numbers.has(node));
+    weakMaps.forEach((node) => {
+      const data = toFiniteFunction(get(get(getObject(node), "slots"), "weakMapData"));
+      data.domain
+        .flatMap((key, position) => {
+          const number = getWeakKeyNumber(key);
+          return number === undefined ? [] : [{ number, value: data.range[position] }];
+        })
+        .sort((left, right) => left.number - right.number)
+        .forEach((entry) => maybeRef(entry.value, realm, more));
+    });
+    const fresh = more.filter((node) => !isNumbered(node));
     if (fresh.length === 0) break;
     walk(fresh);
   }
   const getNew = (node: number) => {
-    const number = numbers.get(node);
-    if (number === undefined) throw new TlaEvaluationError("A reference to a dropped node");
+    const number = node > 0 ? objectNumbers[node] : environmentNumbers[-node];
+    if (number === 0) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
   const renameValue = (value: Value): Value => {
@@ -776,11 +802,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   // other node at the number it had.
   const isUnmoved = (node: number) =>
     node > 0
-      ? node <= realm.objects || numbers.get(node) === node
-      : -node <= realm.environments || numbers.get(node) === -node;
+      ? node <= realm.objects || objectNumbers[node] === node
+      : -node <= realm.environments || environmentNumbers[-node] === -node;
   const isEveryEdgeUnmoved = (node: number) => {
-    const start = edgeStarts.get(node);
-    if (start === undefined) return false;
+    const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
+    if (start === -1) return false;
     for (let index = start + 1; index <= start + edges[start]; index++) {
       if (!isUnmoved(edges[index])) return false;
     }
@@ -847,7 +873,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const elements = set.elements
         .filter((pair) => {
           const environment = Number(getList(pair)[0]);
-          return environment <= realm.environments || numbers.has(-environment);
+          return environment <= realm.environments || isNumbered(-environment);
         })
         .map((pair) => {
           const elements = getList(pair);
