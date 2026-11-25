@@ -11,9 +11,8 @@ const Page = () => (
       <Hero.Title>TLA+ for TypeScript developers</Hero.Title>
       <Hero.Body>
         <p>
-          A test checks the orders you thought of.{" "}
-          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> checks every order. This guide
-          teaches it by translating one TypeScript file.
+          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> checks every order in which
+          code can run. This guide teaches its syntax by translating one TypeScript file.
         </p>
       </Hero.Body>
     </Hero.Root>
