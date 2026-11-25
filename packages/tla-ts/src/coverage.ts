@@ -73,6 +73,7 @@ export interface Coverage {
   recursive: number[];
   twins: number[];
   lets: (number[] | undefined)[];
+  appliedBodies: (AppliedBody[] | undefined)[];
   roots: number[];
   primary: number[];
   secondary: number[];
@@ -94,6 +95,11 @@ export interface Coverage {
   chargeSubsetElements: (set: SubsetValue) => void;
   chargePrintedSize: (set: Value) => void;
   chargeIsEmpty: (set: Value) => void;
+}
+
+interface AppliedBody {
+  after: number;
+  node: number;
 }
 
 export interface CoverageFrame {
@@ -140,6 +146,7 @@ interface Local {
   name: string;
   definition: Definition | undefined;
   scope: Local | undefined;
+  operatorBody: Expression | undefined;
   parent: Local | undefined;
 }
 
@@ -187,6 +194,7 @@ export const createCoverage = (variableCount: number): Coverage => {
     recursive: [],
     twins: [],
     lets: [],
+    appliedBodies: [],
     roots: [],
     primary: [],
     secondary: [],
@@ -257,6 +265,7 @@ const addNode = (
   coverage.recursive.push(-1);
   coverage.twins.push(-1);
   coverage.lets.push(undefined);
+  coverage.appliedBodies.push(undefined);
   coverage.roots.push(parent === -1 ? node : coverage.roots[parent]);
   coverage.primary.push(0);
   coverage.secondary.push(0);
@@ -370,15 +379,38 @@ const getBoundSets = (bounds: Bound[]) =>
     index > 0 && bounds[index - 1].set === bound.set ? [] : [bound.set],
   );
 
-const bindNames = (names: string[], locals: Local | undefined) =>
+const bindNames = (
+  names: string[],
+  locals: Local | undefined,
+  operatorBodies?: (Expression | undefined)[],
+) =>
   names.reduce<Local | undefined>(
-    (parent, name) => ({ name, definition: undefined, scope: undefined, parent }),
+    (parent, name, index) => ({
+      name,
+      definition: undefined,
+      scope: undefined,
+      operatorBody: operatorBodies?.[index],
+      parent,
+    }),
     locals,
   );
 
+const findLocal = (locals: Local | undefined, name: string) => {
+  for (let local = locals; local; local = local.parent) {
+    if (local.name === name) return local;
+  }
+  return undefined;
+};
+
 const bindLocalDefinitions = (definitions: Definition[], locals: Local | undefined) => {
   const inner = definitions.reduce<Local | undefined>(
-    (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
+    (parent, definition) => ({
+      name: definition.name,
+      definition,
+      scope: undefined,
+      operatorBody: undefined,
+      parent,
+    }),
     locals,
   );
   for (let local = inner; local !== locals && local; local = local.parent) local.scope = inner;
@@ -435,14 +467,13 @@ export const buildCoverage = (
   const definitions: (Definition | undefined)[] = [];
   const walking: Definition[] = [];
   const letBodies = new Map<Expression, Expression>();
+  const applications = new Map<Expression, number[]>();
+  let unadopted: Expression | undefined;
 
   const resolve = (expression: Expression, name: string, locals: Local | undefined) => {
     if (isLocallyResolved(expression)) {
-      for (let local = locals; local; local = local.parent) {
-        if (local.name !== name) continue;
-        return local.definition && { definition: local.definition, scope: local.scope };
-      }
-      return undefined;
+      const local = findLocal(locals, name);
+      return local?.definition && { definition: local.definition, scope: local.scope };
     }
     const target = environment.substitutions.get(name) ?? name;
     if (environment.variableIndex.has(target) || environment.constants.has(target)) {
@@ -458,12 +489,20 @@ export const buildCoverage = (
   const enter = (
     expression: Expression | undefined,
     range: SourceRange | undefined,
-    walkChildren: () => void,
+    walkChildren: (node: number) => void,
     isPart = false,
     definition?: Definition,
   ) => {
     const node = addNode(coverage, expression, range, stack.at(-1) ?? -1, isPart);
     coverage.isPrimed[node] = range !== undefined && primed.has(getRangeKey(range));
+    const applied =
+      expression === unadopted ? undefined : expression && applications.get(expression);
+    applied?.forEach((application) => {
+      const bodies = (coverage.appliedBodies[application] ??= []);
+      const adopted = bodies.find((item) => coverage.expressions[item.node] === expression);
+      if (adopted) adopted.node = node;
+      else bodies.push({ after: coverage.lastChild[application], node });
+    });
     const body = expression && letBodies.get(expression);
     if (body) {
       stack.forEach((outer) => {
@@ -476,12 +515,12 @@ export const buildCoverage = (
     }
     definitions[node] = definition;
     stack.push(node);
-    walkChildren();
+    walkChildren(node);
     stack.pop();
     return node;
   };
 
-  const walkDefinition = (resolved: Resolved) => {
+  const walkDefinition = (resolved: Resolved, operatorBodies?: (Expression | undefined)[]) => {
     const definition = resolved.definition;
     if (walking.includes(definition)) return;
     walking.push(definition);
@@ -494,12 +533,25 @@ export const buildCoverage = (
         walk(definition.body, bindNames(names, resolved.scope));
         getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
       });
-    } else walk(definition.body, bindNames(names, resolved.scope));
+    } else walk(definition.body, bindNames(names, resolved.scope, operatorBodies));
     walking.pop();
   };
 
   const hasParams = (resolved: Resolved | undefined) =>
     resolved?.definition.kind === "Operator" && resolved.definition.params.length > 0;
+
+  const getOperatorBody = (argument: Expression, locals: Local | undefined) => {
+    if (argument.kind === "Lambda") return argument.body;
+    if (argument.kind !== "Identifier") return undefined;
+    const definition = resolve(argument, argument.name, locals)?.definition;
+    if (definition?.kind !== "Operator" || definition.params.length === 0) {
+      return isLocallyResolved(argument)
+        ? findLocal(locals, argument.name)?.operatorBody
+        : undefined;
+    }
+    // SANY gives an instance's operator a SubstInNode body, which CostModelCreator connects to no application.
+    return getActionPredicate(definition.body) === definition.body ? definition.body : undefined;
+  };
 
   const walkArgument = (
     argument: Expression,
@@ -517,7 +569,14 @@ export const buildCoverage = (
         (callee?.kind === "Operator" && (callee.params[index]?.arity ?? 0) > 0) ||
         hasParams(resolved);
       if (isOperator) {
-        if (resolved) walkDefinition(resolved);
+        if (!resolved) return;
+        const outer = unadopted;
+        // SANY's OpArgNode holds the operator as declared, so CostModelCreator doesn't visit the definition the config substitutes for it.
+        if (!isLocallyResolved(argument) && environment.substitutions.has(argument.name)) {
+          unadopted = resolved.definition.body;
+        }
+        walkDefinition(resolved);
+        unadopted = outer;
         return;
       }
     }
@@ -658,16 +717,42 @@ export const buildCoverage = (
         const resolved = resolve(expression, expression.operator, locals);
         const isGenerated =
           untracedExpressions.has(expression) && !expression.resolution?.isSubstitute;
+        const operatorBody = isLocallyResolved(expression)
+          ? findLocal(locals, expression.operator)?.operatorBody
+          : undefined;
         const walkApplication = () => {
-          if (resolved && !expression.hasSubstitutedOperator) walkDefinition(resolved);
+          if (resolved && !expression.hasSubstitutedOperator) {
+            walkDefinition(
+              resolved,
+              expression.args.map((argument) => getOperatorBody(argument, locals)),
+            );
+          }
           expression.args.forEach((argument, index) => {
             if (!syntheticIdentifiers.has(argument)) {
               walkArgument(argument, index, resolved?.definition, locals);
             }
           });
         };
-        if (isGenerated) walkApplication();
-        else enter(expression, range, walkApplication, false, resolved?.definition);
+        if (isGenerated) {
+          walkApplication();
+          return;
+        }
+        enter(
+          expression,
+          range,
+          (node) => {
+            if (operatorBody) {
+              const applied = applications.get(operatorBody) ?? [];
+              // CostModelCreator#node2Wrapper is a set of OpApplNodeWrappers, which are equal when their locations are.
+              if (!applied.some((other) => isSameRange(coverage.ranges[other], range))) {
+                applications.set(operatorBody, [...applied, node]);
+              }
+            }
+            walkApplication();
+          },
+          false,
+          resolved?.definition,
+        );
         return;
       }
       case "And":
@@ -814,6 +899,7 @@ export const buildCoverage = (
   };
 
   coverage.relations.forEach((relation) => {
+    applications.clear();
     stack.push(relation.node);
     walk(relation.expression, getScopeLocals(relation.scope));
     stack.pop();
@@ -828,7 +914,10 @@ const findChild = (coverage: Coverage, node: number, expression: Expression): nu
       if (found !== -1) return found;
     }
   }
-  return -1;
+  return (
+    coverage.appliedBodies[node]?.find((body) => coverage.expressions[body.node] === expression)
+      ?.node ?? -1
+  );
 };
 
 export const getCoverageNode = (coverage: Coverage, node: number, expression: Expression) => {
@@ -874,6 +963,11 @@ export const runReportedInto = <Result>(
 ): Result => {
   const substitutions = new Set(coverage.substitutionNodes.get(coverage.roots[node])?.values());
   const snapshot: number[] = [];
+  const addDescendant = (descendant: number) => {
+    if (!substitutions.has(descendant)) {
+      snapshot.push(descendant, coverage.primary[descendant], coverage.secondary[descendant]);
+    }
+  };
   for (let index = -3; index < snapshot.length; index += 3) {
     const parent = index === -3 ? node : snapshot[index];
     for (
@@ -881,10 +975,9 @@ export const runReportedInto = <Result>(
       child !== -1;
       child = coverage.nextSibling[child]
     ) {
-      if (!substitutions.has(child)) {
-        snapshot.push(child, coverage.primary[child], coverage.secondary[child]);
-      }
+      addDescendant(child);
     }
+    coverage.appliedBodies[parent]?.forEach((body) => addDescendant(body.node));
   }
   try {
     return run();
@@ -1758,15 +1851,25 @@ const isNodePrimed = (coverage: Coverage, node: number) =>
 
 const getChildGroups = (coverage: Coverage, group: number[]) => {
   const groups: number[][] = [];
+  const addChild = (child: number) => {
+    const twin = coverage.twins[child];
+    const twins = twin === -1 ? undefined : groups.find((item) => item.includes(twin));
+    if (twins) {
+      twins.push(child);
+      return;
+    }
+    groups.push([child]);
+  };
   group.forEach((node) => {
+    const bodies = coverage.appliedBodies[node];
+    const addBodiesAfter = (sibling: number) =>
+      bodies?.forEach((body) => {
+        if (body.after === sibling) addChild(body.node);
+      });
+    addBodiesAfter(-1);
     for (let child = coverage.firstChild[node]; child !== -1; child = coverage.nextSibling[child]) {
-      const twin = coverage.twins[child];
-      const twins = twin === -1 ? undefined : groups.find((item) => item.includes(twin));
-      if (twins) {
-        twins.push(child);
-        continue;
-      }
-      groups.push([child]);
+      addChild(child);
+      addBodiesAfter(child);
     }
   });
   return groups;

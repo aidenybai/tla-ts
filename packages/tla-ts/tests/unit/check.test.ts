@@ -6007,6 +6007,161 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts nothing under a LAMBDA that SelectSeq or SortSeq applies, as TLC's OpLambdaValue#eval evaluates its body without a cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE s\nInit == s = <<>>\nNext == /\\ Len(s) < 3\n        /\\ \\E v \\in {0, 1} : s' = Append(s, v)\n        /\\ Len(SelectSeq(s, LAMBDA e : e = 1)) >= 0\n        /\\ Len(SortSeq(s, LAMBDA a, b : a < b)) >= 0\nInv == /\\ Len(SortSeq(s, LAMBDA a, b : a < b)) <= 3\n       /\\ Len(SelectSeq(s, LAMBDA e : e = 0)) <= 3\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toEqual([
+      ["line 4, col 9 to line 4, col 16 of module M: 1"],
+      [
+        "line 5, col 12 to line 5, col 21 of module M: 7",
+        "|line 5, col 12 to line 5, col 17 of module M: 15",
+        "line 6, col 30 to line 6, col 46 of module M: 14",
+        "line 6, col 21 to line 6, col 26 of module M: 7:21",
+        "line 7, col 12 to line 7, col 51 of module M: 14",
+        "line 8, col 12 to line 8, col 52 of module M: 14",
+      ],
+      ["line 9, col 8 to line 10, col 50 of module M: 15"],
+    ]);
+  });
+
+  it("counts an operator argument's body under each application of its parameter, as TLC's CostModelCreator connects them in each action and invariant", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE s\nApply(F(_), x) == F(x)\nTwice(F(_), x) == F(F(x))\nOuter(G(_), x) == Apply(G, x)\nInc(y) == y + 1\nInit == s = <<>>\nNext == /\\ Len(s) < 3\n        /\\ \\E v \\in {0, 1} : s' = Append(s, v)\n        /\\ Apply(LAMBDA y : y + 1, Len(s)) > 0\n        /\\ Twice(Inc, Len(s)) > 1\n        /\\ LET L(y) == y + 3 IN Outer(L, Len(s)) > 2\nInv == /\\ Apply(LAMBDA y : y + 1, Len(s)) > 0\n       /\\ Outer(Inc, 1) = 2\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toEqual([
+      ["line 8, col 9 to line 8, col 16 of module M: 1"],
+      [
+        "line 9, col 12 to line 9, col 21 of module M: 7",
+        "|line 9, col 12 to line 9, col 17 of module M: 15",
+        "line 10, col 30 to line 10, col 46 of module M: 14",
+        "line 10, col 21 to line 10, col 26 of module M: 7:21",
+        "line 11, col 12 to line 11, col 46 of module M: 14",
+        "line 12, col 12 to line 12, col 33 of module M: 14",
+        "|line 12, col 12 to line 12, col 29 of module M: 14",
+        "||line 5, col 19 to line 5, col 25 of module M: 14",
+        "|||line 5, col 21 to line 5, col 24 of module M: 14",
+        "||||line 5, col 23 to line 5, col 23 of module M: 14",
+        "||||line 7, col 11 to line 7, col 15 of module M: 28",
+        "|||line 7, col 11 to line 7, col 15 of module M: 28",
+        "||line 7, col 11 to line 7, col 15 of module M: 28",
+        "||line 12, col 23 to line 12, col 28 of module M: 14",
+        "line 13, col 33 to line 13, col 52 of module M: 14",
+      ],
+      ["line 14, col 8 to line 15, col 27 of module M: 15"],
+    ]);
+  });
+
+  it("counts an operator argument's body into its parameter's application when an earlier call applied it at the same location, as TLC's CostModelCreator keeps one OpApplNodeWrapper per location", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE s\nApply(F(_), x) == F(x)\nInc(y) == y + 1\nBaz(n) == Apply(Inc, n) > 0\nInit == s = <<>>\nNext == /\\ Len(s) < 3\n        /\\ \\E v \\in {0, 1} : s' = Append(s, v)\n        /\\ Baz(Len(s))\n        /\\ Baz(1)\nInv == Baz(Len(s))\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines).toEqual([
+      ["line 7, col 9 to line 7, col 16 of module M: 1"],
+      [
+        "line 8, col 12 to line 8, col 21 of module M: 7",
+        "|line 8, col 12 to line 8, col 17 of module M: 15",
+        "line 9, col 30 to line 9, col 46 of module M: 14",
+        "line 9, col 21 to line 9, col 26 of module M: 7:21",
+        "line 10, col 12 to line 10, col 22 of module M: 14",
+        "line 11, col 12 to line 11, col 17 of module M: 14",
+        "|line 6, col 11 to line 6, col 27 of module M: 14",
+        "||line 6, col 11 to line 6, col 23 of module M: 14",
+        "|||line 4, col 19 to line 4, col 22 of module M: 42",
+        "||||line 4, col 21 to line 4, col 21 of module M: 14",
+        "|||line 5, col 11 to line 5, col 15 of module M: 14",
+        "|||line 6, col 22 to line 6, col 22 of module M: 14",
+      ],
+      ["line 12, col 8 to line 12, col 18 of module M: 15"],
+    ]);
+  });
+
+  it("lists an operator argument's body among its parameter's application's children in the order CostModelCreator visits it", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAdd(a, b) == a + b\nAp(G(_, _), b) == G(b, b)\nFoo(F(_, _), a) == F(Ap(Add, a), a + 1)\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ Foo(Add, x) > 0\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 8, col 9 to line 8, col 13 of module M: 3",
+      "|line 8, col 9 to line 8, col 9 of module M: 4",
+      "line 8, col 18 to line 8, col 27 of module M: 3",
+      "line 8, col 32 to line 8, col 46 of module M: 3",
+      "|line 8, col 32 to line 8, col 42 of module M: 3",
+      "||line 6, col 20 to line 6, col 39 of module M: 3",
+      "|||line 6, col 22 to line 6, col 31 of module M: 3",
+      "||||line 5, col 19 to line 5, col 25 of module M: 3",
+      "|||||line 5, col 21 to line 5, col 21 of module M: 3",
+      "|||||line 5, col 24 to line 5, col 24 of module M: 3",
+      "|||||line 4, col 14 to line 4, col 18 of module M: 6",
+      "||||line 6, col 30 to line 6, col 30 of module M: 3",
+      "|||line 4, col 14 to line 4, col 18 of module M: 6",
+      "|||line 6, col 34 to line 6, col 38 of module M: 3",
+      "||line 4, col 14 to line 4, col 18 of module M: 6",
+      "||line 8, col 41 to line 8, col 41 of module M: 3",
+    ]);
+  });
+
+  it("reports an operator argument's body into a CASE that ENABLED applies it under, as TLC's Tool#enabled evaluates the CASE in its own CostModel", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nFoo(F(_)) == CASE F(x) -> x' = x + 1 [] OTHER -> x' = x + 2\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x >= 3 \\/ ENABLED Foo(LAMBDA y : y < 2)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 8 to line 7, col 46 of module M: 4",
+      "|line 7, col 8 to line 7, col 13 of module M: 4",
+      "|line 7, col 18 to line 7, col 46 of module M: 3",
+      "||line 7, col 26 to line 7, col 46 of module M: 18",
+    ]);
+  });
+
+  it("counts the body of an operator argument the config substitutes, or of an instance's operator, into its parameter's application, as TLC's CostModelCreator connects neither", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Op(_), K\nVARIABLE x\nDef(a) == a + 1\nOver(a) == a + 5\nAp(F(_), a) == F(a)\nI == INSTANCE N\nInit == x = 0\nNext == /\\ x < 3\n        /\\ x' = x + 1\n        /\\ Ap(Op, x) > 0\n        /\\ Ap(Over, x) > 0\n        /\\ Ap(I!Half, x) >= 0\nInv == Ap(Op, x) > 0\n====",
+      config:
+        "CONSTANT Op <- Def\nCONSTANT Over <- Def\nCONSTANT K = 0\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "N"
+          ? "---- MODULE N ----\nEXTENDS Naturals\nCONSTANT K\nHalf(n) == n \\div 2 + K\n===="
+          : undefined,
+    });
+    expect(formatCoverage(result)).toEqual([
+      ["line 9, col 9 to line 9, col 13 of module M: 1"],
+      [
+        "line 10, col 12 to line 10, col 16 of module M: 3",
+        "|line 10, col 12 to line 10, col 12 of module M: 4",
+        "line 11, col 12 to line 11, col 21 of module M: 3",
+        "line 12, col 12 to line 12, col 24 of module M: 3",
+        "|line 12, col 12 to line 12, col 20 of module M: 3",
+        "||line 7, col 16 to line 7, col 19 of module M: 9",
+        "|||line 7, col 18 to line 7, col 18 of module M: 3",
+        "||line 12, col 19 to line 12, col 19 of module M: 3",
+        "line 13, col 12 to line 13, col 26 of module M: 3",
+        "|line 13, col 12 to line 13, col 22 of module M: 3",
+        "||line 7, col 16 to line 7, col 19 of module M: 9",
+        "|||line 7, col 18 to line 7, col 18 of module M: 3",
+        "||line 13, col 21 to line 13, col 21 of module M: 3",
+        "line 14, col 12 to line 14, col 29 of module M: 3",
+        "|line 14, col 12 to line 14, col 24 of module M: 3",
+        "||line 7, col 16 to line 7, col 19 of module M: 15",
+        "|||line 7, col 18 to line 7, col 18 of module M: 3",
+        "||line 8, col 1 to line 8, col 15 of module M: 3",
+        "||line 14, col 23 to line 14, col 23 of module M: 3",
+      ],
+      [
+        "line 15, col 8 to line 15, col 20 of module M: 4",
+        "|line 15, col 8 to line 15, col 16 of module M: 4",
+        "||line 7, col 16 to line 7, col 19 of module M: 12",
+        "|||line 7, col 18 to line 7, col 18 of module M: 4",
+        "||line 15, col 15 to line 15, col 15 of module M: 4",
+      ],
+    ]);
+  });
+
   it("charges a function constructor its domain and size, as TLC's FcnLambdaValue#toFcnRcd does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLES y, z\nInit == z = 1 /\\ y = [p \\in {1, 2} |-> z]\nNext == z' = 2 /\\ y' = [p \\in {1, 2} |-> z + 1]\nInv == y = [p \\in {1, 2} |-> z] \\/ z = 2\n====",
