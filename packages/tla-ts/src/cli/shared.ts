@@ -103,6 +103,7 @@ export const reportMissingModules174 =
   };
 
 export interface JavaProperties {
+  systemProperties: Map<string, string>;
   libraries: string[];
   classPath?: string;
   temporaryDirectory?: string;
