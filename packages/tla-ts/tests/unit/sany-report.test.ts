@@ -2851,6 +2851,22 @@ VARIABLE x
     );
   });
 
+  it("ends an options statement's command-line error with the period SANY adds to the message's", () => {
+    const report = getReport({
+      Counter: COUNTER.replace("(* --algorithm", "(* PlusCal options (-bogus) *)\n(* --algorithm"),
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "",
+        "Unrecoverable error:",
+        " -- Command-line error: Unknown or illegal option in options statement: -bogus..",
+        "",
+        "Labels added.",
+      ]),
+      isFailed: false,
+    });
+  });
+
   it("rejects a specification whose algorithm it cannot uncomment", () => {
     const report = getReport({
       Quote: `---- MODULE Quote ----

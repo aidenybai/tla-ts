@@ -102,7 +102,7 @@ const findToken = (lines: string[], location: PcalSearchLocation, token: string)
 };
 
 const reportCommandLineError = (session: PcalSession, message: string) =>
-  reportUnrecoverableError(session, `Command-line error: ${message}`);
+  reportUnrecoverableError(session, `Command-line error: ${message}.`);
 
 const processOptionArguments = (session: PcalSession, args: string[]) => {
   const params = session.params;
