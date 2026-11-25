@@ -592,6 +592,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         }
         stack[0] = initials[0];
         successorStack[0] = [];
+        // Deviation from TLC: DFIDWorker#run expands the next initial state at the last one's curLevel, so its trace repeats the initial state or stops at it before the state that breaks an invariant.
         stackLevel = 0;
         const isInitialLeaf = toLevel < 2;
         const isInitialNoLeaf = expandState(0, isInitialLeaf, successorStack[0]);
