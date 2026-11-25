@@ -11,8 +11,8 @@ const Page = () => (
       <Hero.Title>TLA+ for TypeScript developers</Hero.Title>
       <Hero.Body>
         <p>
-          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> checks every order in which
-          code can run. This guide teaches its syntax by translating one TypeScript file.
+          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> lets you check every order
+          your code can run in. This guide teaches it by translating a TypeScript file.
         </p>
       </Hero.Body>
     </Hero.Root>
