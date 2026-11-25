@@ -6,11 +6,6 @@ declare module "virtual:site-data" {
   export const reference: import("@/lib/site-data").ContentSection[];
 }
 
-declare module "virtual:tutorial" {
-  const tutorial: import("@/lib/site-data").ContentSection[];
-  export default tutorial;
-}
-
 declare module "virtual:compilations" {
   export const initial: import("@/lib/compilation").Precompiled;
   export const compilations: Record<string, () => Promise<import("@/lib/compilation").Precompiled>>;
