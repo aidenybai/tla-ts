@@ -200,6 +200,11 @@ const environmentRef = (environment: Value, realm: Realm, refs: number[]) => {
   if (environment > realm.environments) refs.push(-environment);
 };
 
+const valueRefs = (list: Value, realm: Realm, refs: number[]) => {
+  const values = getList(list);
+  for (let index = 0; index < values.length; index++) maybeRef(values[index], realm, refs);
+};
+
 const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
   maybeRef(get(element, "value"), realm, refs);
   maybeRef(get(element, "get"), realm, refs);
@@ -212,7 +217,12 @@ const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
     stop("a decorated class element");
   }
   maybeRef(get(element, "init"), realm, refs);
-  getList(get(element, "initializers")).forEach((inner) => maybeRef(inner, realm, refs));
+  valueRefs(get(element, "initializers"), realm, refs);
+};
+
+const elementListRefs = (list: Value, realm: Realm, refs: number[]) => {
+  const elements = getList(list);
+  for (let index = 0; index < elements.length; index++) elementRefs(elements[index], realm, refs);
 };
 
 const PLAIN_CLASSES = new Set([
@@ -303,20 +313,19 @@ const isPlainBuiltin = (slots: Value) =>
 const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   const objectClass = getString(object, "class");
   const slots = get(object, "slots");
-  const values = (list: Value) => getList(list).forEach((inner) => maybeRef(inner, realm, refs));
   if (PLAIN_CLASSES.has(objectClass)) {
-    if (hasField(slots, "initializers")) values(get(slots, "initializers"));
+    if (hasField(slots, "initializers")) valueRefs(get(slots, "initializers"), realm, refs);
   } else if (objectClass === "function") {
     environmentRef(get(slots, "env"), realm, refs);
     maybeRef(get(slots, "home"), realm, refs);
-    getList(get(slots, "fields")).forEach((element) => elementRefs(element, realm, refs));
-    getList(get(slots, "privateMethods")).forEach((element) => elementRefs(element, realm, refs));
+    elementListRefs(get(slots, "fields"), realm, refs);
+    elementListRefs(get(slots, "privateMethods"), realm, refs);
     const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) values(initializers);
+    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
   } else if (objectClass === "bound") {
     objectRef(get(slots, "target"), realm, refs);
     maybeRef(get(slots, "this"), realm, refs);
-    values(get(slots, "args"));
+    valueRefs(get(slots, "args"), realm, refs);
   } else if (objectClass === "map") {
     getList(get(slots, "mapData")).forEach((entry) => {
       if (isModelValue(entry, "Empty")) return;
@@ -324,7 +333,7 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
       maybeRef(get(entry, "value"), realm, refs);
     });
   } else if (objectClass === "set") {
-    values(get(slots, "setData"));
+    valueRefs(get(slots, "setData"), realm, refs);
   } else if (VIEW_CLASSES.has(objectClass)) {
     maybeRef(get(slots, "buffer"), realm, refs);
   } else if (objectClass === "proxy") {
@@ -354,10 +363,10 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
     isDefaultConstructor(slots) &&
     getDomain(slots).join() === DEFAULT_CONSTRUCTOR_SLOTS.join()
   ) {
-    getList(get(slots, "fields")).forEach((element) => elementRefs(element, realm, refs));
-    getList(get(slots, "privateMethods")).forEach((element) => elementRefs(element, realm, refs));
+    elementListRefs(get(slots, "fields"), realm, refs);
+    elementListRefs(get(slots, "privateMethods"), realm, refs);
     const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) values(initializers);
+    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
   } else {
     stop(`an object of class ${objectClass}`);
   }
@@ -369,67 +378,70 @@ const getIndex = (key: Value) =>
 
 const KEY_TYPES = ["string", "symbol"];
 
-// The descriptors of an object's properties in OwnKeysOf's order: index keys ascending, then the
-// string keys and the symbol keys in the order they were added.
-const getDescriptors = (object: Value) => {
+const descriptorRefs = (descriptor: Value, realm: Realm, refs: number[]) => {
+  maybeRef(get(descriptor, "value"), realm, refs);
+  maybeRef(get(descriptor, "get"), realm, refs);
+  maybeRef(get(descriptor, "set"), realm, refs);
+};
+
+// The refs of the descriptors of an index bucket's keys, by their indexes ascending.
+const bucketRefs = (value: Value, realm: Realm, refs: number[]) => {
+  const bucket = toFiniteFunction(value);
+  let previous = -Infinity;
+  let isInOrder = true;
+  for (let position = 0; position < bucket.domain.length && isInOrder; position++) {
+    const keyIndex = getIndex(bucket.domain[position]);
+    isInOrder = keyIndex >= previous;
+    previous = keyIndex;
+  }
+  if (isInOrder) {
+    for (let position = 0; position < bucket.range.length; position++) {
+      descriptorRefs(bucket.range[position], realm, refs);
+    }
+    return;
+  }
+  bucket.domain
+    .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
+    .sort((left, right) => left.index - right.index)
+    .forEach((pair) => descriptorRefs(pair.descriptor, realm, refs));
+};
+
+// The refs of an object's properties in OwnKeysOf's order: index keys ascending, then the string
+// keys and the symbol keys in the order they were added.
+const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
+  maybeRef(get(object, "proto"), realm, refs);
   const props = toFiniteFunction(get(object, "props"));
-  const positions: number[] = [];
   let named: Value | undefined;
   let isAscending = true;
   let previousBucket = -Infinity;
   for (let position = 0; position < props.domain.length; position++) {
     const bucket = props.domain[position];
-    if (bucket === NAMED_BUCKET) {
-      named = props.range[position];
-      continue;
+    if (bucket === NAMED_BUCKET) named = props.range[position];
+    else {
+      if (Number(bucket) < previousBucket) isAscending = false;
+      previousBucket = Number(bucket);
     }
-    if (Number(bucket) < previousBucket) isAscending = false;
-    previousBucket = Number(bucket);
-    positions.push(position);
   }
-  if (!isAscending) {
-    positions.sort((left, right) => Number(props.domain[left]) - Number(props.domain[right]));
-  }
-  const descriptors: Value[] = [];
-  for (let index = 0; index < positions.length; index++) {
-    const bucket = toFiniteFunction(props.range[positions[index]]);
-    let previous = -Infinity;
-    let isInOrder = true;
-    for (let position = 0; position < bucket.domain.length && isInOrder; position++) {
-      const keyIndex = getIndex(bucket.domain[position]);
-      isInOrder = keyIndex >= previous;
-      previous = keyIndex;
+  if (isAscending) {
+    for (let position = 0; position < props.domain.length; position++) {
+      if (props.domain[position] !== NAMED_BUCKET) bucketRefs(props.range[position], realm, refs);
     }
-    if (isInOrder) {
-      for (let position = 0; position < bucket.range.length; position++) {
-        descriptors.push(bucket.range[position]);
-      }
-      continue;
-    }
-    bucket.domain
-      .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
-      .sort((left, right) => left.index - right.index)
-      .forEach((pair) => descriptors.push(pair.descriptor));
+  } else {
+    props.domain
+      .map((bucket, position) => ({ bucket, position }))
+      .filter((entry) => entry.bucket !== NAMED_BUCKET)
+      .sort((left, right) => Number(left.bucket) - Number(right.bucket))
+      .forEach((entry) => bucketRefs(props.range[entry.position], realm, refs));
   }
   const keys = getList(get(object, "keys"));
   for (const type of KEY_TYPES) {
     for (let index = 0; index < keys.length; index++) {
       if (getString(keys[index], "type") !== type) continue;
       if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
-      descriptors.push(applyFunction(named, keys[index]));
+      descriptorRefs(applyFunction(named, keys[index]), realm, refs);
     }
   }
-  return descriptors;
-};
-
-const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
-  maybeRef(get(object, "proto"), realm, refs);
-  getDescriptors(object).forEach((descriptor) => {
-    maybeRef(get(descriptor, "value"), realm, refs);
-    maybeRef(get(descriptor, "get"), realm, refs);
-    maybeRef(get(descriptor, "set"), realm, refs);
-  });
-  getList(get(object, "privs")).forEach((element) => elementRefs(element, realm, refs));
+  elementListRefs(get(object, "privs"), realm, refs);
   slotRefs(object, realm, refs);
 };
 
