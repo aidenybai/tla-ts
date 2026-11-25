@@ -403,6 +403,14 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
+    if (
+      typeof value === "object" &&
+      value.kind === "Function" &&
+      value.functionClass === "record"
+    ) {
+      const index = value.domain.indexOf(field);
+      if (index !== -1) return value.range[index];
+    }
     if (!isFunctionValue(value)) {
       throw new TlaEvaluationError(
         `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
