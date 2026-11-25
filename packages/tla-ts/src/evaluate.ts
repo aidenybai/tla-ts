@@ -193,7 +193,7 @@ export interface Thunk {
   isReleased?: boolean;
 }
 
-export type Binding =
+type Binding =
   | { kind: "Value"; value: Value; argument?: Expression; isSelf?: boolean }
   | Thunk
   | { kind: "Operator"; operator: Operator };

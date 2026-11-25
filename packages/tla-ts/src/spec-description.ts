@@ -5,7 +5,6 @@ import {
   isLocallyResolved,
   type Definition,
   type Expression,
-  type OperatorParam,
   type SourceLocation,
   type SourceRange,
 } from "./ast";
@@ -41,7 +40,6 @@ import {
   getStartupValue,
   lookupScope,
   resolveGlobalOperator,
-  type Binding,
   type Closure,
   type Environment,
   type Scope,
@@ -284,17 +282,24 @@ const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =
       : [];
   });
 
-const getSplitBinding = (
-  param: OperatorParam,
-  arg: Expression,
+const bindSplitArguments = (
+  called: Closure,
+  args: Expression[],
   scope: Scope | undefined,
   environment: Environment,
-): Binding => {
-  const context = getSplitContext(environment, scope);
-  return param.arity > 0
-    ? { kind: "Operator", operator: evaluateOperatorValue(arg, context) }
-    : { kind: "Value", value: evaluate(arg, context) };
-};
+) =>
+  args.reduce<Scope | undefined>((current, arg, index) => {
+    const param = called.params[index];
+    const context = getSplitContext(environment, scope);
+    return {
+      name: param.name,
+      binding:
+        param.arity > 0
+          ? { kind: "Operator", operator: evaluateOperatorValue(arg, context) }
+          : { kind: "Value", value: evaluate(arg, context) },
+      parent: current,
+    };
+  }, called.scope);
 
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
@@ -333,14 +338,7 @@ const getInstanceActions = (
   if (!called) return [{ ...instanceAction, parameters: [], context, expression, scope }];
   if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
-    const boundScope = args.reduce<Scope | undefined>(
-      (current, arg, index) => ({
-        name: called.params[index].name,
-        binding: getSplitBinding(called.params[index], arg, scope, environment),
-        parent: current,
-      }),
-      called.scope,
-    );
+    const boundScope = bindSplitArguments(called, args, scope, environment);
     const parameters = getParameters(called, boundScope).map((parameter): [string, Value] => [
       parameter[0].replace(/#\d+$/, ""),
       parameter[1],
@@ -604,14 +602,7 @@ const getActions = (
     return;
   }
   splitCall(() => {
-    const boundScope = args.reduce<Scope | undefined>(
-      (current, arg, index) => ({
-        name: called.params[index].name,
-        binding: getSplitBinding(called.params[index], arg, scope, environment),
-        parent: current,
-      }),
-      called.scope,
-    );
+    const boundScope = bindSplitArguments(called, args, scope, environment);
     getActions(
       called.body,
       boundScope,
