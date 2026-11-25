@@ -248,6 +248,41 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("hides a LOCAL definition of a RECURSIVE operator from an extending module, which SANY exports", () => {
+    const base =
+      "---- MODULE Base ----\nRECURSIVE F(_), G\nLOCAL F(n) == n\nLOCAL G[n \\in {0}] == 0\n====\n";
+    const used = getReport({
+      Use: "---- MODULE Use ----\nEXTENDS Base\nA == F(3)\nB == G\n====\n",
+      Base: base,
+    });
+    const redefined = getReport({
+      Redefine: "---- MODULE Redefine ----\nEXTENDS Base\nF(n) == n\nG == 0\n====\n",
+      Base: base,
+    });
+    expect([used, redefined]).toEqual([
+      {
+        text: joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 2",
+          "",
+          ...[
+            ["line 3, col 6 to line 3, col 6", "F"],
+            ["line 4, col 6 to line 4, col 6", "G"],
+          ].flatMap((error) => [
+            `${error[0]} of module Use`,
+            "",
+            `Unknown operator: \`${error[1]}'.`,
+            "",
+            "",
+          ]),
+        ]),
+        isFailed: true,
+      },
+      { text: "", isFailed: false },
+    ]);
+  });
+
   it("rejects an argument above the level that the operator parameter it reaches through a definition permits, where SANY drops the constraint", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nPr(p) == p'\nW(Op(_)) == LET D(p) == Op(p) IN D(x')\nV == W(Pr)\n====\n",

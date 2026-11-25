@@ -58,4 +58,22 @@ describe("Java module overrides match TLC", () => {
       }),
     ).rejects.toThrow(TlaUnsupportedError);
   });
+
+  it("keeps a LOCAL definition of a RECURSIVE operator from its override, which TLC loads through SANY's leak", async () => {
+    const matched: string[] = [];
+    const result = await check({
+      source: "---- MODULE Root ----\nEXTENDS Overrides\nASSUME Double(5) = 10\n====",
+      config: "",
+      loadModule: (name) =>
+        name === "Overrides"
+          ? "---- MODULE Overrides ----\nEXTENDS Integers\nRECURSIVE Twice(_)\nLOCAL Twice(n) == 2 * n\nDouble(n) == Twice(n)\n===="
+          : undefined,
+      loadClass,
+      onProgress: (progress) => {
+        if (progress.kind === "java-override" && progress.isMatched)
+          matched.push(progress.operator);
+      },
+    });
+    expect([result.status, matched]).toEqual(["success", []]);
+  });
 });

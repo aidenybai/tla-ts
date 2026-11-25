@@ -158,7 +158,7 @@ export const processOperator = (
     existing.maxLevels = params.map(() => TEMPORAL_LEVEL);
     existing.isLeibnizArg = params.map(() => true);
     existing.labels = labels;
-    endOpDefNode(generation, existing, generated.body, location, preComments);
+    endOpDefNode(generation, existing, generated.body, location, preComments, definition.isLocal);
     generation.currentModule.definitions.push(existing);
     definitions?.push(existing);
     return;
@@ -184,11 +184,14 @@ const endOpDefNode = (
   body: ExprNode,
   location: SanyLocation,
   preComments: string[],
+  isLocal: boolean,
 ) => {
   node.isDefined = true;
   node.body = body;
   node.location = location;
   node.preComments = preComments;
+  // Deviation from SANY: Generator#startOpDefNode makes a RECURSIVE operator non-LOCAL, and endOpDefNode never applies its definition's LOCAL, so the operator leaks to every extending module.
+  node.isLocal = isLocal;
   // Deviation from SANY: Generator#endOpDefNode throws WrongInvocationException once unresolvedSum is negative, as after an inner module's checkForUndefinedRecursiveOps subtracted the outer module's open RECURSIVE operators.
   if (node.inRecursive) {
     generation.recursion.unresolvedCount[generation.curLevel]--;
@@ -254,7 +257,9 @@ export const processFunction = (
         ? existing
         : undefined;
   if (isRecursive) {
-    if (existing.arity === 0) endOpDefNode(generation, existing, node, location, preComments);
+    if (existing.arity === 0) {
+      endOpDefNode(generation, existing, node, location, preComments, definition.isLocal);
+    }
   } else if (existing === undefined && definitionNode !== undefined) {
     addSymbol(generation, definitionNode);
     setRecursionFields(generation, definitionNode);
