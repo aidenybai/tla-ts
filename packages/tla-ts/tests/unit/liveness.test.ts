@@ -69,13 +69,15 @@ describe("liveness matches TLC", () => {
   });
 
   it("finds a lasso in the part of the graph that TLC's periodic check sees", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1));
     const result = await check({
       source:
         "---- MODULE Tree ----\nEXTENDS Naturals\nVARIABLE x\nNext == x < 4000000 /\\ x' \\in {2 * x + 1, 2 * x + 2}\nSpec == x = 0 /\\ [][Next]_x\nProperty == TRUE ~> FALSE\n====",
       config: "SPECIFICATION Spec\nPROPERTY Property",
     });
     expect(result.status).toBe("liveness-violation");
-  }, 60_000);
+  });
 
   it.each([
     [0, 500, [3000, 63_500, 124_000, 184_500, 245_000]],
