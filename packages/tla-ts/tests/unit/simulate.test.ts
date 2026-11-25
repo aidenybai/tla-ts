@@ -1251,7 +1251,7 @@ it("reports the liveness violation another worker finds after the first worker's
 });
 
 const SIM =
-  '---- MODULE Sim ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 5\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("diameter")>>)\nRand == PrintT(<<RandomElement(1..1000000), RandomElement(1..1000000)>>)\nStepped == x\' = x + RandomElement({1, 2})\n====';
+  '---- MODULE Sim ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 5\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("diameter")>>)\nRand == PrintT(<<RandomElement(1..1000000), RandomElement(1..1000000)>>)\nStepped == x\' = x + RandomElement({1, 2})\nLeveled == PrintT(<<"level", TLCGet("level")>>)\n====';
 
 const getSimulatedLines = (config: string, traceCount: bigint) => {
   const lines: string[] = [];
@@ -1295,6 +1295,7 @@ it.each([
   ["Divided", "Next", "TLC Bug: Progress report thread died.", 101],
   ["State", "Next", "TLC Bug: Progress report thread died.", 101],
   ["Printed", "Next", '<<"periodic", 0>>', 101],
+  ["Leveled", "Next", '<<"level", 1>>', 101],
   ["Rand", "Stepped", "<<730610, 918715>>", 51],
 ])(
   "evaluates _PERIODIC %s under %s after the last progress report, as TLC's ProgressReport thread does",
