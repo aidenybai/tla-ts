@@ -1950,6 +1950,7 @@ const searchStates = (
       updateRuntimeRatio(0);
       return undefined;
     }
+    // Here TLC checks below 0.2 and updates above it, so a ratio of exactly 0.2 stays.
     if (periodic.runtimeRatio === LIVENESS_RATIO) return undefined;
     const checkedAt = performance.now();
     periodic.checkedCounts = counts;
