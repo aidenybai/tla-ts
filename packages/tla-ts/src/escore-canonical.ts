@@ -9,6 +9,7 @@ import {
   createRecord,
   createSet,
   createSortedFunction,
+  createSortedRecord,
   createTuple,
   formatValue,
   getSequenceElements,
@@ -593,13 +594,22 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (number === undefined) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
-  const renameValue = (value: Value): Value =>
-    getString(value, "type") === "object" && getNumber(value, "id") > realm.objects
-      ? toRecord(value, [
-          ["type", "object"],
-          ["id", getNew(getNumber(value, "id"))],
-        ])
-      : value;
+  const renameValue = (value: Value): Value => {
+    if (getString(value, "type") !== "object") return value;
+    const id = getNumber(value, "id");
+    if (id <= realm.objects) return value;
+    const number = getNew(id);
+    if (!isPlainOf(value, "record") || value.domain.length !== 2) {
+      return createRecord([
+        ["type", "object"],
+        ["id", number],
+      ]);
+    }
+    if (number === id) return value;
+    const range = value.range.slice();
+    range[value.domain.indexOf("id")] = number;
+    return createSortedRecord(value.domain, range);
+  };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
     typeof environment === "number" && environment > realm.environments
