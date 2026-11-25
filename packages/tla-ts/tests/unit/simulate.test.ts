@@ -1381,3 +1381,49 @@ it("reads the first worker's register and sets every worker's in a progress repo
   });
   expect([status, printed]).toEqual([0, ["<<<<10, 11>>, <<10, 10>>>>"]]);
 });
+
+it("reads TLCGet(\"diameter\") as 0 in a progress report during a behavior, as TLC's ProgressReport thread isn't a SimulationWorker", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  expect(getSimulatedLines("NEXT Next\n_PERIODIC Printed", 10n)).toEqual([
+    0,
+    [
+      "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      '<<"periodic", 0>>',
+      "Progress: 201 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      '<<"periodic", 0>>',
+      "The number of states generated: 201\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it("prints the coverage with every second progress report under -coverage 2, as TLC's ProgressReport counts down", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
+  const kinds: string[] = [];
+  simulate({
+    source: SIM,
+    config: "INIT Init\nNEXT Next",
+    seed: 4n,
+    traceDepth: 10,
+    traceCount: 20n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    coverage: 2,
+    onPrint: () => {},
+    onSimulation: (output) => {
+      if (output.kind !== "message") kinds.push(output.kind);
+    },
+  });
+  expect(kinds).toEqual([
+    "progress",
+    "progress",
+    "coverage",
+    "progress",
+    "progress",
+    "coverage",
+    "coverage",
+    "summary",
+  ]);
+});
