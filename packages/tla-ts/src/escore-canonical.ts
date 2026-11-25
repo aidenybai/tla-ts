@@ -44,16 +44,21 @@ const stop = (what: string): never => {
   );
 };
 
+const findFieldIndex = (domain: Value[], field: string) => {
+  for (let index = 0; index < domain.length; index++) {
+    if (domain[index] === field) return index;
+  }
+  return -1;
+};
+
 const get = (record: Value, field: string) => {
   if (
     typeof record === "object" &&
     record.kind === "Function" &&
     record.functionClass === "record"
   ) {
-    const domain = record.domain;
-    for (let index = 0; index < domain.length; index++) {
-      if (domain[index] === field) return record.range[index];
-    }
+    const index = findFieldIndex(record.domain, field);
+    if (index !== -1) return record.range[index];
   }
   return applyFunction(record, field);
 };
@@ -133,7 +138,7 @@ const toRecord = (record: Value, fields: [string, Value][]) =>
   isPlainOf(record, "record") &&
   record.domain.length === fields.length &&
   fields.every((field) => {
-    const index = record.domain.indexOf(field[0]);
+    const index = findFieldIndex(record.domain, field[0]);
     return index !== -1 && record.range[index] === field[1];
   })
     ? record
@@ -144,7 +149,7 @@ const except = (record: Value, changes: Record<string, (inner: Value, record: Va
   const functionValue = toFiniteFunction(record);
   let range: Value[] | undefined;
   for (const key in changes) {
-    const index = functionValue.domain.indexOf(key);
+    const index = findFieldIndex(functionValue.domain, key);
     if (index === -1) continue;
     const changed = changes[key](functionValue.range[index], record);
     if (changed === functionValue.range[index]) continue;
@@ -659,7 +664,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     if (number === id) return value;
     const range = value.range.slice();
-    range[value.domain.indexOf("id")] = number;
+    range[findFieldIndex(value.domain, "id")] = number;
     return createChangedFunction(value, range);
   };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
