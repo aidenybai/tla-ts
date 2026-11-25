@@ -13,7 +13,6 @@ import { getEscoreCompilation } from "./src/lib/escore";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";
-import { LESSONS } from "./src/lib/tutorial";
 import type {
   Benchmark,
   CompiledExample,
@@ -188,35 +187,6 @@ const siteData = (): Plugin => ({
   },
 });
 
-const TUTORIAL = "virtual:tutorial";
-
-const tutorial = (): Plugin => ({
-  name: "tutorial",
-  resolveId: (id) => (id === TUTORIAL ? `\0${TUTORIAL}` : undefined),
-  async load(id) {
-    if (id !== `\0${TUTORIAL}`) return undefined;
-    this.addWatchFile(fileURLToPath(new URL("./src/lib/tutorial.ts", import.meta.url)));
-    const highlight = await createHighlighter();
-    return `export default ${JSON.stringify(
-      LESSONS.map((lesson): ContentSection => ({
-        title: lesson.title,
-        blocks: lesson.blocks.map((block): ContentBlock => {
-          if (typeof block === "string") return { kind: "paragraph", text: block };
-          if ("heading" in block) return { kind: "heading", text: block.heading };
-          if ("tla" in block) {
-            return {
-              kind: "comparison",
-              typescript: highlight(block.typescript, "typescript"),
-              tla: highlight(block.tla, "tlaplus"),
-            };
-          }
-          return { kind: "code", source: highlight(block.code, block.language) };
-        }),
-      })),
-    )};`;
-  },
-});
-
 const OUTLINES = "virtual:outlines";
 
 const outlines = (): Plugin => ({
@@ -386,7 +356,7 @@ const logoFiles = (): Plugin => ({
 });
 
 // Each route but / is built from the HTML file of its name.
-const ROUTES = ["/playground", "/tla-for-ts-developers"];
+const ROUTES = ["/playground"];
 const ORIGIN = "https://tla-ts.com";
 const EMPTY_ROOT = '<div id="root"></div>';
 const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;
@@ -446,7 +416,6 @@ export default defineConfig({
     react(),
     tailwindcss(),
     siteData(),
-    tutorial(),
     outlines(),
     compilations(),
     typescriptLibraries(),

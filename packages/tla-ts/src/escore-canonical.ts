@@ -9,6 +9,7 @@ import {
   createRecord,
   createSet,
   createSortedFunction,
+  createSortedRecord,
   createTuple,
   formatValue,
   getSequenceElements,
@@ -97,19 +98,37 @@ const isEveryKept = (changed: Value[], values: Value[]) =>
 // A function with each of its values changed, which keeps its domain and its class.
 const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): FunctionValue => {
   const functionValue = toFiniteFunction(value);
-  const range = functionValue.range.map((inner, index) =>
-    change(inner, functionValue.domain[index]),
-  );
-  return functionValue.writtenKeys === undefined && isEveryKept(range, functionValue.range)
+  let range: Value[] | undefined;
+  for (let index = 0; index < functionValue.range.length; index++) {
+    const changed = change(functionValue.range[index], functionValue.domain[index]);
+    if (changed === functionValue.range[index]) continue;
+    range ??= functionValue.range.slice();
+    range[index] = changed;
+  }
+  return range === undefined && functionValue.writtenKeys === undefined
     ? functionValue
     : setFunctionClass(
-        createSortedFunction(functionValue.domain, range),
+        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
         functionValue.functionClass,
       );
 };
 
 const toTuple = (list: Value, elements: Value[]) =>
   isPlainOf(list, "tuple") && isEveryKept(elements, list.range) ? list : createTuple(elements);
+
+const mapTuple = (list: Value, change: (inner: Value) => Value) => {
+  const elements = getList(list);
+  let changed: Value[] | undefined;
+  for (let index = 0; index < elements.length; index++) {
+    const inner = change(elements[index]);
+    if (inner === elements[index]) continue;
+    changed ??= elements.slice();
+    changed[index] = inner;
+  }
+  return changed === undefined && isPlainOf(list, "tuple")
+    ? list
+    : createTuple(changed ?? elements.slice());
+};
 
 const toRecord = (record: Value, fields: [string, Value][]) =>
   isPlainOf(record, "record") &&
@@ -122,13 +141,13 @@ const toRecord = (record: Value, fields: [string, Value][]) =>
     : createRecord(fields);
 
 // [record EXCEPT !.field = change(@), ...].
-const except = (record: Value, changes: Record<string, (inner: Value) => Value>) => {
+const except = (record: Value, changes: Record<string, (inner: Value, record: Value) => Value>) => {
   const functionValue = toFiniteFunction(record);
   let range: Value[] | undefined;
   for (const key in changes) {
     const index = functionValue.domain.indexOf(key);
     if (index === -1) continue;
-    const changed = changes[key](functionValue.range[index]);
+    const changed = changes[key](functionValue.range[index], record);
     if (changed === functionValue.range[index]) continue;
     range ??= functionValue.range.slice();
     range[index] = changed;
@@ -199,6 +218,11 @@ const environmentRef = (environment: Value, realm: Realm, refs: number[]) => {
   if (environment > realm.environments) refs.push(-environment);
 };
 
+const valueRefs = (list: Value, realm: Realm, refs: number[]) => {
+  const values = getList(list);
+  for (let index = 0; index < values.length; index++) maybeRef(values[index], realm, refs);
+};
+
 const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
   maybeRef(get(element, "value"), realm, refs);
   maybeRef(get(element, "get"), realm, refs);
@@ -211,7 +235,12 @@ const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
     stop("a decorated class element");
   }
   maybeRef(get(element, "init"), realm, refs);
-  getList(get(element, "initializers")).forEach((inner) => maybeRef(inner, realm, refs));
+  valueRefs(get(element, "initializers"), realm, refs);
+};
+
+const elementListRefs = (list: Value, realm: Realm, refs: number[]) => {
+  const elements = getList(list);
+  for (let index = 0; index < elements.length; index++) elementRefs(elements[index], realm, refs);
 };
 
 const PLAIN_CLASSES = new Set([
@@ -302,20 +331,19 @@ const isPlainBuiltin = (slots: Value) =>
 const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   const objectClass = getString(object, "class");
   const slots = get(object, "slots");
-  const values = (list: Value) => getList(list).forEach((inner) => maybeRef(inner, realm, refs));
   if (PLAIN_CLASSES.has(objectClass)) {
-    if (hasField(slots, "initializers")) values(get(slots, "initializers"));
+    if (hasField(slots, "initializers")) valueRefs(get(slots, "initializers"), realm, refs);
   } else if (objectClass === "function") {
     environmentRef(get(slots, "env"), realm, refs);
     maybeRef(get(slots, "home"), realm, refs);
-    getList(get(slots, "fields")).forEach((element) => elementRefs(element, realm, refs));
-    getList(get(slots, "privateMethods")).forEach((element) => elementRefs(element, realm, refs));
+    elementListRefs(get(slots, "fields"), realm, refs);
+    elementListRefs(get(slots, "privateMethods"), realm, refs);
     const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) values(initializers);
+    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
   } else if (objectClass === "bound") {
     objectRef(get(slots, "target"), realm, refs);
     maybeRef(get(slots, "this"), realm, refs);
-    values(get(slots, "args"));
+    valueRefs(get(slots, "args"), realm, refs);
   } else if (objectClass === "map") {
     getList(get(slots, "mapData")).forEach((entry) => {
       if (isModelValue(entry, "Empty")) return;
@@ -323,7 +351,7 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
       maybeRef(get(entry, "value"), realm, refs);
     });
   } else if (objectClass === "set") {
-    values(get(slots, "setData"));
+    valueRefs(get(slots, "setData"), realm, refs);
   } else if (VIEW_CLASSES.has(objectClass)) {
     maybeRef(get(slots, "buffer"), realm, refs);
   } else if (objectClass === "proxy") {
@@ -353,10 +381,10 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
     isDefaultConstructor(slots) &&
     getDomain(slots).join() === DEFAULT_CONSTRUCTOR_SLOTS.join()
   ) {
-    getList(get(slots, "fields")).forEach((element) => elementRefs(element, realm, refs));
-    getList(get(slots, "privateMethods")).forEach((element) => elementRefs(element, realm, refs));
+    elementListRefs(get(slots, "fields"), realm, refs);
+    elementListRefs(get(slots, "privateMethods"), realm, refs);
     const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) values(initializers);
+    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
   } else {
     stop(`an object of class ${objectClass}`);
   }
@@ -368,45 +396,70 @@ const getIndex = (key: Value) =>
 
 const KEY_TYPES = ["string", "symbol"];
 
-// The descriptors of an object's properties in OwnKeysOf's order: index keys ascending, then the
-// string keys and the symbol keys in the order they were added.
-const getDescriptors = (object: Value) => {
+const descriptorRefs = (descriptor: Value, realm: Realm, refs: number[]) => {
+  maybeRef(get(descriptor, "value"), realm, refs);
+  maybeRef(get(descriptor, "get"), realm, refs);
+  maybeRef(get(descriptor, "set"), realm, refs);
+};
+
+// The refs of the descriptors of an index bucket's keys, by their indexes ascending.
+const bucketRefs = (value: Value, realm: Realm, refs: number[]) => {
+  const bucket = toFiniteFunction(value);
+  let previous = -Infinity;
+  let isInOrder = true;
+  for (let position = 0; position < bucket.domain.length && isInOrder; position++) {
+    const keyIndex = getIndex(bucket.domain[position]);
+    isInOrder = keyIndex >= previous;
+    previous = keyIndex;
+  }
+  if (isInOrder) {
+    for (let position = 0; position < bucket.range.length; position++) {
+      descriptorRefs(bucket.range[position], realm, refs);
+    }
+    return;
+  }
+  bucket.domain
+    .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
+    .sort((left, right) => left.index - right.index)
+    .forEach((pair) => descriptorRefs(pair.descriptor, realm, refs));
+};
+
+// The refs of an object's properties in OwnKeysOf's order: index keys ascending, then the string
+// keys and the symbol keys in the order they were added.
+const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
+  maybeRef(get(object, "proto"), realm, refs);
   const props = toFiniteFunction(get(object, "props"));
-  const buckets: { bucket: Value; position: number }[] = [];
   let named: Value | undefined;
+  let isAscending = true;
+  let previousBucket = -Infinity;
   for (let position = 0; position < props.domain.length; position++) {
     const bucket = props.domain[position];
     if (bucket === NAMED_BUCKET) named = props.range[position];
-    else buckets.push({ bucket, position });
+    else {
+      if (Number(bucket) < previousBucket) isAscending = false;
+      previousBucket = Number(bucket);
+    }
   }
-  buckets.sort((left, right) => Number(left.bucket) - Number(right.bucket));
-  const descriptors: Value[] = [];
-  for (let index = 0; index < buckets.length; index++) {
-    const bucket = toFiniteFunction(props.range[buckets[index].position]);
-    bucket.domain
-      .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
-      .sort((left, right) => left.index - right.index)
-      .forEach((pair) => descriptors.push(pair.descriptor));
+  if (isAscending) {
+    for (let position = 0; position < props.domain.length; position++) {
+      if (props.domain[position] !== NAMED_BUCKET) bucketRefs(props.range[position], realm, refs);
+    }
+  } else {
+    props.domain
+      .map((bucket, position) => ({ bucket, position }))
+      .filter((entry) => entry.bucket !== NAMED_BUCKET)
+      .sort((left, right) => Number(left.bucket) - Number(right.bucket))
+      .forEach((entry) => bucketRefs(props.range[entry.position], realm, refs));
   }
   const keys = getList(get(object, "keys"));
   for (const type of KEY_TYPES) {
     for (let index = 0; index < keys.length; index++) {
       if (getString(keys[index], "type") !== type) continue;
       if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
-      descriptors.push(applyFunction(named, keys[index]));
+      descriptorRefs(applyFunction(named, keys[index]), realm, refs);
     }
   }
-  return descriptors;
-};
-
-const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
-  maybeRef(get(object, "proto"), realm, refs);
-  getDescriptors(object).forEach((descriptor) => {
-    maybeRef(get(descriptor, "value"), realm, refs);
-    maybeRef(get(descriptor, "get"), realm, refs);
-    maybeRef(get(descriptor, "set"), realm, refs);
-  });
-  getList(get(object, "privs")).forEach((element) => elementRefs(element, realm, refs));
+  elementListRefs(get(object, "privs"), realm, refs);
   slotRefs(object, realm, refs);
 };
 
@@ -501,11 +554,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
   });
   // The nodes that each walked record refers to, an object by its id and an environment by its
-  // number negated: from where edgeStarts has a node, its count and then the nodes.
+  // number negated: from where a node's edges start, its count and then the nodes.
   const edges: number[] = [];
-  const edgeStarts = new Map<number, number>();
+  const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
+  const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
   const collect = (node: number, refs: number[], start: number) => {
-    edgeStarts.set(node, edges.length);
+    if (node > 0) objectEdgeStarts[node] = edges.length;
+    else environmentEdgeStarts[-node] = edges.length;
     edges.push(refs.length - start);
     for (let index = start; index < refs.length; index++) edges.push(refs[index]);
   };
@@ -535,22 +590,28 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   maybeRef(get(state, "hostImport"), realm, queue);
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
-  const numbers = new Map<number, number>();
+  const objectNumbers = new Int32Array(objectEdgeStarts.length);
+  const environmentNumbers = new Int32Array(environmentEdgeStarts.length);
+  const isNumbered = (node: number) =>
+    (node > 0 ? objectNumbers[node] : environmentNumbers[-node]) !== 0;
   const order: number[] = [];
+  const weakMaps: number[] = [];
   let objectCount = 0;
   let environmentCount = 0;
   const walk = (walked: number[]) => {
     for (let head = 0; head < walked.length; head++) {
       const node = walked[head];
-      if (numbers.has(node)) continue;
+      if (isNumbered(node)) continue;
       const start = walked.length;
       if (node > 0) {
         objectCount++;
-        numbers.set(node, realm.objects + objectCount);
-        objectRefs(getObject(node), realm, walked);
+        objectNumbers[node] = realm.objects + objectCount;
+        const object = getObject(node);
+        objectRefs(object, realm, walked);
+        if (getString(object, "class") === "weakMap") weakMaps.push(node);
       } else {
         environmentCount++;
-        numbers.set(node, realm.environments + environmentCount);
+        environmentNumbers[-node] = realm.environments + environmentCount;
         environmentRefs(getEnvironment(-node), realm, walked);
       }
       collect(node, walked, start);
@@ -563,77 +624,84 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getWeakKeyNumber = (key: Value) => {
     if (getString(key, "type") !== "object") stop("a weak collection keyed by a symbol");
     const id = getNumber(key, "id");
-    return id <= realm.objects ? id : numbers.get(id);
+    return id <= realm.objects ? id : objectNumbers[id] === 0 ? undefined : objectNumbers[id];
   };
   // The walk again from the objects that the values of the walked WeakMaps' reached entries refer
   // to, by the walk's order of the WeakMaps and each one's keys by their new numbers, until it
   // reaches no more.
   for (;;) {
     const more: number[] = [];
-    order
-      .filter((node) => node > 0)
-      .forEach((node) => {
-        const object = getObject(node);
-        if (getString(object, "class") !== "weakMap") return;
-        const data = toFiniteFunction(get(get(object, "slots"), "weakMapData"));
-        data.domain
-          .flatMap((key, position) => {
-            const number = getWeakKeyNumber(key);
-            return number === undefined ? [] : [{ number, value: data.range[position] }];
-          })
-          .sort((left, right) => left.number - right.number)
-          .forEach((entry) => maybeRef(entry.value, realm, more));
-      });
-    const fresh = more.filter((node) => !numbers.has(node));
+    weakMaps.forEach((node) => {
+      const data = toFiniteFunction(get(get(getObject(node), "slots"), "weakMapData"));
+      data.domain
+        .flatMap((key, position) => {
+          const number = getWeakKeyNumber(key);
+          return number === undefined ? [] : [{ number, value: data.range[position] }];
+        })
+        .sort((left, right) => left.number - right.number)
+        .forEach((entry) => maybeRef(entry.value, realm, more));
+    });
+    const fresh = more.filter((node) => !isNumbered(node));
     if (fresh.length === 0) break;
     walk(fresh);
   }
   const getNew = (node: number) => {
-    const number = numbers.get(node);
-    if (number === undefined) throw new TlaEvaluationError("A reference to a dropped node");
+    const number = node > 0 ? objectNumbers[node] : environmentNumbers[-node];
+    if (number === 0) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
-  const renameValue = (value: Value): Value =>
-    getString(value, "type") === "object" && getNumber(value, "id") > realm.objects
-      ? toRecord(value, [
-          ["type", "object"],
-          ["id", getNew(getNumber(value, "id"))],
-        ])
-      : value;
+  const renameValue = (value: Value): Value => {
+    if (getString(value, "type") !== "object") return value;
+    const id = getNumber(value, "id");
+    if (id <= realm.objects) return value;
+    const number = getNew(id);
+    if (!isPlainOf(value, "record") || value.domain.length !== 2) {
+      return createRecord([
+        ["type", "object"],
+        ["id", number],
+      ]);
+    }
+    if (number === id) return value;
+    const range = value.range.slice();
+    range[value.domain.indexOf("id")] = number;
+    return createSortedRecord(value.domain, range);
+  };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
     typeof environment === "number" && environment > realm.environments
       ? getNew(-environment)
       : environment;
-  const renameValues = (list: Value) => toTuple(list, getList(list).map(renameMaybe));
-  const renameDescriptor = (descriptor: Value) =>
-    except(descriptor, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
+  const renameValues = (list: Value) => mapTuple(list, renameMaybe);
+  const descriptorChanges = { value: renameMaybe, get: renameMaybe, set: renameMaybe };
+  const renameDescriptor = (descriptor: Value) => except(descriptor, descriptorChanges);
+  const initChanges = { init: renameMaybe, initializers: renameValues };
   const renameElement = (element: Value) => {
-    const renamed = except(element, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
-    return hasField(element, "init")
-      ? except(renamed, { init: renameMaybe, initializers: renameValues })
-      : renamed;
+    const renamed = except(element, descriptorChanges);
+    return hasField(element, "init") ? except(renamed, initChanges) : renamed;
   };
-  const renameElements = (list: Value) => toTuple(list, getList(list).map(renameElement));
+  const renameElements = (list: Value) => mapTuple(list, renameElement);
+  const renameInitializers = (inner: Value) =>
+    isModelValue(inner, "Empty") ? inner : renameValues(inner);
+  const plainChanges = {
+    initializers: renameValues,
+    trace: (trace: Value) => toRecord(trace, [["dropped", true]]),
+  };
+  const viewChanges = { buffer: renameMaybe };
+  const functionChanges = {
+    env: renameEnvironment,
+    home: renameMaybe,
+    fields: renameElements,
+    privateMethods: renameElements,
+    initializers: renameInitializers,
+  };
   const renameSlots = (object: Value) => {
     const objectClass = getString(object, "class");
     const slots = get(object, "slots");
-    if (PLAIN_CLASSES.has(objectClass)) {
-      return except(slots, {
-        initializers: renameValues,
-        trace: (trace) => toRecord(trace, [["dropped", true]]),
-      });
-    }
-    if (VIEW_CLASSES.has(objectClass)) return except(slots, { buffer: renameMaybe });
+    if (PLAIN_CLASSES.has(objectClass)) return except(slots, plainChanges);
+    if (VIEW_CLASSES.has(objectClass)) return except(slots, viewChanges);
     switch (objectClass) {
       case "function":
-        return except(slots, {
-          env: renameEnvironment,
-          home: renameMaybe,
-          fields: renameElements,
-          privateMethods: renameElements,
-          initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
-        });
+        return except(slots, functionChanges);
       case "bound":
         return except(slots, { target: renameValue, this: renameMaybe, args: renameValues });
       case "map":
@@ -701,7 +769,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           ? except(slots, {
               fields: renameElements,
               privateMethods: renameElements,
-              initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
+              initializers: renameInitializers,
             })
           : isObjectDataBuiltin(slots)
             ? except(slots, { data: renameValue })
@@ -714,63 +782,71 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         return except(slots, { target: renameMaybe, handler: renameMaybe });
     }
   };
-  const renameObject = (object: Value) =>
-    except(object, {
-      proto: renameMaybe,
-      props: (props) => {
-        const buckets = toFiniteFunction(props);
-        const kept = buckets.range.flatMap((bucket, position) =>
-          toFiniteFunction(bucket).domain.length === 0
-            ? []
-            : [{ key: buckets.domain[position], bucket: mapRange(bucket, renameDescriptor) }],
-        );
-        return buckets.writtenKeys === undefined &&
-          isEveryKept(
-            kept.map((entry) => entry.bucket),
-            buckets.range,
-          )
-          ? buckets
-          : setFunctionClass(
-              createSortedFunction(
-                kept.map((entry) => entry.key),
-                kept.map((entry) => entry.bucket),
-              ),
-              buckets.functionClass,
-            );
-      },
-      privs: renameElements,
-      slots: () => renameSlots(object),
-    });
-  const renameBindings = (bindings: Value) =>
-    mapRange(bindings, (binding) => except(binding, { value: renameMaybe }));
+  const renameProps = (props: Value) => {
+    const buckets = toFiniteFunction(props);
+    let keys: Value[] | undefined;
+    let kept: Value[] | undefined;
+    for (let position = 0; position < buckets.range.length; position++) {
+      const bucket = buckets.range[position];
+      const isEmptied = toFiniteFunction(bucket).domain.length === 0;
+      const renamed = isEmptied ? bucket : mapRange(bucket, renameDescriptor);
+      if (kept === undefined && (isEmptied || renamed !== bucket)) {
+        keys = buckets.domain.slice(0, position);
+        kept = buckets.range.slice(0, position);
+      }
+      if (isEmptied || keys === undefined || kept === undefined) continue;
+      keys.push(buckets.domain[position]);
+      kept.push(renamed);
+    }
+    if (keys === undefined || kept === undefined) {
+      if (buckets.writtenKeys === undefined) return buckets;
+      keys = buckets.domain.slice();
+      kept = buckets.range.slice();
+    }
+    return setFunctionClass(createSortedFunction(keys, kept), buckets.functionClass);
+  };
+  const objectChanges = {
+    proto: renameMaybe,
+    props: renameProps,
+    privs: renameElements,
+    slots: (_slots: Value, object: Value) => renameSlots(object),
+  };
+  const renameObject = (object: Value) => except(object, objectChanges);
+  const bindingChanges = { value: renameMaybe };
+  const renameBinding = (binding: Value) => except(binding, bindingChanges);
+  const renameBindings = (bindings: Value) => mapRange(bindings, renameBinding);
+  const declarativeChanges = { outer: renameEnvironment, b: renameBindings };
+  const functionEnvironmentChanges = {
+    outer: renameEnvironment,
+    b: renameBindings,
+    this: renameMaybe,
+    fn: renameValue,
+    newTarget: renameMaybe,
+  };
+  const objectEnvironmentChanges = { outer: renameEnvironment, obj: renameValue };
+  const globalChanges = { outer: renameEnvironment, this: renameMaybe };
   const renameEnvironmentRecord = (environment: Value) => {
     const kind = getString(environment, "kind");
     return except(
       environment,
       kind === "declarative" || kind === "catch" || kind === "module"
-        ? { outer: renameEnvironment, b: renameBindings }
+        ? declarativeChanges
         : kind === "function"
-          ? {
-              outer: renameEnvironment,
-              b: renameBindings,
-              this: renameMaybe,
-              fn: renameValue,
-              newTarget: renameMaybe,
-            }
+          ? functionEnvironmentChanges
           : kind === "object"
-            ? { outer: renameEnvironment, obj: renameValue }
-            : { outer: renameEnvironment, this: renameMaybe },
+            ? objectEnvironmentChanges
+            : globalChanges,
     );
   };
   // Whether the walk numbers a node as it was: the realm's, which it doesn't number, and each
   // other node at the number it had.
   const isUnmoved = (node: number) =>
     node > 0
-      ? node <= realm.objects || numbers.get(node) === node
-      : -node <= realm.environments || numbers.get(node) === -node;
+      ? node <= realm.objects || objectNumbers[node] === node
+      : -node <= realm.environments || environmentNumbers[-node] === -node;
   const isEveryEdgeUnmoved = (node: number) => {
-    const start = edgeStarts.get(node);
-    if (start === undefined) return false;
+    const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
+    if (start === -1) return false;
     for (let index = start + 1; index <= start + edges[start]; index++) {
       if (!isUnmoved(edges[index])) return false;
     }
@@ -837,7 +913,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const elements = set.elements
         .filter((pair) => {
           const environment = Number(getList(pair)[0]);
-          return environment <= realm.environments || numbers.has(-environment);
+          return environment <= realm.environments || isNumbered(-environment);
         })
         .map((pair) => {
           const elements = getList(pair);

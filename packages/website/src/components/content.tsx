@@ -1,6 +1,5 @@
 import type { ContentBlock, ContentSection } from "@/lib/site-data";
 import { Code } from "./code";
-import { Comparison } from "./comparison";
 import { Section } from "./section";
 import { InlineCode } from "@/components/ui/inline-code";
 
@@ -45,9 +44,6 @@ const Block = (props: BlockProps) => {
         </Code.Actions>
       </Code.Root>
     );
-  }
-  if (block.kind === "comparison") {
-    return <Comparison typescript={block.typescript} tla={block.tla} />;
   }
   return (
     <div className="overflow-x-auto">

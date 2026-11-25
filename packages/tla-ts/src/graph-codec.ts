@@ -304,12 +304,14 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
   );
   // A function of each shape that makes an object that no other object shares, reading its values
   // in its keys' order, which a literal makes with its keys in place, faster than a copy of the
-  // template that each key then fills.
+  // template that each key then fills. V8 gives a literal whose keys are written, not computed, the
+  // hidden class of the source's literals with those keys, so the checker's reads of a decoded
+  // value stay monomorphic. A written __proto__ would set the prototype, so it stays computed.
   const makers = shapes.map(
     (keys) =>
       new Function(
         "read",
-        `return {${keys.map((key) => `[${JSON.stringify(key)}]: read()`).join(", ")}};`,
+        `return {${keys.map((key) => `${key === "__proto__" ? `["__proto__"]` : JSON.stringify(key)}: read()`).join(", ")}};`,
       ) as (read: () => unknown) => object,
   );
   const shared: unknown[] = [];
