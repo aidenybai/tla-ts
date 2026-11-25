@@ -16,12 +16,14 @@ import {
   formatValue,
   getEntryContribution,
   getKeyPosition,
+  getPageHash,
   getPageRecord,
   getSequenceElements,
   getValueHash,
   isCanonical,
   isCanonicalPage,
   isUnfingerprintableHash,
+  isWrittenSlot,
   markCanonical,
   PAGE_SIZE,
   setFunctionClass,
@@ -810,11 +812,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     );
   const objectCanonicalPages = getCanonicalPages(pages);
   const environmentCanonicalPages = getCanonicalPages(environmentPages);
-  const getPage = (node: number) =>
-    (node > 0 ? objectCanonicalPages : environmentCanonicalPages)[
+  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
+  // The page of a node whose record a step didn't write since CanonicalStateOf made the page.
+  const getPage = (node: number) => {
+    const page = (node > 0 ? objectCanonicalPages : environmentCanonicalPages)[
       Math.floor(((node > 0 ? node : -node) - 1) / PAGE_SIZE)
     ];
-  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
+    return page === undefined || isWrittenSlot(page, getSlot(node)) ? undefined : page;
+  };
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
     if (valuesEqual(pages[position], page)) return;
@@ -1330,7 +1335,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const first = page * PAGE_SIZE;
       const count = Math.min(PAGE_SIZE, slots.sources.length - first);
       const previous = pagesBefore[page];
-      let isKept = isIncremental && isCanonicalPage(previous) && previous.domain.length === count;
+      let isKept =
+        isIncremental &&
+        isCanonicalPage(previous) &&
+        previous.writtenSlots === undefined &&
+        previous.domain.length === count;
       for (let slot = 0; isKept && slot < count; slot++)
         isKept = slots.isInPlace[first + slot] === 1;
       if (isKept) return previous;
@@ -1364,14 +1373,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         const node = nodes[first + slot + 1];
         locations[slot] = getLocated(node === 0 ? first + slot + 1 : node);
       }
+      const hashes = slots.hashes.slice(first, first + count);
       return new CanonicalPage(
         pageEdges,
         locations,
         slots.plans.slice(first, first + count),
         slots.sources.slice(first, first + count),
         slots.records.slice(first, first + count),
-        slots.hashes.slice(first, first + count),
+        hashes,
+        getPageHash(hashes),
         makeRecord,
+        undefined,
       );
     };
   return except(state, {

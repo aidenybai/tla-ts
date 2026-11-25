@@ -255,7 +255,9 @@ export const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
 // refers to, and its locations where the record holds them. Each record is its source with those
 // nodes at those locations, which makeRecord makes as a reader first reads it (see
 // escore-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
-// its locations in its source.
+// its locations in its source. An EXCEPT or Append that writes a record gives a page with a bit set
+// for its slot in writtenSlots, whose source, locations, plan and edges no longer hold, and whose
+// hash is 0 until the record's is ready, as EXCEPT leaves a function's.
 export class CanonicalPage implements FunctionValue {
   readonly kind = "Function";
   domain: Value[];
@@ -271,6 +273,7 @@ export class CanonicalPage implements FunctionValue {
   records: (Value | undefined)[];
   hashes: Int32Array;
   makeRecord: (page: CanonicalPage, slot: number) => Value;
+  writtenSlots: Int32Array | undefined;
   made: Value[] | undefined = undefined;
 
   constructor(
@@ -280,10 +283,12 @@ export class CanonicalPage implements FunctionValue {
     sources: Value[],
     records: (Value | undefined)[],
     hashes: Int32Array,
+    hash: number,
     makeRecord: (page: CanonicalPage, slot: number) => Value,
+    writtenSlots: Int32Array | undefined,
   ) {
     this.domain = getIntervalDomain(records.length);
-    this.hash = getPageHash(hashes);
+    this.hash = hash;
     this.edges = edges;
     this.locations = locations;
     this.plans = plans;
@@ -291,6 +296,7 @@ export class CanonicalPage implements FunctionValue {
     this.records = records;
     this.hashes = hashes;
     this.makeRecord = makeRecord;
+    this.writtenSlots = writtenSlots;
   }
 
   get range(): Value[] {
@@ -307,6 +313,81 @@ export const isCanonicalPage = (value: Value): value is CanonicalPage =>
 
 export const getPageRecord = (page: CanonicalPage, slot: number) =>
   (page.records[slot] ??= page.makeRecord(page, slot));
+
+export const isWrittenSlot = (page: CanonicalPage, slot: number) =>
+  page.writtenSlots !== undefined && ((page.writtenSlots[slot >> 5] >>> (slot & 31)) & 1) === 1;
+
+// A page with a record written at a slot, which may be the one after its last.
+const writePageRecord = (page: CanonicalPage, slot: number, record: Value, hash: number) => {
+  const writtenSlots = page.writtenSlots?.slice() ?? new Int32Array(PAGE_SIZE / 32);
+  writtenSlots[slot >> 5] |= 1 << (slot & 31);
+  const records = page.records.slice();
+  const hashes = new Int32Array(Math.max(page.hashes.length, slot + 1));
+  hashes.set(page.hashes);
+  records[slot] = record;
+  hashes[slot] = hash;
+  const key = getValueHash(slot + 1);
+  const written = new CanonicalPage(
+    page.edges,
+    page.locations,
+    page.plans,
+    page.sources,
+    records,
+    hashes,
+    hash === UNREADY_HASH
+      ? UNREADY_HASH
+      : page.hash === UNREADY_HASH || page.hash === UNFINGERPRINTABLE_HASH
+        ? getPageHash(hashes)
+        : (page.hash -
+            (slot < page.hashes.length ? getEntryContribution(key, page.hashes[slot]) : 0) +
+            getEntryContribution(key, hash)) |
+          0,
+    page.makeRecord,
+    writtenSlots,
+  );
+  written.flags = VALUE_PAGE;
+  return written;
+};
+
+// SubSeq(page, 1, count).
+export const truncatePage = (page: CanonicalPage, count: number) => {
+  const writtenSlots = page.writtenSlots?.slice();
+  let isWritten = false;
+  if (writtenSlots !== undefined) {
+    for (let slot = count; slot < page.records.length; slot++) {
+      writtenSlots[slot >> 5] &= ~(1 << (slot & 31));
+    }
+    for (let word = 0; word < writtenSlots.length; word++) {
+      isWritten ||= writtenSlots[word] !== 0;
+    }
+  }
+  const hashes = page.hashes.slice(0, count);
+  let hash = page.hash;
+  for (let slot = count; slot < page.hashes.length; slot++) {
+    hash = (hash - getEntryContribution(getValueHash(slot + 1), page.hashes[slot])) | 0;
+  }
+  const truncated = new CanonicalPage(
+    page.edges,
+    page.locations,
+    page.plans,
+    page.sources,
+    page.records.slice(0, count),
+    hashes,
+    page.hash === UNREADY_HASH || page.hash === UNFINGERPRINTABLE_HASH ? getPageHash(hashes) : hash,
+    page.makeRecord,
+    isWritten ? writtenSlots : undefined,
+  );
+  truncated.flags = VALUE_PAGE;
+  return truncated;
+};
+
+// Append(page, record).
+export const appendPageRecord = (page: CanonicalPage, record: Value) => {
+  const hash = getReadyHash(record);
+  return page.records.length === PAGE_SIZE || hash === UNFINGERPRINTABLE_HASH
+    ? createTuple(page.range.concat([record]))
+    : writePageRecord(page, page.records.length, record, hash);
+};
 
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
@@ -1096,10 +1177,16 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
     for (let slot = 0; slot < left.domain.length; slot++) {
       const record = left.records[slot];
       if (record !== undefined && record === right.records[slot]) continue;
-      if (left.hashes[slot] !== right.hashes[slot]) return false;
+      const leftHash = left.hashes[slot];
+      const rightHash = right.hashes[slot];
+      if (leftHash !== UNREADY_HASH && rightHash !== UNREADY_HASH && leftHash !== rightHash) {
+        return false;
+      }
       if (
         isSameRealm &&
         left.sources[slot] === right.sources[slot] &&
+        !isWrittenSlot(left, slot) &&
+        !isWrittenSlot(right, slot) &&
         areSameEdges(left.edges, right.edges, slot)
       ) {
         continue;
@@ -4928,11 +5015,18 @@ export const updateFunction = (
   const finite = getExceptTarget(functionValue);
   const position = findKeyIndexLikeTlc(finite, path[depth], describeExceptKey);
   if (position === -1) return finite;
-  return setFunctionValue(
-    finite,
-    position,
-    updateFunction(finite.range[position], path, depth + 1, getNewValue),
-  );
+  if (!(finite instanceof CanonicalPage)) {
+    return setFunctionValue(
+      finite,
+      position,
+      updateFunction(finite.range[position], path, depth + 1, getNewValue),
+    );
+  }
+  const next = updateFunction(getPageRecord(finite, position), path, depth + 1, getNewValue);
+  const hash = getReadyHash(next);
+  return hash === UNFINGERPRINTABLE_HASH
+    ? setFunctionValue(finite, position, next)
+    : writePageRecord(finite, position, next, hash);
 };
 
 const UNREADY_HASH = 0;
@@ -5069,9 +5163,10 @@ const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
 
 export const isUnfingerprintableHash = (hash: number) => hash === UNFINGERPRINTABLE_HASH;
 
-const getPageHash = (hashes: Int32Array) => {
+export const getPageHash = (hashes: Int32Array) => {
   let hash = FUNCTION_HASH_SEED;
   for (let slot = 0; slot < hashes.length; slot++) {
+    if (hashes[slot] === UNREADY_HASH) return UNREADY_HASH;
     if (hashes[slot] === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
     hash = (hash + getEntryContribution(getValueHash(slot + 1), hashes[slot])) | 0;
   }

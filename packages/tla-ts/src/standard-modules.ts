@@ -40,10 +40,13 @@ import {
 import { createTlcOperators } from "./tlc/tlc-operators";
 import { TLC_JAVA_METHODS } from "./tlc/jar-data";
 import {
+  appendPageRecord,
   addBoundedElement,
   ANY_SET,
   createUnsortedCopy,
   forEachElement,
+  isCanonicalPage,
+  truncatePage,
   isBeyondSetBound,
   createSet,
   createSortedSet,
@@ -506,15 +509,16 @@ const createSequencesOperators = (version: TlcVersion) =>
     }),
     // A copy by concat, which builds the long sequences of a loop that appends to one several times
     // faster than a spread.
-    defineOperator("Append", 2, (args) =>
-      createTuple(
-        getSequenceArgument(
-          args,
-          0,
-          getEvaluatingMessage(version === "1.7.4" ? "Append(v, s)" : "Append(s, v)", "sequence"),
-        ).concat([getValue(args, 1, "Append")]),
-      ),
-    ),
+    defineOperator("Append", 2, (args) => {
+      const message = getEvaluatingMessage(
+        version === "1.7.4" ? "Append(v, s)" : "Append(s, v)",
+        "sequence",
+      );
+      const sequence = getValue(args, 0, message);
+      return isCanonicalPage(sequence)
+        ? appendPageRecord(sequence, getValue(args, 1, "Append"))
+        : createTuple(getSequenceArgument(args, 0, message).concat([getValue(args, 1, "Append")]));
+    }),
     defineOperator("Head", 1, (args) => {
       const elements = getSequenceArgument(args, 0, getSequenceMessage("", "Head"));
       if (elements.length === 0)
@@ -528,6 +532,12 @@ const createSequencesOperators = (version: TlcVersion) =>
       return sliceSequence(sequence, 1);
     }),
     defineOperator("SubSeq", 3, (args) => {
+      const first = getValue(args, 0, getSequenceMessage("first ", "SubSeq"));
+      if (isCanonicalPage(first)) {
+        const start = getSubSeqIndex(args, 1, "second");
+        const end = getSubSeqIndex(args, 2, "third");
+        if (start === 1 && end >= 1 && end <= first.records.length) return truncatePage(first, end);
+      }
       const sequence = getSequenceOrString(args, 0, getSequenceMessage("first ", "SubSeq"));
       const start = getSubSeqIndex(args, 1, "second");
       const end = getSubSeqIndex(args, 2, "third");
