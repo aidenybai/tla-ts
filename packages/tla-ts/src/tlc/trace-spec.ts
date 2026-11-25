@@ -7,7 +7,7 @@ interface TraceSpecInput {
   module: string;
   specName: string;
   rawConstants: string[];
-  states: Record<string, Value>[];
+  states: Record<string, string>[];
   loopStart: number | undefined;
   modelValues: ModelValue[];
   isDefined: (name: string) => boolean;
@@ -86,12 +86,17 @@ ${examples}`;
   return `expression == \n${INDENT}[\n${indent(body, 2)}\n${INDENT}]\n\n`;
 };
 
+export const formatTraceSpecState = (state: Record<string, Value>) =>
+  Object.fromEntries(
+    Object.entries(state).map((entry): [string, string] => [entry[0], formatValue(entry[1])]),
+  );
+
 export const writeTraceSpec = (input: TraceSpecInput) => {
   const loopStart = input.loopStart;
   const states = input.states.map((state) =>
     getHashMapOrder(Object.keys(state), getJavaHashCode).map((name): [string, string] => [
       name,
-      formatValue(state[name]),
+      state[name],
     ]),
   );
   if (states.length + (loopStart === undefined ? 0 : 1) <= 1) return undefined;

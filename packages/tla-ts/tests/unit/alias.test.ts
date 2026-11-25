@@ -307,7 +307,7 @@ describe("ALIAS matches TLC", () => {
       isGenerating: false,
       scheduler: "random",
       onSimulation: (output) => {
-        if (output.kind === "behavior") states.push(output.trace[output.trace.length - 1].state);
+        if (output.kind === "error-state") states.push(output.state);
       },
     });
     expect(states).toEqual([{ x: 2 }]);

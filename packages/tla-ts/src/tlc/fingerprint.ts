@@ -317,18 +317,22 @@ const extendFunction = (length: number) => {
   extendInt(length);
 };
 
+// TLC's Value#fingerPrint normalizes the value in place, which sorts the fields of its records.
 const extendValue = (value: Value) => {
   if (typeof value !== "object" || isModelValue(value)) {
     extendScalar(value);
   } else if (isFunctionValue(value)) {
     const functionValue = toFiniteFunction(value);
+    if (functionValue.writtenKeys !== undefined) functionValue.writtenKeys = undefined;
     extendFunction(functionValue.domain.length);
     for (let index = 0; index < functionValue.domain.length; index++) {
       extendValue(functionValue.domain[index]);
       extendValue(functionValue.range[index]);
     }
   } else {
-    const elements = toFiniteSet(value).elements;
+    const set = toFiniteSet(value);
+    if (!set.isNormalized) set.isNormalized = true;
+    const elements = set.elements;
     extendSet(elements.length);
     for (const element of elements) extendValue(element);
   }

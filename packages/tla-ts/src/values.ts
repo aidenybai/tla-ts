@@ -6046,6 +6046,17 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
     .join("");
 };
 
+// TLC's StatePrinter fingerprints a state right after it prints it, which sorts the records that later states and the trace spec share with it.
+export const formatFingerprintedState = (
+  state: Record<string, Value>,
+  previous: Record<string, Value> | undefined,
+  fingerprinted: Value[],
+) => {
+  const text = formatState(state, previous);
+  fingerprinted.forEach(markNormalized);
+  return text;
+};
+
 // TLCStateMut#toString evaluates the VIEW under -view, and what that throws while TLC reports an error escapes to TLC#process.
 export const formatErrorState = (state: Record<string, Value>) =>
   withProcessException(() => formatState(state));

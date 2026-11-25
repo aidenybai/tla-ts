@@ -229,6 +229,13 @@ export class TlaMissingCheckpointError extends TlaEvaluationError {
 
 export class TlaAliasFormatError extends TlaEvaluationError {}
 
+export const getTracePrintFailure = (error: unknown) => {
+  // Deviation from TLC: it reports an overflow while it prints a trace as "TLC threw an unexpected exception" with a Java stack trace.
+  if (isStackOverflow(error)) return STACK_OVERFLOW_MESSAGE;
+  if (!(error instanceof TlaAliasFormatError)) throw error;
+  return error.message;
+};
+
 export class TlaSetBoundError extends TlaEvaluationError {}
 
 export class TlaFileError extends TlaEvaluationError {
