@@ -1349,6 +1349,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   for (let number = 1; number < environmentNodes.length; number++) {
     rename(environmentNodes[number], number, renameEnvironmentRecord, environmentSlots);
   }
+  // The edges of the page that a page maker makes, which grows to hold the most of any page.
+  let pageScratch = new Int32Array(EDGE_NODES + 4 * PAGE_SIZE);
   // A page of a heap, which is the page of the heap before where each of its slots is in place.
   const getPageMaker =
     (nodes: Int32Array, slots: Slots, pagesBefore: Value[]) => (page: number) => {
@@ -1363,40 +1365,43 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       for (let slot = 0; isKept && slot < count; slot++)
         isKept = slots.isInPlace[first + slot] === 1;
       if (isKept) return previous;
-      let size = EDGE_NODES;
-      for (let slot = 0; slot < count; slot++) {
-        const node = nodes[first + slot + 1];
-        if (getEdgeStart(node) === -1) continue;
-        const array = getEdgeArray(node, getPage(node));
-        size += getEdgeEnd(node, array) - getEdgeFirst(node, array);
-      }
-      const pageEdges = new Int32Array(size);
-      pageEdges[0] = realm.objects;
-      pageEdges[1] = realm.environments;
-      let at = EDGE_NODES;
-      for (let slot = 0; slot < PAGE_SIZE; slot++) {
-        pageEdges[EDGE_STARTS + slot] = at;
-        const node = slot < count ? nodes[first + slot + 1] : 0;
-        if (getEdgeStart(node) === -1) continue;
-        const array = getEdgeArray(node, getPage(node));
-        const end = getEdgeEnd(node, array);
-        for (let index = getEdgeFirst(node, array); index < end; index++) {
-          const target = array[index];
-          pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
-        }
-        if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
-      }
-      pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
+      pageScratch.fill(0, 0, EDGE_STARTS);
+      pageScratch[0] = realm.objects;
+      pageScratch[1] = realm.environments;
       // eslint-disable-next-line unicorn/no-new-array
       const locations = new Array<number[] | undefined>(count);
-      for (let slot = 0; slot < count; slot++) {
+      let at = EDGE_NODES;
+      for (let slot = 0; slot < PAGE_SIZE; slot++) {
+        pageScratch[EDGE_STARTS + slot] = at;
+        if (slot >= count) continue;
         const node = nodes[first + slot + 1];
         const heapNode = node === 0 ? first + slot + 1 : node;
-        locations[slot] = getLocated(heapNode, getPage(heapNode));
+        const nodePage = getPage(heapNode);
+        locations[slot] = getLocated(heapNode, nodePage);
+        if (getEdgeStart(node) === -1) continue;
+        const array = getEdgeArray(node, nodePage);
+        const edgeFirst = getEdgeFirst(node, array);
+        const end = getEdgeEnd(node, array);
+        if (at + end - edgeFirst > pageScratch.length) {
+          const grown = new Int32Array(2 * (at + end - edgeFirst));
+          grown.set(pageScratch);
+          pageScratch = grown;
+        }
+        for (let index = edgeFirst; index < end; index++) {
+          const target = array[index];
+          pageScratch[at++] = target > 0 ? getNew(target) : -getNew(target);
+        }
+      }
+      pageScratch[EDGE_STARTS + PAGE_SIZE] = at;
+      if (nodes === objectNodes) {
+        for (let index = 0; index < weakMaps.length; index++) {
+          const slot = objectNumbers[weakMaps[index]] - 1 - first;
+          if (slot >= 0 && slot < count) pageScratch[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
+        }
       }
       const hashes = slots.hashes.slice(first, first + count);
       return new CanonicalPage(
-        pageEdges,
+        pageScratch.slice(0, at),
         locations,
         slots.plans.slice(first, first + count),
         slots.sources.slice(first, first + count),
