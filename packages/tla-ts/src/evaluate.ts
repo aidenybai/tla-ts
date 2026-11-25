@@ -1365,12 +1365,12 @@ const callOperatorWithValues = (operator: Operator, args: Value[], context: Cont
   return evaluate(operator.body, withScope(context, scope));
 };
 
-const toOperatorValue = (operator: Operator, context: Context): OperatorValue => {
+const toOperatorValue = (operator: Operator, name: string, context: Context): OperatorValue => {
   if (operator.kind === "Operator") return operator;
   const coverage = context.environment.coverage;
   return {
     kind: "Operator",
-    name: operator.name,
+    name,
     arity: getArity(operator),
     signature: operator.kind === "Builtin" ? operator.signature : undefined,
     // TLC's OpLambdaValue#eval, which a Java override or a split action calls, evaluates the operator's body without a cost model.
@@ -1381,8 +1381,14 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
   };
 };
 
-export const evaluateOperatorValue = (expression: Expression, context: Context) =>
-  toOperatorValue(evaluateOperatorArgument(expression, context), context);
+export const evaluateOperatorValue = (expression: Expression, context: Context) => {
+  const operator = evaluateOperatorArgument(expression, context);
+  const instanceName =
+    expression.kind === "Identifier" && !isLocallyResolved(expression)
+      ? context.environment.instanceNames.get(expression.name)
+      : undefined;
+  return toOperatorValue(operator, instanceName ?? operator.name, context);
+};
 
 const isOperatorArgument = (expression: Expression, context: Context) => {
   if (expression.kind === "Lambda" || expression.kind === "OperatorReference") return true;

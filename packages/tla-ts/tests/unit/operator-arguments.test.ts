@@ -240,6 +240,15 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
       ],
     ]);
   });
+
+  it("names an operator an instance imports by the instance, as SANY names its OpDefNode", () => {
+    const run = runSpec(["-noGenerateSpecTE", "-config", "Instanced.cfg"], "Outer");
+    const step = "<I!Step(<Operator I!Twice>) line 4, col 1 to line 4, col 31 of module Outer>";
+    expect([run.status, run.lines.filter((line) => line.startsWith("State "))]).toEqual([
+      11,
+      ["State 1: <Initial predicate>", `State 2: ${step}`, `State 3: ${step}`],
+    ]);
+  });
 });
 
 const BEHAVIOR = "Error: The behavior up to this point is:";
