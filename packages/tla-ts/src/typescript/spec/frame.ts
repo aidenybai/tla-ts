@@ -731,10 +731,14 @@ export const frameModel = (
       ? signatures[0]
       : undefined;
   };
-  const getShape = (type: ts.Type): Shape | undefined => {
+  // A type that holds itself, as a constructed value's type may, is a record's shape.
+  const getShape = (type: ts.Type, outer: readonly ts.Type[] = []): Shape | undefined => {
+    if (outer.includes(type))
+      return { kind: "function", keys: { kind: "string" }, values: new Map() };
+    const getInner = (inner: ts.Type) => getShape(inner, [...outer, type]);
     if (type.flags & ts.TypeFlags.TypeParameter) {
       const constraint = getConstraint(type);
-      return constraint === undefined ? { kind: "number" } : getShape(constraint);
+      return constraint === undefined ? { kind: "number" } : getInner(constraint);
     }
     // A callback is the record of its table, as its domain makes it.
     if (getCallback(type) !== undefined) {
@@ -742,7 +746,7 @@ export const frameModel = (
     }
     if (type.isUnion()) {
       return type.types
-        .map(getShape)
+        .map(getInner)
         .reduce((left, right) => left && right && unifyShapes(left, right));
     }
     if (type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) {
@@ -754,15 +758,15 @@ export const frameModel = (
     if (type.flags & ts.TypeFlags.StringLike) return { kind: "string" };
     const typeArguments = isTypeReference(type) ? checker.getTypeArguments(type) : [];
     if (isSetType(type)) {
-      const rest = getShape(typeArguments[0]);
+      const rest = getInner(typeArguments[0]);
       return rest && { kind: "set", rest };
     }
     if (isMapType(type)) {
-      const [keys, rest] = typeArguments.map(getShape);
+      const [keys, rest] = typeArguments.map(getInner);
       return keys && rest && { kind: "function", keys, rest };
     }
     if (checker.isArrayType(type) || getTypeName(type) === "Iterable") {
-      const rest = getShape(typeArguments[0]);
+      const rest = getInner(typeArguments[0]);
       return rest && { kind: "function", keys: { kind: "number" }, rest };
     }
     const properties = checker.isTupleType(type)
@@ -771,7 +775,7 @@ export const frameModel = (
           key: property.name,
           type: checker.getTypeOfSymbol(property),
         }));
-    const shapes = properties.map((property) => getShape(property.type));
+    const shapes = properties.map((property) => getInner(property.type));
     if (shapes.some((shape) => shape === undefined)) return undefined;
     return {
       kind: "function",
@@ -992,10 +996,160 @@ export const frameModel = (
       )
       .find((keys) => names.every((name) => keys.some((place) => place.includes(name))));
   };
+  // Whether a type is plain data: a primitive, a type parameter, or an array, a tuple, or an
+  // object of plain data that holds at least one property that TLA+ can name, not counting
+  // methods. An effect holds none, a function, a Set, and a Map aren't plain data, and a mutable
+  // object fails isImmutable.
+  const isData = (type: ts.Type, outer: readonly ts.Type[]): boolean => {
+    if (outer.includes(type)) return true;
+    const path = [...outer, type];
+    if (type.isUnion()) return type.types.every((member) => isData(member, path));
+    if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.ESSymbolLike)) {
+      return false;
+    }
+    if (!(type.flags & ts.TypeFlags.Object)) return true;
+    if (type.getCallSignatures().length > 0 || isSetType(type) || isMapType(type)) return false;
+    if ((checker.isArrayType(type) || checker.isTupleType(type)) && isTypeReference(type)) {
+      return checker.getTypeArguments(type).every((inner) => isData(inner, path));
+    }
+    const fields = getFields(type);
+    return (
+      fields.length > 0 && fields.every((field) => isData(checker.getTypeOfSymbol(field), path))
+    );
+  };
+  // The properties of an object that TLA+ can name, but its methods, which a method's syntax
+  // declares.
+  const getFields = (type: ts.Type) =>
+    type
+      .getProperties()
+      .filter(
+        (property) =>
+          isFieldName(property.name) &&
+          !(property.declarations ?? []).some(
+            (declaration) =>
+              ts.isMethodSignature(declaration) || ts.isMethodDeclaration(declaration),
+          ),
+      );
+  // Whether a data type's values can't change: each member's required fields are read-only, and
+  // its declaration has no type parameter that is both in and out, as a mutable cell's is.
+  const isImmutable = (type: ts.Type, symbol: ts.Symbol) =>
+    (type.isUnion() ? type.types : [type]).every((member) =>
+      getFields(member).every(
+        (field) =>
+          (field.flags & ts.SymbolFlags.Optional) !== 0 ||
+          ((field.declarations ?? []).length > 0 &&
+            (field.declarations ?? []).every(
+              (declaration) =>
+                (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Readonly) !== 0,
+            )),
+      ),
+    ) &&
+    (symbol.declarations ?? []).every(
+      (declaration) =>
+        !(ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration)) ||
+        (declaration.typeParameters ?? []).every((parameter) => {
+          const modifiers = (ts.getModifiers(parameter) ?? []).map((modifier) => modifier.kind);
+          return !(
+            modifiers.includes(ts.SyntaxKind.InKeyword) &&
+            modifiers.includes(ts.SyntaxKind.OutKeyword)
+          );
+        }),
+    );
+  // Whether a constructor's parameter takes only primitives or a type parameter's values.
+  const isSimple = (type: ts.Type): boolean =>
+    type.isUnion()
+      ? type.types.every(isSimple)
+      : (type.flags &
+          (ts.TypeFlags.StringLike |
+            ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BigIntLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.Null |
+            ts.TypeFlags.Undefined |
+            ts.TypeFlags.TypeParameter)) !==
+        0;
+  // The type whose constructors' parameters are being listed, which take no constructed values.
+  const constructing = new Set<ts.Type>();
+  // A type that has no finite set of values, which the module declares, which is plain data, and
+  // whose type arguments are type parameters without constraints, takes each value that the
+  // module's constructors of it make: its exported functions that return it from parameters that
+  // take only primitives or type parameters' values, each of each list of their arguments.
+  const getConstructedDomain = (type: ts.Type, outer: readonly ts.Type[]): Domain | undefined => {
+    if (constructing.size > 0) return undefined;
+    const symbol = type.aliasSymbol ?? type.getSymbol();
+    const typeArguments =
+      type.aliasTypeArguments ?? (isTypeReference(type) ? checker.getTypeArguments(type) : []);
+    if (
+      symbol === undefined ||
+      !(symbol.declarations ?? []).some(
+        (declaration) => declaration.getSourceFile() === sourceFile,
+      ) ||
+      !typeArguments.every(
+        (argument) =>
+          (argument.flags & ts.TypeFlags.TypeParameter) !== 0 &&
+          getConstraint(argument) === undefined,
+      ) ||
+      !isData(type, []) ||
+      !isImmutable(type, symbol)
+    ) {
+      return undefined;
+    }
+    const parts = exported.flatMap((definition) => {
+      const returned = getReturnType(definition);
+      const parameters = getParameters(definition);
+      if (
+        returned === undefined ||
+        (returned.aliasSymbol ?? returned.getSymbol()) !== symbol ||
+        !isFieldName(definition.identifier.text) ||
+        !parameters.every((parameter) => isSimple(parameter.type))
+      ) {
+        return [];
+      }
+      constructing.add(type);
+      const domains = findDomains(
+        parameters.map((parameter) => parameter.type),
+        [...outer, type],
+        parameters.map((parameter) => parameter.node.type),
+      );
+      constructing.delete(type);
+      return Array.isArray(domains) ? [{ definition, parameters, domains }] : [];
+    });
+    if (parts.length === 0) return undefined;
+    assumed.add(
+      `${checker.typeToString(type)} := ${parts.map((part) => `${part.definition.identifier.text}(${part.parameters.map((parameter) => parameter.name).join(", ")})`).join(", ")}`,
+    );
+    const texts = parts.map((part) => {
+      const bound = part.domains.map(() => names.getFresh("argument"));
+      // The arguments are a field named by the constructor, as TLC compares two records' field
+      // names before their values, which another constructor's arguments may not match.
+      const record = `[constructed |-> [${part.definition.identifier.text} |-> <<${bound.join(", ")}>>]]`;
+      return bound.length === 0
+        ? `{${record}}`
+        : `{${record} : ${bound.map((name, index) => `${name} \\in (${part.domains[index].text})`).join(", ")}}`;
+    });
+    return {
+      text: texts.map((text) => `(${text})`).join(" \\cup "),
+      size: parts.reduce(
+        (sum, part) => sum + part.domains.reduce((product, domain) => product * domain.size, 1),
+        0,
+      ),
+    };
+  };
+  // The domain of a type, or of the values that the module's constructors make of it.
+  const findSizedDomain = (
+    type: ts.Type,
+    outer: readonly ts.Type[],
+    node?: ts.TypeNode,
+    isHeldOptional = false,
+    isMethod = false,
+  ): Domain | Infinite => {
+    const domain = findListedDomain(type, outer, node, isHeldOptional, isMethod);
+    return isUnlisted(domain) ? (getConstructedDomain(type, outer) ?? domain) : domain;
+  };
   // The set of every value that a finite type allows, which TLC enumerates, as TLA+, with how many
   // values it has. outer holds the types around this one, so a type that holds itself, such as a
   // tree, has no end. node, where it's given, writes the type.
-  const findSizedDomain = (
+  const findListedDomain = (
     type: ts.Type,
     outer: readonly ts.Type[],
     node?: ts.TypeNode,

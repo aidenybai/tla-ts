@@ -514,6 +514,52 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A parameter of a data type that the module declares and lists no values of takes each value
+  // that the module's constructors of it make, as the note says: make of each number and fromBig of
+  // each BigInt from -3 to 3, but those whose call throws, which make none. TLC compares the two
+  // constructors' values, whose arguments it can't compare, by their names first. Node, calling
+  // half with each of those, finds no throw where half throws above 3, and finds odd 3 where it
+  // throws above 1.
+  describe("calls an export with a value that the module's constructor makes", () => {
+    const getModel = (limit: number) =>
+      `export interface Cents {\n  readonly amount: number;\n  pipe(): unknown;\n}\nexport const make = (amount: number): Cents => {\n  if (amount < 0) throw new RangeError("negative " + amount);\n  return { amount, pipe: () => amount };\n};\nexport const fromBig = (amount: bigint): Cents => make(Number(amount));\nexport const half = (self: Cents): number => {\n  if (self.amount % 2 === 1 && self.amount > ${limit}) throw new Error("odd " + self.amount);\n  return self.amount / 2;\n};\n`;
+    const NOTE = "tla-ts calls half with Cents := make(amount), fromBig(amount)";
+    // Every message that half throws in Node over those values, in order.
+    const getThrown = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { make, fromBig, half } from "./cents.ts";
+          const values = [-3, -2, -1, 0, 1, 2, 3].flatMap((amount) => [() => make(amount), () => fromBig(BigInt(amount))]).flatMap((construct) => { try { return [construct()]; } catch { return []; } });
+          const thrown = new Set();
+          for (const value of values) { try { half(value); } catch (error) { thrown.add(error.message); } }
+          console.log(JSON.stringify([values.length, ...thrown]));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim();
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "cents.ts"), getModel(3));
+      expect(getThrown(directory)).toBe("[8]");
+      const result = runCli(directory, ["cents.ts"]);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"make throws: negative -3"');
+      expect(result.stdout).not.toContain("half throws");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "cents.ts"), getModel(1));
+      expect(getThrown(directory)).toBe('[8,"odd 3"]');
+      const result = runCli(directory, ["cents.ts"]);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"half throws: odd 3"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.

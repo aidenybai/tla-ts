@@ -243,7 +243,7 @@ const STEP_OF = String.raw`StepOf(s, name, converted) ==
 // one again: an export named x takes another.
 const LOCAL_NAMES = new Set(
   (
-    "listHead listRest listValues keyOrder choiceList converted before s0 ka va ts " +
+    "listHead listRest listValues keyOrder choiceList converted constructed before s0 ka va ts " +
     "a e f g i j k m n r s t v x"
   ).split(" "),
 );
@@ -259,11 +259,34 @@ const isTagged = (domain: Expression, field: string) =>
   domain.expression.fields.length === 1 &&
   domain.expression.fields[0].name === field;
 
-// Whether a domain's values hold a callback anywhere.
+// The constructor and the bounds of its arguments of a domain of the values that a constructor
+// makes, [constructed |-> [name |-> args]]: a set of one, or the set of each list of arguments.
+const getConstructed = (domain: Expression) => {
+  const record =
+    domain.kind === "SetMap"
+      ? domain.expression
+      : domain.kind === "SetEnumeration" && domain.elements.length === 1
+        ? domain.elements[0]
+        : undefined;
+  const inner =
+    record?.kind === "Record" &&
+    record.fields.length === 1 &&
+    record.fields[0].name === "constructed"
+      ? record.fields[0].value
+      : undefined;
+  return inner?.kind === "Record" && inner.fields.length === 1
+    ? { name: inner.fields[0].name, bounds: domain.kind === "SetMap" ? domain.bounds : [] }
+    : undefined;
+};
+
+// Whether a domain's values hold a callback or a constructed value anywhere, which only ESCore
+// makes.
 const holdsFunction = (node: unknown): boolean =>
   typeof node === "object" &&
   node !== null &&
-  (("kind" in node && isTagged(node as Expression, "callback")) ||
+  (("kind" in node &&
+    (isTagged(node as Expression, "callback") ||
+      getConstructed(node as Expression) !== undefined)) ||
     Object.values(node).some(holdsFunction));
 
 // The global that holds the values the initial state chose for the state variables without an
@@ -564,6 +587,40 @@ export const planModel = (
     if (holdsFunction(domain)) opaque.add(name);
     return converter;
   };
+  // The definitions of a constructor's call in a state with the arguments of the value x of a
+  // domain of constructed values, whose completion r is.
+  const getConstructedCall = (domain: Expression, state: string) => {
+    const constructed = getConstructed(domain);
+    const parts = (constructed?.bounds ?? []).map((bound) => getConverter(bound.set).name);
+    entries.add(constructed?.name ?? "");
+    return `${parts.map((part, index) => `e${index + 1} == ${part}(${index === 0 ? state : `e${index}.s`}, x.constructed.${constructed?.name}[${index + 1}])\n      `).join("")}r == ModelCall(${parts.length === 0 ? state : `e${parts.length}.s`}, ${getUnits(constructed?.name ?? "")}, <<${parts.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`;
+  };
+  // An expression whose sets of constructed values hold only those that their constructors make,
+  // in the state that the module's top level leaves: a list of arguments whose call throws makes
+  // none.
+  const filterConstructed = (expression: Expression): Expression =>
+    JSON.parse(JSON.stringify(expression), (_, value: unknown) => {
+      if (typeof value !== "object" || value === null || !("kind" in value)) return value;
+      const set = value as Expression;
+      if (getConstructed(set) === undefined) return value;
+      const state = lowered === undefined ? "ModelStartState" : "ModelState(ModelInitial)";
+      const operator = define(
+        "Constructs",
+        (name) => `${name}(x) ==\n  LET ${getConstructedCall(set, state)}\n  IN r.c.type # "throw"`,
+      );
+      const location = set.location;
+      return {
+        kind: "SetFilter",
+        bound: { pattern: { kind: "Name", name: "constructed" }, set },
+        predicate: {
+          kind: "Apply",
+          operator,
+          args: [{ kind: "Identifier", name: "constructed", location }],
+          location,
+        },
+        location,
+      };
+    });
   // The converters whose values hold a function, which no native call takes.
   const opaque = new Set<string>();
   // The lowered converter of each converter, by name, where the values it makes lower: its
@@ -642,6 +699,18 @@ export const planModel = (
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
     if (isTagged(domain, "bigint")) return plain("BigInt(BigIntFromInt(x.bigint))");
+    // A value that a constructor of the module makes: the constructor's call with its arguments,
+    // which the domain's filter keeps to those that return.
+    if (getConstructed(domain) !== undefined) {
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${getConstructedCall(domain, "s")}\n  IN IF r.c.type = "throw" THEN Assert(FALSE, "tla-ts can't construct a value whose constructor throws: " \\o ThrownText(r)) ELSE [s |-> r.s, v |-> Val(r)]`,
+        ),
+        undefined,
+      );
+    }
     // A callback, the record of its table: the function that the module gets appended makes it of
     // the table's keys and values, and returns the value at the key that its first argument is.
     if (isTagged(domain, "callback")) {
@@ -990,7 +1059,7 @@ export const planModel = (
         `tla-ts can't read today's state in ${printExpression(expression)} on ESCore yet`,
       );
     }
-    return copyDefinitions(renameModelValues(expression));
+    return filterConstructed(copyDefinitions(renameModelValues(expression)));
   };
   // The exported function that an action or a fairness condition applies, with the names it
   // passes as arguments.
