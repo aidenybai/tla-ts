@@ -57,6 +57,7 @@ import {
   type Value,
 } from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
+import { createTlcRecord } from "./tlc/tlcext-operators";
 import { resolveSynonym, TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
 import { getSanyStandardModules } from "./sany/modules";
 import { parseModule } from "./parser";
@@ -105,7 +106,7 @@ const BUILTIN_RANGE: SourceRange = {
 
 const toLocationValue = (location: SourceLocation) => {
   const range = location.range ?? BUILTIN_RANGE;
-  return createRecord([
+  return createTlcRecord([
     ["beginLine", range.start.line],
     ["beginColumn", range.start.column],
     ["endLine", range.end.line],
@@ -119,14 +120,14 @@ export const toActionValue = (action: SpecAction, coverage?: Value) => {
     ["name", action.name],
     ["location", toLocationValue(action.location)],
   ];
+  if (coverage !== undefined) fields.push(["coverage", coverage]);
   if (action.parameters.length > 0) {
     fields.push(
-      ["context", createRecord(action.parameters)],
+      ["context", createTlcRecord(action.parameters)],
       ["parameters", createTuple(action.parameters.map((parameter) => parameter[0]))],
     );
   }
-  if (coverage !== undefined) fields.push(["coverage", coverage]);
-  return createRecord(fields);
+  return createTlcRecord(fields);
 };
 
 const createAction = (name: string, expression: Expression, scope?: Scope): SpecAction => ({
