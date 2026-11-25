@@ -397,6 +397,41 @@ describe("typed tier matches TLC", () => {
     },
   );
 
+  it("checks the temporal properties on the graph so far before its first progress report, as TLC's periodic work does after it expands x = 63", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 4000));
+    const reported: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nNext == x < 200 /\\ x' = x + 1\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(x = 200)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onProgress: (progress) => {
+        if (progress.kind === "liveness-started") {
+          reported.push(`${progress.isComplete ? "complete" : "current"} ${progress.states}`);
+        }
+        if (progress.kind === "liveness-finished" || progress.kind === "progress") {
+          reported.push(progress.kind);
+        }
+      },
+    });
+    expect([result.status, reported]).toEqual([
+      "success",
+      ["current 65", "liveness-finished", "progress", "complete 201", "liveness-finished"],
+    ]);
+  });
+
+  it("leaves a violation its periodic check finds to the interpreter", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 4000));
+    const result = await check({
+      source:
+        "---- MODULE Cycle ----\nEXTENDS Naturals\nVARIABLE x\nNext == IF x < 30 THEN x' \\in {(x + 1) % 30, x + 100} ELSE x < 400 /\\ x' = x + 1\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nProp == []<>(x >= 100)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onProgress: () => {},
+    });
+    expect([result.status, result.violation?.name]).toEqual(["liveness-violation", "Prop"]);
+  });
+
   it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
