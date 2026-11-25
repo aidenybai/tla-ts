@@ -202,7 +202,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
       return;
     }
     if (functionClass === "record") {
-      // Deviation from TLC: _TLCTrace#ioSerialize can't fingerprint an operator a split action binds in its context, so TLC cuts the trace file short.
+      // Deviation from TLC: _TLCTrace#ioSerialize can't fingerprint an operator a split action binds in its context, so TLC fails _TLCTraceSilent and leaves the trace file empty.
       const fields = functionValue.domain.flatMap((_name, index) => {
         const field = functionValue.range[index];
         return isContext && typeof field === "object" && field.kind === "Operator" ? [] : [index];
