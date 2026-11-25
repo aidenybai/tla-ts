@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import type { CheckProgress } from "../../src";
 import { checkDepthFirst, type DepthFirstOutput } from "../../src/dfid";
+import { formatProbability } from "../../src/tlc/summary";
 
 const searchDepthFirst = (body: string, coverage?: number) => {
   const outputs: DepthFirstOutput[] = [];
@@ -414,6 +415,58 @@ it("checks the assumptions of a specification without variables and then complet
       "2208 Finished computing initial states: 0 states generated, with 0 of them distinct.",
       "success 0 0",
       "2204 0 states generated, 0 distinct states found.",
+    ],
+  ]);
+});
+
+const searchTwoInitialStates = (source: string) => {
+  const outputs: DepthFirstOutput[] = [];
+  const exitCode = checkDepthFirst({
+    source,
+    config: "INIT Init\nNEXT Next",
+    maxDepth: 3,
+    onOutput: (output) => outputs.push(output),
+  });
+  return [
+    exitCode,
+    outputs.map((output) =>
+      output.kind === "message"
+        ? `${output.code} ${output.message}`
+        : output.kind === "success"
+          ? `success ${formatProbability(output.optimistic)} ${formatProbability(output.actual)}`
+          : output.kind,
+    ),
+  ];
+};
+
+it("reports the distance of two fingerprints that share a negative low word, which TLC's MemFPIntSet#checkFPs reads as equal before it divides by zero", () => {
+  expect(
+    searchTwoInitialStates(
+      "---- MODULE M ----\nVARIABLES x, y\nInit == \\/ x = 0 /\\ y = 1\n        \\/ x = 27370 /\\ y = 42572\nNext == UNCHANGED <<x, y>>\n====",
+    ),
+  ).toEqual([
+    0,
+    [
+      "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
+      "2205 Starting level 2: 2 states generated, 2 distinct states found.",
+      "success 2.2E-19 2.2E-19",
+      "2204 4 states generated, 2 distinct states found.",
+    ],
+  ]);
+});
+
+it("reports a positive probability for two fingerprints in a bucket that differ by 2^63, where TLC's MemFPIntSet#checkFPs takes Math.abs(Long.MIN_VALUE)", () => {
+  expect(
+    searchTwoInitialStates(
+      "---- MODULE M ----\nVARIABLES x, y, z\nInit == \\/ x = 0 /\\ y = 0 /\\ z = 0\n        \\/ x = 3424530 /\\ y = 1985122 /\\ z = 1350749\nNext == UNCHANGED <<x, y, z>>\n====",
+    ),
+  ).toEqual([
+    0,
+    [
+      "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
+      "2205 Starting level 2: 2 states generated, 2 distinct states found.",
+      "success 2.2E-19 1.1E-19",
+      "2204 4 states generated, 2 distinct states found.",
     ],
   ]);
 });
