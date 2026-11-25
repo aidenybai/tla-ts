@@ -872,6 +872,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const length = Math.min(traceDepth, currentNode.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
+    // Deviation from TLC: it packs m2 into the high 32 bits of one AtomicLong, so its variance wraps once m2 reaches 2^32.
     statistics.levelM2 += delta * (length - statistics.levelMean);
     // Deviation from TLC: it learns after file= drops the stuttering steps, and RLSimulationWorker#postTrace then walks past the initial state into a NullPointerException.
     if (options.scheduler === "rl") scheduler.learnTrace(currentNode);

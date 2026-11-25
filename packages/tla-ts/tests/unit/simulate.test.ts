@@ -1014,6 +1014,36 @@ it("simulates num behaviors on each worker and prints the statistics TLC's worke
   ]);
 });
 
+it("keeps the trace-length variance whole past 2^32, where TLC's packed m2 wraps to var(x)=66399434", () => {
+  const lines: string[] = [];
+  simulate({
+    source:
+      "---- MODULE Wrap ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in {0, 70000}\nNext == x < 70000 /\\ x' = x + 1\n====",
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 100000,
+    traceCount: 8n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (_code, _level, text) => lines.push(text),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  expect(lines.filter((line) => line.startsWith("Progress"))).toEqual([
+    "Progress: 210002 states checked, 8 traces generated (trace length: mean=26251, var(x)=1020836611, sd=31951)",
+  ]);
+});
+
 it.each([
   [
     2,
