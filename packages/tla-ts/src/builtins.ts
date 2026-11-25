@@ -197,6 +197,7 @@ const KIND_STRINGS: Record<string, string> = {
   FcnLambdaValue: "a function of the form  [x \\in S |-> expr]",
   FcnRcdValue: "a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)",
   OpLambdaValue: "an operator",
+  MethodValue: "a java method",
   SetOfFcnsValue: "a set of the form [S -> T]",
   SetOfRcdsValue: "a set of the form [d1 : S1, ... , dN : SN]",
   SetOfTuplesValue: "a cartesian product",
@@ -221,6 +222,7 @@ export const getJavaClassName = (value: Value) => {
   if (typeof value === "string") return "StringValue";
   if (typeof value === "boolean") return "BoolValue";
   if (value.kind === "SetOperation") return SET_OPERATION_CLASSES[value.operator];
+  if (value.kind === "Operator" && value.signature !== undefined) return "MethodValue";
   if (value.kind !== "Function") return JAVA_CLASSES[value.kind];
   const functionClass = getFunctionClass(value);
   return functionClass === undefined ? "FcnRcdValue" : FUNCTION_CLASSES[functionClass];

@@ -1372,6 +1372,7 @@ const toOperatorValue = (operator: Operator, context: Context): OperatorValue =>
     kind: "Operator",
     name: operator.name,
     arity: getArity(operator),
+    signature: operator.kind === "Builtin" ? operator.signature : undefined,
     // TLC's OpLambdaValue#eval, which a Java override or a split action calls, evaluates the operator's body without a cost model.
     call: coverage
       ? (args) =>

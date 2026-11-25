@@ -313,6 +313,57 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
   });
 });
 
+const LEN_METHOD =
+  "<Java Method: public static tlc2.value.impl.IntValue tlc2.module.Sequences.Len(tlc2.value.impl.Value)>";
+
+const LEN_STEP = `<Step(${LEN_METHOD}) line 4, col 15 to line 4, col 40 of module OperatorJava>`;
+
+describe("an action with a Java override for an argument binds it as TLC's MethodValue", () => {
+  it("labels a step by the Java method its action binds", () => {
+    const run = runSpec(["-noGenerateSpecTE"], "OperatorJava", [
+      ["OperatorJava.cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"],
+    ]);
+    expect([run.status, run.lines.filter((line) => line.startsWith("State "))]).toEqual([
+      12,
+      ["State 1: <Initial predicate>", `State 2: ${LEN_STEP}`, `State 3: ${LEN_STEP}`],
+    ]);
+  });
+
+  it("fails to apply the Java method as a function with TLC's message", () => {
+    const run = simulateInvariant("OperatorJava", "Applies");
+    expect([run.status, getFailure("Applies", run.lines)]).toEqual([
+      76,
+      [
+        "A non-function (a java method) was applied as a function.",
+        "line 13, col 21 to line 13, col 25 of module OperatorJava",
+      ],
+    ]);
+  });
+
+  it("prints the Java method as TLC does", () => {
+    const run = simulateInvariant("OperatorJava", "Prints");
+    expect([run.status, getPrinted(run.lines)]).toEqual([
+      11,
+      [LEN_METHOD, LEN_METHOD, LEN_METHOD, "Error: Deadlock reached.", BEHAVIOR],
+    ]);
+  });
+
+  it.each([
+    ["EqualsNumber", [`Attempted to check equality of operator ${LEN_METHOD} with value:`, "1"]],
+    ["Compares", [`Attempted to compare operator ${LEN_METHOD} with value:`, LEN_METHOD]],
+    [
+      "HasMember",
+      ["Attempted to check if the value:", "1", `is an element of operator ${LEN_METHOD}`],
+    ],
+  ])(
+    "fails %s with the whole message, which a string precedence bug in TLC's MethodValue cuts short",
+    (invariant, message) => {
+      const run = simulateInvariant("OperatorJava", invariant);
+      expect([run.status, getFailure(invariant, run.lines)]).toEqual([76, message]);
+    },
+  );
+});
+
 const SERIALIZE_ERROR = [
   "Error: Evaluating postcondition _TLCTraceSilent at line 28, col 5 to line 28, col 21 of module _TLCTrace failed.",
   "Attempted to apply the operator overridden by the Java method",

@@ -174,6 +174,7 @@ export interface OperatorValue {
   arity: number;
   call: (args: Value[]) => Value;
   expression?: Expression;
+  signature?: string;
 }
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
@@ -1204,6 +1205,7 @@ const describeScalarMismatch = (
 
 const getComparisonVerb = (isEquality: boolean) => (isEquality ? "check equality of" : "compare");
 
+// Deviation from TLC: a string precedence bug in MethodValue#compareTo and #equals leaves only the other value in the message.
 const describeOperatorComparison = (isEquality: boolean, left: Value, right: Value) =>
   `Attempted to ${getComparisonVerb(isEquality)} operator ${prettyPrint(formatValue(left))} with value:\n${prettyPrint(formatValue(right))}`;
 
@@ -4184,6 +4186,7 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
+  // Deviation from TLC: a string precedence bug in MethodValue#member drops the message's first line.
   if (typeof value === "object" && value.kind === "Operator") {
     return `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of operator ${prettyPrint(formatValue(value))}`;
   }
@@ -5974,7 +5977,12 @@ const writeValue = (
       return writeText(writer, ")");
     }
     case "Operator":
-      return writeText(writer, `<Operator ${value.name}>`);
+      return writeText(
+        writer,
+        value.signature === undefined
+          ? `<Operator ${value.name}>`
+          : `<Java Method: ${value.signature}>`,
+      );
   }
 };
 
