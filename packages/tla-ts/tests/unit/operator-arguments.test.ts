@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -8,19 +16,24 @@ import { DIST_CLI } from "./cli-harness";
 
 const DIRECTORY = "operator-arguments";
 
-const runSpec = (args: string[], module = "OperatorArguments", config?: string) => {
+const runSpec = (
+  args: string[],
+  module = "OperatorArguments",
+  files: [string, string | Uint8Array][] = [],
+) => {
   const directory = mkdtempSync(join(tmpdir(), "operator-arguments-"));
   cpSync(join(FIXTURES, DIRECTORY), directory, { recursive: true });
-  if (config !== undefined) writeFileSync(join(directory, `${module}.cfg`), config);
-  const result = spawnSync(
-    process.execPath,
-    [DIST_CLI, `${module}.tla`, "-noGenerateSpecTE", "-fp", "0", ...args],
-    { cwd: directory, encoding: "utf8" },
-  );
+  files.forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
+  const result = spawnSync(process.execPath, [DIST_CLI, `${module}.tla`, "-fp", "0", ...args], {
+    cwd: directory,
+    encoding: "utf8",
+  });
   const graphPath = join(directory, "OperatorArguments_actions.dot");
   const graph = existsSync(graphPath) ? readFileSync(graphPath, "utf8") : undefined;
+  const traceFile = readdirSync(directory).find((file) => file.endsWith(".bin"));
+  const trace = traceFile === undefined ? undefined : readFileSync(join(directory, traceFile));
   rmSync(directory, { recursive: true });
-  return { status: result.status, lines: result.stdout.split("\n"), graph };
+  return { status: result.status, lines: result.stdout.split("\n"), graph, trace };
 };
 
 const getBehavior = (lines: string[]) =>
@@ -36,7 +49,7 @@ const SPLIT_LOCATION =
 
 describe("an action with operators for arguments splits as TLC's Tool#getActionsAppl splits it", () => {
   it("labels a step by the operator its action binds", () => {
-    const run = runSpec([]);
+    const run = runSpec(["-noGenerateSpecTE"]);
     expect([run.status, run.lines.filter((line) => line.startsWith("State "))]).toEqual([
       12,
       [
@@ -66,7 +79,14 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
   });
 
   it("counts the actions it splits from one body under one cost model, and splits no operator of a variable", () => {
-    const run = runSpec(["-deadlock", "-coverage", "1", "-config", "Graph.cfg"]);
+    const run = runSpec([
+      "-noGenerateSpecTE",
+      "-deadlock",
+      "-coverage",
+      "1",
+      "-config",
+      "Graph.cfg",
+    ]);
     expect([run.status, run.lines.filter((line) => line.startsWith("<"))]).toEqual([
       0,
       [
@@ -80,6 +100,7 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
 
   it("draws the actions it splits from one body as one vertex of -simulate's action graph", () => {
     const run = runSpec([
+      "-noGenerateSpecTE",
       "-simulate",
       "num=4,stats=basic",
       "-depth",
@@ -97,6 +118,7 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
 
   it('binds the operator in the context of TLCGet("action") and counts the action by its name', () => {
     const run = runSpec([
+      "-noGenerateSpecTE",
       "-simulate",
       "num=1",
       "-depth",
@@ -147,7 +169,7 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
 
   it("records no coverage in the body of an operator it calls as a value, as TLC's OpLambdaValue#eval does", () => {
     const run = runSpec(
-      ["-deadlock", "-coverage", "1", "-config", "OperatorCoverage.cfg"],
+      ["-noGenerateSpecTE", "-deadlock", "-coverage", "1", "-config", "OperatorCoverage.cfg"],
       "OperatorCoverage",
     );
     const module = "of module OperatorCoverage";
@@ -180,7 +202,10 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
   });
 
   it("splits an instanced action by its operator arguments", () => {
-    const run = runSpec(["-simulate", "num=1", "-depth", "4", "-seed", "2"], "Outer");
+    const run = runSpec(
+      ["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "2"],
+      "Outer",
+    );
     const step = "line 4, col 1 to line 4, col 31 of module Outer";
     const action = `/\\ action = [name |-> "I!Step", location |-> [beginLine |-> 4, beginColumn |-> 1, endLine |-> 4, endColumn |-> 31, module |-> "Outer"], context |-> [F |-> <Operator Inc>], parameters |-> <<"F">>]`;
     expect([
@@ -245,9 +270,9 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
     ],
   ])("fails %s in -simulate with TLC's message", (invariant, status, message) => {
     const run = runSpec(
-      ["-simulate", "num=1", "-depth", "4", "-seed", "1"],
+      ["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "1"],
       "OperatorValues",
-      `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`,
+      [["OperatorValues.cfg", `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`]],
     );
     const start = run.lines.findIndex((line) => line.startsWith("Error: Evaluating invariant"));
     expect([run.status, run.lines.slice(start, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
@@ -261,14 +286,88 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
     ["Shows", []],
   ])("prints the operator in %s as TLC does", (invariant, printed) => {
     const run = runSpec(
-      ["-simulate", "num=1", "-depth", "4", "-seed", "1"],
+      ["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "1"],
       "OperatorValues",
-      `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`,
+      [["OperatorValues.cfg", `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`]],
     );
     const start = run.lines.findIndex((line) => line.startsWith("Finished computing initial"));
     expect([run.status, run.lines.slice(start + 1, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
       11,
       [...printed, "Error: Deadlock reached.", BEHAVIOR],
     ]);
+  });
+});
+
+const SERIALIZE_ERROR = [
+  "Error: Evaluating postcondition _TLCTraceSilent at line 28, col 5 to line 28, col 21 of module _TLCTrace failed.",
+  "Attempted to apply the operator overridden by the Java method",
+  "public static final tlc2.value.IValue tlc2.module._TLCTrace.ioSerialize(tlc2.value.IValue,tlc2.value.impl.StringValue) throws java.io.IOException,",
+  "but it produced the following error:",
+  "TLC has found a state in which the value of a variable contains <Operator Inc>",
+];
+
+const isPostconditionError = (line: string) => line.startsWith("Error: Evaluating postcondition");
+
+describe("a trace file leaves out the operators a split action binds", () => {
+  it.each([[[]], [["-noGenerateSpecTE", "-dumpTrace", "tlc", "dump.bin"]]])(
+    "writes a trace with %j that TLC's -loadTrace tlc replays",
+    (args) => {
+      const written = runSpec(args);
+      const replayed = runSpec(
+        ["-noGenerateSpecTE", "-loadTrace", "tlc", "trace.bin"],
+        "OperatorArguments",
+        [["trace.bin", written.trace ?? ""]],
+      );
+      const start = replayed.lines.indexOf("Error: Invariant Inv is violated.");
+      const end = replayed.lines.findIndex((line) => line.endsWith("states left on queue."));
+      expect([
+        written.status,
+        written.lines.filter(isPostconditionError),
+        replayed.status,
+        replayed.lines.slice(start, end + 1),
+      ]).toEqual([
+        12,
+        [],
+        12,
+        [
+          "Error: Invariant Inv is violated.",
+          BEHAVIOR,
+          "State 1: <Initial predicate>",
+          "x = 0",
+          "",
+          `State 2: <Step(<Operator Inc>) ${STEP}>`,
+          "x = 1",
+          "",
+          `State 3: <Step(<Operator LAMBDA>) ${STEP}>`,
+          "x = 3",
+          "",
+          "6 states generated, 3 distinct states found, 0 states left on queue.",
+        ],
+      ]);
+    },
+  );
+
+  it("keeps the operators in the CounterExample a POSTCONDITION reads", () => {
+    const run = runSpec(["-config", "OperatorTrace.cfg"], "OperatorTrace");
+    const action = (operator: string) =>
+      `[name |-> "Step", ${SPLIT_LOCATION}, context |-> [F |-> <Operator ${operator}>], parameters |-> <<"F">>]`;
+    expect([
+      run.status,
+      run.lines.filter((line) => line.startsWith("{") || isPostconditionError(line)),
+    ]).toEqual([
+      12,
+      [
+        `{<<<<1, [x |-> 0]>>, ${action("Inc")}, <<2, [x |-> 1]>>>>, <<<<2, [x |-> 1]>>, ${action("LAMBDA")}, <<3, [x |-> 3]>>>>}`,
+      ],
+    ]);
+  });
+
+  it("fails to write a state that holds an operator with TLC's _TLCTrace#ioSerialize error", () => {
+    const run = runSpec(
+      ["-simulate", "num=1", "-depth", "4", "-seed", "1", "-config", "OperatorState.cfg"],
+      "OperatorState",
+    );
+    const start = run.lines.findIndex(isPostconditionError);
+    expect(run.lines.slice(start, start + SERIALIZE_ERROR.length)).toEqual(SERIALIZE_ERROR);
   });
 });

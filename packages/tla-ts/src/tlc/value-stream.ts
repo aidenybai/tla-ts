@@ -149,7 +149,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
     writeByte(TAGS.handle);
     writeNat(index);
   };
-  const write = (inner: Value): void => {
+  const write = (inner: Value, isContext = false): void => {
     if (typeof inner === "boolean") {
       writeByte(TAGS.boolean);
       writeByte(inner ? 1 : 0);
@@ -179,6 +179,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
     if (inner.kind === "InfiniteSet" || inner.kind === "SequenceSet") {
       throw createUnfingerprintableError(inner);
     }
+    if (inner.kind === "Operator") throw createUnfingerprintableError(inner);
     const handle = objectHandles.get(inner);
     if (handle !== undefined) {
       writeHandle(handle);
@@ -189,7 +190,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
       const elements = toFiniteSet(inner).elements;
       writeByte(TAGS.set);
       writeInt(elements.length);
-      elements.forEach(write);
+      elements.forEach((element) => write(element));
       return;
     }
     const functionValue = toFiniteFunction(inner);
@@ -197,14 +198,19 @@ const serializeValue = (value: Value, variableNames: string[]) => {
     if (functionClass === "tuple") {
       writeByte(TAGS.tuple);
       writeNat(functionValue.range.length);
-      functionValue.range.forEach(write);
+      functionValue.range.forEach((element) => write(element));
       return;
     }
     if (functionClass === "record") {
+      // Deviation from TLC: _TLCTrace#ioSerialize can't fingerprint an operator a split action binds in its context, so TLC cuts the trace file short.
+      const fields = functionValue.domain.flatMap((_name, index) => {
+        const field = functionValue.range[index];
+        return isContext && typeof field === "object" && field.kind === "Operator" ? [] : [index];
+      });
       writeByte(TAGS.record);
-      writeInt(functionValue.domain.length);
-      functionValue.domain.forEach((name, index) => {
-        const fieldName = String(name);
+      writeInt(fields.length);
+      fields.forEach((index) => {
+        const fieldName = String(functionValue.domain[index]);
         const nameHandle = nameHandles.get(fieldName);
         if (nameHandle === undefined) {
           nameHandles.set(fieldName, handleCount++);
@@ -212,7 +218,7 @@ const serializeValue = (value: Value, variableNames: string[]) => {
         } else {
           writeHandle(nameHandle);
         }
-        write(functionValue.range[index]);
+        write(functionValue.range[index], fieldName === "context");
       });
       return;
     }
