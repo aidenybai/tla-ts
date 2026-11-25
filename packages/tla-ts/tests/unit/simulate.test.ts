@@ -655,6 +655,36 @@ it("drops a step under -difftrace whose VIEW keeps the same filter of Nat, where
   ]);
 });
 
+it("leaves out of each -difftrace state a filter of Nat that the step keeps, as TLC does a finite set, where TLC's StatePrinter crashes on the filter", () => {
+  const printed: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES y, z\nInit == y = 0 /\\ z = 0\nNext == y' = y + 1 /\\ z' = IF y = 0 THEN {m \\in Nat : m > 1} ELSE z\nInv == y < 3\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace: true,
+    onSimulation: (output) => {
+      if (output.kind === "behavior") printed.push(output.printedStates);
+    },
+  });
+  expect([status, printed]).toEqual([
+    12,
+    [
+      [
+        "/\\ y = 0\n/\\ z = 0\n",
+        "/\\ y = 1\n/\\ z = {m \\in Nat : <expression line 5, col 55 to line 5, col 59 of module M> }\n",
+        "/\\ y = 2\n",
+        "/\\ y = 3\n",
+      ],
+    ],
+  ]);
+});
+
 it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Simulator#printBehavior does", () => {
   const definitions = "Next == y' = y + 1 /\\ z' = 1 - z\nInv == y < 4\nView == y \\div 2";
   expect(getDiffTraceOutputs(definitions, true)).toEqual([

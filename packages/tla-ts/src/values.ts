@@ -5966,7 +5966,7 @@ const isUnchanged = (previous: Value | undefined, value: Value) => {
   try {
     return valuesEqual(previous, value);
   } catch (error) {
-    if (error instanceof TlaEvaluationError) return false;
+    if (error instanceof TlaEvaluationError) return previous === value;
     throw error;
   }
 };
