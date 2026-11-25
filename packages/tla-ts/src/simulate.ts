@@ -64,6 +64,7 @@ import {
   formatFingerprintedState,
   formatState,
   getDiffBase,
+  getFingerprintError,
   getSetBound,
   markNormalized,
   valuesEqual,
@@ -795,6 +796,19 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     };
   };
 
+  const isUnfingerprintable = (viewState: Value[]) =>
+    viewState.some((value) => getFingerprintError(value) !== undefined);
+  // Deviation from TLC: Simulator#printBehavior compares fingerprints, so a state or VIEW whose value such as Nat can't be fingerprinted crashes TLC under -difftrace.
+  const isRepeatedFingerprint = (current: Value[], last: Value[]) => {
+    const currentView = search.getViewState(current);
+    const lastView = search.getViewState(last);
+    if (!isUnfingerprintable(currentView) && !isUnfingerprintable(lastView)) {
+      return runtime.getFingerprint(current) === runtime.getFingerprint(last);
+    }
+    return currentView.every((value, index) =>
+      computeOnFailure(valuesEqual, isIdentical, value, lastView[index]),
+    );
+  };
   const getDiffTracePositions = (trace: TraceNode[]) => {
     const positions = [0];
     for (let position = 1; position < trace.length; position++) {
@@ -802,10 +816,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       const last = trace[position - 1].state;
       try {
         // Deviation from TLC: TLCStateMut#fingerPrint throws a NullPointerException on the incomplete state of a successor error.
-        if (
-          trace[position].incomplete ||
-          runtime.getFingerprint(current) !== runtime.getFingerprint(last)
-        ) {
+        if (trace[position].incomplete || !isRepeatedFingerprint(current, last)) {
           positions.push(position);
         }
       } catch (error) {

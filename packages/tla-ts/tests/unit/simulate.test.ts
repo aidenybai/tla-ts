@@ -641,6 +641,20 @@ const getDiffTraceOutputs = (definitions: string, isDiffTrace: boolean) => {
   return [status, outputs];
 };
 
+it("drops a step under -difftrace whose VIEW keeps the same filter of Nat, where TLC's Simulator#printBehavior fingerprints the filter and crashes", () => {
+  const definitions =
+    "Next == y' = y + 1 /\\ z' = IF y = 0 THEN {m \\in Nat : m > 1} ELSE z\nInv == y < 3\nView == z";
+  expect(getDiffTraceOutputs(definitions, true)).toEqual([
+    12,
+    [
+      "Invariant Inv is violated.",
+      "1: 0",
+      "2: 1",
+      "difftrace requested: Shortened behavior by omitting finite stuttering (2 states), which is an artifact of simulation mode.\n",
+    ],
+  ]);
+});
+
 it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Simulator#printBehavior does", () => {
   const definitions = "Next == y' = y + 1 /\\ z' = 1 - z\nInv == y < 4\nView == y \\div 2";
   expect(getDiffTraceOutputs(definitions, true)).toEqual([

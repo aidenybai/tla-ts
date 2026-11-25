@@ -882,6 +882,7 @@ export interface Search {
   ) => GraphState;
   spec: Specification;
   getFingerprintState: (state: Value[], viewEnvironment?: Environment) => Value[];
+  getViewState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
@@ -1467,12 +1468,16 @@ export const createSearch = (
       ? state
       : getRepresentative(state, symmetryGroup, getTlcOrder());
   };
-  const getTlcStateFingerprint = (state: Value[], viewEnvironment = environment) => {
+  const getViewState = (state: Value[], viewEnvironment = environment) => {
     const representative = getRepresentativeState(state);
+    return view === undefined
+      ? representative
+      : [getViewValue(view.expression, representative, viewEnvironment)];
+  };
+  const getTlcStateFingerprint = (state: Value[], viewEnvironment = environment) => {
+    const viewState = getViewState(state, viewEnvironment);
     return getTlcFingerprint(
-      view === undefined
-        ? getTlcOrder().map((index) => representative[index])
-        : [getViewValue(view.expression, representative, viewEnvironment)],
+      view === undefined ? getTlcOrder().map((index) => viewState[index]) : viewState,
     );
   };
   const findFailedInitialPredicate = (state: Value[]) =>
@@ -1762,15 +1767,11 @@ export const createSearch = (
       }
       return getTlcFingerprints(fingerprintStates, getTlcOrder());
     },
-    getFingerprintState: (state, viewEnvironment) => {
-      if (isFingerprintedLikeTlc) {
-        return [String(getTlcStateFingerprint(state, viewEnvironment))];
-      }
-      const representative = getRepresentativeState(state);
-      return view === undefined
-        ? representative
-        : [getViewValue(view.expression, representative, viewEnvironment)];
-    },
+    getFingerprintState: (state, viewEnvironment) =>
+      isFingerprintedLikeTlc
+        ? [String(getTlcStateFingerprint(state, viewEnvironment))]
+        : getViewState(state, viewEnvironment),
+    getViewState,
     findViolatedInvariant: (state, parent) => {
       const violated =
         coverage === undefined

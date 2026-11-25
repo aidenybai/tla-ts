@@ -86,7 +86,7 @@ describe("a simulated behavior through a state that TLC can't fingerprint", () =
     ]);
   });
 
-  it("stops -difftrace at the state that holds Nat with TLC's message", () => {
+  it("prints each state under -difftrace, where TLC's Simulator#printBehavior fingerprints the state that holds Nat and crashes", () => {
     const run = runSpec("StateNat", [
       "-noGenerateSpecTE",
       "-difftrace",
@@ -95,19 +95,65 @@ describe("a simulated behavior through a state that TLC can't fingerprint", () =
       "Inv.cfg",
     ]);
     expect([run.status, run.lines]).toEqual([
-      255,
+      12,
       [
         "Error: Invariant Inv is violated.",
         ...BEHAVIOR.slice(0, 7),
-        "",
-        "Error: TLC threw an unexpected exception.",
-        "This was probably caused by an error in the spec or model.",
-        "See the User Output or TLC Console for clues to what happened.",
-        "The exception was a java.lang.RuntimeException",
-        NAT_EXCEPTION,
+        ...BEHAVIOR.slice(8),
+        PROGRESS,
       ],
     ]);
   });
+
+  it.each([
+    ["ViewX.cfg", "a VIEW without Nat, as TLC does"],
+    ["ViewXY.cfg", "a VIEW of Nat, where TLC fingerprints the VIEW and crashes"],
+  ])(
+    "drops the steps under -difftrace whose VIEW repeats past a state that holds Nat, with %s, %s",
+    (config) => {
+      const run = runSpec("ToggleNat", [
+        "-noGenerateSpecTE",
+        "-difftrace",
+        "-simulate",
+        "num=1",
+        "-depth",
+        "12",
+        "-seed",
+        "4",
+        "-config",
+        config,
+      ]);
+      const step = "line 5, col 10 to line 5, col 78 of module ToggleNat";
+      expect([run.status, run.lines]).toEqual([
+        12,
+        [
+          "Error: Invariant Inv is violated.",
+          "Error: The behavior up to this point is:",
+          "State 1: <Init line 4, col 9 to line 4, col 31 of module ToggleNat>",
+          "/\\ x = 0",
+          "/\\ y = 0",
+          "/\\ z = 0",
+          "",
+          `State 2: <Next ${step}>`,
+          "/\\ x = 1",
+          "",
+          `State 3: <Next ${step}>`,
+          "/\\ x = 2",
+          "/\\ y = Nat",
+          "",
+          `State 6: <Next ${step}>`,
+          "/\\ x = 3",
+          "/\\ y = 0",
+          "",
+          "difftrace requested: Shortened behavior by omitting finite stuttering (2 states), which is an artifact of simulation mode.",
+          "",
+          "The number of states generated: 8",
+          "Simulation using seed 4 and aril 0",
+          "Progress: 8 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+        ],
+      ]);
+    },
+  );
 });
 
 it("fails -dfid on a state that holds Nat with TLC's message", () => {
