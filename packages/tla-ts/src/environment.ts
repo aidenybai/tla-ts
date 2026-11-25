@@ -75,6 +75,7 @@ import {
   getRecursiveDefinitions,
   getTheoremGoal,
   isBefore,
+  isSameRange,
   isSameSanyError,
   isTheoremDefinition,
   isUnresolved,
@@ -2036,12 +2037,16 @@ export const createEnvironment = (
   const javaOverrides = linkOrder.flatMap((linked) => {
     const bytes = options.loadClass?.(linked.module.name);
     if (!bytes) return [];
-    // TLC's SpecProcessor#processModuleOverrides matches a method only to a definition the root module sees by the method's name.
+    // TLC matches a method only to a definition the root module sees as originally defined in the class's module.
     const isVisibleInRoot = (name: string) => {
       const rootSymbol = linkedRoot.visible.get(name);
+      const symbol = linked.visible.get(name);
       return (
         rootSymbol?.kind === "Definition" &&
-        getSourceKey(rootSymbol.key) === linked.visible.get(name)?.key
+        isSameRange(
+          rootSymbol.sourceRange ?? rootSymbol.range,
+          symbol?.sourceRange ?? symbol?.range,
+        )
       );
     };
     const overridden = getModuleOverrides(linked.module, bytes, isVisibleInRoot);

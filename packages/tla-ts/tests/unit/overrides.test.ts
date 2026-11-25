@@ -10,6 +10,22 @@ const loadClass = (name: string) => {
   return existsSync(path) ? readFileSync(path) : undefined;
 };
 
+const PARAMETERIZED = "---- MODULE Overrides ----\nCONSTANT N\nFlag == N = {}\nG == Flag\n====";
+
+const checkMatched = async (source: string, config: string, modules: Map<string, string>) => {
+  const matched: string[] = [];
+  const result = await check({
+    source,
+    config,
+    loadModule: (name) => modules.get(name),
+    loadClass,
+    onProgress: (progress) => {
+      if (progress.kind === "java-override" && progress.isMatched) matched.push(progress.operator);
+    },
+  });
+  return [result.status, result.violation?.name, matched];
+};
+
 describe("Java module overrides match TLC", () => {
   it("replaces each operator with the method of the same name and arity", async () => {
     const result = await check({
@@ -74,29 +90,28 @@ describe("Java module overrides match TLC", () => {
   ])(
     "overrides an operator reached through %s only where the root sees its name",
     async (_name, body, status, assumption, isFlagMatched) => {
-      const modules = new Map([
-        ["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="],
-        ["Mid", "---- MODULE Mid ----\nLOCAL INSTANCE Overrides\nMidFlag == Flag\n===="],
-      ]);
-      const matched: string[] = [];
-      const result = await check({
-        source: `---- MODULE Root ----\n${body}\n====`,
-        config: "",
-        loadModule: (name) => modules.get(name),
-        loadClass,
-        onProgress: (progress) => {
-          if (progress.kind === "java-override" && progress.isMatched) {
-            matched.push(progress.operator);
-          }
-        },
-      });
-      expect([result.status, result.violation?.name, matched]).toEqual([
-        status,
-        assumption,
-        isFlagMatched ? ["Flag"] : [],
-      ]);
+      expect(
+        await checkMatched(
+          `---- MODULE Root ----\n${body}\n====`,
+          "",
+          new Map([
+            ["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="],
+            ["Mid", "---- MODULE Mid ----\nLOCAL INSTANCE Overrides\nMidFlag == Flag\n===="],
+          ]),
+        ),
+      ).toEqual([status, assumption, isFlagMatched ? ["Flag"] : []]);
     },
   );
+
+  it("overrides no operator the root sees through an unnamed INSTANCE with substitutions", async () => {
+    expect(
+      await checkMatched(
+        "---- MODULE Root ----\nINSTANCE Overrides WITH N <- {1}\nASSUME Flag\n====",
+        "",
+        new Map([["Overrides", PARAMETERIZED]]),
+      ),
+    ).toEqual(["assumption-violation", "line 3, col 8 to line 3, col 11 of module Root", []]);
+  });
 
   it("rejects an override whose method computes its value", async () => {
     await expect(
