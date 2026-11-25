@@ -1929,6 +1929,8 @@ const searchStates = (
     );
   };
   const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
+  const hasPeriodicWork =
+    isPeriodic || config.periodic !== undefined || options.onProgress !== undefined;
   const periodic = {
     at: performance.now() + PERIODIC_START,
     checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
@@ -2107,10 +2109,7 @@ const searchStates = (
     if (outcome) return outcome;
     outDegrees[getOutDegreeBucket()]++;
     newStateCount = 0;
-    if (
-      (isPeriodic || config.periodic !== undefined || options.onProgress) &&
-      performance.now() >= periodic.at
-    ) {
+    if (hasPeriodicWork && performance.now() >= periodic.at) {
       const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const periodicResult =
