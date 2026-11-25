@@ -98,19 +98,37 @@ const isEveryKept = (changed: Value[], values: Value[]) =>
 // A function with each of its values changed, which keeps its domain and its class.
 const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): FunctionValue => {
   const functionValue = toFiniteFunction(value);
-  const range = functionValue.range.map((inner, index) =>
-    change(inner, functionValue.domain[index]),
-  );
-  return functionValue.writtenKeys === undefined && isEveryKept(range, functionValue.range)
+  let range: Value[] | undefined;
+  for (let index = 0; index < functionValue.range.length; index++) {
+    const changed = change(functionValue.range[index], functionValue.domain[index]);
+    if (changed === functionValue.range[index]) continue;
+    range ??= functionValue.range.slice();
+    range[index] = changed;
+  }
+  return range === undefined && functionValue.writtenKeys === undefined
     ? functionValue
     : setFunctionClass(
-        createSortedFunction(functionValue.domain, range),
+        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
         functionValue.functionClass,
       );
 };
 
 const toTuple = (list: Value, elements: Value[]) =>
   isPlainOf(list, "tuple") && isEveryKept(elements, list.range) ? list : createTuple(elements);
+
+const mapTuple = (list: Value, change: (inner: Value) => Value) => {
+  const elements = getList(list);
+  let changed: Value[] | undefined;
+  for (let index = 0; index < elements.length; index++) {
+    const inner = change(elements[index]);
+    if (inner === elements[index]) continue;
+    changed ??= elements.slice();
+    changed[index] = inner;
+  }
+  return changed === undefined && isPlainOf(list, "tuple")
+    ? list
+    : createTuple(changed ?? elements.slice());
+};
 
 const toRecord = (record: Value, fields: [string, Value][]) =>
   isPlainOf(record, "record") &&
@@ -123,13 +141,13 @@ const toRecord = (record: Value, fields: [string, Value][]) =>
     : createRecord(fields);
 
 // [record EXCEPT !.field = change(@), ...].
-const except = (record: Value, changes: Record<string, (inner: Value) => Value>) => {
+const except = (record: Value, changes: Record<string, (inner: Value, record: Value) => Value>) => {
   const functionValue = toFiniteFunction(record);
   let range: Value[] | undefined;
   for (const key in changes) {
     const index = functionValue.domain.indexOf(key);
     if (index === -1) continue;
-    const changed = changes[key](functionValue.range[index]);
+    const changed = changes[key](functionValue.range[index], record);
     if (changed === functionValue.range[index]) continue;
     range ??= functionValue.range.slice();
     range[index] = changed;
@@ -653,35 +671,37 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     typeof environment === "number" && environment > realm.environments
       ? getNew(-environment)
       : environment;
-  const renameValues = (list: Value) => toTuple(list, getList(list).map(renameMaybe));
-  const renameDescriptor = (descriptor: Value) =>
-    except(descriptor, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
+  const renameValues = (list: Value) => mapTuple(list, renameMaybe);
+  const descriptorChanges = { value: renameMaybe, get: renameMaybe, set: renameMaybe };
+  const renameDescriptor = (descriptor: Value) => except(descriptor, descriptorChanges);
+  const initChanges = { init: renameMaybe, initializers: renameValues };
   const renameElement = (element: Value) => {
-    const renamed = except(element, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
-    return hasField(element, "init")
-      ? except(renamed, { init: renameMaybe, initializers: renameValues })
-      : renamed;
+    const renamed = except(element, descriptorChanges);
+    return hasField(element, "init") ? except(renamed, initChanges) : renamed;
   };
-  const renameElements = (list: Value) => toTuple(list, getList(list).map(renameElement));
+  const renameElements = (list: Value) => mapTuple(list, renameElement);
+  const renameInitializers = (inner: Value) =>
+    isModelValue(inner, "Empty") ? inner : renameValues(inner);
+  const plainChanges = {
+    initializers: renameValues,
+    trace: (trace: Value) => toRecord(trace, [["dropped", true]]),
+  };
+  const viewChanges = { buffer: renameMaybe };
+  const functionChanges = {
+    env: renameEnvironment,
+    home: renameMaybe,
+    fields: renameElements,
+    privateMethods: renameElements,
+    initializers: renameInitializers,
+  };
   const renameSlots = (object: Value) => {
     const objectClass = getString(object, "class");
     const slots = get(object, "slots");
-    if (PLAIN_CLASSES.has(objectClass)) {
-      return except(slots, {
-        initializers: renameValues,
-        trace: (trace) => toRecord(trace, [["dropped", true]]),
-      });
-    }
-    if (VIEW_CLASSES.has(objectClass)) return except(slots, { buffer: renameMaybe });
+    if (PLAIN_CLASSES.has(objectClass)) return except(slots, plainChanges);
+    if (VIEW_CLASSES.has(objectClass)) return except(slots, viewChanges);
     switch (objectClass) {
       case "function":
-        return except(slots, {
-          env: renameEnvironment,
-          home: renameMaybe,
-          fields: renameElements,
-          privateMethods: renameElements,
-          initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
-        });
+        return except(slots, functionChanges);
       case "bound":
         return except(slots, { target: renameValue, this: renameMaybe, args: renameValues });
       case "map":
@@ -749,7 +769,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           ? except(slots, {
               fields: renameElements,
               privateMethods: renameElements,
-              initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
+              initializers: renameInitializers,
             })
           : isObjectDataBuiltin(slots)
             ? except(slots, { data: renameValue })
@@ -762,52 +782,60 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         return except(slots, { target: renameMaybe, handler: renameMaybe });
     }
   };
-  const renameObject = (object: Value) =>
-    except(object, {
-      proto: renameMaybe,
-      props: (props) => {
-        const buckets = toFiniteFunction(props);
-        const kept = buckets.range.flatMap((bucket, position) =>
-          toFiniteFunction(bucket).domain.length === 0
-            ? []
-            : [{ key: buckets.domain[position], bucket: mapRange(bucket, renameDescriptor) }],
-        );
-        return buckets.writtenKeys === undefined &&
-          isEveryKept(
-            kept.map((entry) => entry.bucket),
-            buckets.range,
-          )
-          ? buckets
-          : setFunctionClass(
-              createSortedFunction(
-                kept.map((entry) => entry.key),
-                kept.map((entry) => entry.bucket),
-              ),
-              buckets.functionClass,
-            );
-      },
-      privs: renameElements,
-      slots: () => renameSlots(object),
-    });
-  const renameBindings = (bindings: Value) =>
-    mapRange(bindings, (binding) => except(binding, { value: renameMaybe }));
+  const renameProps = (props: Value) => {
+    const buckets = toFiniteFunction(props);
+    let keys: Value[] | undefined;
+    let kept: Value[] | undefined;
+    for (let position = 0; position < buckets.range.length; position++) {
+      const bucket = buckets.range[position];
+      const isEmptied = toFiniteFunction(bucket).domain.length === 0;
+      const renamed = isEmptied ? bucket : mapRange(bucket, renameDescriptor);
+      if (kept === undefined && (isEmptied || renamed !== bucket)) {
+        keys = buckets.domain.slice(0, position);
+        kept = buckets.range.slice(0, position);
+      }
+      if (isEmptied || keys === undefined || kept === undefined) continue;
+      keys.push(buckets.domain[position]);
+      kept.push(renamed);
+    }
+    if (keys === undefined || kept === undefined) {
+      if (buckets.writtenKeys === undefined) return buckets;
+      keys = buckets.domain.slice();
+      kept = buckets.range.slice();
+    }
+    return setFunctionClass(createSortedFunction(keys, kept), buckets.functionClass);
+  };
+  const objectChanges = {
+    proto: renameMaybe,
+    props: renameProps,
+    privs: renameElements,
+    slots: (_slots: Value, object: Value) => renameSlots(object),
+  };
+  const renameObject = (object: Value) => except(object, objectChanges);
+  const bindingChanges = { value: renameMaybe };
+  const renameBinding = (binding: Value) => except(binding, bindingChanges);
+  const renameBindings = (bindings: Value) => mapRange(bindings, renameBinding);
+  const declarativeChanges = { outer: renameEnvironment, b: renameBindings };
+  const functionEnvironmentChanges = {
+    outer: renameEnvironment,
+    b: renameBindings,
+    this: renameMaybe,
+    fn: renameValue,
+    newTarget: renameMaybe,
+  };
+  const objectEnvironmentChanges = { outer: renameEnvironment, obj: renameValue };
+  const globalChanges = { outer: renameEnvironment, this: renameMaybe };
   const renameEnvironmentRecord = (environment: Value) => {
     const kind = getString(environment, "kind");
     return except(
       environment,
       kind === "declarative" || kind === "catch" || kind === "module"
-        ? { outer: renameEnvironment, b: renameBindings }
+        ? declarativeChanges
         : kind === "function"
-          ? {
-              outer: renameEnvironment,
-              b: renameBindings,
-              this: renameMaybe,
-              fn: renameValue,
-              newTarget: renameMaybe,
-            }
+          ? functionEnvironmentChanges
           : kind === "object"
-            ? { outer: renameEnvironment, obj: renameValue }
-            : { outer: renameEnvironment, this: renameMaybe },
+            ? objectEnvironmentChanges
+            : globalChanges,
     );
   };
   // Whether the walk numbers a node as it was: the realm's, which it doesn't number, and each
