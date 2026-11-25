@@ -372,6 +372,7 @@ export type ParallelCheck = (
 
 export const checkSequentially = (
   options: CheckOptions,
+  startedAt: number,
   checkInParallel?: ParallelCheck,
   isTypedTierSkipped = false,
 ): CheckResult | Promise<CheckResult> => {
@@ -381,7 +382,14 @@ export const checkSequentially = (
     ? createLivenessDump(options.dump, options.writeFile, options.version)
     : undefined;
   try {
-    return searchStates(options, stateWriter, livenessDump, checkInParallel, isTypedTierSkipped);
+    return searchStates(
+      options,
+      stateWriter,
+      livenessDump,
+      checkInParallel,
+      isTypedTierSkipped,
+      startedAt,
+    );
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
@@ -402,6 +410,7 @@ const searchStates = (
   livenessDump: LivenessDump | undefined,
   checkInParallel: ParallelCheck | undefined,
   isTypedTierSkipped: boolean,
+  startedAt: number,
 ): CheckResult | Promise<CheckResult> => {
   const config =
     typeof options.config === "string"
@@ -1918,23 +1927,32 @@ const searchStates = (
     );
   };
   const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
-  const startedAt = performance.now();
   const periodic = {
-    at: startedAt + PERIODIC_START,
+    at: performance.now() + PERIODIC_START,
     checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
-    time: 0,
+    runtimeRatio: 0,
     coverageCount: Math.trunc(options.coverage ?? 0),
   };
   const getGraphStates = (checker: LivenessChecker) =>
     checker.getStateCounts().reduce((sum, count) => sum + count, 0);
+  const updateRuntimeRatio = (delta: number) => {
+    const totalRuntime = performance.now() - startedAt - PROGRESS_INTERVAL - delta;
+    const livenessRuntime = Math.max(totalRuntime * periodic.runtimeRatio, 0);
+    periodic.runtimeRatio = (delta + livenessRuntime) / (totalRuntime + PROGRESS_INTERVAL + delta);
+  };
   const findPeriodicViolation = (checker: LivenessChecker) => {
-    const now = performance.now();
     const counts = checker.getStateCounts();
     const isGrown = counts.some(
       (count, branch) =>
         (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
     );
-    if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
+    if (periodic.runtimeRatio > LIVENESS_RATIO || !isGrown) {
+      updateRuntimeRatio(0);
+      return undefined;
+    }
+    // Here TLC checks below 0.2 and updates above it, so a ratio of exactly 0.2 stays.
+    if (periodic.runtimeRatio === LIVENESS_RATIO) return undefined;
+    const checkedAt = performance.now();
     periodic.checkedCounts = counts;
     options.onProgress?.({
       kind: "liveness-started",
@@ -1944,9 +1962,10 @@ const searchStates = (
       statistics: createResult("success"),
     });
     const lasso = checker.findViolation();
-    if (!lasso) options.onProgress?.({ kind: "liveness-finished" });
-    periodic.time += performance.now() - now;
-    return lasso;
+    if (lasso) return lasso;
+    options.onProgress?.({ kind: "liveness-finished" });
+    updateRuntimeRatio(performance.now() - checkedAt);
+    return undefined;
   };
   const adoptTypedSearch = (searched: TypedResult) => {
     runtime.generatedStates = searched.generatedStates;
@@ -2074,7 +2093,6 @@ const searchStates = (
     outDegrees[getOutDegreeBucket()]++;
     newStateCount = 0;
     if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
-      periodic.at = performance.now() + PROGRESS_INTERVAL;
       const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
@@ -2091,6 +2109,7 @@ const searchStates = (
           coverage: isCoverageDue ? progress.coverage : undefined,
         },
       });
+      periodic.at = performance.now() + PROGRESS_INTERVAL;
     }
   }
 

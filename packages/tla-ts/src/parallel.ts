@@ -86,6 +86,7 @@ interface Attempt {
 
 /** Model checks a spec as TLC does. It runs one check at a time, so a callback must not start another check. */
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
+  const startedAt = performance.now();
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -137,7 +138,12 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     if (createdString !== undefined) {
       options.onProgress?.({ kind: "sequential-fallback", string: createdString });
     }
-    return checkSequentially({ ...options, config, ...createAttempt() }, undefined, true);
+    return checkSequentially(
+      { ...options, config, ...createAttempt() },
+      startedAt,
+      undefined,
+      true,
+    );
   };
   const workerCount = options.workers ?? 1;
   const isSequential =
@@ -150,15 +156,18 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     config.postconditions.length > 0 ||
     config.possible.length > 0 ||
     (options.moduleOperators?.length ?? 0) > 0;
-  if (isSequential) return checkSequentially({ ...options, config, ...createAttempt() });
-  return checkSequentially({ ...options, config, ...createAttempt() }, (search, description) =>
-    search.spec.init === undefined ||
-    search.spec.next === undefined ||
-    search.properties.liveness.length > 0 ||
-    description.isNextOverlapping ||
-    search.isImpure()
-      ? undefined
-      : checkWithWorkers(config, options, createAttempt(), fallBack),
+  if (isSequential) return checkSequentially({ ...options, config, ...createAttempt() }, startedAt);
+  return checkSequentially(
+    { ...options, config, ...createAttempt() },
+    startedAt,
+    (search, description) =>
+      search.spec.init === undefined ||
+      search.spec.next === undefined ||
+      search.properties.liveness.length > 0 ||
+      description.isNextOverlapping ||
+      search.isImpure()
+        ? undefined
+        : checkWithWorkers(config, options, createAttempt(), fallBack),
   );
 };
 

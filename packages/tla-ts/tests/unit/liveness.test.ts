@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { check, TlaError } from "../../src";
 import { getErrorExitCode, getUnexpectedException, STACK_OVERFLOW_MESSAGE } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
@@ -12,6 +12,10 @@ const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
 
 const checkGithub710 = (configName: string, version?: TlcVersion) =>
   checkFixture("github710", "Github710d", configName, { version });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const TLC_VERDICTS: [string, string][] = [
   ["Unfair-ReachesLimit", "liveness-violation"],
@@ -72,6 +76,36 @@ describe("liveness matches TLC", () => {
     });
     expect(result.status).toBe("liveness-violation");
   }, 60_000);
+
+  it.each([
+    [0, 500, [3000, 63_500, 124_000, 184_500, 245_000]],
+    [0, 750, [3000]],
+    [0, 2000, [3000, 125_000, 187_000, 249_000]],
+    [0, 20_000, [3000, 203_000, 283_000]],
+    [10_000, 2000, [13_000, 75_000, 137_000, 199_000, 261_000]],
+  ])(
+    "checks the partial graph each minute only while the runtime ratio TLC last recorded is below 0.2, when the initial states take %i ms and a check takes %i ms",
+    async (initialDuration, checkDuration, expected) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      const checkedAt: number[] = [];
+      const result = await check({
+        source:
+          "---- MODULE Ticks ----\nEXTENDS Naturals, TLC\nVARIABLE x\nNext == x < 2500 /\\ PrintT(x) /\\ x' = x + 1\nSpec == x = 0 /\\ [][Next]_x\nProp == <>(x >= 0)\n====",
+        config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+        onPrint: () => {
+          now += 100;
+        },
+        onProgress: (progress) => {
+          if (progress.kind === "initial-states-computed") now += initialDuration;
+          if (progress.kind !== "liveness-started" || progress.isComplete) return;
+          checkedAt.push(now);
+          now += checkDuration;
+        },
+      });
+      expect([result.status, checkedAt]).toEqual(["success", expected]);
+    },
+  );
 
   it("reports a lasso whose cycle returns to an earlier state", async () => {
     const result = await check({
