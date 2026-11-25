@@ -2030,6 +2030,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const maxima = new Uint8Array(MAX_CONSTANT_NAMES).fill(TEMPORAL_LEVEL);
     let constrained = 0;
     const argConstraints = new Map<string, number>();
+    const argParams: ArgumentParams = new Map();
     let allParams: Set<string> | undefined;
     let nonLeibnizParams: Set<string> | undefined;
     let applied: number | undefined;
@@ -2120,7 +2121,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         }
         operands.push(operand);
       }
-      for (const parameter of callee.argParams.values()) {
+      for (const [key, parameter] of callee.argParams) {
         const position = callee.formals.findIndex((formal) => formal.name === parameter.param);
         if (position !== -1) {
           putArgConstraint(
@@ -2130,7 +2131,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           );
         }
         if (callee.formals.some((formal) => formal.name === parameter.operator)) continue;
-        if (position === -1 || operands[position] !== 0) return undefined;
+        if (position === -1) {
+          if (isShadowed(parameter.param)) return undefined;
+          argParams.set(key, parameter);
+          continue;
+        }
+        for (let rest = operands[position]; rest !== 0; rest &= rest - 1) {
+          const bit = 31 - Math.clz32(rest & -rest);
+          addArgumentParam(argParams, parameter.operator, parameter.index, names[bit]);
+        }
       }
       applied = isApplying ? appliedParams : undefined;
       return params;
@@ -2404,7 +2413,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       params: getNames(body),
       constraints,
       argConstraints,
-      argParams: new Map(),
+      argParams,
       allParams: allParams ?? EMPTY_PARAMS,
       nonLeibnizParams: nonLeibnizParams ?? EMPTY_PARAMS,
       appliedParams: applied === undefined ? undefined : getNames(applied),
