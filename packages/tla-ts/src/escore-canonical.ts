@@ -689,69 +689,47 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const edges: number[] = [];
   const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
   const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
-  const collect = (node: number, refs: number[], start: number) => {
-    if (node > 0) objectEdgeStarts[node] = edges.length;
-    else environmentEdgeStarts[-node] = edges.length;
-    edges.push(refs.length - start);
-    for (let index = start; index < refs.length; index++) edges.push(refs[index]);
+  const startEdges = (node: number) => {
+    const start = edges.length;
+    if (node > 0) objectEdgeStarts[node] = start;
+    else environmentEdgeStarts[-node] = start;
+    edges.push(0);
+    return start;
   };
   // undefined where renaming the record moved what it holds.
   const walkedLocations = new Map<number, number[] | undefined>();
   const path: Path = { steps: [], located: [], count: 0 };
-  const collectWalked = (node: number, refs: number[], start: number) => {
-    collect(node, refs, start);
+  const endWalked = (node: number, start: number) => {
+    edges[start] = edges.length - start - 1;
     walkedLocations.set(node, sortLocated(path.located));
     path.located.length = 0;
     path.count = 0;
   };
   // Gives whether the record is a WeakMap.
-  const walkRecord = (node: number, walked: number[]) => {
-    const start = walked.length;
+  const walkRecord = (node: number) => {
+    const start = startEdges(node);
     const page = getPage(node);
     if (page !== undefined) {
       const pageEdges = page.edges;
       const slot = ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
       for (let at = pageEdges[EDGE_STARTS + slot]; at < pageEdges[EDGE_STARTS + slot + 1]; at++) {
-        walked.push(pageEdges[at]);
+        edges.push(pageEdges[at]);
       }
-      collect(node, walked, start);
+      edges[start] = edges.length - start - 1;
       return ((pageEdges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
     }
     if (node < 0) {
-      environmentRefs(getEnvironment(-node), realm, walked, path);
-      collectWalked(node, walked, start);
+      environmentRefs(getEnvironment(-node), realm, edges, path);
+      endWalked(node, start);
       return false;
     }
     const object = getObject(node);
-    objectRefs(object, realm, walked, path);
-    collectWalked(node, walked, start);
+    objectRefs(object, realm, edges, path);
+    endWalked(node, start);
     return getString(object, "class") === "weakMap";
   };
-  const queue: number[] = [];
-  for (let environment = 1; environment <= realm.environments; environment++) {
-    walkRecord(-environment, queue);
-  }
-  for (const id of changed) {
-    const start = queue.length;
-    objectRefs(getObject(id), realm, queue, path);
-    collectWalked(id, queue, start);
-  }
-  const rootPath: Path = { steps: [], located: [], count: 0 };
-  const templates = toFiniteFunction(get(state, "templates"));
-  templates.domain
-    .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
-    .sort((left, right) => left.key - right.key)
-    .forEach((entry) => objectRef(entry.value, realm, queue, rootPath));
-  getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, queue, rootPath));
-  required.domain
-    .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
-    .sort((left, right) => left.file - right.file)
-    .forEach((pair) => objectRef(get(pair.entry, "module"), realm, queue, rootPath));
-  // The handler of the host's proxies and the host's import, which the state names by object.
-  maybeRef(get(state, "hostHandler"), realm, queue, rootPath);
-  maybeRef(get(state, "hostImport"), realm, queue, rootPath);
-  // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
-  // that node refers to.
+  // The breadth-first walk numbers each node where it first reaches it, from the roots and then
+  // from the nodes that each node it numbered refers to.
   const objectNumbers = new Int32Array(objectEdgeStarts.length);
   const environmentNumbers = new Int32Array(environmentEdgeStarts.length);
   const isNumbered = (node: number) =>
@@ -760,22 +738,55 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const weakMaps: number[] = [];
   let objectCount = 0;
   let environmentCount = 0;
-  const walk = (walked: number[]) => {
-    for (let head = 0; head < walked.length; head++) {
-      const node = walked[head];
-      if (isNumbered(node)) continue;
-      if (node > 0) {
-        objectCount++;
-        objectNumbers[node] = realm.objects + objectCount;
-      } else {
-        environmentCount++;
-        environmentNumbers[-node] = realm.environments + environmentCount;
-      }
-      if (walkRecord(node, walked)) weakMaps.push(node);
-      order.push(node);
+  const reach = (node: number) => {
+    if (isNumbered(node)) return;
+    if (node > 0) {
+      objectCount++;
+      objectNumbers[node] = realm.objects + objectCount;
+    } else {
+      environmentCount++;
+      environmentNumbers[-node] = realm.environments + environmentCount;
+    }
+    order.push(node);
+  };
+  const reachEdges = (start: number) => {
+    for (let index = start + 1; index <= start + edges[start]; index++) reach(edges[index]);
+  };
+  for (let environment = 1; environment <= realm.environments; environment++) {
+    walkRecord(-environment);
+    reachEdges(environmentEdgeStarts[environment]);
+  }
+  for (const id of changed) {
+    const start = startEdges(id);
+    objectRefs(getObject(id), realm, edges, path);
+    endWalked(id, start);
+    reachEdges(start);
+  }
+  const roots: number[] = [];
+  const rootPath: Path = { steps: [], located: [], count: 0 };
+  const templates = toFiniteFunction(get(state, "templates"));
+  templates.domain
+    .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
+    .sort((left, right) => left.key - right.key)
+    .forEach((entry) => objectRef(entry.value, realm, roots, rootPath));
+  getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, roots, rootPath));
+  required.domain
+    .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
+    .sort((left, right) => left.file - right.file)
+    .forEach((pair) => objectRef(get(pair.entry, "module"), realm, roots, rootPath));
+  // The handler of the host's proxies and the host's import, which the state names by object.
+  maybeRef(get(state, "hostHandler"), realm, roots, rootPath);
+  maybeRef(get(state, "hostImport"), realm, roots, rootPath);
+  roots.forEach(reach);
+  let head = 0;
+  const walk = () => {
+    for (; head < order.length; head++) {
+      const node = order[head];
+      if (walkRecord(node)) weakMaps.push(node);
+      reachEdges(node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node]);
     }
   };
-  walk(queue);
+  walk();
   // A weak collection's key that the walk reached, which a step can still read the entry by, and
   // its new number.
   const getWeakKeyNumber = (key: Value) => {
@@ -798,9 +809,9 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         .sort((left, right) => left.number - right.number)
         .forEach((entry) => maybeRef(entry.value, realm, more, rootPath));
     });
-    const fresh = more.filter((node) => !isNumbered(node));
-    if (fresh.length === 0) break;
-    walk(fresh);
+    more.forEach(reach);
+    if (head === order.length) break;
+    walk();
   }
   const getNew = (node: number) => {
     const number = node > 0 ? objectNumbers[node] : environmentNumbers[-node];
