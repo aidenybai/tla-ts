@@ -234,6 +234,7 @@ const VALUE_DEEPLY_NORMALIZED = 8;
 const VALUE_CANONICAL = 16;
 // A function each key of whose domain isOrderless, which a key stays once it is.
 const VALUE_KEYS_ORDERLESS = 32;
+const VALUE_PAGE = 64;
 
 export const markCanonical = (value: FunctionValue) => {
   value.flags |= VALUE_CANONICAL;
@@ -243,13 +244,29 @@ export const markCanonical = (value: FunctionValue) => {
 export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
+// ESCore's heap pages hold 256 records. A CanonicalPage's edges hold the realm's sizes they were
+// walked from, a bit for each record that is a WeakMap, where each record's edges start, and then
+// each record's edges, the nodes it refers to by their numbers.
+export const PAGE_SIZE = 256;
+export const WEAK_BITS = 2;
+export const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
+
 // A page of ESCore's heap that CanonicalStateOf made, with the nodes that each of its records refers
-// to (see escore-canonical.ts), whose hidden class no other function shares.
+// to, where each record holds them, and the record that each was renamed from, where renaming it
+// gives a record of that source and its edges alone (see escore-canonical.ts), whose hidden class no
+// other function shares.
 export interface CanonicalPage extends FunctionValue {
   edges: Int32Array;
+  locations: (number[] | undefined)[];
+  sources: (Value | undefined)[];
 }
 
-export const createCanonicalPage = (records: Value[], edges: Int32Array): CanonicalPage => ({
+export const createCanonicalPage = (
+  records: Value[],
+  edges: Int32Array,
+  locations: (number[] | undefined)[],
+  sources: (Value | undefined)[],
+): CanonicalPage => ({
   kind: "Function",
   domain: getIntervalDomain(records.length),
   range: records,
@@ -257,8 +274,10 @@ export const createCanonicalPage = (records: Value[], edges: Int32Array): Canoni
   fingerprint: 0,
   writtenKeys: undefined,
   functionClass: "tuple",
-  flags: VALUE_CANONICAL,
+  flags: VALUE_CANONICAL | VALUE_PAGE,
   edges,
+  locations,
+  sources,
 });
 
 export const isCanonicalPage = (value: Value): value is CanonicalPage =>
@@ -1018,12 +1037,42 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   return compareValues(left, right) === 0;
 };
 
+const areSameEdges = (left: Int32Array, right: Int32Array, slot: number) => {
+  const leftStart = left[EDGE_STARTS + slot];
+  const rightStart = right[EDGE_STARTS + slot];
+  const length = left[EDGE_STARTS + slot + 1] - leftStart;
+  if (length !== right[EDGE_STARTS + slot + 1] - rightStart) return false;
+  for (let index = 0; index < length; index++) {
+    if (left[leftStart + index] !== right[rightStart + index]) return false;
+  }
+  return true;
+};
+
 const createSameValueCheck = (isClassSensitive: boolean) => {
   const areSameValues = (left: Value[], right: Value[]) => {
     if (left === right) return true;
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index++) {
       if (!isSame(left[index], right[index])) return false;
+    }
+    return true;
+  };
+  // Records renamed from one source by the same numbers are the same.
+  const areSamePages = (left: CanonicalPage, right: CanonicalPage) => {
+    if (left.range.length !== right.range.length) return false;
+    const isSameRealm = left.edges[0] === right.edges[0] && left.edges[1] === right.edges[1];
+    for (let slot = 0; slot < left.range.length; slot++) {
+      if (left.range[slot] === right.range[slot]) continue;
+      const source = left.sources[slot];
+      if (
+        isSameRealm &&
+        source !== undefined &&
+        source === right.sources[slot] &&
+        areSameEdges(left.edges, right.edges, slot)
+      ) {
+        continue;
+      }
+      if (!isSame(left.range[slot], right.range[slot])) return false;
     }
     return true;
   };
@@ -1040,7 +1089,11 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
         (!isClassSensitive || left.functionClass === right.functionClass) &&
         (left.hash === 0 || right.hash === 0 || left.hash === right.hash) &&
         areSameValues(left.domain, right.domain) &&
-        areSameValues(left.range, right.range)
+        ((left.flags & right.flags & VALUE_PAGE) !== 0 &&
+        isCanonicalPage(left) &&
+        isCanonicalPage(right)
+          ? areSamePages(left, right)
+          : areSameValues(left.range, right.range))
       );
     if (left.kind === "LazyFunction" && left.enumerated) return isSame(left.enumerated, right);
     if (right.kind === "LazyFunction" && right.enumerated) return isSame(left, right.enumerated);
@@ -4525,6 +4578,16 @@ const findKeyIndexLikeTlc = (
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
   return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
+};
+
+// The position of the key in a function's domain whose value applying the function to argument
+// gives.
+export const getKeyPosition = (functionValue: FunctionValue, argument: Value) => {
+  const position = findKeyIndexLikeTlc(functionValue, argument, describeMissingArgument);
+  if (position === -1) {
+    throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
+  }
+  return position;
 };
 
 const describeBoundArgument = (

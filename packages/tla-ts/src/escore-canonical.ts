@@ -12,18 +12,23 @@ import {
   createSet,
   createSortedFunction,
   createTuple,
+  EDGE_STARTS,
   formatValue,
+  getKeyPosition,
   getSequenceElements,
   getValueHash,
   isCanonical,
   isCanonicalPage,
   markCanonical,
+  PAGE_SIZE,
   setFunctionClass,
   toFiniteFunction,
   toFiniteSet,
+  type CanonicalPage,
   type FunctionValue,
   type Value,
   valuesEqual,
+  WEAK_BITS,
 } from "./values";
 
 // ESCanonical's CanonicalStateOf, which tla-ts runs natively while TLC runs the module's TLA+
@@ -31,12 +36,7 @@ import {
 // value. ESCore's state is a record whose objs and envs are heaps [size, pages] of pages of 256
 // records, an object's props maps a bucket to a function from key to descriptor, and a JavaScript
 // object value is [type |-> "object", id |-> n].
-const PAGE_SIZE = 256;
 const NAMED_BUCKET = -1;
-// A page's edges: the realm's sizes they were walked from, a bit for each record that is a WeakMap,
-// where each record's nodes start, and then the nodes.
-const WEAK_BITS = 2;
-const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
 const EDGE_NODES = EDGE_STARTS + PAGE_SIZE + 1;
 
 interface Realm {
@@ -180,12 +180,12 @@ const createHeapReader = (heap: Value) => {
 };
 
 // A heap of records, whose each page is the page of the heap before that a canonicalization made,
-// where that page holds the same records, or else a page of its own, which this one makes.
+// where that page holds the same records, or else a page of its own, which createPage makes.
 const createHeap = (
   records: Value[],
   before: Value,
   isIncremental: boolean,
-  getEdges: (page: number, count: number) => Int32Array,
+  createPage: (records: Value[], page: number) => CanonicalPage,
 ) => {
   const pagesBefore = get(before, "pages");
   const pages = getList(pagesBefore);
@@ -207,7 +207,7 @@ const createHeap = (
           ) {
             return previous;
           }
-          return createCanonicalPage(kept, getEdges(page, kept.length));
+          return createPage(kept, page);
         }),
       ),
     ],
@@ -217,32 +217,97 @@ const createHeap = (
 // The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
 const WEAK_CLASSES = new Set(["weakMap", "weakSet", "weakRef"]);
 
-const objectRef = (value: Value, realm: Realm, refs: number[]) => {
+// Renaming makes these classes' entries anew, which substituting along a path can't give.
+const ENTRY_CLASSES = new Set(["map", "set"]);
+
+// Where the walk is in a record, and where it found each node the record refers to. A step is the
+// position of the value it goes into in the range of the value that holds it, times two, plus one
+// where renaming makes that holder anew as a tuple rather than as a changed function. located holds
+// for each node: its position among the record's edges, its number of steps, and the steps.
+interface Path {
+  steps: number[];
+  located: number[];
+  count: number;
+}
+
+const compareSteps = (located: number[], left: number, right: number) => {
+  for (let index = 0; index < Math.min(located[left + 1], located[right + 1]); index++) {
+    const difference = located[left + 2 + index] - located[right + 2 + index];
+    if (difference !== 0) return difference;
+  }
+  return located[left + 1] - located[right + 1];
+};
+
+const sortLocated = (located: number[]) => {
+  const starts: number[] = [];
+  for (let at = 0; at < located.length; at += 2 + located[at + 1]) starts.push(at);
+  if (starts.length < 2) return located.slice();
+  const sorted: number[] = [];
+  starts
+    .sort((left, right) => compareSteps(located, left, right))
+    .forEach((start) => {
+      for (let index = start; index < start + 2 + located[start + 1]; index++) {
+        sorted.push(located[index]);
+      }
+    });
+  return sorted;
+};
+
+const pushRef = (node: number, refs: number[], path: Path) => {
+  refs.push(node);
+  path.located.push(path.count++, path.steps.length);
+  for (let index = 0; index < path.steps.length; index++) path.located.push(path.steps[index]);
+};
+
+const objectRef = (value: Value, realm: Realm, refs: number[], path: Path) => {
   if (getString(value, "type") === "object") {
     const id = getNumber(value, "id");
-    if (id > realm.objects) refs.push(id);
+    if (id > realm.objects) pushRef(id, refs, path);
   }
 };
 
-const maybeRef = (value: Value, realm: Realm, refs: number[]) => {
-  if (!isAbsentOrEmpty(value)) objectRef(value, realm, refs);
+const maybeRef = (value: Value, realm: Realm, refs: number[], path: Path) => {
+  if (!isAbsentOrEmpty(value)) objectRef(value, realm, refs, path);
 };
 
-const environmentRef = (environment: Value, realm: Realm, refs: number[]) => {
+const environmentRef = (environment: Value, realm: Realm, refs: number[], path: Path) => {
   if (typeof environment !== "number")
     throw new TlaEvaluationError("An environment isn't a number");
-  if (environment > realm.environments) refs.push(-environment);
+  if (environment > realm.environments) pushRef(-environment, refs, path);
 };
 
-const valueRefs = (list: Value, realm: Realm, refs: number[]) => {
-  const values = getList(list);
-  for (let index = 0; index < values.length; index++) maybeRef(values[index], realm, refs);
+type Refs = (value: Value, realm: Realm, refs: number[], path: Path) => void;
+
+const fieldRefs = (
+  record: Value,
+  field: string,
+  realm: Realm,
+  refs: number[],
+  path: Path,
+  getRefs: Refs,
+) => {
+  const value = get(record, field);
+  path.steps.push(findFieldIndex(toFiniteFunction(record).domain, field) * 2);
+  getRefs(value, realm, refs, path);
+  path.steps.pop();
 };
 
-const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
-  maybeRef(get(element, "value"), realm, refs);
-  maybeRef(get(element, "get"), realm, refs);
-  maybeRef(get(element, "set"), realm, refs);
+const tupleRefs = (list: Value, realm: Realm, refs: number[], path: Path, getRefs: Refs) => {
+  const elements = getList(list);
+  for (let index = 0; index < elements.length; index++) {
+    path.steps.push(index * 2 + 1);
+    getRefs(elements[index], realm, refs, path);
+    path.steps.pop();
+  }
+};
+
+const valueRefs = (list: Value, realm: Realm, refs: number[], path: Path) =>
+  tupleRefs(list, realm, refs, path, maybeRef);
+
+const elementRefs = (element: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(element, "value", realm, refs, path, maybeRef);
+  fieldRefs(element, "get", realm, refs, path, maybeRef);
+  fieldRefs(element, "set", realm, refs, path, maybeRef);
   if (!hasField(element, "init")) return;
   if (
     getList(get(element, "decorators")).length > 0 ||
@@ -250,14 +315,12 @@ const elementRefs = (element: Value, realm: Realm, refs: number[]) => {
   ) {
     stop("a decorated class element");
   }
-  maybeRef(get(element, "init"), realm, refs);
-  valueRefs(get(element, "initializers"), realm, refs);
+  fieldRefs(element, "init", realm, refs, path, maybeRef);
+  fieldRefs(element, "initializers", realm, refs, path, valueRefs);
 };
 
-const elementListRefs = (list: Value, realm: Realm, refs: number[]) => {
-  const elements = getList(list);
-  for (let index = 0; index < elements.length; index++) elementRefs(elements[index], realm, refs);
-};
+const elementListRefs = (list: Value, realm: Realm, refs: number[], path: Path) =>
+  tupleRefs(list, realm, refs, path, elementRefs);
 
 const PLAIN_CLASSES = new Set([
   "ordinary",
@@ -344,66 +407,81 @@ const isPlainBuiltin = (slots: Value) =>
     isNamedBuiltin(slots) ||
     isModelValue(get(slots, "data"), "Empty"));
 
-const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
+const classElementRefs = (slots: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(slots, "fields", realm, refs, path, elementListRefs);
+  fieldRefs(slots, "privateMethods", realm, refs, path, elementListRefs);
+  if (!isModelValue(get(slots, "initializers"), "Empty")) {
+    fieldRefs(slots, "initializers", realm, refs, path, valueRefs);
+  }
+};
+
+const mapEntryRefs = (entry: Value, realm: Realm, refs: number[], path: Path) => {
+  if (isModelValue(entry, "Empty")) return;
+  fieldRefs(entry, "key", realm, refs, path, maybeRef);
+  fieldRefs(entry, "value", realm, refs, path, maybeRef);
+};
+
+const mapDataRefs = (list: Value, realm: Realm, refs: number[], path: Path) =>
+  tupleRefs(list, realm, refs, path, mapEntryRefs);
+
+const asyncResourceRefs = (data: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(data, "run", realm, refs, path, objectRef);
+  fieldRefs(data, "destroy", realm, refs, path, objectRef);
+};
+
+const slotRefs = (object: Value, realm: Realm, refs: number[], path: Path) => {
   const objectClass = getString(object, "class");
   const slots = get(object, "slots");
+  path.steps.push(findFieldIndex(toFiniteFunction(object).domain, "slots") * 2);
   if (PLAIN_CLASSES.has(objectClass)) {
-    if (hasField(slots, "initializers")) valueRefs(get(slots, "initializers"), realm, refs);
+    if (hasField(slots, "initializers")) {
+      fieldRefs(slots, "initializers", realm, refs, path, valueRefs);
+    }
   } else if (objectClass === "function") {
-    environmentRef(get(slots, "env"), realm, refs);
-    maybeRef(get(slots, "home"), realm, refs);
-    elementListRefs(get(slots, "fields"), realm, refs);
-    elementListRefs(get(slots, "privateMethods"), realm, refs);
-    const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
+    fieldRefs(slots, "env", realm, refs, path, environmentRef);
+    fieldRefs(slots, "home", realm, refs, path, maybeRef);
+    classElementRefs(slots, realm, refs, path);
   } else if (objectClass === "bound") {
-    objectRef(get(slots, "target"), realm, refs);
-    maybeRef(get(slots, "this"), realm, refs);
-    valueRefs(get(slots, "args"), realm, refs);
+    fieldRefs(slots, "target", realm, refs, path, objectRef);
+    fieldRefs(slots, "this", realm, refs, path, maybeRef);
+    fieldRefs(slots, "args", realm, refs, path, valueRefs);
   } else if (objectClass === "map") {
-    getList(get(slots, "mapData")).forEach((entry) => {
-      if (isModelValue(entry, "Empty")) return;
-      maybeRef(get(entry, "key"), realm, refs);
-      maybeRef(get(entry, "value"), realm, refs);
-    });
+    fieldRefs(slots, "mapData", realm, refs, path, mapDataRefs);
   } else if (objectClass === "set") {
-    valueRefs(get(slots, "setData"), realm, refs);
+    fieldRefs(slots, "setData", realm, refs, path, valueRefs);
   } else if (VIEW_CLASSES.has(objectClass)) {
-    maybeRef(get(slots, "buffer"), realm, refs);
+    fieldRefs(slots, "buffer", realm, refs, path, maybeRef);
   } else if (objectClass === "proxy") {
-    maybeRef(get(slots, "target"), realm, refs);
-    maybeRef(get(slots, "handler"), realm, refs);
+    fieldRefs(slots, "target", realm, refs, path, maybeRef);
+    fieldRefs(slots, "handler", realm, refs, path, maybeRef);
   } else if (objectClass === "promise") {
     if (getString(slots, "state") === "pending") stop("a pending promise");
-    maybeRef(get(slots, "result"), realm, refs);
+    fieldRefs(slots, "result", realm, refs, path, maybeRef);
   } else if (objectClass === "cell" && getDomain(slots).join() === "promise") {
-    maybeRef(get(slots, "promise"), realm, refs);
+    fieldRefs(slots, "promise", realm, refs, path, maybeRef);
   } else if (objectClass === "cell" && getDomain(slots).join() === "reject,resolve") {
-    maybeRef(get(slots, "resolve"), realm, refs);
-    maybeRef(get(slots, "reject"), realm, refs);
+    fieldRefs(slots, "resolve", realm, refs, path, maybeRef);
+    fieldRefs(slots, "reject", realm, refs, path, maybeRef);
   } else if (objectClass === "weakMap" || objectClass === "weakSet" || objectClass === "weakRef") {
     // A weak collection's entries refer to objects only where the walk reaches their keys.
   } else if (objectClass === "finalizationRegistry" && getList(get(slots, "cells")).length === 0) {
     // A registry holds no cell, as the runtime stops where a program registers a target.
-    objectRef(get(slots, "cleanupCallback"), realm, refs);
+    fieldRefs(slots, "cleanupCallback", realm, refs, path, objectRef);
   } else if (objectClass === "builtin" && isPlainBuiltin(slots)) {
-    if (isObjectDataBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
+    if (isObjectDataBuiltin(slots)) fieldRefs(slots, "data", realm, refs, path, objectRef);
     if (isAsyncResourceBuiltin(slots)) {
-      objectRef(get(get(slots, "data"), "run"), realm, refs);
-      objectRef(get(get(slots, "data"), "destroy"), realm, refs);
+      fieldRefs(slots, "data", realm, refs, path, asyncResourceRefs);
     }
   } else if (
     objectClass === "builtin" &&
     isDefaultConstructor(slots) &&
     getDomain(slots).join() === DEFAULT_CONSTRUCTOR_SLOTS.join()
   ) {
-    elementListRefs(get(slots, "fields"), realm, refs);
-    elementListRefs(get(slots, "privateMethods"), realm, refs);
-    const initializers = get(slots, "initializers");
-    if (!isModelValue(initializers, "Empty")) valueRefs(initializers, realm, refs);
+    classElementRefs(slots, realm, refs, path);
   } else {
     stop(`an object of class ${objectClass}`);
   }
+  path.steps.pop();
 };
 
 // An array index's number, from the code units of its canonical decimal string.
@@ -412,14 +490,27 @@ const getIndex = (key: Value) =>
 
 const KEY_TYPES = ["string", "symbol"];
 
-const descriptorRefs = (descriptor: Value, realm: Realm, refs: number[]) => {
-  maybeRef(get(descriptor, "value"), realm, refs);
-  maybeRef(get(descriptor, "get"), realm, refs);
-  maybeRef(get(descriptor, "set"), realm, refs);
+const descriptorRefs = (descriptor: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(descriptor, "value", realm, refs, path, maybeRef);
+  fieldRefs(descriptor, "get", realm, refs, path, maybeRef);
+  fieldRefs(descriptor, "set", realm, refs, path, maybeRef);
+};
+
+const positionRefs = (
+  holder: FunctionValue,
+  position: number,
+  realm: Realm,
+  refs: number[],
+  path: Path,
+  getRefs: Refs,
+) => {
+  path.steps.push(position * 2);
+  getRefs(holder.range[position], realm, refs, path);
+  path.steps.pop();
 };
 
 // The refs of the descriptors of an index bucket's keys, by their indexes ascending.
-const bucketRefs = (value: Value, realm: Realm, refs: number[]) => {
+const bucketRefs = (value: Value, realm: Realm, refs: number[], path: Path) => {
   const bucket = toFiniteFunction(value);
   let previous = -Infinity;
   let isInOrder = true;
@@ -430,27 +521,28 @@ const bucketRefs = (value: Value, realm: Realm, refs: number[]) => {
   }
   if (isInOrder) {
     for (let position = 0; position < bucket.range.length; position++) {
-      descriptorRefs(bucket.range[position], realm, refs);
+      positionRefs(bucket, position, realm, refs, path, descriptorRefs);
     }
     return;
   }
   bucket.domain
-    .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
+    .map((key, position) => ({ index: getIndex(key), position }))
     .sort((left, right) => left.index - right.index)
-    .forEach((pair) => descriptorRefs(pair.descriptor, realm, refs));
+    .forEach((pair) => positionRefs(bucket, pair.position, realm, refs, path, descriptorRefs));
 };
 
 // The refs of an object's properties in OwnKeysOf's order: index keys ascending, then the string
 // keys and the symbol keys in the order they were added.
-const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
-  maybeRef(get(object, "proto"), realm, refs);
+const objectRefs = (object: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(object, "proto", realm, refs, path, maybeRef);
   const props = toFiniteFunction(get(object, "props"));
-  let named: Value | undefined;
+  path.steps.push(findFieldIndex(toFiniteFunction(object).domain, "props") * 2);
+  let namedPosition = -1;
   let isAscending = true;
   let previousBucket = -Infinity;
   for (let position = 0; position < props.domain.length; position++) {
     const bucket = props.domain[position];
-    if (bucket === NAMED_BUCKET) named = props.range[position];
+    if (bucket === NAMED_BUCKET) namedPosition = position;
     else {
       if (Number(bucket) < previousBucket) isAscending = false;
       previousBucket = Number(bucket);
@@ -458,25 +550,31 @@ const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
   }
   if (isAscending) {
     for (let position = 0; position < props.domain.length; position++) {
-      if (props.domain[position] !== NAMED_BUCKET) bucketRefs(props.range[position], realm, refs);
+      if (props.domain[position] !== NAMED_BUCKET) {
+        positionRefs(props, position, realm, refs, path, bucketRefs);
+      }
     }
   } else {
     props.domain
       .map((bucket, position) => ({ bucket, position }))
       .filter((entry) => entry.bucket !== NAMED_BUCKET)
       .sort((left, right) => Number(left.bucket) - Number(right.bucket))
-      .forEach((entry) => bucketRefs(props.range[entry.position], realm, refs));
+      .forEach((entry) => positionRefs(props, entry.position, realm, refs, path, bucketRefs));
   }
   const keys = getList(get(object, "keys"));
   for (const type of KEY_TYPES) {
     for (let index = 0; index < keys.length; index++) {
       if (getString(keys[index], "type") !== type) continue;
-      if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
-      descriptorRefs(applyFunction(named, keys[index]), realm, refs);
+      if (namedPosition === -1) throw new TlaEvaluationError("A key has no bucket");
+      const named = toFiniteFunction(props.range[namedPosition]);
+      path.steps.push(namedPosition * 2);
+      positionRefs(named, getKeyPosition(named, keys[index]), realm, refs, path, descriptorRefs);
+      path.steps.pop();
     }
   }
-  elementListRefs(get(object, "privs"), realm, refs);
-  slotRefs(object, realm, refs);
+  path.steps.pop();
+  fieldRefs(object, "privs", realm, refs, path, elementListRefs);
+  slotRefs(object, realm, refs, path);
 };
 
 // LexLess on sequences of code units: a prefix first, then by the first unit that differs.
@@ -487,42 +585,48 @@ const compareUnits = (left: Value[], right: Value[]) => {
   return left.length - right.length;
 };
 
-const bindingRefs = (bindings: Value, realm: Realm, refs: number[]) => {
+const bindingValueRefs = (binding: Value, realm: Realm, refs: number[], path: Path) =>
+  fieldRefs(binding, "value", realm, refs, path, maybeRef);
+
+const bindingRefs = (bindings: Value, realm: Realm, refs: number[], path: Path) => {
   const functionValue = toFiniteFunction(bindings);
   functionValue.domain
-    .map((name, position) => ({ units: getList(name), binding: functionValue.range[position] }))
+    .map((name, position) => ({ units: getList(name), position }))
     .sort((left, right) => compareUnits(left.units, right.units))
-    .forEach((entry) => maybeRef(get(entry.binding, "value"), realm, refs));
+    .forEach((entry) =>
+      positionRefs(functionValue, entry.position, realm, refs, path, bindingValueRefs),
+    );
 };
 
-const environmentRefs = (environment: Value, realm: Realm, refs: number[]) => {
-  environmentRef(get(environment, "outer"), realm, refs);
+const environmentRefs = (environment: Value, realm: Realm, refs: number[], path: Path) => {
+  fieldRefs(environment, "outer", realm, refs, path, environmentRef);
   const kind = getString(environment, "kind");
-  if (kind === "declarative" || kind === "catch") bindingRefs(get(environment, "b"), realm, refs);
-  else if (kind === "function") {
-    bindingRefs(get(environment, "b"), realm, refs);
-    maybeRef(get(environment, "this"), realm, refs);
-    objectRef(get(environment, "fn"), realm, refs);
-    maybeRef(get(environment, "newTarget"), realm, refs);
-  } else if (kind === "object") objectRef(get(environment, "obj"), realm, refs);
-  else if (kind === "global") maybeRef(get(environment, "this"), realm, refs);
-  else if (kind === "module") bindingRefs(get(environment, "b"), realm, refs);
+  if (kind === "declarative" || kind === "catch") {
+    fieldRefs(environment, "b", realm, refs, path, bindingRefs);
+  } else if (kind === "function") {
+    fieldRefs(environment, "b", realm, refs, path, bindingRefs);
+    fieldRefs(environment, "this", realm, refs, path, maybeRef);
+    fieldRefs(environment, "fn", realm, refs, path, objectRef);
+    fieldRefs(environment, "newTarget", realm, refs, path, maybeRef);
+  } else if (kind === "object") fieldRefs(environment, "obj", realm, refs, path, objectRef);
+  else if (kind === "global") fieldRefs(environment, "this", realm, refs, path, maybeRef);
+  else if (kind === "module") fieldRefs(environment, "b", realm, refs, path, bindingRefs);
   else stop(`an environment of kind ${kind}`);
 };
 
 // What a module record refers to: its environment, its namespaces, its import.meta, a synthetic
 // module's value, its module source, the capability of its evaluation, and what it threw.
-const moduleRefs = (module: Value, realm: Realm, refs: number[]) => {
+const moduleRefs = (module: Value, realm: Realm, refs: number[], path: Path) => {
   const environment = get(module, "env");
-  if (environment !== 0) environmentRef(environment, realm, refs);
+  if (environment !== 0) environmentRef(environment, realm, refs, path);
   ["namespace", "deferredNamespace", "meta", "value", "moduleSource", "error"].forEach((field) =>
-    maybeRef(get(module, field), realm, refs),
+    maybeRef(get(module, field), realm, refs, path),
   );
   const capability = get(module, "capability");
   if (isModelValue(capability, "Empty")) return;
-  objectRef(get(capability, "promise"), realm, refs);
-  maybeRef(get(capability, "resolve"), realm, refs);
-  maybeRef(get(capability, "reject"), realm, refs);
+  objectRef(get(capability, "promise"), realm, refs, path);
+  maybeRef(get(capability, "resolve"), realm, refs, path);
+  maybeRef(get(capability, "reject"), realm, refs, path);
 };
 
 const NULL = createRecord([["type", "null"]]);
@@ -562,19 +666,15 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getInitialObject = createHeapReader(initialObjs);
   const getEnvironment = createHeapReader(envs);
   const environmentPages = getList(get(envs, "pages"));
-  // Pushes the nodes that a node's record refers to from the edges of its page, and gives whether
-  // it is a WeakMap, or -1 where its page holds no edges of this realm.
-  const pushPageEdges = (node: number, walked: number[]) => {
+  const getPage = (node: number) => {
     const index = (node > 0 ? node : -node) - 1;
     const page = (node > 0 ? pages : environmentPages)[Math.floor(index / PAGE_SIZE)];
-    if (!isIncremental || !isCanonicalPage(page)) return -1;
-    const edges = page.edges;
-    if (edges[0] !== realm.objects || edges[1] !== realm.environments) return -1;
-    const slot = index % PAGE_SIZE;
-    for (let at = edges[EDGE_STARTS + slot]; at < edges[EDGE_STARTS + slot + 1]; at++) {
-      walked.push(edges[at]);
-    }
-    return (edges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1;
+    return isIncremental &&
+      isCanonicalPage(page) &&
+      page.edges[0] === realm.objects &&
+      page.edges[1] === realm.environments
+      ? page
+      : undefined;
   };
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
@@ -589,40 +689,47 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const edges: number[] = [];
   const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
   const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
-  const collect = (node: number, refs: number[], start: number) => {
-    if (node > 0) objectEdgeStarts[node] = edges.length;
-    else environmentEdgeStarts[-node] = edges.length;
-    edges.push(refs.length - start);
-    for (let index = start; index < refs.length; index++) edges.push(refs[index]);
+  const startEdges = (node: number) => {
+    const start = edges.length;
+    if (node > 0) objectEdgeStarts[node] = start;
+    else environmentEdgeStarts[-node] = start;
+    edges.push(0);
+    return start;
   };
-  const queue: number[] = [];
-  for (let environment = 1; environment <= realm.environments; environment++) {
-    const start = queue.length;
-    if (pushPageEdges(-environment, queue) === -1) {
-      environmentRefs(getEnvironment(environment), realm, queue);
+  // undefined where renaming the record moved what it holds.
+  const walkedLocations = new Map<number, number[] | undefined>();
+  const path: Path = { steps: [], located: [], count: 0 };
+  const endWalked = (node: number, start: number) => {
+    edges[start] = edges.length - start - 1;
+    walkedLocations.set(node, sortLocated(path.located));
+    path.located.length = 0;
+    path.count = 0;
+  };
+  // Gives whether the record is a WeakMap.
+  const walkRecord = (node: number) => {
+    const start = startEdges(node);
+    const page = getPage(node);
+    if (page !== undefined) {
+      const pageEdges = page.edges;
+      const slot = ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
+      for (let at = pageEdges[EDGE_STARTS + slot]; at < pageEdges[EDGE_STARTS + slot + 1]; at++) {
+        edges.push(pageEdges[at]);
+      }
+      edges[start] = edges.length - start - 1;
+      return ((pageEdges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
     }
-    collect(-environment, queue, start);
-  }
-  for (const id of changed) {
-    const start = queue.length;
-    objectRefs(getObject(id), realm, queue);
-    collect(id, queue, start);
-  }
-  const templates = toFiniteFunction(get(state, "templates"));
-  templates.domain
-    .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
-    .sort((left, right) => left.key - right.key)
-    .forEach((entry) => objectRef(entry.value, realm, queue));
-  getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, queue));
-  required.domain
-    .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
-    .sort((left, right) => left.file - right.file)
-    .forEach((pair) => objectRef(get(pair.entry, "module"), realm, queue));
-  // The handler of the host's proxies and the host's import, which the state names by object.
-  maybeRef(get(state, "hostHandler"), realm, queue);
-  maybeRef(get(state, "hostImport"), realm, queue);
-  // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
-  // that node refers to.
+    if (node < 0) {
+      environmentRefs(getEnvironment(-node), realm, edges, path);
+      endWalked(node, start);
+      return false;
+    }
+    const object = getObject(node);
+    objectRefs(object, realm, edges, path);
+    endWalked(node, start);
+    return getString(object, "class") === "weakMap";
+  };
+  // The breadth-first walk numbers each node where it first reaches it, from the roots and then
+  // from the nodes that each node it numbered refers to.
   const objectNumbers = new Int32Array(objectEdgeStarts.length);
   const environmentNumbers = new Int32Array(environmentEdgeStarts.length);
   const isNumbered = (node: number) =>
@@ -631,34 +738,55 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const weakMaps: number[] = [];
   let objectCount = 0;
   let environmentCount = 0;
-  const walk = (walked: number[]) => {
-    for (let head = 0; head < walked.length; head++) {
-      const node = walked[head];
-      if (isNumbered(node)) continue;
-      const start = walked.length;
-      if (node > 0) {
-        objectCount++;
-        objectNumbers[node] = realm.objects + objectCount;
-        const isWeakMap = pushPageEdges(node, walked);
-        if (isWeakMap === -1) {
-          const object = getObject(node);
-          objectRefs(object, realm, walked);
-          if (getString(object, "class") === "weakMap") weakMaps.push(node);
-        } else if (isWeakMap === 1) {
-          weakMaps.push(node);
-        }
-      } else {
-        environmentCount++;
-        environmentNumbers[-node] = realm.environments + environmentCount;
-        if (pushPageEdges(node, walked) === -1) {
-          environmentRefs(getEnvironment(-node), realm, walked);
-        }
-      }
-      collect(node, walked, start);
-      order.push(node);
+  const reach = (node: number) => {
+    if (isNumbered(node)) return;
+    if (node > 0) {
+      objectCount++;
+      objectNumbers[node] = realm.objects + objectCount;
+    } else {
+      environmentCount++;
+      environmentNumbers[-node] = realm.environments + environmentCount;
+    }
+    order.push(node);
+  };
+  const reachEdges = (start: number) => {
+    for (let index = start + 1; index <= start + edges[start]; index++) reach(edges[index]);
+  };
+  for (let environment = 1; environment <= realm.environments; environment++) {
+    walkRecord(-environment);
+    reachEdges(environmentEdgeStarts[environment]);
+  }
+  for (const id of changed) {
+    const start = startEdges(id);
+    objectRefs(getObject(id), realm, edges, path);
+    endWalked(id, start);
+    reachEdges(start);
+  }
+  const roots: number[] = [];
+  const rootPath: Path = { steps: [], located: [], count: 0 };
+  const templates = toFiniteFunction(get(state, "templates"));
+  templates.domain
+    .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
+    .sort((left, right) => left.key - right.key)
+    .forEach((entry) => objectRef(entry.value, realm, roots, rootPath));
+  getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, roots, rootPath));
+  required.domain
+    .map((file, position) => ({ file: Number(file), entry: required.range[position] }))
+    .sort((left, right) => left.file - right.file)
+    .forEach((pair) => objectRef(get(pair.entry, "module"), realm, roots, rootPath));
+  // The handler of the host's proxies and the host's import, which the state names by object.
+  maybeRef(get(state, "hostHandler"), realm, roots, rootPath);
+  maybeRef(get(state, "hostImport"), realm, roots, rootPath);
+  roots.forEach(reach);
+  let head = 0;
+  const walk = () => {
+    for (; head < order.length; head++) {
+      const node = order[head];
+      if (walkRecord(node)) weakMaps.push(node);
+      reachEdges(node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node]);
     }
   };
-  walk(queue);
+  walk();
   // A weak collection's key that the walk reached, which a step can still read the entry by, and
   // its new number.
   const getWeakKeyNumber = (key: Value) => {
@@ -679,22 +807,18 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           return number === undefined ? [] : [{ number, value: data.range[position] }];
         })
         .sort((left, right) => left.number - right.number)
-        .forEach((entry) => maybeRef(entry.value, realm, more));
+        .forEach((entry) => maybeRef(entry.value, realm, more, rootPath));
     });
-    const fresh = more.filter((node) => !isNumbered(node));
-    if (fresh.length === 0) break;
-    walk(fresh);
+    more.forEach(reach);
+    if (head === order.length) break;
+    walk();
   }
   const getNew = (node: number) => {
     const number = node > 0 ? objectNumbers[node] : environmentNumbers[-node];
     if (number === 0) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
-  const renameValue = (value: Value): Value => {
-    if (getString(value, "type") !== "object") return value;
-    const id = getNumber(value, "id");
-    if (id <= realm.objects) return value;
-    const number = getNew(id);
+  const renameRef = (value: Value, id: number, number: number) => {
     if (!isPlainOf(value, "record") || value.domain.length !== 2) {
       return createRecord([
         ["type", "object"],
@@ -705,6 +829,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const range = value.range.slice();
     range[findFieldIndex(value.domain, "id")] = number;
     return createChangedFunction(value, range);
+  };
+  const renameValue = (value: Value): Value => {
+    if (getString(value, "type") !== "object") return value;
+    const id = getNumber(value, "id");
+    return id <= realm.objects ? value : renameRef(value, id, getNew(id));
   };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
@@ -842,6 +971,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         ? buckets
         : createChangedFunction(buckets, range ?? buckets.range.slice());
     }
+    isEveryPositionKept = false;
     const renamedBuckets = range ?? buckets.range;
     const keys: Value[] = [];
     const kept: Value[] = [];
@@ -891,6 +1021,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     node > 0
       ? node <= realm.objects || objectNumbers[node] === node
       : -node <= realm.environments || environmentNumbers[-node] === -node;
+  const getEdgeStart = (node: number) =>
+    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
   const isEveryEdgeUnmoved = (node: number) => {
     const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
     if (start === -1) return false;
@@ -899,70 +1031,150 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     return true;
   };
-  // A record renamed, or as it is where renaming would give it back.
-  const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) =>
-    isIncremental &&
-    isCanonical(record) &&
-    (node < 0 || !WEAK_CLASSES.has(getString(record, "class"))) &&
-    isEveryEdgeUnmoved(node)
-      ? record
-      : markCanonical(renameRecord(record));
-  const changedSet = new Set(changed);
-  const objects = [
-    ...Array.from({ length: realm.objects }, (_, index) => {
-      const record = getObject(index + 1);
-      return changedSet.has(index + 1) ? rename(index + 1, record, renameObject) : record;
-    }),
-    ...order.filter((node) => node > 0).map((node) => rename(node, getObject(node), renameObject)),
-  ];
-  const environments = [
-    ...Array.from({ length: realm.environments }, (_, index) =>
-      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord),
-    ),
-    ...order
-      .filter((node) => node < 0)
-      .map((node) => rename(node, getEnvironment(-node), renameEnvironmentRecord)),
-  ];
-  // The node that each new number names, in each heap.
-  const objectNodes = new Int32Array(objects.length + 1);
-  const environmentNodes = new Int32Array(environments.length + 1);
+  const openSources: FunctionValue[] = [];
+  const openRanges: Value[][] = [];
+  const openSteps: number[] = [];
+  const openKinds: number[] = [];
+  const closeLevel = (level: number) => {
+    openRanges[level - 1][openSteps[level - 1] >> 1] =
+      openKinds[level] === 1
+        ? createTuple(openRanges[level])
+        : createChangedFunction(openSources[level], openRanges[level]);
+  };
+  const getLocated = (node: number) =>
+    walkedLocations.has(node)
+      ? walkedLocations.get(node)
+      : getPage(node)?.locations[((node > 0 ? node : -node) - 1) % PAGE_SIZE];
+  // Renaming a canonical record copies only the values on the paths to its moved nodes.
+  const substitute = (node: number, record: Value, located: number[]) => {
+    const start = getEdgeStart(node);
+    const root = toFiniteFunction(record);
+    openSources[0] = root;
+    openRanges[0] = root.range.slice();
+    let open = 0;
+    for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
+      const target = edges[start + 1 + located[at]];
+      if (isUnmoved(target)) continue;
+      const depth = located[at + 1] - 1;
+      let common = 0;
+      while (common < open && common < depth && openSteps[common] === located[at + 2 + common]) {
+        common++;
+      }
+      for (; open > common; open--) closeLevel(open);
+      for (; open < depth; open++) {
+        const step = located[at + 2 + open];
+        const inner = toFiniteFunction(openRanges[open][step >> 1]);
+        openSteps[open] = step;
+        openSources[open + 1] = inner;
+        openRanges[open + 1] = inner.range.slice();
+        openKinds[open + 1] = located[at + 3 + open] & 1;
+      }
+      const range = openRanges[open];
+      const position = located[at + 2 + depth] >> 1;
+      range[position] =
+        target > 0 ? renameRef(range[position], target, getNew(target)) : getNew(target);
+    }
+    for (; open > 0; open--) closeLevel(open);
+    return createChangedFunction(root, openRanges[0]);
+  };
+  // Dropping an emptied bucket moves the values after it.
+  let isEveryPositionKept = true;
+  // A record renamed, or as it is where renaming would give it back, whose source a weak record's
+  // renaming doesn't stand for, as the walk's other nodes decide which entries it keeps.
+  const rename = (
+    node: number,
+    record: Value,
+    renameRecord: (inner: Value) => FunctionValue,
+    sources: (Value | undefined)[],
+  ) => {
+    const isWeak = node > 0 && WEAK_CLASSES.has(getString(record, "class"));
+    sources.push(isWeak ? undefined : record);
+    const isKept = isIncremental && isCanonical(record) && !isWeak;
+    if (isKept && isEveryEdgeUnmoved(node)) return record;
+    const located =
+      isKept && (node < 0 || !ENTRY_CLASSES.has(getString(record, "class")))
+        ? getLocated(node)
+        : undefined;
+    if (located !== undefined) return markCanonical(substitute(node, record, located));
+    isEveryPositionKept = true;
+    const renamed = markCanonical(renameRecord(record));
+    if (!isEveryPositionKept) walkedLocations.set(node, undefined);
+    return renamed;
+  };
+  // The node that each new number names, in each heap, where a realm's object that no step changed
+  // names none.
+  const objectNodes = new Int32Array(realm.objects + objectCount + 1);
+  const environmentNodes = new Int32Array(realm.environments + environmentCount + 1);
   for (let environment = 1; environment <= realm.environments; environment++) {
     environmentNodes[environment] = -environment;
   }
+  for (const id of changed) objectNodes[id] = id;
   for (const node of order) {
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
   }
-  const getEdgeStart = (node: number) =>
-    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
-  // A new page's edges, of the nodes that its records' sources refer to by their new numbers.
-  const getEdges = (nodes: Int32Array) => (page: number, count: number) => {
-    let size = EDGE_NODES;
-    for (let slot = 0; slot < count; slot++) {
-      const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
-      if (start !== -1) size += edges[start];
+  const objectSources: (Value | undefined)[] = [];
+  const objects: Value[] = [];
+  for (let number = 1; number < objectNodes.length; number++) {
+    const node = objectNodes[number];
+    if (node === 0) {
+      objectSources.push(undefined);
+      objects.push(getObject(number));
+      continue;
     }
-    const pageEdges = new Int32Array(size);
-    pageEdges[0] = realm.objects;
-    pageEdges[1] = realm.environments;
-    let at = EDGE_NODES;
-    for (let slot = 0; slot < PAGE_SIZE; slot++) {
-      pageEdges[EDGE_STARTS + slot] = at;
-      const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
-      const start = getEdgeStart(node);
-      if (start === -1) continue;
-      for (let index = start + 1; index <= start + edges[start]; index++) {
-        const target = edges[index];
-        pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
+    objects.push(rename(node, getObject(node), renameObject, objectSources));
+  }
+  const environmentSources: (Value | undefined)[] = [];
+  const environments: Value[] = [];
+  for (let number = 1; number < environmentNodes.length; number++) {
+    const node = environmentNodes[number];
+    environments.push(
+      rename(node, getEnvironment(-node), renameEnvironmentRecord, environmentSources),
+    );
+  }
+  const getPageMaker =
+    (nodes: Int32Array, sources: (Value | undefined)[]) => (records: Value[], page: number) => {
+      const count = records.length;
+      let size = EDGE_NODES;
+      for (let slot = 0; slot < count; slot++) {
+        const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
+        if (start !== -1) size += edges[start];
       }
-      if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
-    }
-    pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
-    return pageEdges;
-  };
+      const pageEdges = new Int32Array(size);
+      pageEdges[0] = realm.objects;
+      pageEdges[1] = realm.environments;
+      let at = EDGE_NODES;
+      for (let slot = 0; slot < PAGE_SIZE; slot++) {
+        pageEdges[EDGE_STARTS + slot] = at;
+        const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
+        const start = getEdgeStart(node);
+        if (start === -1) continue;
+        for (let index = start + 1; index <= start + edges[start]; index++) {
+          const target = edges[index];
+          pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
+        }
+        if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
+      }
+      pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
+      return createCanonicalPage(
+        records,
+        pageEdges,
+        Array.from({ length: count }, (_, slot) => {
+          const node = nodes[page * PAGE_SIZE + slot + 1];
+          return node === 0 ? undefined : getLocated(node);
+        }),
+        sources.slice(page * PAGE_SIZE, page * PAGE_SIZE + count),
+      );
+    };
   return except(state, {
-    objs: () => createHeap(objects, objs, isIncremental, getEdges(objectNodes)),
-    envs: () => createHeap(environments, envs, isIncremental, getEdges(environmentNodes)),
+    objs: () => createHeap(objects, objs, isIncremental, getPageMaker(objectNodes, objectSources)),
+    envs: () =>
+      createHeap(
+        environments,
+        envs,
+        isIncremental,
+        getPageMaker(environmentNodes, environmentSources),
+      ),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
