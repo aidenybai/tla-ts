@@ -990,7 +990,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   runtime.registers = registers[0];
   runtime.namedRegisters = namedRegisters[0];
   runtime.possibleCounts = possibleCounts[0];
-  runtime.setSimulationRegister = (key, value) => {
+  runtime.setEveryWorkerRegister = (key, value) => {
     for (let index = 0; index < workers.length; index++) {
       if (typeof key === "number") registers[index].set(key, value);
       else namedRegisters[index].set(key, value);

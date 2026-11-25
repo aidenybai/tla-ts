@@ -2086,6 +2086,13 @@ const searchStates = (
     );
   });
   if (typed && typedLasso) adoptTypedSearch(typed);
+  // TLC's workers race, so tla-ts expands every state on the first worker, and the other workers keep the registers that TLC's main thread sets in every worker.
+  const idleWorker = {
+    registers: new Map(runtime.registers),
+    namedRegisters: new Map(runtime.namedRegisters),
+    possibleCounts: new Map(runtime.possibleCounts),
+  };
+  runtime.idleWorker = idleWorker;
   for (
     let index = typedLasso ? states.length : 0;
     index < states.length && !runtime.isStopped;
@@ -2165,6 +2172,12 @@ const searchStates = (
   if (missingPostcondition) {
     return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
   }
+  runtime.setEveryWorkerRegister = (key, value) => {
+    for (const worker of [runtime, idleWorker]) {
+      if (typeof key === "number") worker.registers.set(key, value);
+      else worker.namedRegisters.set(key, value);
+    }
+  };
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {
