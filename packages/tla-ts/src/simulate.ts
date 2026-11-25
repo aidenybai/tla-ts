@@ -638,7 +638,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   let reportAt = performance.now() + PROGRESS_INTERVAL;
   let coverageCount = Math.trunc(options.coverage ?? 0);
   let isReporterDead = false;
-  let isPeriodicFalse = false;
+  let periodicStatus: number = EXIT_STATUS.success;
   let stoppedStates: number | undefined;
   const reporterRandom = createJavaRandom(seed);
   const reportProgress = () => {
@@ -660,17 +660,17 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     try {
       const periodic = search.findFalsePeriodic();
       if (periodic) {
-        // TLC's ProgressReport stops the simulation with a result that isn't an error, so TLC exits 0.
         reportMessage(
           MESSAGE_CODE.assumptionFalse,
           `Assumption ${describeNode(periodic)} is false.`,
         );
-        isPeriodicFalse = true;
+        periodicStatus = EXIT_STATUS.assumptionViolation;
       }
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
       reportReporterDied();
       isReporterDead = true;
+      periodicStatus = EXIT_STATUS.error;
     }
     isOnWorker = wasOnWorker;
     runtime.getRandom = getWorkerRandom;
@@ -684,7 +684,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
     reportProgress();
     reportAt = performance.now() + PROGRESS_INTERVAL;
-    return isPeriodicFalse;
+    return periodicStatus === EXIT_STATUS.assumptionViolation;
   };
 
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
@@ -1116,7 +1116,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const status = Math.max(errorStatus, postconditionStatus);
   if (!isReporterDead) reportProgress();
   if (status === EXIT_STATUS.success) printSummary();
-  return status;
+  // Deviation from TLC: its ProgressReport stops on a FALSE _PERIODIC and dies when _PERIODIC fails to evaluate, yet TLC exits 0; tla-ts exits as model checking does.
+  return status === EXIT_STATUS.success ? periodicStatus : status;
 };
 
 const toEvaluationError = (error: unknown) => {

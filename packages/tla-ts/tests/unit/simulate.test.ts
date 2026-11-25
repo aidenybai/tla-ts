@@ -1288,20 +1288,21 @@ it.each([
   [
     "False",
     "Next",
+    10,
     "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.",
     101,
   ],
-  ["Number", "Next", "TLC Bug: Progress report thread died.", 101],
-  ["Divided", "Next", "TLC Bug: Progress report thread died.", 101],
-  ["State", "Next", "TLC Bug: Progress report thread died.", 101],
-  ["Printed", "Next", '<<"periodic", 0>>', 101],
-  ["Leveled", "Next", '<<"level", 1>>', 101],
-  ["Rand", "Stepped", "<<730610, 918715>>", 51],
+  ["Number", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["Divided", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["State", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["Printed", "Next", 0, '<<"periodic", 0>>', 101],
+  ["Leveled", "Next", 0, '<<"level", 1>>', 101],
+  ["Rand", "Stepped", 0, "<<730610, 918715>>", 51],
 ])(
-  "evaluates _PERIODIC %s under %s after the last progress report, as TLC's ProgressReport thread does",
-  (name, next, line, states) => {
+  "evaluates _PERIODIC %s under %s after the last progress report, as TLC's ProgressReport thread does, and exits %i as model checking does",
+  (name, next, status, line, states) => {
     expect(getSimulatedLines(`NEXT ${next}\n_PERIODIC ${name}`, 5n)).toEqual([
-      0,
+      status,
       [
         `Progress: ${states} states checked, 5 traces generated (trace length: mean=10, var(x)=0, sd=0)`,
         line,
@@ -1328,14 +1329,14 @@ it("evaluates _PERIODIC after the summary of a behavior that violates an invaria
   ]);
 });
 
-it("stops at the progress report every minute that finds _PERIODIC FALSE and reports again, as TLC's Simulator does", () => {
+it("stops at the progress report every minute that finds _PERIODIC FALSE and reports again, as TLC's Simulator does, and exits 10 as model checking does", () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
   const progress =
     "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)";
   const error = "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.";
   expect(getSimulatedLines("NEXT Next\n_PERIODIC False", 10n)).toEqual([
-    0,
+    10,
     [
       progress,
       error,
@@ -1346,11 +1347,11 @@ it("stops at the progress report every minute that finds _PERIODIC FALSE and rep
   ]);
 });
 
-it("reports no more progress once _PERIODIC fails to evaluate to a boolean, as TLC's ProgressReport dies", () => {
+it("reports no more progress once _PERIODIC fails to evaluate to a boolean, as TLC's ProgressReport dies, and exits 255 as model checking does", () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => (now += 10000));
   expect(getSimulatedLines("NEXT Next\n_PERIODIC Number", 10n)).toEqual([
-    0,
+    255,
     [
       "Progress: 101 states checked, 6 traces generated (trace length: mean=10, var(x)=0, sd=0)",
       "TLC Bug: Progress report thread died.",
