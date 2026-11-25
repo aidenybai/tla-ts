@@ -84,6 +84,23 @@ it("keeps a step whose values TLC fails to compare as it drops stuttering steps,
   ]);
 });
 
+it.each([
+  [
+    "{n \\in Nat : n > 1}",
+    "{n \\in Nat : <expression line 6, col 107 to line 6, col 111 of module M> }",
+  ],
+  [
+    "[n \\in Nat |-> n]",
+    "[n \\in Nat |-> <expression line 6, col 109 to line 6, col 109 of module M>]",
+  ],
+])(
+  "drops a stuttering step that keeps %s, which TLC fails to compare with itself and hangs on",
+  (value, printed) => {
+    const body = `Init == p = 0 /\\ q = 0\nNext == IF TLCGet("level") = 2 THEN UNCHANGED <<p, q>> ELSE p' = p + 1 /\\ q' = IF p = 0 THEN ${value} ELSE q\nInv == p < 2`;
+    expect(getPrintedRecords(body, SAFETY_CONFIG)).toEqual([["0", printed, printed]]);
+  },
+);
+
 it("reports the violation of a successor TLC fails to compare with the current state, where TLC reports that failure", () => {
   const body =
     'Init == p = 0 /\\ q = 0\nNext == p\' = 1 /\\ q\' = IF p = 0 THEN 0 ELSE "a"\nInv == TLCGet("level") < 3';
