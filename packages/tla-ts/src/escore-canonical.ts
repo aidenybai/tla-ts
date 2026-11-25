@@ -25,6 +25,7 @@ import {
   isUnfingerprintableHash,
   isWrittenSlot,
   markCanonical,
+  PAGE_BITS,
   PAGE_SIZE,
   setFunctionClass,
   toFiniteFunction,
@@ -812,11 +813,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     );
   const objectCanonicalPages = getCanonicalPages(pages);
   const environmentCanonicalPages = getCanonicalPages(environmentPages);
-  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
+  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) & (PAGE_SIZE - 1);
   // The page of a node whose record a step didn't write since CanonicalStateOf made the page.
   const getPage = (node: number) => {
     const page = (node > 0 ? objectCanonicalPages : environmentCanonicalPages)[
-      Math.floor(((node > 0 ? node : -node) - 1) / PAGE_SIZE)
+      ((node > 0 ? node : -node) - 1) >> PAGE_BITS
     ];
     return page === undefined || isWrittenSlot(page, getSlot(node)) ? undefined : page;
   };
@@ -836,8 +837,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
   const getEdgeStart = (node: number) =>
     node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
-  const getEdgeArray = (node: number) =>
-    (getEdgeStart(node) === PAGE_EDGES ? getPage(node)?.edges : undefined) ?? edges;
+  const getEdgeArray = (node: number, page: CanonicalPage | undefined) =>
+    page !== undefined && getEdgeStart(node) === PAGE_EDGES ? page.edges : edges;
   const getEdgeFirst = (node: number, array: ArrayLike<number>) =>
     array === edges ? getEdgeStart(node) + 1 : array[EDGE_STARTS + getSlot(node)];
   const getEdgeEnd = (node: number, array: ArrayLike<number>) => {
@@ -861,12 +862,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     path.located.length = 0;
     path.count = 0;
   };
-  // Gives whether the record is a WeakMap.
+  // Reaches the nodes that the record refers to, and gives whether it is a WeakMap.
   const walkRecord = (node: number) => {
     const page = getPage(node);
     if (page !== undefined) {
       if (node > 0) objectEdgeStarts[node] = PAGE_EDGES;
       else environmentEdgeStarts[-node] = PAGE_EDGES;
+      reachEdges(node, page);
       const slot = getSlot(node);
       return ((page.edges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
     }
@@ -874,11 +876,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (node < 0) {
       environmentRefs(getEnvironment(-node), realm, edges, path);
       endWalked(node, start);
+      reachEdges(node, undefined);
       return false;
     }
     const object = getObject(node);
     objectRefs(object, realm, edges, path);
     endWalked(node, start);
+    reachEdges(node, undefined);
     return getString(object, "class") === "weakMap";
   };
   // The breadth-first walk numbers each node where it first reaches it, from the roots and then
@@ -902,20 +906,19 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     order.push(node);
   };
-  const reachEdges = (node: number) => {
-    const array = getEdgeArray(node);
+  const reachEdges = (node: number, page: CanonicalPage | undefined) => {
+    const array = getEdgeArray(node, page);
     const end = getEdgeEnd(node, array);
     for (let index = getEdgeFirst(node, array); index < end; index++) reach(array[index]);
   };
   for (let environment = 1; environment <= realm.environments; environment++) {
     walkRecord(-environment);
-    reachEdges(-environment);
   }
   for (const id of changed) {
     const start = startEdges(id);
     objectRefs(getObject(id), realm, edges, path);
     endWalked(id, start);
-    reachEdges(id);
+    reachEdges(id, undefined);
   }
   const roots: number[] = [];
   const rootPath: Path = { steps: [], located: [], count: 0 };
@@ -938,7 +941,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     for (; head < order.length; head++) {
       const node = order[head];
       if (walkRecord(node)) weakMaps.push(node);
-      reachEdges(node);
     }
   };
   walk();
@@ -1164,17 +1166,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     node > 0
       ? node <= realm.objects || objectNumbers[node] === node
       : -node <= realm.environments || environmentNumbers[-node] === -node;
-  const isEveryEdgeUnmoved = (node: number) => {
+  const isEveryEdgeUnmoved = (node: number, page: CanonicalPage | undefined) => {
     if (getEdgeStart(node) === -1) return false;
-    const array = getEdgeArray(node);
+    const array = getEdgeArray(node, page);
     const end = getEdgeEnd(node, array);
     for (let index = getEdgeFirst(node, array); index < end; index++) {
       if (!isUnmoved(array[index])) return false;
     }
     return true;
   };
-  const getLocated = (node: number) =>
-    walkedLocations.has(node) ? walkedLocations.get(node) : getPage(node)?.locations[getSlot(node)];
+  const getLocated = (node: number, page: CanonicalPage | undefined) =>
+    walkedLocations.has(node) ? walkedLocations.get(node) : page?.locations[getSlot(node)];
   const hashSteps: number[] = [];
   const levelKeys: number[] = [];
   const levelBases: number[] = [];
@@ -1189,9 +1191,15 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   // The hash of the record that makeRecord makes of a source of the given hash with node's edges, by
   // their new numbers, at located, from the source's plan.
-  const getMadeHash = (node: number, hash: number, located: number[], plan: Int32Array) => {
+  const getMadeHash = (
+    node: number,
+    page: CanonicalPage | undefined,
+    hash: number,
+    located: number[],
+    plan: Int32Array,
+  ) => {
     levelHashes[0] = hash;
-    const array = getEdgeArray(node);
+    const array = getEdgeArray(node, page);
     const first = getEdgeFirst(node, array);
     let open = 0;
     let planAt = 0;
@@ -1230,8 +1238,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   // Dropping an emptied bucket moves the values after it.
   let isEveryPositionKept = true;
   const getRecord = (node: number) => (node > 0 ? getObject(node) : getEnvironment(-node));
-  const keepSlot = (node: number, slots: Slots, isInPlace: boolean) => {
-    const page = getPage(node);
+  const keepSlot = (
+    node: number,
+    page: CanonicalPage | undefined,
+    slots: Slots,
+    isInPlace: boolean,
+  ) => {
     if (page === undefined) {
       const record = getRecord(node);
       pushSlot(slots, record, record, undefined, getValueHash(record), isInPlace);
@@ -1249,6 +1261,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const makeLater = (
     node: number,
+    page: CanonicalPage | undefined,
     source: Value,
     located: number[] | undefined,
     plan: Int32Array | undefined,
@@ -1265,7 +1278,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       undefined,
       source,
       sourcePlan,
-      getMadeHash(node, hash, located, sourcePlan),
+      getMadeHash(node, page, hash, located, sourcePlan),
       false,
     );
   };
@@ -1281,23 +1294,30 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const page = getPage(node);
     const slot = getSlot(node);
     if (page !== undefined && page.records[slot] === undefined) {
-      if (isEveryEdgeUnmoved(node)) return keepSlot(node, slots, isInPlace);
-      return makeLater(node, page.sources[slot], page.locations[slot], page.plans[slot], slots);
+      if (isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
+      return makeLater(
+        node,
+        page,
+        page.sources[slot],
+        page.locations[slot],
+        page.plans[slot],
+        slots,
+      );
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
     const isKept =
       isIncremental &&
       isCanonical(record) &&
       !(node > 0 && WEAK_CLASSES.has(getString(record, "class")));
-    if (isKept && isEveryEdgeUnmoved(node)) return keepSlot(node, slots, isInPlace);
+    if (isKept && isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
     const located =
       isKept && (node < 0 || !ENTRY_CLASSES.has(getString(record, "class")))
-        ? getLocated(node)
+        ? getLocated(node, page)
         : undefined;
     if (located !== undefined) {
       return page === undefined
-        ? makeLater(node, record, located, undefined, slots)
-        : makeLater(node, page.sources[slot], located, page.plans[slot], slots);
+        ? makeLater(node, page, record, located, undefined, slots)
+        : makeLater(node, page, page.sources[slot], located, page.plans[slot], slots);
     }
     isEveryPositionKept = true;
     const renamed = markCanonical(renameRecord(record));
@@ -1320,7 +1340,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   for (let number = 1; number < objectNodes.length; number++) {
     const node = objectNodes[number];
     if (node === 0) {
-      keepSlot(number, objectSlots, true);
+      keepSlot(number, getPage(number), objectSlots, true);
       continue;
     }
     rename(node, number, renameObject, objectSlots);
@@ -1347,7 +1367,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       for (let slot = 0; slot < count; slot++) {
         const node = nodes[first + slot + 1];
         if (getEdgeStart(node) === -1) continue;
-        const array = getEdgeArray(node);
+        const array = getEdgeArray(node, getPage(node));
         size += getEdgeEnd(node, array) - getEdgeFirst(node, array);
       }
       const pageEdges = new Int32Array(size);
@@ -1358,7 +1378,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         pageEdges[EDGE_STARTS + slot] = at;
         const node = slot < count ? nodes[first + slot + 1] : 0;
         if (getEdgeStart(node) === -1) continue;
-        const array = getEdgeArray(node);
+        const array = getEdgeArray(node, getPage(node));
         const end = getEdgeEnd(node, array);
         for (let index = getEdgeFirst(node, array); index < end; index++) {
           const target = array[index];
@@ -1371,7 +1391,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const locations = new Array<number[] | undefined>(count);
       for (let slot = 0; slot < count; slot++) {
         const node = nodes[first + slot + 1];
-        locations[slot] = getLocated(node === 0 ? first + slot + 1 : node);
+        const heapNode = node === 0 ? first + slot + 1 : node;
+        locations[slot] = getLocated(heapNode, getPage(heapNode));
       }
       const hashes = slots.hashes.slice(first, first + count);
       return new CanonicalPage(
