@@ -2507,6 +2507,118 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  const checkImplicitSubstitution = (definitions: string, declaration: string) =>
+    check({
+      source: `---- MODULE M ----\n${definitions}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        new Map([
+          ["N", `---- MODULE N ----\n${declaration}\n====`],
+          ["Z", "---- MODULE Z ----\nZz == 1\n===="],
+        ]).get(name),
+    });
+
+  it.each([
+    [
+      "CONSTANT X(_)\nINSTANCE N",
+      "CONSTANT X",
+      [
+        [
+          "line 3, col 1 to line 3, col 10 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT X(_)\nINSTANCE N WITH X <- X",
+      "VARIABLE X",
+      [
+        [
+          "line 3, col 1 to line 3, col 22 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+        ["line 3, col 22 to line 3, col 22 of module M", "The operator X requires 1 arguments."],
+      ],
+    ],
+    [
+      "THEOREM ASSUME NEW CONSTANT X(_) PROVE LET J == INSTANCE N IN TRUE",
+      "CONSTANT X",
+      [
+        [
+          "line 2, col 44 to line 2, col 58 of module M",
+          "Operator used with the wrong number of arguments.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nJ == INSTANCE N",
+      "CONSTANT X",
+      [
+        [
+          "line 3, col 1 to line 3, col 15 of module M",
+          "Module instance identifier where operator should be.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nY == LET J == INSTANCE N IN TRUE",
+      "VARIABLE X",
+      [
+        [
+          "line 3, col 10 to line 3, col 24 of module M",
+          "Module instance identifier where operator should be.",
+        ],
+      ],
+    ],
+    [
+      "X == INSTANCE Z\nJ == INSTANCE N",
+      "CONSTANT X(_)",
+      [
+        [
+          "line 3, col 1 to line 3, col 15 of module M",
+          "An operator must be substituted for symbol 'X', and it must have arity 1.",
+        ],
+      ],
+    ],
+    [
+      "X(p) == INSTANCE Z\nINSTANCE N WITH X <- X",
+      "CONSTANT X(_)",
+      [
+        ["line 3, col 22 to line 3, col 22 of module M", "Operator name X is incomplete."],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'X', and it must have arity 1.",
+        ],
+      ],
+    ],
+  ])(
+    "rejects the implicit substitution in %j for N's %s as SANY's SymbolNode#match does",
+    async (definitions, declaration, errors) => {
+      await expect(checkImplicitSubstitution(definitions, declaration)).rejects.toThrow(
+        createSanyError(errors.map((error) => ({ location: error[0], message: error[1] }))),
+      );
+    },
+  );
+
+  it("accepts an operator parameter for N's CONSTANT X, which SANY's FormalParamNode#match never rejects", async () => {
+    await expect(
+      checkImplicitSubstitution("P(X(_)) == INSTANCE N", "CONSTANT X"),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
+  it("rejects a module instance of the right arity substituted for an operator constant, where SANY throws a NullPointerException", async () => {
+    await expect(
+      checkImplicitSubstitution("X(p) == INSTANCE Z\nJ == INSTANCE N", "CONSTANT X(_)"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 15 of module M",
+          message: "An operator must be substituted for symbol 'X', and it must have arity 1.",
+        },
+      ]),
+    );
+  });
+
   const checkOperatorSubstitute = (instance: string, other: string) =>
     check({
       source: `---- MODULE M ----\nEXTENDS Naturals\nAp2(F(_, _)) == F(1, 2)\nD9(k) == Ap2(LAMBDA a, b : a + b + k)\nJ == INSTANCE Pure\nP(n) == INSTANCE Pure\n${instance}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
@@ -5748,6 +5860,98 @@ describe("name resolution matches SANY", () => {
           location: `${start} to ${start} of module M`,
           message: "Nonexistent operand specified by `argument selector 3'.",
         })),
+      ],
+      [],
+    ],
+    [
+      "a proof's DEFINE of an operator that a RECURSIVE declaration and its definition name",
+      "RECURSIVE X(_)\nX(p) == p\nTHEOREM TRUE\n<1> DEFINE X == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 5, col 12 to line 5, col 17 of module M",
+          message: "Operator X already defined or declared.",
+        },
+        {
+          location: "line 5, col 12 to line 5, col 17 of module M",
+          message:
+            "Multiply-defined symbol 'X': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a proof step's definition of an operator that a RECURSIVE declaration and its definition name",
+      "RECURSIVE X(_)\nX(p) == p\nTHEOREM TRUE\n<1> X(q) == q\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 5, col 5 to line 5, col 13 of module M",
+          message: "Operator X already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 5, col 5 to line 5, col 13 of module M",
+          message:
+            "Multiple declarations or definitions for symbol X.  \nThis duplicates the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+      ],
+    ],
+    [
+      "a proof's DEFINE of an operator that only a RECURSIVE declaration names, with another arity",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1> DEFINE X == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 12 to line 4, col 17 of module M",
+          message: "Definition of X has different arity than its RECURSIVE declaration.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a module definition of an operator that a nested proof step's definition completed for a RECURSIVE declaration",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1>1. TRUE\n  <2> X(a) == a\n  <2>2. QED\n    OBVIOUS\n<1>2. QED\n  OBVIOUS\nX(p) == p",
+      [
+        {
+          location: "line 3, col 1 to line 9, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 10, col 1 to line 10, col 9 of module M",
+          message: "Operator X already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 10, col 1 to line 10, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol X.  \nThis duplicates the one at line 5, col 7 to line 5, col 15 of module M.",
+        },
+      ],
+    ],
+    [
+      "a proof's DEFINE of a function that a RECURSIVE declaration with parameters names",
+      "RECURSIVE X(_)\nTHEOREM TRUE\n<1> DEFINE X[a \\in {1}] == 1\n<1>2. QED\n  OBVIOUS",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 9 of module M",
+          message: "A THEOREM may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 12 to line 4, col 28 of module M",
+          message: "Function X has operator arguments in its RECURSIVE declaration.",
+        },
+        {
+          location: "line 7, col 1 to line 7, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 2, col 11 to line 2, col 14 of module M",
+          message: "Symbol X declared in RECURSIVE statement but not defined.",
+        },
       ],
       [],
     ],

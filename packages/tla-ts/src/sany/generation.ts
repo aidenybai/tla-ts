@@ -353,6 +353,12 @@ export const matchArguments = (
   operands: ExprOrOpArgNode[],
   location: SanyLocation,
 ) => {
+  if (operator.kind === "OpDecl" && operator.arity !== operands.length) {
+    generation.addError(location, "Operator used with the wrong number of arguments.");
+  }
+  if (operator.kind === "OpDef" && operator.defKind === "ModuleInstance") {
+    generation.addError(location, "Module instance identifier where operator should be.");
+  }
   if (operator.kind !== "OpDef" || operator.defKind !== "UserDefined") return;
   const params = operator.params ?? [];
   if (params.length !== operands.length) {

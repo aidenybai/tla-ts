@@ -2451,8 +2451,10 @@ const parse = (
     if (isAt("DEFINE") || isDefinitionStart()) {
       const start = cursor;
       accept("DEFINE");
+      recursiveScopes.push(new Set());
       const definitions = [parseDefinition(false)];
       while (isDefinitionStart()) definitions.push(parseDefinition(false));
+      recursiveScopes.pop();
       const define: DefineStep = { kind: "Define", definitions, location: getLocation(token) };
       return withRange(define, start);
     }

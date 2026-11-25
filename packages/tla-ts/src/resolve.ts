@@ -92,6 +92,7 @@ interface Unit {
   location: SourceLocation;
   self: Definition | undefined;
   bindings: ModuleBindings;
+  recursive: Set<Binding>;
   errors: SanyError[];
   warnings: SanyError[];
   hasLabelScope: boolean;
@@ -1268,27 +1269,8 @@ const resolveDefinitions = (
   unit: Unit,
   instances: Instance[] = [],
   declarations: Declaration[] = [],
+  recursive = new Set<Binding>(),
 ) => {
-  const recursive = new Set<Binding>();
-  const declared = definitions
-    .filter(
-      (definition) =>
-        definition.isRecursive &&
-        declarations.every((declaration) => declaration.name !== definition.name),
-    )
-    .reduce<LocalName | undefined>((parent, definition) => {
-      if (lookupLocal(parent, definition.name)?.isPending) return parent;
-      const local: LocalName = {
-        name: definition.name,
-        arity: getArity(definition),
-        params: getParamArities(definition),
-        kind: "Definition",
-        parent,
-        isPending: true,
-      };
-      recursive.add(local);
-      return local;
-    }, scope);
   const declaredLocals = new Map<Declaration, LocalName | undefined>();
   const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
     const binding: Binding = {
@@ -1351,7 +1333,7 @@ const resolveDefinitions = (
     return resolveDefinition(definition, current, inner, recursive)
       ? { ...local, params: getParamArities(definition) }
       : current;
-  }, declared);
+  }, scope);
   const resolvedScope = resolvePending(resolved, () => true);
   declaredLocals.forEach((local, declaration) => {
     const range = declaration.location.range;
@@ -2706,7 +2688,7 @@ const resolveStep = (
           (current, definition) =>
             definition.kind === "Instance"
               ? resolveLocalInstance(definition, current, stepUnit)
-              : resolveDefinitions([definition], current, unit),
+              : resolveDefinitions([definition], current, unit, [], [], unit.recursive),
           scope,
         ),
         body.kind,
@@ -2837,6 +2819,21 @@ export interface NestedRecursion {
   closed: number;
 }
 
+const getStepDefinitions = (proof: Proof | undefined): Definition[] =>
+  proof?.kind === "Steps"
+    ? proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [] : [definition],
+            )
+          : []),
+        ...getStepDefinitions(step.proof),
+      ])
+    : [];
+
+const getProofDefinitions = (module: Module) =>
+  module.theorems.flatMap((theorem) => getStepDefinitions(theorem.proof));
+
 export const getRecursiveDefinitions = (
   module: Module,
   declarations: Declaration[],
@@ -2844,7 +2841,7 @@ export const getRecursiveDefinitions = (
 ) => {
   const names = new Set(declarations.map((declaration) => declaration.name));
   return Map.groupBy(
-    definitions.filter(
+    [...definitions, ...getProofDefinitions(module)].filter(
       (definition) => names.has(definition.name) && !isTheoremDefinition(module, definition),
     ),
     (definition) => definition.name,
@@ -3002,7 +2999,7 @@ const checkSubstitutions = (
       return;
     }
     const name = expression.name;
-    const arity = getSymbolArity(expression, name, scope, unit);
+    const arity = getSymbolArity(expression, name, scope, unit, true);
     if (arity !== undefined && arity !== declaration.arity) {
       unit.errors.push({
         location: formatRange(getSpelledNameRange(expression, name)),
@@ -3015,26 +3012,39 @@ const checkSubstitutions = (
     }
   };
   const instanceRange = instance.location.range;
-  const isFound = (declaration: Declaration) =>
-    lookupLocal(scope, declaration.name) !== undefined ||
-    findSymbol(declaration.name, unit) !== undefined;
-  const implicit = declarations.filter(isFound).map((declaration) => {
+  const implicit = declarations.flatMap((declaration) => {
+    const name = declaration.name;
+    const binding = getModuleBinding(name, unit, undefined);
+    const symbol =
+      lookupLocal(scope, name) ??
+      findSymbol(name, unit) ??
+      (binding?.kind === "Instance" ? binding : undefined);
+    if (symbol === undefined) return [];
     const expression: Expression & { kind: "Identifier" } = {
       kind: "Identifier",
-      name: declaration.name,
+      name,
       location: instance.location,
     };
-    return { declaration, expression };
+    return [{ declaration, symbol, expression }];
   });
   implicit
     .filter((item) => item.declaration.arity === 0)
     .forEach((item) => {
-      const arity = getSymbolArity(item.expression, item.declaration.name, scope, unit);
-      if (arity && instanceRange) {
-        unit.errors.push({
-          location: formatRange(instanceRange),
-          message: `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`,
-        });
+      const symbol = item.symbol;
+      const arity =
+        symbol.kind === "Instance"
+          ? undefined
+          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+      const message =
+        symbol.kind === "Instance"
+          ? "Module instance identifier where operator should be."
+          : !arity || symbol.kind === "Parameter" || symbol.kind === "Theorem"
+            ? undefined
+            : symbol.kind === "Definition"
+              ? `Wrong number of arguments (0) given to operator '${resolveSynonym(item.declaration.name)}', \nwhich requires ${arity} arguments.`
+              : "Operator used with the wrong number of arguments.";
+      if (message && instanceRange) {
+        unit.errors.push({ location: formatRange(instanceRange), message });
       }
     });
   const substitutions = new Map<string, Expression>();
@@ -3065,10 +3075,14 @@ const checkSubstitutions = (
       const arity =
         item.declaration.arity === 0
           ? 0
-          : getSymbolArity(item.expression, item.declaration.name, scope, unit);
+          : item.symbol.kind === "Instance"
+            ? item.symbol.arity
+            : getSymbolArity(item.expression, item.declaration.name, scope, unit);
       if (
         (arity !== item.declaration.arity ||
-          (item.declaration.arity > 0 && hasOperatorParam(item.declaration.name))) &&
+          (item.declaration.arity > 0 &&
+            // Deviation from SANY: Generator#checkSubstitutionForCorrectArity accepts a module instance of the right arity, and level checking the substitute then throws a NullPointerException.
+            (hasOperatorParam(item.declaration.name) || item.symbol.kind === "Instance"))) &&
         instanceRange
       ) {
         reportArity(item.declaration, formatRange(instanceRange));
@@ -3155,6 +3169,7 @@ export const resolveSubstitutions = (
         },
         keys: () => imported.keys(),
       },
+      recursive: new Set(),
       errors: report.errors,
       warnings: report.warnings,
       hasLabelScope: false,
@@ -3253,6 +3268,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         location,
         self,
         bindings,
+        recursive,
         errors,
         warnings,
         hasLabelScope,
@@ -3450,7 +3466,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     }),
     recursion: {
       location: module.location,
-      definitions: [...module.definitions, ...nestedDefinitions].filter((definition) =>
+      definitions: [
+        ...module.definitions,
+        ...getProofDefinitions(module),
+        ...nestedDefinitions,
+      ].filter((definition) =>
         isSameRange(outerBindings.get(definition.name)?.range, definition.location.range),
       ),
       declarations: endCount.declarations
