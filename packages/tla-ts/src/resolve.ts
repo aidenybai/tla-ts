@@ -917,6 +917,12 @@ const checkReference = (
   use: SelectionUse,
 ) => {
   if (!isReference(expression)) return false;
+  if (
+    expression.kind !== "Subexpression" &&
+    !(expression.kind === "Identifier" ? expression.name : expression.operator).includes("!")
+  ) {
+    return undefined;
+  }
   const selectors = getSelectors(expression);
   let name = "";
   let argumentCount = 0;
@@ -1397,43 +1403,54 @@ const isInstanceArityReported = (
 
 const isArgumentCountReported = (
   callee: Binding | undefined,
+  expression: Expression & { kind: "Identifier" | "Apply" },
   name: string,
-  count: number,
-  range: SourceRange | undefined,
   unit: Unit,
 ) => {
   const params = callee?.kind === "Definition" ? callee.params : undefined;
   if (!callee || !params || params.length === callee.arity) return false;
+  const range =
+    expression.kind === "Identifier"
+      ? getSpelledNameRange(expression, name)
+      : expression.location.range;
   if (range && !unit.isGenerated) {
     unit.errors.push({
       location: formatRange(range),
-      message: `Wrong number of arguments (${count}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,
+      message: `Wrong number of arguments (${expression.kind === "Identifier" ? 0 : expression.args.length}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,
     });
   }
   return true;
 };
 
+const reportAt = (unit: Unit, range: SourceRange | undefined, message: string) => {
+  if (range) unit.errors.push({ location: formatRange(range), message });
+};
+
 const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
-  const range = arg.location.range;
-  const report = (message: string) => {
-    if (range) unit.errors.push({ location: formatRange(range), message });
-  };
   const selectionError = operatorSelectionErrors.get(arg);
   // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
   if (arg.kind === "Lambda" && arg.operator !== undefined) {
     unresolvedExpressions.add(arg);
-    report(`The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+    reportAt(
+      unit,
+      arg.location.range,
+      `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`,
+    );
   } else if (selectionError) {
     unit.errors.push(selectionError);
-  } else if (arg.kind === "Lambda" && range) {
+  } else if (arg.kind === "Lambda" && arg.location.range) {
     unresolvedExpressions.add(arg);
-    report("LAMBDA expression used where an expression is required.");
+    reportAt(unit, arg.location.range, "LAMBDA expression used where an expression is required.");
   } else if (arg.kind === "OperatorReference") {
     unresolvedExpressions.add(arg);
     const operator = arg.operator;
     const argArity = getSymbolArity(arg, operator, scope, unit);
     if (argArity !== undefined) {
-      report(`The operator ${resolveSynonym(operator)} requires ${argArity} arguments.`);
+      reportAt(
+        unit,
+        arg.location.range,
+        `The operator ${resolveSynonym(operator)} requires ${argArity} arguments.`,
+      );
     }
   } else resolveExpression(arg, scope, unit);
 };
@@ -1457,6 +1474,26 @@ const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => 
   };
 };
 
+const reportOperatorArity = (
+  name: string,
+  arity: number,
+  expected: number,
+  index: number,
+  operator: string,
+  operatorRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const definition =
+    findInstance(operator, scope, unit)?.range ?? findBinding(operator, scope, unit)?.range;
+  if (!definition) return;
+  reportAt(
+    unit,
+    operatorRange,
+    `Operator with incorrect arity passed as argument. \nOperator '${resolveSynonym(name)}' of arity ${arity} is argument number ${index + 1} (counting from 1) to operator \`${formatRange(definition)}', \nbut an operator of arity ${expected} was expected.`,
+  );
+};
+
 const matchArgument = (
   arg: Expression,
   expected: number,
@@ -1466,26 +1503,14 @@ const matchArgument = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const report = (range: SourceRange | undefined, message: string) => {
-    if (range) unit.errors.push({ location: formatRange(range), message });
-  };
-  const reportOperatorArity = (name: string, arity: number) => {
-    const definition =
-      findInstance(operator, scope, unit)?.range ?? findBinding(operator, scope, unit)?.range;
-    if (!definition) return;
-    report(
-      operatorRange,
-      `Operator with incorrect arity passed as argument. \nOperator '${resolveSynonym(name)}' of arity ${arity} is argument number ${index + 1} (counting from 1) to operator \`${formatRange(definition)}', \nbut an operator of arity ${expected} was expected.`,
-    );
-  };
-  const range = arg.location.range;
   if (expected === 0) {
     resolveExpressionArgument(arg, scope, unit);
     return true;
   }
   const parenthesized = parenthesizedRanges.get(arg);
   if (parenthesized) {
-    report(
+    reportAt(
+      unit,
       parenthesized,
       `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
     );
@@ -1494,7 +1519,7 @@ const matchArgument = (
   const reference = selections.get(arg) ?? arg;
   const argumentError = getSelectorArgumentError(reference);
   if (argumentError) {
-    report(argumentError.range, argumentError.message);
+    reportAt(unit, argumentError.range, argumentError.message);
     return false;
   }
   if (arg.kind === "Lambda") {
@@ -1503,14 +1528,28 @@ const matchArgument = (
     if (findNullError(nullSelections.get(arg))) return false;
     const isMatched = arg.params.length === expected;
     if (!isMatched && selections.has(arg)) {
-      report(range, `Expected arity ${expected} but found operator of arity ${arg.params.length}.`);
-    } else if (!isMatched && range && arg.operator === undefined) {
-      report(
+      reportAt(
+        unit,
+        arg.location.range,
+        `Expected arity ${expected} but found operator of arity ${arg.params.length}.`,
+      );
+    } else if (!isMatched && arg.location.range && arg.operator === undefined) {
+      reportAt(
+        unit,
         operatorRange,
         `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
       );
     } else if (!isMatched && arg.operator !== undefined) {
-      reportOperatorArity(arg.operator, arg.params.length);
+      reportOperatorArity(
+        arg.operator,
+        arg.params.length,
+        expected,
+        index,
+        operator,
+        operatorRange,
+        scope,
+        unit,
+      );
     }
     return isMatched;
   }
@@ -1518,7 +1557,11 @@ const matchArgument = (
     const failed = findNullError(nullSelections.get(arg));
     if (failed) unit.errors.push(failed);
     if (!failed) {
-      report(reference.location.range, `Expected arity ${expected} but found operator of arity 0.`);
+      reportAt(
+        unit,
+        reference.location.range,
+        `Expected arity ${expected} but found operator of arity 0.`,
+      );
     }
     return false;
   }
@@ -1527,8 +1570,9 @@ const matchArgument = (
     return false;
   }
   if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
-    report(
-      range,
+    reportAt(
+      unit,
+      arg.location.range,
       `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
     );
     return false;
@@ -1537,16 +1581,17 @@ const matchArgument = (
   const argParams = findBinding(name, scope, unit)?.params ?? [];
   const argArity = getSymbolArity(arg, name, scope, unit, true);
   if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
-    report(
+    reportAt(
+      unit,
       getSpelledNameRange(arg, name),
       `Expected arity ${expected} but found operator of arity ${argArity}.`,
     );
   }
   if (arg.kind === "OperatorReference" && argArity !== undefined && argArity !== expected) {
-    reportOperatorArity(name, argArity);
+    reportOperatorArity(name, argArity, expected, index, operator, operatorRange, scope, unit);
   }
   if (argArity === expected && isAssumeProveTheorem(name, scope, unit)) {
-    report(range, "ASSUME/PROVE used where an expression is required.");
+    reportAt(unit, arg.location.range, "ASSUME/PROVE used where an expression is required.");
     return false;
   }
   // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
@@ -1610,17 +1655,7 @@ const resolveApply = (
     });
     return;
   }
-  if (
-    isArgumentCountReported(
-      callee,
-      operator,
-      expression.args.length,
-      expression.location.range,
-      unit,
-    )
-  ) {
-    return;
-  }
+  if (isArgumentCountReported(callee, expression, operator, unit)) return;
   matches.forEach((isMatched, index) => {
     if (!isMatched && expression.location.range) {
       unit.errors.push({
@@ -1700,12 +1735,6 @@ const resolveExpression = (
     resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
-  const resolveAll = (expressions: Expression[]) =>
-    expressions.forEach((child) => resolveExpression(child, scope, unit));
-  const bindLabelParams = (names: string[]) => ({
-    ...unit,
-    labelParams: [...unit.labelParams, ...names],
-  });
   switch (expression.kind) {
     case "Number":
     case "Decimal":
@@ -1744,7 +1773,7 @@ const resolveExpression = (
           });
           return;
         }
-        isArgumentCountReported(binding, name, 0, getSpelledNameRange(expression, name), unit);
+        isArgumentCountReported(binding, expression, name, unit);
         return;
       }
       if (arity !== undefined) {
@@ -1774,7 +1803,7 @@ const resolveExpression = (
       return;
     case "And":
     case "Or":
-      resolveAll(expression.operands);
+      resolveExpressions(expression.operands, scope, unit);
       return;
     case "Prime":
     case "Unchanged":
@@ -1784,10 +1813,15 @@ const resolveExpression = (
       resolveExpression(expression.expression, scope, unit);
       return;
     case "If":
-      resolveAll([expression.condition, expression.consequent, expression.alternative]);
+      resolveExpression(expression.condition, scope, unit);
+      resolveExpression(expression.consequent, scope, unit);
+      resolveExpression(expression.alternative, scope, unit);
       return;
     case "Case":
-      resolveAll(expression.arms.flatMap((arm) => [arm.condition, arm.body]));
+      for (let index = 0; index < expression.arms.length; index++) {
+        resolveExpression(expression.arms[index].condition, scope, unit);
+        resolveExpression(expression.arms[index].body, scope, unit);
+      }
       if (expression.other) resolveExpression(expression.other, scope, unit);
       return;
     case "Let":
@@ -1809,14 +1843,14 @@ const resolveExpression = (
       resolveExpression(
         expression.body,
         resolveBounds(expression.bounds, scope, unit),
-        bindLabelParams(getBoundNames(expression.bounds)),
+        bindLabelParams(unit, getBoundNames(expression.bounds)),
       );
       return;
     case "UnboundedQuantifier":
       resolveExpression(
         expression.body,
         bindNames(scope, expression.names, expression.nameRanges, unit),
-        bindLabelParams(expression.names),
+        bindLabelParams(unit, expression.names),
       );
       return;
     case "Choose": {
@@ -1830,49 +1864,55 @@ const resolveExpression = (
       resolveExpression(
         expression.body,
         bindNames(scope, getPatternNames(expression.pattern), ranges, unit),
-        bindLabelParams(getPatternNames(expression.pattern)),
+        bindLabelParams(unit, getPatternNames(expression.pattern)),
       );
       return;
     }
     case "SetEnumeration":
     case "Tuple":
-      resolveAll(expression.elements);
+      resolveExpressions(expression.elements, scope, unit);
       return;
     case "SetFilter":
       resolveExpression(
         expression.predicate,
         resolveBounds([expression.bound], scope, unit),
-        bindLabelParams(getPatternNames(expression.bound.pattern)),
+        bindLabelParams(unit, getPatternNames(expression.bound.pattern)),
       );
       return;
     case "SetMap":
       resolveExpression(
         expression.expression,
         resolveBounds(expression.bounds, scope, unit),
-        bindLabelParams(getBoundNames(expression.bounds)),
+        bindLabelParams(unit, getBoundNames(expression.bounds)),
       );
       return;
     case "FunctionSet":
-      resolveAll([expression.domain, expression.range]);
+      resolveExpression(expression.domain, scope, unit);
+      resolveExpression(expression.range, scope, unit);
       return;
     case "Record":
     case "RecordSet":
-      expression.fields.forEach((field, index) => {
-        if (expression.fields.slice(0, index).some((earlier) => earlier.name === field.name)) {
+      for (let index = 0; index < expression.fields.length; index++) {
+        const field = expression.fields[index];
+        if (expression.fields.findIndex((earlier) => earlier.name === field.name) < index) {
           unit.errors.push({
             location: formatRange(field.location.range ?? getNameRange(field.location, field.name)),
             message: "Non-unique fields in constructor.",
           });
         }
         resolveExpression(field.value, scope, unit);
-      });
+      }
       return;
     case "Except":
       resolveExpression(expression.function, scope, unit);
-      expression.updates.forEach((update) => {
-        resolveAll(update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])));
+      for (let index = 0; index < expression.updates.length; index++) {
+        const update = expression.updates[index];
+        for (let position = 0; position < update.path.length; position++) {
+          const step = update.path[position];
+          if (step.kind === "Index") resolveExpressions(step.args, scope, unit);
+        }
         resolveExpression(update.value, scope, { ...unit, isInExcept: true });
-      });
+      }
       return;
     case "FunctionApplication": {
       const applied = expression.function;
@@ -1891,7 +1931,7 @@ const resolveExpression = (
       }
       const count = expression.args.length;
       if (arity === undefined || count < 2 || arity === count || isEmptyExpression(applied)) {
-        resolveAll(expression.args);
+        resolveExpressions(expression.args, scope, unit);
         return;
       }
       emptyExpressions.add(expression);
@@ -1907,15 +1947,17 @@ const resolveExpression = (
       resolveExpression(expression.record, scope, unit);
       return;
     case "Product":
-      resolveAll(expression.factors);
+      resolveExpressions(expression.factors, scope, unit);
       return;
     case "BoxAction":
     case "AngleAction":
-      resolveAll([expression.action, expression.subscript]);
+      resolveExpression(expression.action, scope, unit);
+      resolveExpression(expression.subscript, scope, unit);
       return;
     case "WeakFairness":
     case "StrongFairness":
-      resolveAll([expression.subscript, expression.action]);
+      resolveExpression(expression.subscript, scope, unit);
+      resolveExpression(expression.action, scope, unit);
       return;
     case "Label":
       if (isLabelReported(expression.location, unit)) return;
@@ -1940,6 +1982,21 @@ const resolveExpression = (
       return;
   }
 };
+
+const resolveExpressions = (
+  expressions: Expression[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  for (let index = 0; index < expressions.length; index++) {
+    resolveExpression(expressions[index], scope, unit);
+  }
+};
+
+const bindLabelParams = (unit: Unit, names: string[]) => ({
+  ...unit,
+  labelParams: [...unit.labelParams, ...names],
+});
 
 const isPendingSelectionReported = (
   name: string,
