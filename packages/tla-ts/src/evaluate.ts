@@ -159,6 +159,8 @@ export interface Builtin {
   isLevelConstant?: boolean;
   isActionLevel?: boolean;
   isLazy?: boolean;
+  // A lazy builtin's evaluation from its arguments' expressions, which makes a thunk only of one it passes on.
+  evaluateLazy?: (args: Expression[], context: Context) => Value;
   signature?: string;
 }
 
@@ -1908,7 +1910,11 @@ const callOperator = (
       : evaluate(operator.body, bodyContext);
   }
   if (operator.kind === "Operator") return operator.call(args.map((arg) => evaluate(arg, context)));
-  if (operator.isLazy) return operator.evaluate(getLazyArguments(args, context), context);
+  if (operator.isLazy) {
+    return operator.evaluateLazy
+      ? operator.evaluateLazy(args, context)
+      : operator.evaluate(getLazyArguments(args, context), context);
+  }
   return operator.evaluate(evaluateBuiltinArguments(args, context), context);
 };
 
@@ -2531,14 +2537,16 @@ export const isValueArgument = (argument: Expression, environment: Environment) 
   return operator === undefined || getArity(operator) === 0;
 };
 
-const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
-  args.map((arg) => ({
-    kind: "Operator",
-    name: "argument",
-    arity: 0,
-    call: () => evaluate(arg, context),
-    expression: arg,
-  }));
+export const getLazyArgument = (arg: Expression, context: Context): OperatorValue => ({
+  kind: "Operator",
+  name: "argument",
+  arity: 0,
+  call: () => evaluate(arg, context),
+  expression: arg,
+});
+
+const getLazyArguments = (args: Expression[], context: Context) =>
+  args.map((arg) => getLazyArgument(arg, context));
 
 const compileBuiltinCall = (
   builtin: Builtin,
@@ -2546,7 +2554,10 @@ const compileBuiltinCall = (
   environment: Environment,
 ): Evaluator => {
   if (builtin.isLazy) {
-    return (context) => builtin.evaluate(getLazyArguments(args, context), context);
+    const evaluateLazy = builtin.evaluateLazy;
+    return evaluateLazy
+      ? (context) => evaluateLazy(args, context)
+      : (context) => builtin.evaluate(getLazyArguments(args, context), context);
   }
   const unary = builtin.evaluateUnary;
   if (unary && args.length === 1 && isValueArgument(args[0], environment)) {
