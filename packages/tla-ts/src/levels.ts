@@ -176,7 +176,7 @@ type ConstantLocal =
       name: string;
       params: number;
       applied: number | undefined;
-      allParams: Set<string> | undefined;
+      allParams: ReadonlySet<string> | undefined;
       nonLeibnizParams: Set<string> | undefined;
     }
   | { kind: "Pending"; name: string };
@@ -2031,7 +2031,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     let constrained = 0;
     const argConstraints = new Map<string, number>();
     const argParams: ArgumentParams = new Map();
-    let allParams: Set<string> | undefined;
+    let allParams: ReadonlySet<string> | undefined;
+    let ownAllParams: Set<string> | undefined;
     let nonLeibnizParams: Set<string> | undefined;
     let applied: number | undefined;
     const locals: ConstantLocal[] = [];
@@ -2064,12 +2065,27 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     };
     const isFree = (bitset: number) =>
       names.every((name, bit) => (bitset & (1 << bit)) === 0 || !isShadowed(name));
-    const addAllParams = (added: ReadonlySet<string>) => {
-      for (const name of added) {
-        if (isShadowed(name)) return false;
-        allParams ??= new Set();
-        allParams.add(name);
+    const addAllParam = (name: string) => {
+      if (allParams?.has(name)) return;
+      if (ownAllParams === undefined || ownAllParams !== allParams) {
+        ownAllParams = new Set(allParams);
+        allParams = ownAllParams;
       }
+      ownAllParams.add(name);
+    };
+    const addAllParams = (added: ReadonlySet<string>) => {
+      if (
+        boundCount > 0 &&
+        locals.some((local) => local.kind === "Bound" && added.has(local.name))
+      ) {
+        return false;
+      }
+      if (added.size === 0 || added === allParams) return true;
+      if (allParams === undefined) {
+        allParams = added;
+        return true;
+      }
+      for (const name of added) addAllParam(name);
       return true;
     };
     const addNonLeibnizParams = (added: ReadonlySet<string>) => {
@@ -2188,8 +2204,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         if (args.length > 0 || local.kind === "Pending") return undefined;
         if (local.kind === "Bound") return 0;
         if (local.kind === "Formal") {
-          allParams ??= new Set();
-          allParams.add(name);
+          addAllParam(name);
           return 1 << local.bit;
         }
         if (
@@ -2207,8 +2222,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         applied = undefined;
         const bit = arity > 0 || args.length > 0 ? undefined : getBit(name);
         if (bit === undefined) return undefined;
-        allParams ??= new Set();
-        allParams.add(name);
+        addAllParam(name);
         return 1 << bit;
       }
       const callee = getConstantCallee(name, args.length);
@@ -2261,8 +2275,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           for (let index = 0; index < expression.definitions.length; index++) {
             const inner = expression.definitions[index];
             const outerAllParams = allParams;
+            const outerOwnAllParams = ownAllParams;
             const outerNonLeibnizParams = nonLeibnizParams;
             allParams = undefined;
+            ownAllParams = undefined;
             nonLeibnizParams = undefined;
             const params =
               inner.kind === "Operator" && inner.params.length === 0
@@ -2277,6 +2293,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
               nonLeibnizParams,
             };
             allParams = outerAllParams;
+            ownAllParams = outerOwnAllParams;
             nonLeibnizParams = outerNonLeibnizParams;
             if (params === undefined) {
               locals.length = depth;
@@ -2458,6 +2475,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           );
     const isInSection = sectionBodies.has(definition);
     if (isInSection) sectionBodies.set(definition, levels);
+    if (cached === undefined && !isInSection) {
+      definitionLevels.set(definition, levels);
+      return levels;
+    }
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
