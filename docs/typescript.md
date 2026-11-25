@@ -156,20 +156,28 @@ TLC tries every value of a parameter's type, so each type needs a finite set of 
 | `bigint`                       | The BigInts from `-3n` to `3n`                    |
 | `string`                       | `""`, `"a"`, and `"b"`                            |
 | `T[]`                          | Every array of `T`s up to 3 long                  |
+| `Iterable<T>`                  | Every array of `T`s up to 3 long                  |
+| `[T, ...T[]]`                  | Every array of `T`s from 1 up to 3 long           |
+| A type parameter `A`           | `0`, `1`, and `2`, or its constraint's values     |
+| `(a: A, i: number) => B`       | Every table from `A`'s values to `B`'s            |
 
 An object with an optional property is each object that lacks or holds it. A held property also takes `undefined`, unless the nearest `tsconfig.json` that includes the file sets `exactOptionalPropertyTypes`. A file that no project includes gets TypeScript's default, which leaves it off.
 
 The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values.
 
+A generic function's checks cover only part of each type it takes. Every type parameter without a constraint, or whose constraint is `unknown`, takes `0`, `1`, and `2`. A type parameter with a constraint takes the constraint's values, so `N extends number` takes the integers from -3 to 3. A callback is a function that looks up its first argument in a table and returns the value it finds there, or `undefined` for an argument the table lacks. It ignores its other arguments. A callback without parameters looks up `undefined`, and the line says `callbacks as tables of no argument`. A method of an object is a callback too, so an object takes every object of its methods' tables and its other properties' values, and the line says `methods as tables of their first argument` or `methods as tables of no argument`. The parameter takes every table from the first parameter's values to the result's values. A callback's first parameter must take primitives and can't be a rest parameter, and its type must have one call signature and no properties. Where a call takes any of these, tla-ts prints what it took, such as `tla-ts calls some with A := {0, 1, 2}; iterables as arrays up to length 3; callbacks as tables of their first argument`.
+
+Each such argument list is a call on ESCore, so a call that takes any of these makes at most 10,000 argument lists. Where its parameters make more, it takes smaller values instead: `0` and `1` for a type parameter and arrays up to 2 long, then `0` alone and arrays up to 1 long. Every array of the call takes the smaller bound, and the line lists it, such as `arrays up to length 2`. Where even the smallest values make more than 10,000 argument lists, tla-ts calls no such function and prints the count.
+
 Other types have no finite set of values:
 
-- A function, or an object with an index signature, such as `Record<string, number>`.
+- A function with more than one call signature, or with properties, or an object with an index signature, such as `Record<string, number>`.
 - A class's instances.
 - An object with a property that TLA+ can't name, or with an optional property and a numeric key.
-- A tuple with optional or rest elements.
+- A tuple with optional elements, or with a rest element whose type differs from another element's, or with more than 3 elements before its rest element.
 - A type that holds itself.
 
-tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are a type parameter, `any` or `unknown`, a function, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It calls no exported function whose parameters make more argument lists, every combination of their values, than TLC puts in a set, 1,000,000 unless `-maxSetSize` sets it, and the line gives the count, as in `its parameters make 18,892,923 argument lists, more than the 1,000,000 it lists`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
+tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are `any` or `unknown`, a function that isn't a callback, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It calls no exported function whose parameters make more argument lists, every combination of their values, than TLC puts in a set, 1,000,000 unless `-maxSetSize` sets it, and the line gives the count, as in `its parameters make 18,892,923 argument lists, more than the 1,000,000 it lists`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
 
 A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 

@@ -23267,7 +23267,7 @@
     },
     {
       "name": "errors > calls no exported function whose parameter takes values tla-ts can't list",
-      "source": "\n      let count = 0;\n      count += 2;\n      if (count !== 3) throw new Error(\"count \" + count);\n      export const run = (step: () => number) => {\n        count += step();\n      };\n      export const bump = (by: 1 | 2) => {\n        if (count < 4) count += by;\n      };\n    ",
+      "source": "\n      let count = 0;\n      count += 2;\n      if (count !== 3) throw new Error(\"count \" + count);\n      export const run = (step: (value: unknown) => number) => {\n        count += step(count);\n      };\n      export const bump = (by: 1 | 2) => {\n        if (count < 4) count += by;\n      };\n    ",
       "runs": [
         {
           "name": "rejects another outcome of the top level",

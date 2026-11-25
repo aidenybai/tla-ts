@@ -141,7 +141,6 @@ const FIRST_LITERALS = ["Undefined", "Null", "FALSE", "TRUE"];
 // The kinds of a parameter's type that a note names where no domain lists it, in the order that it
 // names the first of a union's.
 const UNLISTED_KINDS = [
-  "a type parameter",
   "any, as an untyped parameter is",
   "unknown",
   "a function",
@@ -151,6 +150,26 @@ const UNLISTED_KINDS = [
 
 // The kinds of values that a note names where a union mixes them, in the order that it names them.
 const VALUE_KINDS = ["string", "number", "bigint", "boolean", "array", "Set", "Map", "object"];
+
+// The values that an export's domains take in place of its types that have no finite set of
+// values, each rung smaller than the one before: what every type parameter without a constraint
+// takes, and the longest array, which bounds an iterable and a tuple with a rest element too.
+interface Rung {
+  values: readonly number[];
+  length: number;
+}
+
+const RUNGS: readonly Rung[] = [
+  { values: [0, 1, 2], length: MAX_ARRAY_LENGTH },
+  { values: [0, 1], length: 2 },
+  { values: [0], length: 1 },
+];
+
+// The most argument lists that the model calls an export with on a rung, which the export takes
+// the first rung that fits. Each is a call on ESCore: a check of Effect's Array.ts, whose 95
+// generic exports this bound gives 48,846 argument lists, took 961 s, about 50 calls a second, so
+// a file's checks of its generic exports end well within the hour that a check is given.
+const INSTANTIATED_LISTS = 10_000;
 
 // The most characters of TLA+ that a parameter's set of values takes, which the model writes into
 // its spec beside each check of the parameter.
@@ -356,6 +375,8 @@ export const frameModel = (
   reserved: ReadonlySet<string> = new Set(),
   // The most values that TLC puts in a set, as its -maxSetSize sets it.
   setBound = getSetBound(),
+  // The names that the model binds below its spec's top level, which no export's definition takes.
+  localNames: ReadonlySet<string> = new Set(),
 ) => {
   const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
   const sourceFile = program.sourceFile;
@@ -646,24 +667,36 @@ export const frameModel = (
   });
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
   // calls the function's binding by.
+  const getExportName = (base: string): string => {
+    const name = names.getFresh(base);
+    return localNames.has(name) ? getExportName(base) : name;
+  };
   exported.forEach((definition) => {
-    const name = names.getFresh(definition.name);
+    const name = getExportName(definition.name);
     if (name !== definition.name) bindings.set(name, definition.name);
     definition.name = name;
   });
   const getTag = (definition: Exported) =>
     [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
 
-  // The first type that has no end, or the domains of every type, which the nodes may write.
+  // The first type that has no end, or the domains of every type, which the nodes may write. A
+  // method is an object's property, whose callback's table the note names as a method's.
   const findDomains = (
     types: readonly ts.Type[],
     path: readonly ts.Type[],
     nodes: readonly (ts.TypeNode | undefined)[],
     isHeldOptional: (position: number) => boolean = () => false,
+    isMethod = false,
   ) =>
     types.reduce<Domain[] | Infinite>((domains, type, position) => {
       if (!Array.isArray(domains)) return domains;
-      const domain = findSizedDomain(type, path, nodes[position], isHeldOptional(position));
+      const domain = findSizedDomain(
+        type,
+        path,
+        nodes[position],
+        isHeldOptional(position),
+        isMethod,
+      );
       return isUnlisted(domain) ? domain : [...domains, domain];
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
@@ -682,7 +715,31 @@ export const frameModel = (
     if (rank !== -1) return rank;
     return type.isNumberLiteral() ? FIRST_LITERALS.length : FIRST_LITERALS.length + 1;
   };
+  // A type parameter's constraint, or undefined where it has none but unknown.
+  const getConstraint = (type: ts.Type) => {
+    const constraint = checker.getBaseConstraintOfType(type);
+    return constraint === undefined || constraint.flags & ts.TypeFlags.Unknown
+      ? undefined
+      : constraint;
+  };
+  // The one call signature of a function type that has no properties, which a table stands for.
+  const getCallback = (type: ts.Type) => {
+    const signatures = type.getCallSignatures();
+    return signatures.length === 1 &&
+      type.getConstructSignatures().length === 0 &&
+      type.getProperties().length === 0
+      ? signatures[0]
+      : undefined;
+  };
   const getShape = (type: ts.Type): Shape | undefined => {
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      const constraint = getConstraint(type);
+      return constraint === undefined ? { kind: "number" } : getShape(constraint);
+    }
+    // A callback is the record of its table, as its domain makes it.
+    if (getCallback(type) !== undefined) {
+      return { kind: "function", keys: { kind: "string" }, values: new Map() };
+    }
     if (type.isUnion()) {
       return type.types
         .map(getShape)
@@ -704,7 +761,7 @@ export const frameModel = (
       const [keys, rest] = typeArguments.map(getShape);
       return keys && rest && { kind: "function", keys, rest };
     }
-    if (checker.isArrayType(type)) {
+    if (checker.isArrayType(type) || getTypeName(type) === "Iterable") {
       const rest = getShape(typeArguments[0]);
       return rest && { kind: "function", keys: { kind: "number" }, rest };
     }
@@ -815,6 +872,24 @@ export const frameModel = (
   const getInfinite = (type: ts.Type, reason: string): Infinite => ({
     message: `${printType(type)} isn't finite: ${reason}`,
   });
+  // The rung that the export whose domains are being listed takes, the first but while the
+  // model tries a rung for an export and translates its call.
+  let rung = RUNGS[0];
+  // The arrays of an element's values from a length up to the rung's.
+  const getArrayDomain = (element: Domain, shortest: number): Domain => {
+    const length = names.getFresh("length");
+    return {
+      text: `UNION {[1..${length} -> (${element.text})] : ${length} \\in ${shortest}..${rung.length}}`,
+      size: Array.from(
+        { length: rung.length + 1 - shortest },
+        (_, count) => element.size ** (shortest + count),
+      ).reduce((sum, count) => sum + count, 0),
+    };
+  };
+  // What the domains of the last export's parameters took in place of a type that has no finite
+  // set of values, which the note of its call states: a type parameter's values, an iterable as an
+  // array, and a callback as a table.
+  const assumed = new Set<string>();
   // A held optional field's type, where the program's options make optional fields exact, holds the
   // missing type, which TypeScript adds to it beside any undefined that it declares, and which no
   // value of the field is, as removeMissingType tells.
@@ -925,11 +1000,23 @@ export const frameModel = (
     outer: readonly ts.Type[],
     node?: ts.TypeNode,
     isHeldOptional = false,
+    isMethod = false,
   ): Domain | Infinite => {
     if (outer.includes(type)) {
       return { message: `${printType(type)} holds itself, so it has no end` };
     }
     const path = [...outer, type];
+    // A type parameter takes its constraint's values, or, without one, those of one finite type
+    // that TLC compares, which every type parameter takes.
+    if (type.flags & ts.TypeFlags.TypeParameter) {
+      const constraint = getConstraint(type);
+      const domain =
+        constraint === undefined
+          ? { text: `{${rung.values.join(", ")}}`, size: rung.values.length }
+          : findSizedDomain(constraint, path);
+      if (!isUnlisted(domain)) assumed.add(`${checker.typeToString(type)} := ${domain.text}`);
+      return domain;
+    }
     if (type.flags & ts.TypeFlags.Boolean) return { text: "BOOLEAN", size: 2 };
     if (type.isUnion()) {
       const members = isHeldOptional
@@ -969,6 +1056,8 @@ export const frameModel = (
         otherTypes.map((inner) => inner.member),
         path,
         otherTypes.map((inner) => inner.node),
+        () => false,
+        isMethod,
       );
       if (!Array.isArray(others)) return others;
       if (getShape(type) === undefined) {
@@ -1018,11 +1107,20 @@ export const frameModel = (
           size: (1 + elements[1].size) ** elements[0].size,
         };
       }
-      const isFixed =
-        isTypeReference(type) &&
-        (type.target as ts.TupleType).elementFlags.every(
-          (flags) => (flags & ts.ElementFlags.Required) !== 0,
-        );
+      const flags = isTypeReference(type) ? (type.target as ts.TupleType).elementFlags : [];
+      const isFixed = flags.every((flag) => (flag & ts.ElementFlags.Required) !== 0);
+      // A tuple of required elements and a rest of one type, as [A, ...A[]], is each array of
+      // that type from its required length up to the rung's.
+      const elementTypes = isTypeReference(type) ? checker.getTypeArguments(type) : [];
+      const isRest =
+        flags.length <= rung.length + 1 &&
+        flags.at(-1) === ts.ElementFlags.Rest &&
+        flags.slice(0, -1).every((flag) => flag === ts.ElementFlags.Required) &&
+        elementTypes.every((elementType) => elementType === elementTypes[0]);
+      if (isRest) {
+        assumed.add(`tuples with a rest element as arrays up to length ${rung.length}`);
+        return getArrayDomain(elements[0], flags.length - 1);
+      }
       if (!isFixed) {
         return getInfinite(type, "tuples with optional or rest elements can have any length");
       }
@@ -1034,20 +1132,51 @@ export const frameModel = (
       const element = names.getFresh("element");
       return { text: `{<<${element}>> : ${element} \\in (${elements[0].text})}`, size };
     }
-    if (checker.isArrayType(type) && isTypeReference(type)) {
+    // An iterable is each array of its elements, which iterates them.
+    const isIterable = getTypeName(type) === "Iterable";
+    if ((checker.isArrayType(type) || isIterable) && isTypeReference(type)) {
       const element = findSizedDomain(
         checker.getTypeArguments(type)[0],
         path,
         getArgumentNodes(type, node)[0],
       );
       if (isUnlisted(element)) return element;
-      const length = names.getFresh("length");
+      assumed.add(
+        isIterable
+          ? `iterables as arrays up to length ${rung.length}`
+          : `arrays up to length ${rung.length}`,
+      );
+      return getArrayDomain(element, 0);
+    }
+    // A callback is each table from the values of its first argument, or undefined where it takes
+    // none, to those of its result, which a record holds apart from any other value.
+    const callback = getCallback(type);
+    if (callback !== undefined) {
+      const first = callback.getParameters().at(0);
+      const declaration = first?.valueDeclaration;
+      if (declaration !== undefined && ts.isParameter(declaration) && declaration.dotDotDotToken) {
+        return getInfinite(
+          type,
+          "a callback whose first parameter is a rest parameter has no table",
+        );
+      }
+      const keyType = first === undefined ? undefined : checker.getTypeOfSymbol(first);
+      const keys =
+        keyType === undefined ? { text: "{Undefined}", size: 1 } : findSizedDomain(keyType, path);
+      if (isUnlisted(keys)) return keys;
+      const keyKind = keyType === undefined ? "model" : getShape(keyType)?.kind;
+      if (!["model", "boolean", "number", "string"].includes(keyKind ?? "")) {
+        return getInfinite(type, "a callback's table takes only primitives as its first argument");
+      }
+      const values = findSizedDomain(callback.getReturnType(), path);
+      if (isUnlisted(values)) return values;
+      assumed.add(
+        `${isMethod ? "methods" : "callbacks"} as tables of ${first === undefined ? "no argument" : "their first argument"}`,
+      );
+      const table = names.getFresh("table");
       return {
-        text: `UNION {[1..${length} -> (${element.text})] : ${length} \\in 0..${MAX_ARRAY_LENGTH}}`,
-        size: Array.from(
-          { length: MAX_ARRAY_LENGTH + 1 },
-          (_, count) => element.size ** count,
-        ).reduce((sum, count) => sum + count),
+        text: `{[callback |-> ${table}] : ${table} \\in [(${keys.text}) -> (${values.text})]}`,
+        size: values.size ** keys.size,
       };
     }
     // A mapped type's properties, which no declaration gives, go in the order of its keys' union's
@@ -1094,6 +1223,7 @@ export const frameModel = (
           : undefined;
       }),
       (position) => (properties[position].flags & ts.SymbolFlags.Optional) !== 0,
+      true,
     );
     if (!Array.isArray(fields)) return fields;
     const keys = properties.map((property) => property.name);
@@ -1276,8 +1406,17 @@ export const frameModel = (
     if (type.isUnion()) return type.types.every(isExact);
     if (getLiteral(type) !== undefined || type.flags & ts.TypeFlags.Boolean) return true;
     if (
-      type.flags & (ts.TypeFlags.Number | ts.TypeFlags.BigInt | ts.TypeFlags.String) ||
-      checker.isArrayType(type)
+      type.flags &
+        (ts.TypeFlags.Number |
+          ts.TypeFlags.BigInt |
+          ts.TypeFlags.String |
+          ts.TypeFlags.TypeParameter) ||
+      checker.isArrayType(type) ||
+      getTypeName(type) === "Iterable" ||
+      type.getCallSignatures().length > 0 ||
+      (checker.isTupleType(type) &&
+        isTypeReference(type) &&
+        (type.target as ts.TupleType).elementFlags.includes(ts.ElementFlags.Rest))
     ) {
       return false;
     }
@@ -1307,10 +1446,10 @@ export const frameModel = (
     );
   };
   // The kind of a type that no domain lists, as a note names it, where it's one of the kinds that a
-  // program's code most often gives a parameter: a type parameter, any or unknown, a function, a
-  // class's instance, or an object with methods, alone or in a union.
+  // program's code most often gives a parameter: any or unknown, a function other than a callback, a
+  // class's instance, or an object with methods, alone or in a union. A type parameter or a callback
+  // that no domain lists has a part that none does, which the note's reason names.
   const getUnlistedKind = (type: ts.Type): string | undefined => {
-    if (type.flags & ts.TypeFlags.TypeParameter) return "a type parameter";
     if (type.flags & ts.TypeFlags.Any) return "any, as an untyped parameter is";
     if (type.flags & ts.TypeFlags.Unknown) return "unknown";
     if (type.isUnion()) {
@@ -1318,6 +1457,7 @@ export const frameModel = (
       const kind = UNLISTED_KINDS.find((candidate) => kinds.includes(candidate));
       return kind === undefined ? undefined : `a union with ${kind}`;
     }
+    if (getCallback(type) !== undefined || getTypeName(type) === "Iterable") return undefined;
     if (type.getCallSignatures().length > 0) return "a function";
     const declaration = type.getSymbol()?.valueDeclaration;
     if (declaration !== undefined && ts.isClassLike(declaration)) return "an instance of a class";
@@ -1353,6 +1493,18 @@ export const frameModel = (
     );
     return VALUE_KINDS.filter((kind) => kinds.has(kind));
   };
+  // A call's argument lists, every combination of the values of its parameters that no guard
+  // chooses.
+  const getListCount = (definition: Exported) => {
+    const parameters = getParameters(definition);
+    const guarded = isStepExport(definition) ? readGuards(definition, parameters) : new Map();
+    return parameters
+      .filter((parameter) => !guarded.has(parameter))
+      .reduce((product, parameter) => {
+        const domain = findSizedDomain(parameter.type, [], parameter.node.type);
+        return isUnlisted(domain) ? product : product * BigInt(domain.size);
+      }, 1n);
+  };
   // Why the model calls no exported function: Node runs only a module's top level, so an export
   // runs only where TLC can choose its arguments, which it can't where a parameter takes values
   // that tla-ts can't list, and where a call of it may return.
@@ -1364,14 +1516,9 @@ export const frameModel = (
       const domain = findDomain(parameter.type, parameter.node.type);
       return !guarded.has(parameter) && isInfinite(domain);
     });
-    // A call's argument lists, every combination of its parameters' values, which the model lists
-    // only where they're at most as many as TLC puts in a set, as it lists one parameter's values.
-    const count = parameters
-      .filter((parameter) => !guarded.has(parameter))
-      .reduce((product, parameter) => {
-        const domain = findSizedDomain(parameter.type, [], parameter.node.type);
-        return isUnlisted(domain) ? product : product * BigInt(domain.size);
-      }, 1n);
+    // A call's argument lists, which the model lists only where they're at most as many as TLC
+    // puts in a set, as it lists one parameter's values.
+    const count = getListCount(definition);
     if (unlisted === undefined && count > BigInt(setBound)) {
       return `its parameters make ${count.toLocaleString("en-US")} argument lists, more than the ${setBound.toLocaleString("en-US")} it lists`;
     }
@@ -1396,13 +1543,49 @@ export const frameModel = (
       : undefined;
   };
   const notes: string[] = [];
+  // What the domains of an export's parameters take in place of types that have no finite set of
+  // values.
+  const getAssumed = (definition: Exported) => {
+    assumed.clear();
+    getParameters(definition).forEach((parameter) =>
+      findSizedDomain(parameter.type, [], parameter.node.type),
+    );
+    return [...assumed].toSorted(
+      (left, right) => Number(right.includes(" := ")) - Number(left.includes(" := ")),
+    );
+  };
+  // Whether an export's domains took values in place of a type, beside an array's bound, which
+  // every array takes.
+  const isInstantiated = (taken: readonly string[]) =>
+    taken.some((entry) => !entry.startsWith("arrays up to length"));
+  // The rung of each export that the model calls: the first whose argument lists fit
+  // INSTANTIATED_LISTS, where its domains took values in place of a type.
+  const rungs = new Map<Exported, Rung>();
   const called = exported.filter((definition) => {
-    const reason = getUncalledReason(definition);
+    const fitting = RUNGS.find((candidate) => {
+      rung = candidate;
+      return (
+        !isInstantiated(getAssumed(definition)) ||
+        getListCount(definition) <= BigInt(INSTANTIATED_LISTS)
+      );
+    });
+    rung = fitting ?? RUNGS[RUNGS.length - 1];
+    rungs.set(definition, rung);
+    const taken = getAssumed(definition);
+    const count = getListCount(definition);
+    const reason =
+      getUncalledReason(definition) ??
+      (fitting === undefined
+        ? `its parameters make ${count.toLocaleString("en-US")} argument lists with ${taken.join("; ")}, more than the ${INSTANTIATED_LISTS.toLocaleString("en-US")} it calls with values in place of a type`
+        : undefined);
     const by = definition.signature === undefined ? "" : ` by ${definition.signature.note}`;
+    const taking = isInstantiated(taken) ? `${by === "" ? "" : ","} with ${taken.join("; ")}` : "";
     if (reason !== undefined) notes.push(`tla-ts calls no ${definition.name}${by}: ${reason}`);
-    else if (definition.signature !== undefined) notes.push(`tla-ts calls ${definition.name}${by}`);
+    else if (by !== "" || taking !== "")
+      notes.push(`tla-ts calls ${definition.name}${by}${taking}`);
     return reason === undefined;
   });
+  rung = RUNGS[0];
   const init: string[] = [];
   const next: string[] = [];
   const fairness: string[] = [];
@@ -1420,14 +1603,21 @@ export const frameModel = (
   );
   const list = (section: string, name: string) => sections.get(section)?.push(name);
   // A state variable starts at its initializer, or at every value of its type without one, or at
-  // undefined, as Node starts it, where its type has values TLC can't list.
+  // undefined, as Node starts it, where its type has values TLC can't list, or values that only a
+  // call's arguments take in place of a type, as a callback.
   variables.forEach((variable) => {
     const declaration = variable.declared.declaration;
     if (ts.isVariableDeclaration(declaration) && declaration.initializer === undefined) {
+      assumed.clear();
       const domain = findDomain(getType(declaration), declaration.type);
+      const taken = [...assumed];
       if (isInfinite(domain)) {
         notes.push(
           `tla-ts starts ${variable.declared.name} at undefined, as Node does: ${domain.message}`,
+        );
+      } else if (isInstantiated(taken)) {
+        notes.push(
+          `tla-ts starts ${variable.declared.name} at undefined, as Node does: only a call's arguments take ${taken.join("; ")}`,
         );
       } else {
         init.push(`${variable.name} \\in ${domain}`);
@@ -1582,6 +1772,7 @@ export const frameModel = (
   // An exported function is a property if a tag says so, an action if it changes state, and an
   // invariant if it returns a boolean.
   called.forEach((definition) => {
+    rung = rungs.get(definition) ?? RUNGS[0];
     const tag = getTag(definition);
     if (tag !== undefined) return translateProperty(definition, tag);
     if (isStepExport(definition)) return translateStep(definition);
@@ -1596,6 +1787,7 @@ export const frameModel = (
     predicates.push(`${definition.name} == TRUE`);
     list("INVARIANTS", definition.name);
   });
+  rung = RUNGS[0];
   if ((sections.get("VIEW") ?? []).length > 1) {
     throw new TlaTypeScriptError("Tag only one function @view");
   }
