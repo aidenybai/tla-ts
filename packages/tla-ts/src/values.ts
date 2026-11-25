@@ -254,7 +254,8 @@ export const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
 // A page of ESCore's heap that CanonicalStateOf made. Its edges hold the nodes that each record
 // refers to, and its locations where the record holds them. Each record is its source with those
 // nodes at those locations, which makeRecord makes as a reader first reads it (see
-// escore-canonical.ts), and hashes holds the hash of each.
+// escore-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
+// its locations in its source.
 export class CanonicalPage implements FunctionValue {
   readonly kind = "Function";
   domain: Value[];
@@ -265,6 +266,7 @@ export class CanonicalPage implements FunctionValue {
   flags = VALUE_CANONICAL | VALUE_PAGE;
   edges: Int32Array;
   locations: (number[] | undefined)[];
+  plans: (Int32Array | undefined)[];
   sources: Value[];
   records: (Value | undefined)[];
   hashes: Int32Array;
@@ -274,6 +276,7 @@ export class CanonicalPage implements FunctionValue {
   constructor(
     edges: Int32Array,
     locations: (number[] | undefined)[],
+    plans: (Int32Array | undefined)[],
     sources: Value[],
     records: (Value | undefined)[],
     hashes: Int32Array,
@@ -283,6 +286,7 @@ export class CanonicalPage implements FunctionValue {
     this.hash = getPageHash(hashes);
     this.edges = edges;
     this.locations = locations;
+    this.plans = plans;
     this.sources = sources;
     this.records = records;
     this.hashes = hashes;
@@ -5057,18 +5061,12 @@ const FUNCTION_HASH_SEED = 0x66d1b4f7;
 const getElementContribution = (elementHash: number) =>
   finalizeHash((elementHash + 0x9e3779b9) | 0);
 
-const getEntryContribution = (keyHash: number, valueHash: number) =>
+export const getEntryContribution = (keyHash: number, valueHash: number) =>
   finalizeHash((Math.imul(keyHash, 0x27d4eb2d) + valueHash) | 0);
 
 const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
 
 export const isUnfingerprintableHash = (hash: number) => hash === UNFINGERPRINTABLE_HASH;
-
-// The hash of a function whose value at key, of the previous hash, becomes one of the next hash.
-export const changeEntryHash = (hash: number, key: Value, previous: number, next: number) => {
-  const keyHash = getValueHash(key);
-  return (hash - getEntryContribution(keyHash, previous) + getEntryContribution(keyHash, next)) | 0;
-};
 
 const getPageHash = (hashes: Int32Array) => {
   let hash = FUNCTION_HASH_SEED;

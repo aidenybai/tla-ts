@@ -6,7 +6,6 @@ import { writeStateFingerprint } from "./fingerprints";
 import {
   applyFunction,
   CanonicalPage,
-  changeEntryHash,
   createChangedFunction,
   createFunction,
   createRecord,
@@ -15,6 +14,7 @@ import {
   createTuple,
   EDGE_STARTS,
   formatValue,
+  getEntryContribution,
   getKeyPosition,
   getPageRecord,
   getSequenceElements,
@@ -212,15 +212,39 @@ const renameRef = (value: Value, number: number) => {
   return createChangedFunction(value, range);
 };
 
-// The hash of renameRef(value, number).
-const getRenamedRefHash = (value: Value, number: number) => {
-  if (!isPlainOf(value, "record") || value.domain.length !== 2) {
-    return getValueHash(renameRef(value, number));
+const ID_HASH = getValueHash("id");
+
+// The hash of the object value that renameRef makes of value, less its id's entry.
+const getRefBaseHash = (value: Value) => {
+  const renamed = toFiniteFunction(
+    isPlainOf(value, "record") && value.domain.length === 2 ? value : renameRef(value, 0),
+  );
+  const id = renamed.range[findFieldIndex(renamed.domain, "id")];
+  return (getValueHash(renamed) - getEntryContribution(ID_HASH, getValueHash(id))) | 0;
+};
+
+// For each of a source's locations: the hashes of its key and its value in its holder, the base hash
+// of the object value there, and then the hashes of the key and the value of each holder on the way.
+const createHashPlan = (source: Value, located: number[]) => {
+  const plan: number[] = [];
+  for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
+    const depth = located[at + 1] - 1;
+    const leafAt = plan.length;
+    plan.push(0, 0, 0);
+    let holder = toFiniteFunction(source);
+    for (let level = 0; level < depth; level++) {
+      const position = located[at + 2 + level] >> 1;
+      const inner = holder.range[position];
+      plan.push(getValueHash(holder.domain[position]), getValueHash(inner));
+      holder = toFiniteFunction(inner);
+    }
+    const position = located[at + 2 + depth] >> 1;
+    const leaf = holder.range[position];
+    plan[leafAt] = getValueHash(holder.domain[position]);
+    plan[leafAt + 1] = getValueHash(leaf);
+    plan[leafAt + 2] = typeof leaf === "object" ? getRefBaseHash(leaf) : 0;
   }
-  const id = value.range[findFieldIndex(value.domain, "id")];
-  return id === number
-    ? getValueHash(value)
-    : changeEntryHash(getValueHash(value), "id", getValueHash(id), getValueHash(number));
+  return Int32Array.from(plan);
 };
 
 // The record at a slot of a canonical page: its source with the node of each of its edges at each
@@ -275,6 +299,7 @@ const makeRecord = (page: CanonicalPage, slot: number): Value => {
 interface Slots {
   records: (Value | undefined)[];
   sources: Value[];
+  plans: (Int32Array | undefined)[];
   hashes: Int32Array;
   isInPlace: Uint8Array;
 }
@@ -282,6 +307,7 @@ interface Slots {
 const createSlots = (size: number): Slots => ({
   records: [],
   sources: [],
+  plans: [],
   hashes: new Int32Array(size),
   isInPlace: new Uint8Array(size),
 });
@@ -290,6 +316,7 @@ const pushSlot = (
   slots: Slots,
   record: Value | undefined,
   source: Value,
+  plan: Int32Array | undefined,
   hash: number,
   isInPlace: boolean,
 ) => {
@@ -297,6 +324,7 @@ const pushSlot = (
   slots.isInPlace[slots.sources.length] = isInPlace ? 1 : 0;
   slots.records.push(record);
   slots.sources.push(source);
+  slots.plans.push(plan);
 };
 
 // The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
@@ -1107,32 +1135,26 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
   const getLocated = (node: number) =>
     walkedLocations.has(node) ? walkedLocations.get(node) : getPage(node)?.locations[getSlot(node)];
-  const hashValues: FunctionValue[] = [];
   const hashSteps: number[] = [];
+  const levelKeys: number[] = [];
+  const levelBases: number[] = [];
   const levelHashes: number[] = [];
   const closeHashLevel = (level: number) => {
-    const holder = hashValues[level - 1];
-    const position = hashSteps[level - 1] >> 1;
-    const previous = getValueHash(holder.range[position]);
-    if (previous === levelHashes[level]) return;
-    levelHashes[level - 1] = changeEntryHash(
-      levelHashes[level - 1],
-      holder.domain[position],
-      previous,
-      levelHashes[level],
-    );
+    if (levelHashes[level] === levelBases[level]) return;
+    levelHashes[level - 1] =
+      (levelHashes[level - 1] -
+        getEntryContribution(levelKeys[level - 1], levelBases[level]) +
+        getEntryContribution(levelKeys[level - 1], levelHashes[level])) |
+      0;
   };
-  // The hash of the record that makeRecord makes of source with node's edges, by their new numbers,
-  // at located.
-  const getMadeHash = (node: number, source: Value, located: number[] | undefined) => {
-    const root = toFiniteFunction(source);
-    levelHashes[0] = getValueHash(root);
-    if (located === undefined || isUnfingerprintableHash(levelHashes[0])) return levelHashes[0];
-    hashValues[0] = root;
+  // The hash of the record that makeRecord makes of a source of the given hash with node's edges, by
+  // their new numbers, at located, from the source's plan.
+  const getMadeHash = (node: number, hash: number, located: number[], plan: Int32Array) => {
+    levelHashes[0] = hash;
     const start = getEdgeStart(node);
     let open = 0;
+    let planAt = 0;
     for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
-      const target = edges[start + 1 + located[at]];
       const depth = located[at + 1] - 1;
       let common = 0;
       while (common < open && common < depth && hashSteps[common] === located[at + 2 + common]) {
@@ -1140,25 +1162,26 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       }
       for (; open > common; open--) closeHashLevel(open);
       for (; open < depth; open++) {
-        const step = located[at + 2 + open];
-        const inner = toFiniteFunction(hashValues[open].range[step >> 1]);
-        hashSteps[open] = step;
-        hashValues[open + 1] = inner;
-        levelHashes[open + 1] = getValueHash(inner);
+        hashSteps[open] = located[at + 2 + open];
+        levelKeys[open] = plan[planAt + 3 + 2 * open];
+        levelBases[open + 1] = plan[planAt + 4 + 2 * open];
+        levelHashes[open + 1] = levelBases[open + 1];
       }
-      const holder = hashValues[open];
-      const position = located[at + 2 + depth] >> 1;
-      const previous = holder.range[position];
-      const previousHash = getValueHash(previous);
-      const nextHash =
-        target > 0 ? getRenamedRefHash(previous, getNew(target)) : getValueHash(getNew(target));
-      if (nextHash === previousHash) continue;
-      levelHashes[open] = changeEntryHash(
-        levelHashes[open],
-        holder.domain[position],
-        previousHash,
-        nextHash,
-      );
+      const target = edges[start + 1 + located[at]];
+      const numberHash = getValueHash(getNew(target));
+      const key = plan[planAt];
+      const previous = plan[planAt + 1];
+      const next =
+        target > 0
+          ? (plan[planAt + 2] + getEntryContribution(ID_HASH, numberHash)) | 0
+          : numberHash;
+      planAt += 3 + 2 * depth;
+      if (next === previous) continue;
+      levelHashes[open] =
+        (levelHashes[open] -
+          getEntryContribution(key, previous) +
+          getEntryContribution(key, next)) |
+        0;
     }
     for (; open > 0; open--) closeHashLevel(open);
     return levelHashes[0];
@@ -1170,14 +1193,41 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const page = getPage(node);
     if (page === undefined) {
       const record = getRecord(node);
-      pushSlot(slots, record, record, getValueHash(record), isInPlace);
+      pushSlot(slots, record, record, undefined, getValueHash(record), isInPlace);
       return;
     }
     const slot = getSlot(node);
-    pushSlot(slots, page.records[slot], page.sources[slot], page.hashes[slot], isInPlace);
+    pushSlot(
+      slots,
+      page.records[slot],
+      page.sources[slot],
+      page.plans[slot],
+      page.hashes[slot],
+      isInPlace,
+    );
   };
-  const makeLater = (node: number, source: Value, located: number[] | undefined, slots: Slots) =>
-    pushSlot(slots, undefined, source, getMadeHash(node, source, located), false);
+  const makeLater = (
+    node: number,
+    source: Value,
+    located: number[] | undefined,
+    plan: Int32Array | undefined,
+    slots: Slots,
+  ) => {
+    const hash = getValueHash(source);
+    if (located === undefined || isUnfingerprintableHash(hash)) {
+      pushSlot(slots, undefined, source, plan, hash, false);
+      return;
+    }
+    const sourcePlan = plan ?? createHashPlan(source, located);
+    pushSlot(
+      slots,
+      undefined,
+      source,
+      sourcePlan,
+      getMadeHash(node, hash, located, sourcePlan),
+      false,
+    );
+  };
   // The slot of a node at a new number: as it is, where renaming would give it back, or renamed. A
   // canonical record's renaming waits until a reader reads it.
   const rename = (
@@ -1191,7 +1241,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const slot = getSlot(node);
     if (page !== undefined && page.records[slot] === undefined) {
       if (isEveryEdgeUnmoved(node)) return keepSlot(node, slots, isInPlace);
-      return makeLater(node, page.sources[slot], page.locations[slot], slots);
+      return makeLater(node, page.sources[slot], page.locations[slot], page.plans[slot], slots);
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
     const isKept =
@@ -1204,12 +1254,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         ? getLocated(node)
         : undefined;
     if (located !== undefined) {
-      return makeLater(node, page === undefined ? record : page.sources[slot], located, slots);
+      return page === undefined
+        ? makeLater(node, record, located, undefined, slots)
+        : makeLater(node, page.sources[slot], located, page.plans[slot], slots);
     }
     isEveryPositionKept = true;
     const renamed = markCanonical(renameRecord(record));
     if (!isEveryPositionKept) walkedLocations.set(node, undefined);
-    pushSlot(slots, renamed, renamed, getValueHash(renamed), false);
+    pushSlot(slots, renamed, renamed, undefined, getValueHash(renamed), false);
   };
   // The node that each new number names, in each heap, where a realm's object that no step changed
   // names none.
@@ -1275,6 +1327,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       return new CanonicalPage(
         pageEdges,
         locations,
+        slots.plans.slice(first, first + count),
         slots.sources.slice(first, first + count),
         slots.records.slice(first, first + count),
         slots.hashes.slice(first, first + count),
