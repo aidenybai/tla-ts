@@ -1,5 +1,6 @@
 import {
   evaluate,
+  getLazyArgument,
   toKeepLazyContext,
   type Builtin,
   type BuiltinArgument,
@@ -1005,16 +1006,17 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
       name: "HeapGet",
       arity: 2,
       isLazy: true,
+      evaluate: (args, context) => callReplaced("HeapGet", args, context),
       // HeapGet's TLA+ reads h.pages, then i, as it applies them, which keeps the functions they
       // build lazy, and fails on h.pages before it reads i.
-      evaluate: (args, context) => {
-        const heap = getKeepLazyValue(args[0], context);
+      evaluateLazy: (args, context) => {
+        const lazyContext = toKeepLazyContext(context);
+        const heap = evaluate(args[0], lazyContext);
         const pages = getField(heap, "pages");
-        if (heap === undefined || (pages === undefined && !isLazyFunction(heap))) {
-          return callReplaced("HeapGet", heap === undefined ? args : [heap, args[1]], context);
+        if (pages === undefined && !isLazyFunction(heap)) {
+          return callReplaced("HeapGet", [heap, getLazyArgument(args[1], context)], context);
         }
-        const index = getKeepLazyValue(args[1], context);
-        if (index === undefined) return callReplaced("HeapGet", [heap, args[1]], context);
+        const index = evaluate(args[1], lazyContext);
         return getHeapEntry(pages, index) ?? callReplaced("HeapGet", [heap, index], context);
       },
       evaluateUnary: undefined,

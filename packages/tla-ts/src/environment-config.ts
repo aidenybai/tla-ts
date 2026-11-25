@@ -416,7 +416,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       const builtin = linked.builtins.get(targetKey);
       getSubstitutedKeys(substitution).forEach((key) => {
         if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
-          setOperator(key, { ...builtin, arity: 0, isLazy: true });
+          setOperator(key, { ...builtin, arity: 0, isLazy: true, evaluateLazy: undefined });
         } else substitutions.set(key, targetKey);
       });
     });
