@@ -2,24 +2,45 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { RUNTIME_DEFINITIONS } from "../../src/typescript/spec/runtime";
 
 const ECMASCRIPT_DIRECTORY = join(import.meta.dirname, "../../ecmascript");
 
 const CONFIG = "CONSTANTS None = None\nEmpty = Empty\nAbsent = Absent\n";
 
-// ESCore's TLA+ under the name of the runtime, whose HeapGet, IsArrayIndex, and PropBucket tla-ts
-// runs natively, and under its own name, whose operators run as written.
+const UNHANDLED_REJECTION =
+  RUNTIME_DEFINITIONS.find((definition) => definition.name === "UnhandledRejection")?.text ?? "";
+
+// ESCore's TLA+ with a compiled spec's UnhandledRejection, under the name of the runtime, whose
+// HeapGet, IsArrayIndex, PropBucket, and UnhandledRejection tla-ts runs natively, and under its own
+// name, whose operators run as written.
 const loadModule = (name: string) => {
   const path = join(ECMASCRIPT_DIRECTORY, `${name === "ESRuntime" ? "ESCore" : name}.tla`);
   if (!existsSync(path)) return undefined;
   const text = readFileSync(path, "utf8");
-  return name === "ESRuntime" ? text.replace("MODULE ESCore", "MODULE ESRuntime") : text;
+  if (name !== "ESRuntime" && name !== "ESCore") return text;
+  const runtime = text.replace(/\n====\s*$/, `\n${UNHANDLED_REJECTION}\n====\n`);
+  return name === "ESRuntime" ? runtime.replace("MODULE ESCore", "MODULE ESRuntime") : runtime;
 };
 
 const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
 const HEAP = "HeapOf([j \\in 1..600 |-> [id |-> j]])";
+
+// Heaps of 300 objects that UnhandledRejection tells apart: ordinary objects only, and promises on
+// either side of a page's end that are pending, fulfilled, rejected and handled, or rejected with
+// no handler, where the first one rejected with no handler wins.
+const getPromiseState = (promises: string) =>
+  `[objs |-> HeapOf([j \\in 1..300 |-> IF j \\in DOMAIN (${promises}) THEN MakeObject(Null, "promise", [state |-> (${promises})[j][1], result |-> IntV(j), isHandled |-> (${promises})[j][2]]) ELSE MakeObject(Null, "ordinary", <<>>)])]`;
+const REJECTION_STATES = [
+  "[objs |-> HeapOf(<<>>)]",
+  getPromiseState("<<>>"),
+  getPromiseState('(1 :> <<"pending", FALSE>>) @@ (256 :> <<"fulfilled", FALSE>>)'),
+  getPromiseState('(257 :> <<"rejected", TRUE>>) @@ (300 :> <<"pending", TRUE>>)'),
+  getPromiseState('(2 :> <<"fulfilled", TRUE>>) @@ (299 :> <<"rejected", FALSE>>)'),
+  getPromiseState('(258 :> <<"rejected", FALSE>>) @@ (3 :> <<"rejected", FALSE>>)'),
+];
 
 // Keys of every kind that PropBucket and IsArrayIndex tell apart: indices in each bucket, the
 // largest index and the integers past it, strings that aren't indices, and symbols and objects.
@@ -150,6 +171,10 @@ const getChecks = () => [
     "HeapGet([pages |-> <<<<5>>>>], Cardinality(DOMAIN [i \\in 1..1 |-> CHOOSE x \\in {} : TRUE]))",
   ].map((call) => `${call} = Plain!${call} /\\ ToString(${call}) = ToString(Plain!${call})`),
   `\\A i \\in 1..600 : HeapGet(${HEAP}, i) = Plain!HeapGet(${HEAP}, i) /\\ ToString(HeapGet(${HEAP}, i)) = ToString(Plain!HeapGet(${HEAP}, i))`,
+  ...REJECTION_STATES.map((state) => {
+    const call = `UnhandledRejection(${state})`;
+    return `${call} = Plain!${call} /\\ ToString(${call}) = ToString(Plain!${call})`;
+  }),
 ];
 
 // Whether each check holds, where the root module extends ESRuntime and instances ESCore as Plain.
@@ -315,6 +340,22 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     [
       "CanonicalNumericIndexString of a lazy function",
       "CanonicalNumericIndexString([i \\in Nat |-> 49])",
+    ],
+    [
+      "UnhandledRejection of an object without a class",
+      "UnhandledRejection([objs |-> HeapOf(<<[slots |-> <<>>]>>)])",
+    ],
+    [
+      "UnhandledRejection of a promise whose state isn't a string",
+      'UnhandledRejection([objs |-> HeapOf(<<MakeObject(Null, "promise", [state |-> 3, isHandled |-> FALSE])>>)])',
+    ],
+    [
+      "UnhandledRejection of a rejected promise whose isHandled isn't a Boolean",
+      'UnhandledRejection([objs |-> HeapOf(<<MakeObject(Null, "promise", [state |-> "rejected", isHandled |-> 3])>>)])',
+    ],
+    [
+      "UnhandledRejection of a heap whose size passes its pages",
+      'UnhandledRejection([objs |-> [size |-> 2, pages |-> <<<<MakeObject(Null, "ordinary", <<>>)>>>>]])',
     ],
   ])("fails as the TLA+ fails on %s", { timeout: 120_000 }, async (_, expression) => {
     const error = await getError("ESCore", expression);
