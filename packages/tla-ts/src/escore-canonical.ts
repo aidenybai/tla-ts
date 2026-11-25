@@ -1399,18 +1399,19 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           if (slot >= 0 && slot < count) pageScratch[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
         }
       }
-      const hashes = slots.hashes.slice(first, first + count);
-      return new CanonicalPage(
+      const made = new CanonicalPage(
         pageScratch.slice(0, at),
         locations,
         slots.plans.slice(first, first + count),
         slots.sources.slice(first, first + count),
         slots.records.slice(first, first + count),
-        hashes,
-        getPageHash(hashes),
+        slots.hashes.slice(first, first + count),
+        0,
         makeRecord,
         undefined,
       );
+      made.hash = getPageHash(made);
+      return made;
     };
   return except(state, {
     objs: () =>
