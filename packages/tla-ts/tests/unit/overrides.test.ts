@@ -123,6 +123,27 @@ describe("Java module overrides match TLC", () => {
     ).toEqual(["success", undefined, ["Flag"]]);
   });
 
+  it.each([
+    [
+      "Flag <- [Overrides] Other",
+      "O == INSTANCE Overrides\nOther == FALSE\nASSUME O!Flag",
+      "assumption-violation",
+      "line 5, col 8 to line 5, col 13 of module Root",
+    ],
+    ["Flag = [Root] FALSE", "ASSUME Flag", "success", undefined],
+  ])(
+    "applies a Java override after a module's configured values and before its substitutions: %s",
+    async (constant, body, status, assumption) => {
+      expect(
+        await checkMatched(
+          `---- MODULE Root ----\nEXTENDS Overrides\n${body}\n====`,
+          `CONSTANT ${constant}`,
+          new Map([["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="]]),
+        ),
+      ).toEqual([status, assumption, ["Flag"]]);
+    },
+  );
+
   it("rejects an override whose method computes its value", async () => {
     await expect(
       check({

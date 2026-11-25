@@ -2001,6 +2001,45 @@ export const createEnvironment = (
   addAssumptions(linkedRoot, new Set());
   const variables = linkedRoot.variables;
 
+  const getSourceKey = (key: string) => {
+    let source = key;
+    for (let copy = copySources.get(source); copy; copy = copySources.get(source)) {
+      source = copy.source;
+    }
+    return source;
+  };
+  const javaValues = new Map<Expression, Value>();
+  const javaOverrides = linkOrder.flatMap((linked) => {
+    const bytes = options.loadClass?.(linked.module.name);
+    if (!bytes) return [];
+    // TLC matches a method only to a definition the root module sees as originally defined in the class's module.
+    const isVisibleInRoot = (name: string) => {
+      const rootSymbol = linkedRoot.visible.get(name);
+      const symbol = linked.visible.get(name);
+      return (
+        rootSymbol?.kind === "Definition" &&
+        isSameRange(
+          rootSymbol.sourceRange ?? rootSymbol.range,
+          symbol?.sourceRange ?? symbol?.range,
+        )
+      );
+    };
+    const overridden = getModuleOverrides(linked.module, bytes, isVisibleInRoot);
+    overridden.values.forEach((value, name) => {
+      const key = linked.visible.get(name)?.key;
+      definitions.forEach((definition, definitionKey) => {
+        if (definition.kind !== "Operator" || getSourceKey(definitionKey) !== key) return;
+        let body = definition.body;
+        javaValues.set(body, value);
+        while (body.kind === "Let" && boundSubstitutions.lets.has(body)) {
+          body = body.body;
+          javaValues.set(body, value);
+        }
+      });
+    });
+    return overridden.overrides;
+  });
+
   const applied = applyConfig(config, {
     root: linkedRoot,
     moduleSymbols: new Map([
@@ -2027,43 +2066,7 @@ export const createEnvironment = (
   });
   const constants = applied.constants;
   const bodyValues = applied.bodyValues;
-  const getSourceKey = (key: string) => {
-    let source = key;
-    for (let copy = copySources.get(source); copy; copy = copySources.get(source)) {
-      source = copy.source;
-    }
-    return source;
-  };
-  const javaOverrides = linkOrder.flatMap((linked) => {
-    const bytes = options.loadClass?.(linked.module.name);
-    if (!bytes) return [];
-    // TLC matches a method only to a definition the root module sees as originally defined in the class's module.
-    const isVisibleInRoot = (name: string) => {
-      const rootSymbol = linkedRoot.visible.get(name);
-      const symbol = linked.visible.get(name);
-      return (
-        rootSymbol?.kind === "Definition" &&
-        isSameRange(
-          rootSymbol.sourceRange ?? rootSymbol.range,
-          symbol?.sourceRange ?? symbol?.range,
-        )
-      );
-    };
-    const overridden = getModuleOverrides(linked.module, bytes, isVisibleInRoot);
-    overridden.values.forEach((value, name) => {
-      const key = linked.visible.get(name)?.key;
-      definitions.forEach((definition, definitionKey) => {
-        if (definition.kind !== "Operator" || getSourceKey(definitionKey) !== key) return;
-        let body = definition.body;
-        bodyValues.set(body, value);
-        while (body.kind === "Let" && boundSubstitutions.lets.has(body)) {
-          body = body.body;
-          bodyValues.set(body, value);
-        }
-      });
-    });
-    return overridden.overrides;
-  });
+  javaValues.forEach((value, body) => bodyValues.set(body, value));
   const substitutions = applied.substitutions;
 
   if (traceFile !== undefined) {
