@@ -126,6 +126,9 @@ const FATAL_CODES = new Set<number>([
   MESSAGE_CODE.incompleteSuccessor,
 ]);
 
+// TLC's worker keeps simulating after an error until its main thread stops it, about 150 states later.
+const STOP_DELAY_STATES = 150;
+
 const INFINITE_DEPTH = 2147483647;
 
 const RL_ALPHA = 0.3;
@@ -813,6 +816,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;
+  let stoppedStates: number | undefined;
   while (true) {
     statistics.traces++;
     currentTrace = statistics.traces;
@@ -828,9 +832,12 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     if (outcome) errors.push(outcome);
     if (outcome?.isException) break;
     if (BigInt(traceCount) >= traceLimit) break;
-    // TLC's worker starts one more behavior before the Simulator stops it, unless traces are bounded.
     const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
-    if (isStopping && options.traceCount === undefined) {
+    if (isStopping && stoppedStates === undefined) stoppedStates = statistics.generatedStates;
+    if (
+      stoppedStates !== undefined &&
+      statistics.generatedStates - stoppedStates >= STOP_DELAY_STATES
+    ) {
       statistics.traces++;
       break;
     }
@@ -841,7 +848,13 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
-  for (const error of reported) {
+  const trailing = errors[errors.length - 1];
+  // TLC's LiveCheck1 prints the violation the worker finds after the error it reported, without the Simulator's summary.
+  const printedErrors =
+    printed < errors.length - 1 && trailing.violation
+      ? [...reported, { ...trailing, isSummarized: false }]
+      : reported;
+  for (const error of printedErrors) {
     if (error.violation) {
       error.failures?.forEach((failure) =>
         reportMessage(failure.code, failure.message, failure.toolMessage),
@@ -851,7 +864,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         status: "liveness-violation",
         violation: error.violation,
       });
-      printSummary();
+      if (error.isSummarized) printSummary();
       if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
       continue;
     }
