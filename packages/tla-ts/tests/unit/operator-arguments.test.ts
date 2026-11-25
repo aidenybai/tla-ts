@@ -87,13 +87,28 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
       "-config",
       "Graph.cfg",
     ]);
-    expect([run.status, run.lines.filter((line) => line.startsWith("<"))]).toEqual([
+    const module = "of module OperatorArguments";
+    expect([
+      run.status,
+      run.lines.slice(
+        run.lines.findIndex((line) => line.startsWith("<x ")),
+        run.lines.indexOf("End of statistics."),
+      ),
+    ]).toEqual([
       0,
       [
-        "<x line 3, col 10 to line 3, col 10 of module OperatorArguments>: 4",
-        "<Init line 6, col 1 to line 6, col 4 of module OperatorArguments>: 1:1",
-        "<Step line 4, col 1 to line 4, col 10 of module OperatorArguments>: 4:6",
-        "<Step line 4, col 1 to line 4, col 10 of module OperatorArguments (7 48 7 77)>: 0:3",
+        `<x line 3, col 10 to line 3, col 10 ${module}>: 4`,
+        `<Init line 6, col 1 to line 6, col 4 ${module}>: 1:1`,
+        `  line 6, col 9 to line 6, col 13 ${module}: 1`,
+        `<Step line 4, col 1 to line 4, col 10 ${module}>: 4:6`,
+        `  line 4, col 15 to line 4, col 19 ${module}: 6`,
+        `  |line 4, col 15 to line 4, col 15 ${module}: 10`,
+        `  line 4, col 24 to line 4, col 32 ${module}: 6`,
+        `<Step line 4, col 1 to line 4, col 10 ${module} (7 48 7 77)>: 0:3`,
+        `  line 4, col 15 to line 4, col 19 ${module}: 3`,
+        `  |line 4, col 15 to line 4, col 15 ${module}: 5`,
+        `  line 4, col 24 to line 4, col 32 ${module}: 3`,
+        `  line 7, col 64 to line 7, col 76 ${module}: 3`,
       ],
     ]);
   });
