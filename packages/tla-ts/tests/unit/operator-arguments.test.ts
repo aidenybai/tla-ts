@@ -255,6 +255,24 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
     ]);
   });
 
+  it("applies a built-in operator argument, where TLC's OpLambdaValue throws a NullPointerException", () => {
+    const run = runSpec(["-noGenerateSpecTE"], "OperatorBuiltins", [
+      ["OperatorBuiltins.cfg", "INIT Init\nNEXT Applied\n"],
+    ]);
+    expect([
+      run.status,
+      run.lines.filter((line) => line.startsWith("State ") || line.startsWith("x = ")),
+    ]).toEqual([
+      11,
+      [
+        "State 1: <Initial predicate>",
+        "x = 0",
+        "State 2: <Apply(<Operator SUBSET>) line 6, col 16 to line 6, col 52 of module OperatorBuiltins>",
+        "x = 2",
+      ],
+    ]);
+  });
+
   it("names an operator an instance imports by the instance, as SANY names its OpDefNode", () => {
     const run = runSpec(["-noGenerateSpecTE", "-config", "Instanced.cfg"], "Outer");
     const step = "<I!Step(<Operator I!Twice>) line 4, col 1 to line 4, col 31 of module Outer>";

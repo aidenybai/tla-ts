@@ -1366,6 +1366,7 @@ const callOperatorWithValues = (operator: Operator, args: Value[], context: Cont
   return evaluate(operator.body, withScope(context, scope));
 };
 
+// Deviation from TLC: OpLambdaValue#eval throws a NullPointerException on a built-in operator such as SUBSET, whose OpDefNode has no body.
 const toOperatorValue = (operator: Operator, name: string, context: Context): OperatorValue => {
   if (operator.kind === "Operator") return operator;
   const coverage = context.environment.coverage;
