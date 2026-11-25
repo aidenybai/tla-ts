@@ -243,6 +243,27 @@ export const markCanonical = (value: FunctionValue) => {
 export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
+// A page of ESCore's heap that CanonicalStateOf made, with the nodes that each of its records refers
+// to (see escore-canonical.ts), whose hidden class no other function shares.
+export interface CanonicalPage extends FunctionValue {
+  edges: Int32Array;
+}
+
+export const createCanonicalPage = (records: Value[], edges: Int32Array): CanonicalPage => ({
+  kind: "Function",
+  domain: getIntervalDomain(records.length),
+  range: records,
+  hash: 0,
+  fingerprint: 0,
+  writtenKeys: undefined,
+  functionClass: "tuple",
+  flags: VALUE_CANONICAL,
+  edges,
+});
+
+export const isCanonicalPage = (value: Value): value is CanonicalPage =>
+  typeof value === "object" && "edges" in value;
+
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
 
@@ -365,7 +386,12 @@ const forgetOwnWrittenOrder = (value: Value) => {
   }
 };
 
-const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
+const isRecordDomain = (domain: Value[]) => {
+  for (let index = 0; index < domain.length; index++) {
+    if (typeof domain[index] !== "string") return false;
+  }
+  return true;
+};
 
 const isRecordMismatch = (left: Value[], right: Value[]) =>
   left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);
@@ -871,6 +897,13 @@ const cacheSet = (value: Value) => {
     value.isCached = true;
   }
 };
+
+const isMarkedFingerprinted = (value: Value) =>
+  typeof value !== "object" ||
+  value.kind === "ModelValue" ||
+  value.kind === "Interval" ||
+  value.kind === "InfiniteSet" ||
+  ((value.flags ?? 0) & VALUE_FINGERPRINTED) !== 0;
 
 export const markFingerprinted = (value: Value): void => {
   if (!hasStreamedSet || typeof value !== "object") return;
@@ -4842,6 +4875,37 @@ const getReadyHash = (value: Value): number => {
   }
   value.hash = hash;
   return hash;
+};
+
+export const createChangedFunction = (source: FunctionValue, range: Value[]) => {
+  const changed = setFunctionClass(
+    createSortedFunction(source.domain, range),
+    source.functionClass,
+  );
+  let isHashed = source.hash !== 0 && source.hash !== UNFINGERPRINTABLE_HASH;
+  let isFingerprinted = (source.flags & VALUE_FINGERPRINTED) !== 0;
+  let hash = source.hash;
+  for (let index = 0; index < range.length && (isHashed || isFingerprinted); index++) {
+    const previous = source.range[index];
+    const next = range[index];
+    if (next === previous) continue;
+    if (isFingerprinted && !isMarkedFingerprinted(next)) isFingerprinted = false;
+    if (!isHashed) continue;
+    const nextHash = getReadyHash(next);
+    if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) {
+      isHashed = false;
+      continue;
+    }
+    const keyHash = getValueHash(source.domain[index]);
+    hash =
+      (hash -
+        getEntryContribution(keyHash, getValueHash(previous)) +
+        getEntryContribution(keyHash, nextHash)) |
+      0;
+  }
+  if (isHashed) changed.hash = hash;
+  if (isFingerprinted) changed.flags = VALUE_FINGERPRINTED;
+  return changed;
 };
 
 const setFunctionValue = (finite: FunctionValue, position: number, next: Value) => {

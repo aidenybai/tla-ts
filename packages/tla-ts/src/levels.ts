@@ -176,7 +176,7 @@ type ConstantLocal =
       name: string;
       params: number;
       applied: number | undefined;
-      allParams: Set<string> | undefined;
+      allParams: ReadonlySet<string> | undefined;
       nonLeibnizParams: Set<string> | undefined;
     }
   | { kind: "Pending"; name: string };
@@ -443,6 +443,13 @@ const bindFormals = (scope: Scope, formals: OperatorParam[], binder?: object) =>
         ]),
       ]);
 
+const hasFormal = (formals: OperatorParam[], name: string) => {
+  for (let index = 0; index < formals.length; index++) {
+    if (formals[index].name === name) return true;
+  }
+  return false;
+};
+
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
 const getFormals = (definition: Definition) =>
@@ -471,22 +478,43 @@ const getDefinitionBody = (definition: Definition): Expression =>
     : definition.body;
 
 const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelData) => {
-  const isFormal = (param: string) => formals.some((formal) => formal.name === param);
-  const removeFormals = (params: ReadonlySet<string>) =>
-    formals.some((formal) => params.has(formal.name))
-      ? new Set([...params].filter((param) => !isFormal(param)))
-      : params;
+  const removeFormals = (params: ReadonlySet<string>) => {
+    if (!formals.some((formal) => params.has(formal.name))) return params;
+    const kept = new Set<string>();
+    for (const param of params) {
+      if (!hasFormal(formals, param)) kept.add(param);
+    }
+    return kept;
+  };
+  const nonLeibniz = new Set<number>();
+  for (let index = 0; index < formals.length; index++) {
+    if (data.nonLeibnizParams.has(formals[index].name)) nonLeibniz.add(index);
+  }
+  const conditions = new Set<string>();
+  for (let operatorIndex = 0; operatorIndex < formals.length; operatorIndex++) {
+    const operator = formals[operatorIndex];
+    for (let paramIndex = 0; paramIndex < formals.length; paramIndex++) {
+      for (let argumentIndex = 0; argumentIndex < operator.arity; argumentIndex++) {
+        const key = getArgumentParamKey(operator.name, argumentIndex, formals[paramIndex].name);
+        if (data.argParams.has(key)) {
+          conditions.add(getConditionKey(operatorIndex, paramIndex, argumentIndex));
+        }
+      }
+    }
+  }
   const levels: OperatorLevels = {
-    ...createData(data.level),
+    level: data.level,
     isCorrect: data.isCorrect,
-    name,
-    formals,
-    nonLeibniz: new Set(
-      formals.flatMap((formal, index) => (data.nonLeibnizParams.has(formal.name) ? [index] : [])),
-    ),
+    params: new Set(),
+    constraints: new Map(),
+    argConstraints: new Map(),
+    argParams: new Map(),
     allParams: removeFormals(data.allParams),
     nonLeibnizParams: removeFormals(data.nonLeibnizParams),
     appliedParams: data.appliedParams,
+    name,
+    formals,
+    nonLeibniz,
     maxLevels: formals.map((formal) =>
       Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
     ),
@@ -497,32 +525,22 @@ const toOperatorLevels = (name: string, formals: OperatorParam[], data: LevelDat
         (_value, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
       ),
     ),
-    conditions: new Set(
-      formals.flatMap((operator, operatorIndex) =>
-        formals.flatMap((param, paramIndex) =>
-          Array.from({ length: operator.arity }, (_value, argumentIndex) => argumentIndex)
-            .filter((argumentIndex) =>
-              data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
-            )
-            .map((argumentIndex) => getConditionKey(operatorIndex, paramIndex, argumentIndex)),
-        ),
-      ),
-    ),
+    conditions,
   };
-  data.params.forEach((param) => {
-    if (!isFormal(param)) levels.params.add(param);
-  });
-  data.constraints.forEach((value, key) => {
-    if (!isFormal(key)) levels.constraints.set(key, value);
-  });
-  data.argConstraints.forEach((value, key) => {
-    if (!isFormal(parseArgumentKey(key).operator)) levels.argConstraints.set(key, value);
-  });
-  data.argParams.forEach((parameter, key) => {
-    if (!isFormal(parameter.operator) || !isFormal(parameter.param)) {
+  for (const param of data.params) {
+    if (!hasFormal(formals, param)) levels.params.add(param);
+  }
+  for (const [key, value] of data.constraints) {
+    if (!hasFormal(formals, key)) levels.constraints.set(key, value);
+  }
+  for (const [key, value] of data.argConstraints) {
+    if (!hasFormal(formals, parseArgumentKey(key).operator)) levels.argConstraints.set(key, value);
+  }
+  for (const [key, parameter] of data.argParams) {
+    if (!hasFormal(formals, parameter.operator) || !hasFormal(formals, parameter.param)) {
       levels.argParams.set(key, parameter);
     }
-  });
+  }
   return levels;
 };
 
@@ -2030,7 +2048,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const maxima = new Uint8Array(MAX_CONSTANT_NAMES).fill(TEMPORAL_LEVEL);
     let constrained = 0;
     const argConstraints = new Map<string, number>();
-    let allParams: Set<string> | undefined;
+    const argParams: ArgumentParams = new Map();
+    let allParams: ReadonlySet<string> | undefined;
+    let ownAllParams: Set<string> | undefined;
     let nonLeibnizParams: Set<string> | undefined;
     let applied: number | undefined;
     const locals: ConstantLocal[] = [];
@@ -2054,7 +2074,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const getBits = (params: ReadonlySet<string>, formals: OperatorParam[] = []) => {
       let bitset = 0;
       for (const param of params) {
-        if (formals.some((formal) => formal.name === param)) continue;
+        if (hasFormal(formals, param)) continue;
         const bit = isShadowed(param) ? undefined : getBit(param);
         if (bit === undefined) return undefined;
         bitset |= 1 << bit;
@@ -2063,12 +2083,27 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     };
     const isFree = (bitset: number) =>
       names.every((name, bit) => (bitset & (1 << bit)) === 0 || !isShadowed(name));
-    const addAllParams = (added: ReadonlySet<string>) => {
-      for (const name of added) {
-        if (isShadowed(name)) return false;
-        allParams ??= new Set();
-        allParams.add(name);
+    const addAllParam = (name: string) => {
+      if (allParams?.has(name)) return;
+      if (ownAllParams === undefined || ownAllParams !== allParams) {
+        ownAllParams = new Set(allParams);
+        allParams = ownAllParams;
       }
+      ownAllParams.add(name);
+    };
+    const addAllParams = (added: ReadonlySet<string>) => {
+      if (
+        boundCount > 0 &&
+        locals.some((local) => local.kind === "Bound" && added.has(local.name))
+      ) {
+        return false;
+      }
+      if (added.size === 0 || added === allParams) return true;
+      if (allParams === undefined) {
+        allParams = added;
+        return true;
+      }
+      for (const name of added) addAllParam(name);
       return true;
     };
     const addNonLeibnizParams = (added: ReadonlySet<string>) => {
@@ -2086,16 +2121,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       rangeParams = 0,
       rangeApplied: number | undefined = undefined,
     ) => {
-      if (
-        callee.level !== CONSTANT_LEVEL ||
-        !callee.isCorrect ||
-        callee.formals.some((formal) => formal.arity > 0) ||
-        callee.nonLeibniz.size > 0
-      ) {
+      if (callee.level !== CONSTANT_LEVEL || !callee.isCorrect || callee.nonLeibniz.size > 0) {
         return undefined;
       }
+      for (let index = 0; index < callee.formals.length; index++) {
+        if (callee.formals[index].arity > 0) return undefined;
+      }
       let params = getBits(callee.params);
-      const calleeApplied = getBits(callee.appliedParams ?? callee.params, callee.formals);
+      const calleeApplied =
+        callee.appliedParams === undefined ? params : getBits(callee.appliedParams, callee.formals);
       if (params === undefined || calleeApplied === undefined) return undefined;
       for (const [name, level] of callee.constraints) {
         const bit = isShadowed(name) ? undefined : getBit(name);
@@ -2108,7 +2142,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       callee.argConstraints.forEach((level, key) => putArgConstraint(argConstraints, key, level));
       let isApplying = callee.appliedParams !== undefined || rangeApplied !== undefined;
       let appliedParams = calleeApplied | (rangeApplied ?? rangeParams);
-      const operands: number[] = [];
+      const operands: number[] | undefined = callee.argParams.size > 0 ? [] : undefined;
       for (let index = 0; index < expressions.length; index++) {
         const operand = walk(expressions[index], exceptAt);
         if (operand === undefined) return undefined;
@@ -2118,19 +2152,32 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           if (applied !== undefined) isApplying = true;
           appliedParams |= applied ?? operand;
         }
-        operands.push(operand);
+        operands?.push(operand);
       }
-      for (const parameter of callee.argParams.values()) {
-        const position = callee.formals.findIndex((formal) => formal.name === parameter.param);
-        if (position !== -1) {
-          putArgConstraint(
-            argConstraints,
-            getArgumentKey(parameter.operator, parameter.index),
-            CONSTANT_LEVEL,
-          );
+      if (operands !== undefined) {
+        for (const [key, parameter] of callee.argParams) {
+          let position = -1;
+          for (let index = 0; index < callee.formals.length && position === -1; index++) {
+            if (callee.formals[index].name === parameter.param) position = index;
+          }
+          if (position !== -1) {
+            putArgConstraint(
+              argConstraints,
+              getArgumentKey(parameter.operator, parameter.index),
+              CONSTANT_LEVEL,
+            );
+          }
+          if (hasFormal(callee.formals, parameter.operator)) continue;
+          if (position === -1) {
+            if (isShadowed(parameter.param)) return undefined;
+            argParams.set(key, parameter);
+            continue;
+          }
+          for (let rest = operands[position]; rest !== 0; rest &= rest - 1) {
+            const bit = 31 - Math.clz32(rest & -rest);
+            addArgumentParam(argParams, parameter.operator, parameter.index, names[bit]);
+          }
         }
-        if (callee.formals.some((formal) => formal.name === parameter.operator)) continue;
-        if (position === -1 || operands[position] !== 0) return undefined;
       }
       applied = isApplying ? appliedParams : undefined;
       return params;
@@ -2173,14 +2220,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       return inner === undefined ? undefined : params | inner;
     };
     const walkName = (name: string, args: Expression[], exceptAt: number | undefined) => {
-      const local = locals.findLast((candidate) => candidate.name === name);
+      let local: ConstantLocal | undefined;
+      for (let index = locals.length - 1; index >= 0 && local === undefined; index--) {
+        if (locals[index].name === name) local = locals[index];
+      }
       if (local !== undefined) {
         applied = undefined;
         if (args.length > 0 || local.kind === "Pending") return undefined;
         if (local.kind === "Bound") return 0;
         if (local.kind === "Formal") {
-          allParams ??= new Set();
-          allParams.add(name);
+          addAllParam(name);
           return 1 << local.bit;
         }
         if (
@@ -2198,8 +2247,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         applied = undefined;
         const bit = arity > 0 || args.length > 0 ? undefined : getBit(name);
         if (bit === undefined) return undefined;
-        allParams ??= new Set();
-        allParams.add(name);
+        addAllParam(name);
         return 1 << bit;
       }
       const callee = getConstantCallee(name, args.length);
@@ -2252,8 +2300,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           for (let index = 0; index < expression.definitions.length; index++) {
             const inner = expression.definitions[index];
             const outerAllParams = allParams;
+            const outerOwnAllParams = ownAllParams;
             const outerNonLeibnizParams = nonLeibnizParams;
             allParams = undefined;
+            ownAllParams = undefined;
             nonLeibnizParams = undefined;
             const params =
               inner.kind === "Operator" && inner.params.length === 0
@@ -2268,6 +2318,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
               nonLeibnizParams,
             };
             allParams = outerAllParams;
+            ownAllParams = outerOwnAllParams;
             nonLeibnizParams = outerNonLeibnizParams;
             if (params === undefined) {
               locals.length = depth;
@@ -2396,15 +2447,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     names.forEach((name, bit) => {
       if ((constrained & (1 << bit)) !== 0) constraints.set(name, maxima[bit]);
     });
-    const getNames = (bitset: number) =>
-      new Set(names.filter((_name, bit) => (bitset & (1 << bit)) !== 0));
+    const getNames = (bitset: number) => {
+      const named = new Set<string>();
+      for (let bit = 0; bit < names.length; bit++) {
+        if ((bitset & (1 << bit)) !== 0) named.add(names[bit]);
+      }
+      return named;
+    };
     return toOperatorLevels(definition.name, definition.params, {
       level: CONSTANT_LEVEL,
       isCorrect: true,
       params: getNames(body),
       constraints,
       argConstraints,
-      argParams: new Map(),
+      argParams,
       allParams: allParams ?? EMPTY_PARAMS,
       nonLeibnizParams: nonLeibnizParams ?? EMPTY_PARAMS,
       appliedParams: applied === undefined ? undefined : getNames(applied),
@@ -2449,6 +2505,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           );
     const isInSection = sectionBodies.has(definition);
     if (isInSection) sectionBodies.set(definition, levels);
+    if (cached === undefined && !isInSection) {
+      definitionLevels.set(definition, levels);
+      return levels;
+    }
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
