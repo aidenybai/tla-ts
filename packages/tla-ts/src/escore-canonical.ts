@@ -785,24 +785,31 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const renameProps = (props: Value) => {
     const buckets = toFiniteFunction(props);
-    let keys: Value[] | undefined;
-    let kept: Value[] | undefined;
+    let range: Value[] | undefined;
+    let isEmptied = false;
     for (let position = 0; position < buckets.range.length; position++) {
       const bucket = buckets.range[position];
-      const isEmptied = toFiniteFunction(bucket).domain.length === 0;
-      const renamed = isEmptied ? bucket : mapRange(bucket, renameDescriptor);
-      if (kept === undefined && (isEmptied || renamed !== bucket)) {
-        keys = buckets.domain.slice(0, position);
-        kept = buckets.range.slice(0, position);
+      if (toFiniteFunction(bucket).domain.length === 0) {
+        isEmptied = true;
+        continue;
       }
-      if (isEmptied || keys === undefined || kept === undefined) continue;
-      keys.push(buckets.domain[position]);
-      kept.push(renamed);
+      const renamed = mapRange(bucket, renameDescriptor);
+      if (renamed === bucket) continue;
+      range ??= buckets.range.slice();
+      range[position] = renamed;
     }
-    if (keys === undefined || kept === undefined) {
-      if (buckets.writtenKeys === undefined) return buckets;
-      keys = buckets.domain.slice();
-      kept = buckets.range.slice();
+    if (!isEmptied) {
+      return range === undefined && buckets.writtenKeys === undefined
+        ? buckets
+        : createChangedFunction(buckets, range ?? buckets.range.slice());
+    }
+    const renamedBuckets = range ?? buckets.range;
+    const keys: Value[] = [];
+    const kept: Value[] = [];
+    for (let position = 0; position < renamedBuckets.length; position++) {
+      if (toFiniteFunction(renamedBuckets[position]).domain.length === 0) continue;
+      keys.push(buckets.domain[position]);
+      kept.push(renamedBuckets[position]);
     }
     return setFunctionClass(createSortedFunction(keys, kept), buckets.functionClass);
   };
