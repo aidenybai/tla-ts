@@ -1,0 +1,23 @@
+digraph ActionGraph {
+nodesep=0.35;
+subgraph cluster_legend {
+label = "Coverage";
+node [shape=point] {
+d0 [style = invis];
+d1 [style = invis];
+p0 [style = invis];
+p0 [style = invis];
+}
+d0 -> d1 [label=unseen, color="green", style=dotted]
+p0 -> p1 [label=seen]
+}
+0 [shape=box,label="Init",style = filled]
+1 [shape=box,label="Step"]
+2 [shape=box,label="Step"]
+0 -> 1[penwidth=0.2];
+0 -> 2[penwidth=0.11];
+1 -> 1[penwidth=0.17];
+1 -> 2[penwidth=0.17];
+2 -> 1[penwidth=0.11];
+2 -> 2[color="green",style=dotted];
+}

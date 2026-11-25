@@ -5,6 +5,7 @@ import {
   isLocallyResolved,
   type Definition,
   type Expression,
+  type OperatorParam,
   type SourceLocation,
   type SourceRange,
 } from "./ast";
@@ -31,6 +32,7 @@ import {
   bindUncachedArguments,
   describeNode,
   evaluate,
+  evaluateOperatorValue,
   forEachBinding,
   getBodyLiteral,
   getDefinition,
@@ -39,6 +41,7 @@ import {
   getStartupValue,
   lookupScope,
   resolveGlobalOperator,
+  type Binding,
   type Closure,
   type Environment,
   type Scope,
@@ -271,11 +274,27 @@ const getBoundValues = (names: string[], scope: Scope | undefined) =>
     return binding?.kind === "Value" ? [[name, binding.value]] : [];
   });
 
+// Action#getParameters counts the OpLambdaValue that Tool#getActionsAppl binds to an operator argument as a value.
 const getParameters = (closure: Closure | undefined, scope: Scope | undefined) =>
-  getBoundValues(
-    (closure?.params ?? []).map((param) => param.name),
-    scope,
-  );
+  (closure?.params ?? []).flatMap((param): [string, Value][] => {
+    const binding = lookupScope(scope, param.name);
+    if (binding?.kind === "Value") return [[param.name, binding.value]];
+    return binding?.kind === "Operator" && binding.operator.kind === "Operator"
+      ? [[param.name, binding.operator]]
+      : [];
+  });
+
+const getSplitBinding = (
+  param: OperatorParam,
+  arg: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): Binding => {
+  const context = getSplitContext(environment, scope);
+  return param.arity > 0
+    ? { kind: "Operator", operator: evaluateOperatorValue(arg, context) }
+    : { kind: "Value", value: evaluate(arg, context) };
+};
 
 const tryCollect = <Result>(collect: () => Result, fallback: () => Result) => {
   try {
@@ -314,10 +333,17 @@ const getInstanceActions = (
   if (!called) return [{ ...instanceAction, parameters: [], context, expression, scope }];
   if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
-    const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
-    const parameters = values.map((value, index): [string, Value] => [
-      called.params[index].name.replace(/#\d+$/, ""),
-      value,
+    const boundScope = args.reduce<Scope | undefined>(
+      (current, arg, index) => ({
+        name: called.params[index].name,
+        binding: getSplitBinding(called.params[index], arg, scope, environment),
+        parent: current,
+      }),
+      called.scope,
+    );
+    const parameters = getParameters(called, boundScope).map((parameter): [string, Value] => [
+      parameter[0].replace(/#\d+$/, ""),
+      parameter[1],
     ]);
     return [
       {
@@ -325,14 +351,7 @@ const getInstanceActions = (
         parameters,
         context: [...context, ...parameters],
         expression: called.body,
-        scope: values.reduce<Scope | undefined>(
-          (current, value, index) => ({
-            name: called.params[index].name,
-            binding: { kind: "Value", value },
-            parent: current,
-          }),
-          called.scope,
-        ),
+        scope: boundScope,
       },
     ];
   }, callAction);
@@ -588,10 +607,7 @@ const getActions = (
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({
         name: called.params[index].name,
-        binding: {
-          kind: "Value",
-          value: evaluate(arg, getSplitContext(environment, scope)),
-        },
+        binding: getSplitBinding(called.params[index], arg, scope, environment),
         parent: current,
       }),
       called.scope,

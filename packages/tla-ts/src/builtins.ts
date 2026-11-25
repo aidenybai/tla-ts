@@ -4,7 +4,7 @@ import {
   TlaEvaluationError,
   TlaModuleError,
 } from "./errors";
-import type { Builtin, BuiltinArgument, Context, OperatorValue } from "./evaluate";
+import type { Builtin, Context } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
   formatValue,
@@ -16,6 +16,7 @@ import {
   MINIMUM_INTEGER,
   setTrace,
   toFiniteSet,
+  type OperatorValue,
   type Value,
 } from "./values";
 
@@ -69,18 +70,18 @@ export const toEnumeratedSet = (value: Value, name: string, reported = value) =>
   return toFiniteSet(value);
 };
 
-const isOperatorValue = (argument: BuiltinArgument): argument is OperatorValue =>
+const isOperatorValue = (argument: Value): argument is OperatorValue =>
   typeof argument === "object" && argument.kind === "Operator";
 
-export const getValue = (args: BuiltinArgument[], index: number, name: string): Value => {
+export const getValue = (args: Value[], index: number, name: string): Value => {
   const argument = args[index];
-  if (argument === undefined || isOperatorValue(argument)) {
+  if (argument === undefined) {
     throw createArgumentError(name, `${name} expects a value as argument ${index + 1}`);
   }
   return argument;
 };
 
-export const getBoolean = (args: BuiltinArgument[], index: number, name: string) => {
+export const getBoolean = (args: Value[], index: number, name: string) => {
   const value = getValue(args, index, name);
   if (typeof value !== "boolean") {
     throw createArgumentError(name, `${name} expects a boolean but received ${formatValue(value)}`);
@@ -88,7 +89,7 @@ export const getBoolean = (args: BuiltinArgument[], index: number, name: string)
   return value;
 };
 
-export const getOperator = (args: BuiltinArgument[], index: number, name: string) => {
+export const getOperator = (args: Value[], index: number, name: string) => {
   const argument = args[index];
   if (argument === undefined || !isOperatorValue(argument)) {
     throw createArgumentError(name, `${name} expects an operator as argument ${index + 1}`);
@@ -108,7 +109,7 @@ export const defineConstant = (name: string, value: Value): Builtin => ({
 export const defineOperator = (
   name: string,
   arity: number,
-  evaluate: (args: BuiltinArgument[]) => Value,
+  evaluate: (args: Value[]) => Value,
 ): Builtin => ({
   kind: "Builtin",
   name,
@@ -121,7 +122,7 @@ export const defineOperator = (
 export const defineHigherOrderOperator = (
   name: string,
   arity: number,
-  evaluate: (args: BuiltinArgument[]) => Value,
+  evaluate: (args: Value[]) => Value,
 ): Builtin => ({
   kind: "Builtin",
   name,
@@ -134,7 +135,7 @@ export const defineHigherOrderOperator = (
 export const defineStateOperator = (
   name: string,
   arity: number,
-  evaluate: (args: BuiltinArgument[], context: Context | undefined) => Value,
+  evaluate: (args: Value[], context: Context | undefined) => Value,
 ): Builtin => ({
   kind: "Builtin",
   name,
@@ -349,10 +350,10 @@ export const defineComparison = (
 export const defineLazyOperator = (
   name: string,
   arity: number,
-  evaluate: (args: BuiltinArgument[], context: Context | undefined) => Value,
+  evaluate: (args: Value[], context: Context | undefined) => Value,
 ): Builtin => ({ ...defineStateOperator(name, arity, evaluate), isLazy: true });
 
-export const getThunk = (args: BuiltinArgument[], index: number, name: string) => {
+export const getThunk = (args: Value[], index: number, name: string) => {
   const argument = getOperator(args, index, name);
   return () => argument.call([]);
 };

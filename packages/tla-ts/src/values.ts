@@ -1,3 +1,4 @@
+import type { Expression } from "./ast";
 import {
   isStackOverflow,
   TlaAliasFormatError,
@@ -167,6 +168,14 @@ export interface LazyFunctionValue {
   enumerated?: FunctionValue;
 }
 
+export interface OperatorValue {
+  kind: "Operator";
+  name: string;
+  arity: number;
+  call: (args: Value[]) => Value;
+  expression?: Expression;
+}
+
 interface CountedLazyFunctionValue extends LazyFunctionValue {
   costModel: CostModel;
 }
@@ -197,7 +206,8 @@ export type Value =
   | SetOperationValue
   | FilteredSetValue
   | UnionValue
-  | LazyFunctionValue;
+  | LazyFunctionValue
+  | OperatorValue;
 
 export type ObjectValue = Exclude<Value, boolean | number | string>;
 
@@ -259,7 +269,8 @@ export const isSetValue = (value: Value) =>
   typeof value === "object" &&
   value.kind !== "ModelValue" &&
   value.kind !== "Function" &&
-  value.kind !== "LazyFunction";
+  value.kind !== "LazyFunction" &&
+  value.kind !== "Operator";
 
 export const isReducibleSet = (value: Value): value is SetValue | MixedSetValue | IntervalValue =>
   typeof value === "object" &&
@@ -279,6 +290,7 @@ const describeKind = (value: Value) => {
   if (typeof value === "number") return "integer";
   if (typeof value === "string") return "string";
   if (value.kind === "ModelValue") return "model value";
+  if (value.kind === "Operator") return "operator";
   return isSetValue(value) ? "set" : "function";
 };
 
@@ -4028,7 +4040,7 @@ const describeInfiniteCheck = (value: Value) =>
   `Attempted to check if the set ${prettyPrint(formatValue(value))}is finite.`;
 
 export const isFiniteSet = (value: Value): boolean => {
-  if (typeof value !== "object" || value.kind === "ModelValue") {
+  if (typeof value !== "object" || value.kind === "ModelValue" || value.kind === "Operator") {
     throw new TlaEvaluationError(
       `Attempted to check if the ${describeKind(value)} ${prettyPrint(formatValue(value))} is a finite set.`,
     );
@@ -5952,6 +5964,8 @@ const writeValue = (
       }
       return writeText(writer, ")");
     }
+    case "Operator":
+      return writeText(writer, `<Operator ${value.name}>`);
   }
 };
 
