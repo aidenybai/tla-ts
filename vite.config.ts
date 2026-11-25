@@ -29,12 +29,6 @@ export default defineConfig({
       eqeqeq: "warn",
       "no-console": "off",
     },
-    overrides: [
-      {
-        files: ["packages/tla-ts/tests/fixtures/typescript/**/*.ts"],
-        rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
-      },
-    ],
     ignorePatterns: ["node_modules", "dist", "coverage", "pnpm-lock.yaml"],
   },
 });

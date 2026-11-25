@@ -86,7 +86,7 @@ Change the README only in the root Development section, and keep it short. Do no
 - Use a `Map` for a table keyed by names from user input. A plain object finds `constructor`, `toString` and `__proto__` on `Object.prototype`.
 - Do not recurse on user input without a bound. 20,000 nested `let` terms overflowed the stack until the SMT-LIB reader used an explicit frame stack.
 - Remove `export` from a name used only in its own file, unless an exported signature mentions it. The build emits declarations and fails with TS4023.
-- Keep code the playground runs safe for the browser. `src/errors.ts` has no `node:` imports. The CLI imports the TypeScript compiler lazily, and `src/index.ts` doesn't export it.
+- Keep code the playground runs safe for the browser. `src/errors.ts` has no `node:` imports.
 
 ## Ported code
 
