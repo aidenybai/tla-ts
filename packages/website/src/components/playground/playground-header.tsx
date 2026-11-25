@@ -45,13 +45,10 @@ export const PlaygroundSettings = () => {
         <GearSix />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end">
-        <DropdownMenu.Item
-          onClick={() => view.setIsArrowsShown(!view.isArrowsShown)}
-          className="max-md:hidden"
-        >
+        <DropdownMenu.Item onClick={() => view.setIsArrowsShown(!view.isArrowsShown)}>
           {view.isArrowsShown ? "Hide arrows" : "Show arrows"}
         </DropdownMenu.Item>
-        <DropdownMenu.Separator className="max-md:hidden" />
+        <DropdownMenu.Separator />
         <DropdownMenu.Group>
           <DropdownMenu.Label>Theme</DropdownMenu.Label>
           <DropdownMenu.RadioGroup value={theme.theme} onValueChange={theme.setTheme}>

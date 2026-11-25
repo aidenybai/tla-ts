@@ -54,7 +54,7 @@ export const PlaygroundSource = () => {
         onChange={playground.setSource}
         marks={playground.sourceMarks}
         hoveredName={hoveredName}
-        isHighlighted={isArrowsShown && playground.isWide}
+        isHighlighted={isArrowsShown}
         focusedNames={focusedNames}
         colors={playground.colors}
         onHover={hoverName}
@@ -137,7 +137,7 @@ export const PlaygroundOutput = () => {
                   playground.outputLineMarks[line.number - 1],
                   hoveredName,
                 )}
-                isHighlighted={isArrowsShown && playground.isWide}
+                isHighlighted={isArrowsShown}
                 colors={playground.colors}
                 note={playground.result?.notes.find((note) => note.line === line.number)}
                 isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
@@ -175,7 +175,6 @@ export const PlaygroundArrows = () => {
       hoveredName={hoveredName}
       colors={playground.colors}
       outputLines={outputLines}
-      className="max-md:hidden"
     />
   );
 };
