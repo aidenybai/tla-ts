@@ -1058,19 +1058,24 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
       const empty = getConstant(context, "Empty");
       if (state === undefined || typeof size !== "number" || pages === undefined) return undefined;
       if (empty === undefined) return undefined;
-      for (let id = 1; id <= size; id++) {
-        const page = pages[Math.floor((id - 1) / HEAP_PAGE_SIZE)];
-        const slot = (id - 1) % HEAP_PAGE_SIZE;
-        // A canonical page's record differs from its source only in its refs' ids, which this doesn't read.
-        const object =
-          page !== undefined && isCanonicalPage(page) ? page.sources[slot] : getTuple(page)?.[slot];
-        const objectClass = getField(object, "class");
-        if (typeof objectClass !== "string") return undefined;
-        if (objectClass !== "promise") continue;
-        const slots = getField(object, "slots");
-        const promiseState = getField(slots, "state");
-        if (typeof promiseState !== "string") return undefined;
-        if (promiseState === "rejected" && getField(slots, "isHandled") !== true) return undefined;
+      for (let first = 0; first < size; first += HEAP_PAGE_SIZE) {
+        const page = pages[first / HEAP_PAGE_SIZE];
+        const canonical = page !== undefined && isCanonicalPage(page) ? page : undefined;
+        const records = canonical?.records ?? getTuple(page);
+        if (records === undefined) return undefined;
+        for (let slot = 0; slot < HEAP_PAGE_SIZE && first + slot < size; slot++) {
+          // A canonical page's record that it hasn't made differs from its source only in its refs'
+          // ids, which this doesn't read.
+          const object = records[slot] ?? canonical?.sources[slot];
+          const objectClass = getField(object, "class");
+          if (typeof objectClass !== "string") return undefined;
+          if (objectClass !== "promise") continue;
+          const slots = getField(object, "slots");
+          const promiseState = getField(slots, "state");
+          if (typeof promiseState !== "string") return undefined;
+          if (promiseState === "rejected" && getField(slots, "isHandled") !== true)
+            return undefined;
+        }
       }
       return createOk(state, typeShape(["undefined"]), empty);
     }),
