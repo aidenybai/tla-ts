@@ -158,6 +158,7 @@ interface EnvironmentSettings
       | "writeFile"
       | "makeDirectory"
       | "seed"
+      | "workers"
       | "isTool"
       | "traceSpec"
       | "isSanyReported"
@@ -1068,6 +1069,7 @@ export const createCheckEnvironment = (
       makeDirectory: options.makeDirectory,
     },
     seed: options.seed,
+    workers: options.workers,
     isTool: options.isTool,
     hasUserFile: options.hasUserFile,
     traceFile: options.traceSpec?.traceFile,

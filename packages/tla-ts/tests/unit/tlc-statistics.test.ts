@@ -34,6 +34,24 @@ it("stops generating successors at the first violation", async () => {
   expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
 });
 
+it.each([1, 2, 3])(
+  'gives -workers %i as TLCGet("config").worker when one thread checks the spec, as TLC\'s AbstractChecker#createConfig does',
+  async (workers) => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT(<<"init", TLCGet("config").worker>>)\nNext == x < 1 /\\ x\' = x + 1 /\\ PrintT(<<"next", TLCGet("config").worker>>)\nPost == PrintT(<<"post", TLCGet("config").worker>>)\n====',
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE",
+      workers,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed]).toEqual([
+      "success",
+      [`<<"init", ${workers}>>`, `<<"next", ${workers}>>`, `<<"post", ${workers}>>`],
+    ]);
+  },
+);
+
 // Deviation from TLC: TLC finds no step for the trace once the statistics forbid it, and prints "Failed to recover the initial state from its fingerprint." with a TLC bug(4), or a bug(2) before the trace.
 it.each([
   ["3", "2", [0, 1, 2]],

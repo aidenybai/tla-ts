@@ -136,6 +136,7 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  workers?: number;
   isTool?: boolean;
   hasUserFile?: boolean;
   traceFile?: string;
@@ -359,6 +360,7 @@ export const createEnvironment = (
   const builtinAliases = new Map<string, string>();
   const standardAliasBodies = new Set<Expression>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
+  runtime.workers = options.workers ?? 1;
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
   runtime.hasUserFile = options.hasUserFile ?? false;
