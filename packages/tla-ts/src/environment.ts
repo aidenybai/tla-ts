@@ -59,7 +59,7 @@ import {
   type BoundSubstitutions,
   type Substitution,
 } from "./instances";
-import { overrideDefinitions, type JavaOverride } from "./java-overrides";
+import { getModuleOverrides, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
 import {
   collectSemanticErrors,
@@ -1396,15 +1396,7 @@ export const createEnvironment = (
     return [...substitutionDefinitions, ...copies, ...exported];
   };
 
-  const javaOverrides = new Map<string, JavaOverride[]>();
-  const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
-    const overridden = overrideDefinitions(
-      unlinked,
-      options.loadClass?.(unlinked.name),
-      unlinked === root,
-    );
-    javaOverrides.set(unlinked.name, overridden.overrides);
-    const parsed = overridden.module;
+  const linkModule = (parsed: Module, scope: ModuleScope): LinkedModule => {
     const firstCheck = instanceChecks.length;
     const visible: Symbols = new Map([
       ...CORE_OPERATORS.map((operator): [string, ModuleSymbol] => [
@@ -2034,6 +2026,35 @@ export const createEnvironment = (
   });
   const constants = applied.constants;
   const bodyValues = applied.bodyValues;
+  const getSourceKey = (key: string) => {
+    let source = key;
+    for (let copy = copySources.get(source); copy; copy = copySources.get(source)) {
+      source = copy.source;
+    }
+    return source;
+  };
+  const javaOverrides = linkOrder.flatMap((linked) => {
+    const bytes = options.loadClass?.(linked.module.name);
+    if (!bytes) return [];
+    // TLC's SpecProcessor#processModuleOverrides matches a method only to a definition the root module sees by the method's name.
+    const isVisibleInRoot = (name: string) => {
+      const rootSymbol = linkedRoot.visible.get(name);
+      return (
+        rootSymbol?.kind === "Definition" &&
+        getSourceKey(rootSymbol.key) === linked.visible.get(name)?.key
+      );
+    };
+    const overridden = getModuleOverrides(linked.module, bytes, isVisibleInRoot);
+    overridden.values.forEach((value, name) => {
+      const key = linked.visible.get(name)?.key;
+      definitions.forEach((definition, definitionKey) => {
+        if (definition.kind === "Operator" && getSourceKey(definitionKey) === key) {
+          bodyValues.set(definition.body, value);
+        }
+      });
+    });
+    return overridden.overrides;
+  });
   const substitutions = applied.substitutions;
 
   if (traceFile !== undefined) {
@@ -2175,7 +2196,7 @@ export const createEnvironment = (
           }),
         };
       }),
-    javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
+    javaOverrides,
     moduleOperators,
     runtimeInvariants,
     rootName: root.name,

@@ -1,5 +1,6 @@
-import type { Definition, Expression, Module, SourceLocation } from "./ast";
+import type { Module } from "./ast";
 import { TlaSyntaxError, TlaUnsupportedError } from "./errors";
+import type { Value } from "./values";
 
 interface PoolEntry {
   tag: number;
@@ -23,12 +24,16 @@ export interface JavaOverride {
   isMatched: boolean;
 }
 
-interface ObjectReference {
-  className: string;
-  value: Expression | undefined;
+interface LiteralValue {
+  literal: Value;
 }
 
-type StackItem = number | string | Expression | ObjectReference;
+interface ObjectReference {
+  className: string;
+  literal: Value | undefined;
+}
+
+type StackItem = number | string | LiteralValue | ObjectReference;
 
 const CLASS_MAGIC = 0xcafebabe;
 const ACCESS_PUBLIC = 0x0001;
@@ -208,12 +213,7 @@ const getMemberReference = (pool: PoolEntry[], index: number) => {
   };
 };
 
-const getReturnedLiteral = (
-  method: JavaMethod,
-  pool: PoolEntry[],
-  className: string,
-  location: SourceLocation,
-) => {
+const getReturnedValue = (method: JavaMethod, pool: PoolEntry[], className: string) => {
   const createUnsupportedError = () =>
     new TlaUnsupportedError(
       `The Java override ${className}.${method.name} computes its value, which tla-ts cannot run`,
@@ -258,11 +258,7 @@ const getReturnedLiteral = (
       const field = getMemberReference(pool, getIndex());
       if (field.className !== `${VALUE_PACKAGE}BoolValue`) throw createUnsupportedError();
       if (field.name !== "ValTrue" && field.name !== "ValFalse") throw createUnsupportedError();
-      stack.push({
-        kind: "Identifier",
-        name: field.name === "ValTrue" ? "TRUE" : "FALSE",
-        location,
-      });
+      stack.push({ literal: field.name === "ValTrue" });
       offset += 3;
     } else if (opcode === OPCODE.invokestatic) {
       const callee = getMemberReference(pool, getIndex());
@@ -271,10 +267,10 @@ const getReturnedLiteral = (
         throw createUnsupportedError();
       }
       if (typeof value !== "number") throw createUnsupportedError();
-      stack.push({ kind: "Number", value, location });
+      stack.push({ literal: value });
       offset += 3;
     } else if (opcode === OPCODE.new) {
-      stack.push({ className: getClassName(pool, getIndex()), value: undefined });
+      stack.push({ className: getClassName(pool, getIndex()), literal: undefined });
       offset += 3;
     } else if (opcode === OPCODE.invokespecial) {
       const constructor = getMemberReference(pool, getIndex());
@@ -287,16 +283,14 @@ const getReturnedLiteral = (
         typeof instance === "object" &&
         "className" in instance;
       if (!isStringValue) throw createUnsupportedError();
-      instance.value = { kind: "String", value: text, location };
+      instance.literal = text;
       offset += 3;
     } else if (opcode === OPCODE.areturn) {
       const returned = pop();
-      if (typeof returned !== "object") throw createUnsupportedError();
-      if ("className" in returned) {
-        if (!returned.value) throw createUnsupportedError();
-        return returned.value;
+      if (typeof returned !== "object" || returned.literal === undefined) {
+        throw createUnsupportedError();
       }
-      return returned;
+      return returned.literal;
     } else {
       throw createUnsupportedError();
     }
@@ -304,35 +298,34 @@ const getReturnedLiteral = (
   throw createUnsupportedError();
 };
 
-export const overrideDefinitions = (
+export const getModuleOverrides = (
   module: Module,
-  bytes: Uint8Array | undefined,
-  isRoot: boolean,
-): { module: Module; overrides: JavaOverride[] } => {
-  if (!bytes) return { module, overrides: [] };
+  bytes: Uint8Array,
+  isVisibleInRoot: (name: string) => boolean,
+): { values: Map<string, Value>; overrides: JavaOverride[] } => {
   const classFile = readClassFile(bytes);
   const arities = new Map(
     module.definitions
-      .filter((definition) => isRoot || !definition.isLocal)
+      .filter((definition) => isVisibleInRoot(definition.name))
       .map((definition) => [
         definition.name,
         definition.kind === "Operator" ? definition.params.length : 0,
       ]),
   );
   const isMatched = (method: JavaMethod) => arities.get(method.name) === method.arity;
-  const definitions = module.definitions.map((definition): Definition => {
-    if (definition.kind !== "Operator") return definition;
-    const method = classFile.methods.find(
-      (candidate) => candidate.name === definition.name && isMatched(candidate),
-    );
-    if (!method) return definition;
-    return {
-      ...definition,
-      body: getReturnedLiteral(method, classFile.pool, module.name, definition.location),
-    };
-  });
+  const values = new Map(
+    module.definitions.flatMap((definition): [string, Value][] => {
+      if (definition.kind !== "Operator") return [];
+      const method = classFile.methods.find(
+        (candidate) => candidate.name === definition.name && isMatched(candidate),
+      );
+      return method
+        ? [[definition.name, getReturnedValue(method, classFile.pool, module.name)]]
+        : [];
+    }),
+  );
   return {
-    module: { ...module, definitions },
+    values,
     overrides: classFile.methods.map((method) => ({
       module: module.name,
       operator: method.name,

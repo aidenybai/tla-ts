@@ -49,6 +49,55 @@ describe("Java module overrides match TLC", () => {
     );
   });
 
+  it.each([
+    [
+      "an extended module's LOCAL INSTANCE",
+      "EXTENDS Mid\nASSUME MidFlag",
+      "assumption-violation",
+      "line 3, col 8 to line 3, col 14 of module Root",
+      false,
+    ],
+    [
+      "a named INSTANCE",
+      "O == INSTANCE Overrides\nASSUME O!Flag",
+      "assumption-violation",
+      "line 3, col 8 to line 3, col 13 of module Root",
+      false,
+    ],
+    [
+      "the root's LOCAL INSTANCE",
+      "LOCAL INSTANCE Overrides\nASSUME Flag",
+      "success",
+      undefined,
+      true,
+    ],
+  ])(
+    "overrides an operator reached through %s only where the root sees its name",
+    async (_name, body, status, assumption, isFlagMatched) => {
+      const modules = new Map([
+        ["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="],
+        ["Mid", "---- MODULE Mid ----\nLOCAL INSTANCE Overrides\nMidFlag == Flag\n===="],
+      ]);
+      const matched: string[] = [];
+      const result = await check({
+        source: `---- MODULE Root ----\n${body}\n====`,
+        config: "",
+        loadModule: (name) => modules.get(name),
+        loadClass,
+        onProgress: (progress) => {
+          if (progress.kind === "java-override" && progress.isMatched) {
+            matched.push(progress.operator);
+          }
+        },
+      });
+      expect([result.status, result.violation?.name, matched]).toEqual([
+        status,
+        assumption,
+        isFlagMatched ? ["Flag"] : [],
+      ]);
+    },
+  );
+
   it("rejects an override whose method computes its value", async () => {
     await expect(
       check({
