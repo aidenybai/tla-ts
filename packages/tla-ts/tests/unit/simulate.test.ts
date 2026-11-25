@@ -641,6 +641,50 @@ const getDiffTraceOutputs = (definitions: string, isDiffTrace: boolean) => {
   return [status, outputs];
 };
 
+it("drops a step under -difftrace whose VIEW keeps the same filter of Nat, where TLC's Simulator#printBehavior fingerprints the filter and crashes", () => {
+  const definitions =
+    "Next == y' = y + 1 /\\ z' = IF y = 0 THEN {m \\in Nat : m > 1} ELSE z\nInv == y < 3\nView == z";
+  expect(getDiffTraceOutputs(definitions, true)).toEqual([
+    12,
+    [
+      "Invariant Inv is violated.",
+      "1: 0",
+      "2: 1",
+      "difftrace requested: Shortened behavior by omitting finite stuttering (2 states), which is an artifact of simulation mode.\n",
+    ],
+  ]);
+});
+
+it("leaves out of each -difftrace state a filter of Nat that the step keeps, as TLC does a finite set, where TLC's StatePrinter crashes on the filter", () => {
+  const printed: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES y, z\nInit == y = 0 /\\ z = 0\nNext == y' = y + 1 /\\ z' = IF y = 0 THEN {m \\in Nat : m > 1} ELSE z\nInv == y < 3\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace: true,
+    onSimulation: (output) => {
+      if (output.kind === "behavior") printed.push(output.printedStates);
+    },
+  });
+  expect([status, printed]).toEqual([
+    12,
+    [
+      [
+        "/\\ y = 0\n/\\ z = 0\n",
+        "/\\ y = 1\n/\\ z = {m \\in Nat : <expression line 5, col 55 to line 5, col 59 of module M> }\n",
+        "/\\ y = 2\n",
+        "/\\ y = 3\n",
+      ],
+    ],
+  ]);
+});
+
 it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Simulator#printBehavior does", () => {
   const definitions = "Next == y' = y + 1 /\\ z' = 1 - z\nInv == y < 4\nView == y \\div 2";
   expect(getDiffTraceOutputs(definitions, true)).toEqual([
@@ -652,6 +696,28 @@ it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Si
       "5: 4",
       "difftrace requested: Shortened behavior by omitting finite stuttering (2 states), which is an artifact of simulation mode.\n",
     ],
+  ]);
+});
+
+it("evaluates the VIEW of both states once per -difftrace comparison, as TLC's Simulator#printBehavior does", () => {
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nInv == x < 2\nView == IF PrintT(<<"view", x>>) THEN x ELSE x\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace: true,
+    onSimulation: () => {},
+    onPrint: (text) => printed.push(text),
+  });
+  expect([status, printed]).toEqual([
+    12,
+    ['<<"view", 1>>', '<<"view", 0>>', '<<"view", 2>>', '<<"view", 1>>'],
   ]);
 });
 
