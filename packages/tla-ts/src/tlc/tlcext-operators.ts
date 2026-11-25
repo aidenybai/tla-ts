@@ -33,6 +33,7 @@ import {
   EMPTY_STATE,
   getNamedRegisters,
   getPossibleCounts,
+  getPossibleTotals,
   NAMED_REGISTER_PREFIX,
   type CheckerRuntime,
 } from "../runtime";
@@ -128,7 +129,8 @@ export const setTlcValue = (
   if (typeof key === "number" && key >= 0) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    runtime.registers.set(key, value);
+    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    else runtime.registers.set(key, value);
     return;
   }
   // Deviation from TLC: TLCGetSet#TLCSet drops the exit, the pause and a named register's write before any checker exists, so each fails here as a numbered register's does.
@@ -150,7 +152,8 @@ export const setTlcValue = (
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    runtime.namedRegisters.set(key, value);
+    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    else runtime.namedRegisters.set(key, value);
     return;
   }
   if (typeof key === "string" && key.startsWith("-D")) {
@@ -441,7 +444,7 @@ export const createPossibleOperators = (
   defineStateOperator("_Counts", 0, () => getPossibleCounts(runtime)),
   defineStateOperator("_CheckName", 1, (args) => {
     const name = String(getValue(args, 0, "_CheckName"));
-    if (runtime.possibleCounts.get(name)) return true;
+    if (getPossibleTotals(runtime).get(name)) return true;
     print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile));
     return false;
   }),

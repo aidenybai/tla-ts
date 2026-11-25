@@ -1,7 +1,8 @@
 import { expect, it } from "vite-plus/test";
 import { formatValue } from "../../src";
+import { printSimulation } from "../../src/cli/tlc-output";
 import { simulate, type SimulationStatistics } from "../../src/simulate";
-import { MESSAGE_LEVEL } from "../../src/tlc/messages";
+import { formatMessage, MESSAGE_LEVEL } from "../../src/tlc/messages";
 
 const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
 
@@ -954,4 +955,293 @@ it("stops simulating about 150 states after an error that -continue can't contin
     true,
   );
   expect(totals).toEqual([76, 153, 77]);
+});
+
+const WORKERS =
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\nPosted == TLCSet(5, 1) /\\ TLCSet("s:k", 2) /\\ PrintT(<<"posted", TLCGet("all"), TLCGet("all:named")>>)\nBig == x > 3\nZero == x = 0\nNever == x = 100\nPossible == PrintT(<<"possible", TLCGet("s:_possible")>>)\nRead == PrintT(<<TLCGet("stats").worker, x, TLCGet("s:_possible")>>) /\\ Next\n====';
+
+const getWorkerLines = (
+  config: string,
+  workers: number,
+  traceCount: bigint,
+  traceDepth: number,
+  isContinued = false,
+) => {
+  const lines: string[] = [];
+  const status = simulate({
+    source: WORKERS,
+    config,
+    seed: 4n,
+    workers,
+    traceDepth,
+    traceCount,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isContinued,
+    onPrint: (text) => lines.push(text),
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return {
+    status,
+    lines: lines.filter((line) => !line.startsWith("Computed ") && !line.startsWith("Finished ")),
+  };
+};
+
+it("simulates num behaviors on each worker and prints the statistics TLC's workers share", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next", 2, 5n, 10);
+  expect([simulated.status, simulated.lines]).toEqual([
+    0,
+    [
+      "Progress: 201 states checked, 10 traces generated (trace length: mean=7, var(x)=13, sd=4)",
+      "The number of states generated: 201\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it.each([
+  [
+    2,
+    [
+      ["<<0, 1, 0>>", "<<0, 1, 2>>", "<<0, 1, 3>>", "<<0, 2, 0>>", "<<0, 2, 2>>", "<<0, 2, 4>>"],
+      ["<<0, 3, 0>>", "<<0, 3, 2>>", "<<0, 3, 4>>"],
+      ["<<1, 1, 0>>", "<<1, 1, 1>>", "<<1, 1, 3>>", "<<1, 2, 0>>", "<<1, 2, 1>>", "<<1, 2, 3>>"],
+      ["<<1, 3, 0>>", "<<1, 3, 1>>", "<<1, 3, 2>>"],
+    ].flat(),
+    "Progress: 37 states checked, 6 traces generated (trace length: mean=1, var(x)=4, sd=2)",
+  ],
+  [
+    3,
+    [
+      ["<<0, 1, 0>>", "<<0, 1, 2>>", "<<0, 1, 3>>", "<<0, 2, 0>>", "<<0, 2, 2>>", "<<0, 2, 4>>"],
+      ["<<0, 3, 0>>", "<<0, 3, 2>>", "<<0, 3, 4>>"],
+      ["<<1, 1, 0>>", "<<1, 1, 1>>", "<<1, 1, 3>>", "<<1, 2, 0>>", "<<1, 2, 1>>", "<<1, 2, 3>>"],
+      ["<<1, 3, 0>>", "<<1, 3, 1>>", "<<1, 3, 2>>"],
+      ["<<2, 1, 0>>", "<<2, 1, 1>>", "<<2, 1, 2>>", "<<2, 2, 0>>", "<<2, 2, 1>>", "<<2, 2, 2>>"],
+      ["<<2, 3, 0>>", "<<2, 3, 1>>", "<<2, 3, 3>>"],
+    ].flat(),
+    "Progress: 55 states checked, 9 traces generated (trace length: mean=1, var(x)=4, sd=2)",
+  ],
+])(
+  "draws the behaviors of each of %i workers from the generator TLC's Simulator seeds for it",
+  (workers, printed, progress) => {
+    const lines = getWorkerLines("INIT Init\nNEXT Shown", workers, 3n, 3).lines;
+    expect([lines.filter((line) => line.startsWith("<<")).sort(), lines.at(-2)]).toEqual([
+      printed,
+      progress,
+    ]);
+  },
+);
+
+it("draws RandomElement from a generator of each worker's own, as TLC's RandomEnumerableValues does per thread", () => {
+  const lines = getWorkerLines("INIT Init\nNEXT Drawn", 2, 2n, 3).lines;
+  expect(lines.filter((line) => line.startsWith("<<")).sort()).toEqual([
+    "<<0, 1, 0>>",
+    "<<0, 1, 2>>",
+    "<<0, 1, 4>>",
+    "<<0, 2, 0>>",
+    "<<0, 2, 2>>",
+    "<<0, 2, 3>>",
+    "<<1, 1, 0>>",
+    "<<1, 1, 2>>",
+    "<<1, 1, 4>>",
+    "<<1, 2, 0>>",
+    "<<1, 2, 2>>",
+    "<<1, 2, 3>>",
+  ]);
+});
+
+it("keeps the registers of each worker, which TLC's Simulator sets from the initial predicate and reads from the first worker", () => {
+  const lines = getWorkerLines("INIT Counting\nNEXT Counted\nPOSTCONDITION Count", 2, 2n, 2).lines;
+  expect(lines.filter((line) => line.startsWith("<<")).sort()).toEqual([
+    '<<"post", 4>>',
+    "<<0, 1>>",
+    "<<0, 2>>",
+    "<<0, 3>>",
+    "<<0, 4>>",
+    "<<1, 1>>",
+    "<<1, 2>>",
+    "<<1, 3>>",
+    "<<1, 4>>",
+  ]);
+});
+
+it.each([
+  [
+    "all",
+    "Counted",
+    "INIT CountingAll\nNEXT Counted\nPOSTCONDITION All",
+    ['<<"init", <<<<0, 0>>>>>>', '<<"all", <<<<4, 4>>>>>>'],
+  ],
+  ["all", "Extra", "INIT Counting\nNEXT Extra\nPOSTCONDITION All", ['<<"all", <<<<0, 0>>>>>>']],
+  [
+    "all:named",
+    "Named",
+    "INIT Counting\nNEXT Named\nPOSTCONDITION AllNamed",
+    ['<<"named", ("s:n" :> <<2, 1>> @@ "s:m" :> <<0, 1>>)>>'],
+  ],
+])(
+  "gives each register of the first worker a value per worker in TLCGet(%j) under NEXT %s, as TLC's Simulator does",
+  (_key, _next, config, printed) => {
+    const simulated = getWorkerLines(config, 2, 2n, 2);
+    expect([simulated.status, simulated.lines.filter((line) => line.startsWith('<<"'))]).toEqual([
+      0,
+      printed,
+    ]);
+  },
+);
+
+it("fails on a register that a worker never set in TLCGet(\"all\"), where TLC's Simulator puts null in the worker's tuple", () => {
+  const simulated = getWorkerLines("INIT Counting\nNEXT Only\nPOSTCONDITION All", 2, 2n, 2);
+  expect([simulated.status, simulated.lines[0].split("\n").at(-1)]).toEqual([
+    10,
+    "TLCGet(2) was undefined.",
+  ]);
+});
+
+it("sets the registers of every worker from a postcondition, as TLC's Simulator does from its own thread", () => {
+  const simulated = getWorkerLines("INIT Counting\nNEXT Next\nPOSTCONDITION Posted", 2, 2n, 2);
+  expect([simulated.status, simulated.lines[0]]).toEqual([
+    0,
+    '<<"posted", (1 :> <<0, 0>> @@ 5 :> <<1, 1>>), ("s:k" :> <<2, 2>>)>>',
+  ]);
+});
+
+it("gives each worker's _POSSIBLE counts in TLCGet(\"all:named\"), each from the counts of the initial states, as TLC's workers keep them", () => {
+  const simulated = getWorkerLines(
+    "INIT Init\nNEXT Next\n_POSSIBLE Big Zero\nPOSTCONDITION AllNamed\nPOSTCONDITION Possible",
+    2,
+    3n,
+    4,
+  );
+  expect([simulated.status, simulated.lines.slice(0, 2)]).toEqual([
+    0,
+    [
+      '<< "named",\n   ("s:_possible" :> <<[Big |-> 13, Zero |-> 1], [Big |-> 12, Zero |-> 1]>>) >>',
+      '<<"possible", [Big |-> 13, Zero |-> 1]>>',
+    ],
+  ]);
+});
+
+it("reads the worker's own _POSSIBLE counts on each worker, as TLC's workers do", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Read\n_POSSIBLE Big Zero", 2, 2n, 3);
+  expect([simulated.status, simulated.lines.slice(0, 12)]).toEqual([
+    0,
+    [
+      "<<0, 0, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 2, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 3, [Big |-> 1, Zero |-> 1]>>",
+      "<<1, 0, [Big |-> 0, Zero |-> 1]>>",
+      "<<1, 1, [Big |-> 0, Zero |-> 1]>>",
+      "<<1, 3, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 0, [Big |-> 3, Zero |-> 1]>>",
+      "<<0, 2, [Big |-> 3, Zero |-> 1]>>",
+      "<<0, 4, [Big |-> 4, Zero |-> 1]>>",
+      "<<1, 0, [Big |-> 2, Zero |-> 1]>>",
+      "<<1, 1, [Big |-> 2, Zero |-> 1]>>",
+      "<<1, 3, [Big |-> 2, Zero |-> 1]>>",
+    ],
+  ]);
+});
+
+it("adds up the _POSSIBLE counts of every worker, counting an initial state's witness once where TLC counts it once per worker", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next\n_POSSIBLE Big Zero Never", 3, 3n, 4);
+  expect([simulated.status, simulated.lines.slice(0, 2)]).toEqual([
+    10,
+    [
+      "[Big |-> 34, Zero |-> 1, Never |-> 0]",
+      "Error: The _POSSIBLE predicate Never at line 26, col 10 to line 26, col 16 of module W was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.",
+    ],
+  ]);
+});
+
+it('counts the behaviors of every worker in TLCGet("config")', () => {
+  const lines = getWorkerLines("INIT Init\nNEXT Next\nINVARIANT Config", 2, 3n, 2).lines;
+  expect(lines[0]).toBe("<<6, 2>>");
+});
+
+it("prints the violations of every worker in turn under -continue", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next\nINVARIANT Inv", 2, 2n, 10, true);
+  const getViolation = (values: number[]) => [
+    "Error: Invariant Inv is violated.",
+    "Error: The behavior up to this point is:",
+    ...values.map((value, index) =>
+      index === 0
+        ? `State 1: <Init line 4, col 9 to line 4, col 13 of module W>\nx = ${value}\n`
+        : `State ${index + 1}: <Next line 5, col 9 to line 5, col 29 of module W>\nx = ${value}\n`,
+    ),
+    "The number of states generated: 36\nSimulation using seed 4 and aril 0",
+  ];
+  expect(simulated.lines).toEqual([
+    ...[
+      [0, 2, 3, 5, 7],
+      [0, 1, 3, 4, 6, 7],
+      [0, 2, 3, 5, 7],
+      [0, 2, 3, 4, 5, 7],
+    ].flatMap(getViolation),
+    "Progress: 36 states checked, 4 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+  ]);
+});
+
+it.each([
+  ["an evaluation error", "NEXT Failing", 255, 105],
+  ["a liveness violation", "NEXT Next\nPROPERTY Live", 13, 111],
+])(
+  "keeps the other worker simulating after %s ends one worker, as TLC's workers do until the Simulator stops them",
+  (_outcome, config, status, states) => {
+    const simulated = getWorkerLines(`INIT Init\n${config}`, 2, 10n, 5);
+    expect([
+      simulated.status,
+      simulated.lines.filter(
+        (line) => line.startsWith("Progress") || line.startsWith("The number of states"),
+      ),
+    ]).toEqual([
+      status,
+      [
+        `The number of states generated: ${states}\nSimulation using seed 4 and aril 0`,
+        `Progress: ${states} states checked, 11 traces generated (trace length: mean=3, var(x)=4, sd=2)`,
+      ],
+    ]);
+  },
+);
+
+it("reports the liveness violation another worker finds after the first worker's error, though the first worker finds more errors", () => {
+  const reported: string[] = [];
+  const status = simulate({
+    source: WORKERS,
+    config: "INIT Init\nNEXT Next\nINVARIANT FirstInv\nPROPERTY Live",
+    seed: 4n,
+    workers: 2,
+    traceDepth: 5,
+    traceCount: 10n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        reported.push(output.message);
+      if (output.kind === "summary") reported.push(`${output.statistics.generatedStates} states`);
+    },
+    onProgress: (progress) => {
+      if (progress.kind === "violation")
+        reported.push(
+          `${progress.violation.name}: ${progress.violation.trace.map((step) => formatValue(step.state.x)).join(" ")}`,
+        );
+    },
+  });
+  expect([status, reported]).toEqual([
+    12,
+    ["Invariant FirstInv is violated.", "91 states", "Live: 0 1 3 4 6 7"],
+  ]);
 });

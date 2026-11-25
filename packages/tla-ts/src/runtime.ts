@@ -22,6 +22,8 @@ export interface CheckerRuntime {
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
+  setSimulationRegister: ((key: number | string, value: Value) => void) | undefined;
+  sumPossibleCounts: (() => Map<string, number>) | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
   readLine: (() => string | undefined) | undefined;
@@ -74,6 +76,8 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
+    setSimulationRegister: undefined,
+    sumPossibleCounts: undefined,
     getRandom: () => {
       if (isStartup) return startupRandom;
       const state = isWorkerStateSet ? workerState : runtime.getCurrentState();
@@ -164,10 +168,21 @@ export const NAMED_REGISTER_PREFIX = "s:";
 
 const POSSIBLE_REGISTER = "s:_possible";
 
-export const getPossibleCounts = (runtime: CheckerRuntime) =>
-  createFunction([...runtime.possibleCounts].map((entry): [Value, Value] => [entry[0], entry[1]]));
+const getCountsFunction = (counts: Map<string, number>) =>
+  createFunction([...counts].map((entry): [Value, Value] => [entry[0], entry[1]]));
 
-export const getNamedRegisters = (runtime: CheckerRuntime): Map<string, Value> =>
-  runtime.possibleCounts.size === 0
-    ? runtime.namedRegisters
-    : new Map([...runtime.namedRegisters, [POSSIBLE_REGISTER, getPossibleCounts(runtime)]]);
+export const getPossibleTotals = (runtime: CheckerRuntime) =>
+  runtime.sumPossibleCounts?.() ?? runtime.possibleCounts;
+
+export const getPossibleCounts = (runtime: CheckerRuntime) =>
+  getCountsFunction(getPossibleTotals(runtime));
+
+export const getNamedRegisters = (
+  worker: Pick<CheckerRuntime, "namedRegisters" | "possibleCounts">,
+): Map<string, Value> =>
+  worker.possibleCounts.size === 0
+    ? worker.namedRegisters
+    : new Map([
+        ...worker.namedRegisters,
+        [POSSIBLE_REGISTER, getCountsFunction(worker.possibleCounts)],
+      ]);

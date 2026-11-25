@@ -50,9 +50,19 @@ import { zeroPad } from "./messages";
 const formatCalendarVersion = (date: Date) =>
   `${date.getUTCFullYear()}.${zeroPad(date.getUTCMonth() + 1)}.${zeroPad(date.getUTCDate())}.${zeroPad(date.getUTCHours())}${zeroPad(date.getUTCMinutes())}${zeroPad(date.getUTCSeconds())}`;
 
-const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
+export const getRegisterFunction = <Key extends Value>(workerRegisters: Map<Key, Value>[]) =>
   createFunction(
-    [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
+    [...workerRegisters[0].keys()].map((key): [Value, Value] => [
+      key,
+      createTuple(
+        workerRegisters.map((registers) => {
+          const value = registers.get(key);
+          // Deviation from TLC: Simulator#getAllValues puts null in the tuple of a worker that never set the first worker's register, which TLC's operators then crash on or compare unequal.
+          if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
+          return value;
+        }),
+      ),
+    ]),
   );
 
 const CHECKER_KEYS = new Set([
@@ -128,9 +138,9 @@ const getRuntimeValue = (
     case "action":
       return createActionRecord(undefined);
     case "all":
-      return getRegisterFunction(runtime.registers);
+      return getRegisterFunction([runtime.registers]);
     case "all:named":
-      return getRegisterFunction(getNamedRegisters(runtime));
+      return getRegisterFunction([getNamedRegisters(runtime)]);
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = state === EMPTY_STATE ? undefined : getNamedRegisters(runtime).get(key);
