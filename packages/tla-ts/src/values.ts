@@ -1204,6 +1204,9 @@ const describeScalarMismatch = (
 
 const getComparisonVerb = (isEquality: boolean) => (isEquality ? "check equality of" : "compare");
 
+const describeOperatorComparison = (isEquality: boolean, left: Value, right: Value) =>
+  `Attempted to ${getComparisonVerb(isEquality)} operator ${prettyPrint(formatValue(left))} with value:\n${prettyPrint(formatValue(right))}`;
+
 const describeFunctionComparison = (isEquality: boolean, left: Value, right: Value) =>
   `Attempted to ${getComparisonVerb(isEquality)} the function ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`;
 
@@ -1375,6 +1378,9 @@ const compareOrEqualLikeTlc = (left: Value, right: Value, isEquality: boolean): 
     if (!isModelValue(right)) return -1;
     if (!isEquality) return left.rank - right.rank;
     return left.name === right.name ? 0 : 1;
+  }
+  if (left.kind === "Operator") {
+    throw createAttemptError(describeOperatorComparison, isEquality, left, right);
   }
   if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right, isEquality);
   return compareSetLikeTlc(left, right, isEquality);
@@ -4178,6 +4184,9 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
+  if (typeof value === "object" && value.kind === "Operator") {
+    return `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of operator ${prettyPrint(formatValue(value))}`;
+  }
   const prefix = `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of the`;
   if (!isFunctionValue(value))
     return `${prefix} ${describeKind(value)} ${prettyPrint(formatValue(value))}`;

@@ -177,6 +177,7 @@ const JAVA_CLASSES: Record<string, string> = {
   LazyFunction: "FcnLambdaValue",
   Union: "UnionValue",
   MixedSet: "SetEnumValue",
+  Operator: "OpLambdaValue",
 };
 
 const SET_OPERATION_CLASSES = {
@@ -195,6 +196,7 @@ const KIND_STRINGS: Record<string, string> = {
   TupleValue: "a tuple",
   FcnLambdaValue: "a function of the form  [x \\in S |-> expr]",
   FcnRcdValue: "a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)",
+  OpLambdaValue: "an operator",
   SetOfFcnsValue: "a set of the form [S -> T]",
   SetOfRcdsValue: "a set of the form [d1 : S1, ... , dN : SN]",
   SetOfTuplesValue: "a cartesian product",

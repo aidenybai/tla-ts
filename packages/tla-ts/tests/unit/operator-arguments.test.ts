@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -8,9 +8,10 @@ import { DIST_CLI } from "./cli-harness";
 
 const DIRECTORY = "operator-arguments";
 
-const runSpec = (args: string[], module = "OperatorArguments") => {
+const runSpec = (args: string[], module = "OperatorArguments", config?: string) => {
   const directory = mkdtempSync(join(tmpdir(), "operator-arguments-"));
   cpSync(join(FIXTURES, DIRECTORY), directory, { recursive: true });
+  if (config !== undefined) writeFileSync(join(directory, `${module}.cfg`), config);
   const result = spawnSync(
     process.execPath,
     [DIST_CLI, `${module}.tla`, "-noGenerateSpecTE", "-fp", "0", ...args],
@@ -197,6 +198,77 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
         "State 4: <I!Step line 7, col 52 to line 7, col 83 of module Outer>",
         '/\\ action = [ name |-> "I!Step",',
       ],
+    ]);
+  });
+});
+
+const BEHAVIOR = "Error: The behavior up to this point is:";
+
+describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaValue is', () => {
+  it.each([
+    [
+      "EqualsNumber",
+      76,
+      ["Attempted to check equality of operator <Operator Inc> with value:", "1"],
+    ],
+    [
+      "EqualsItself",
+      76,
+      ["Attempted to check equality of operator <Operator Inc> with value:", "<Operator Inc>"],
+    ],
+    [
+      "Compares",
+      76,
+      ["Attempted to compare operator <Operator Inc> with value:", "<Operator Inc>"],
+    ],
+    [
+      "HasMember",
+      76,
+      ["Attempted to check if the value:", "1", "is an element of operator <Operator Inc>"],
+    ],
+    [
+      "Applies",
+      76,
+      [
+        "A non-function (an operator) was applied as a function.",
+        "line 14, col 21 to line 14, col 25 of module OperatorValues",
+      ],
+    ],
+    [
+      "HasDomain",
+      76,
+      [
+        "Attempted to apply the operator DOMAIN to a non-function",
+        "(an operator)",
+        "line 15, col 23 to line 15, col 31 of module OperatorValues",
+      ],
+    ],
+  ])("fails %s in -simulate with TLC's message", (invariant, status, message) => {
+    const run = runSpec(
+      ["-simulate", "num=1", "-depth", "4", "-seed", "1"],
+      "OperatorValues",
+      `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`,
+    );
+    const start = run.lines.findIndex((line) => line.startsWith("Error: Evaluating invariant"));
+    expect([run.status, run.lines.slice(start, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
+      status,
+      [`Error: Evaluating invariant ${invariant} failed.`, ...message, BEHAVIOR],
+    ]);
+  });
+
+  it.each([
+    ["Prints", ["<Operator Inc>", "<Operator Inc>", "<Operator Inc>"]],
+    ["Shows", []],
+  ])("prints the operator in %s as TLC does", (invariant, printed) => {
+    const run = runSpec(
+      ["-simulate", "num=1", "-depth", "4", "-seed", "1"],
+      "OperatorValues",
+      `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`,
+    );
+    const start = run.lines.findIndex((line) => line.startsWith("Finished computing initial"));
+    expect([run.status, run.lines.slice(start + 1, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
+      11,
+      [...printed, "Error: Deadlock reached.", BEHAVIOR],
     ]);
   });
 });
