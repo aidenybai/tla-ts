@@ -958,7 +958,7 @@ it("stops simulating about 150 states after an error that -continue can't contin
 });
 
 const WORKERS =
-  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\nPosted == TLCSet(5, 1) /\\ TLCSet("s:k", 2) /\\ PrintT(<<"posted", TLCGet("all"), TLCGet("all:named")>>)\n====';
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\nPosted == TLCSet(5, 1) /\\ TLCSet("s:k", 2) /\\ PrintT(<<"posted", TLCGet("all"), TLCGet("all:named")>>)\nBig == x > 3\nZero == x = 0\nNever == x = 100\nPossible == PrintT(<<"possible", TLCGet("s:_possible")>>)\nRead == PrintT(<<TLCGet("stats").worker, x, TLCGet("s:_possible")>>) /\\ Next\n====';
 
 const getWorkerLines = (
   config: string,
@@ -1115,6 +1115,54 @@ it("sets the registers of every worker from a postcondition, as TLC's Simulator 
   expect([simulated.status, simulated.lines[0]]).toEqual([
     0,
     '<<"posted", (1 :> <<0, 0>> @@ 5 :> <<1, 1>>), ("s:k" :> <<2, 2>>)>>',
+  ]);
+});
+
+it("gives each worker's _POSSIBLE counts in TLCGet(\"all:named\"), each from the counts of the initial states, as TLC's workers keep them", () => {
+  const simulated = getWorkerLines(
+    "INIT Init\nNEXT Next\n_POSSIBLE Big Zero\nPOSTCONDITION AllNamed\nPOSTCONDITION Possible",
+    2,
+    3n,
+    4,
+  );
+  expect([simulated.status, simulated.lines.slice(0, 2)]).toEqual([
+    0,
+    [
+      '<< "named",\n   ("s:_possible" :> <<[Big |-> 13, Zero |-> 1], [Big |-> 12, Zero |-> 1]>>) >>',
+      '<<"possible", [Big |-> 13, Zero |-> 1]>>',
+    ],
+  ]);
+});
+
+it("reads the worker's own _POSSIBLE counts on each worker, as TLC's workers do", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Read\n_POSSIBLE Big Zero", 2, 2n, 3);
+  expect([simulated.status, simulated.lines.slice(0, 12)]).toEqual([
+    0,
+    [
+      "<<0, 0, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 2, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 3, [Big |-> 1, Zero |-> 1]>>",
+      "<<1, 0, [Big |-> 0, Zero |-> 1]>>",
+      "<<1, 1, [Big |-> 0, Zero |-> 1]>>",
+      "<<1, 3, [Big |-> 0, Zero |-> 1]>>",
+      "<<0, 0, [Big |-> 3, Zero |-> 1]>>",
+      "<<0, 2, [Big |-> 3, Zero |-> 1]>>",
+      "<<0, 4, [Big |-> 4, Zero |-> 1]>>",
+      "<<1, 0, [Big |-> 2, Zero |-> 1]>>",
+      "<<1, 1, [Big |-> 2, Zero |-> 1]>>",
+      "<<1, 3, [Big |-> 2, Zero |-> 1]>>",
+    ],
+  ]);
+});
+
+it("adds up the _POSSIBLE counts of every worker, counting an initial state's witness once where TLC counts it once per worker", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next\n_POSSIBLE Big Zero Never", 3, 3n, 4);
+  expect([simulated.status, simulated.lines.slice(0, 2)]).toEqual([
+    10,
+    [
+      "[Big |-> 34, Zero |-> 1, Never |-> 0]",
+      "Error: The _POSSIBLE predicate Never at line 26, col 10 to line 26, col 16 of module W was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.",
+    ],
   ]);
 });
 

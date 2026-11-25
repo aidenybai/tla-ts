@@ -94,7 +94,7 @@ import {
   getSubstitutedName,
   substitutionFrames,
 } from "./instances";
-import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { getPossibleCounts, getPossibleTotals, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
   getSpecDescription,
@@ -1540,7 +1540,8 @@ export const createSearch = (
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
   const findUnwitnessedPossible = () => {
-    const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
+    const totals = getPossibleTotals(runtime);
+    const unwitnessed = possible.find((item) => !totals.get(item.name));
     if (!unwitnessed) return undefined;
     const range = getBodyRange(getRootKey(unwitnessed.name, environment), environment);
     const location = range ? ` at ${formatRange(range)}` : "";

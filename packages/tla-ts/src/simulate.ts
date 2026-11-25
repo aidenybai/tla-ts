@@ -19,6 +19,7 @@ import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
 import { getHashMapOrder, getJavaHashCode } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
+import { getNamedRegisters } from "./runtime";
 import {
   addActionCoverage,
   createOutputCapture,
@@ -345,6 +346,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   // TLC's Simulator sets a register of every worker and reads the first worker's.
   const registers = workers.map(() => runtime.registers);
   const namedRegisters = workers.map(() => runtime.namedRegisters);
+  const possibleCounts = workers.map(() => runtime.possibleCounts);
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
@@ -362,7 +364,16 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       case "all":
         return workers.length > 1 ? getRegisterFunction(registers) : undefined;
       case "all:named":
-        return workers.length > 1 ? getRegisterFunction(namedRegisters) : undefined;
+        return workers.length > 1
+          ? getRegisterFunction(
+              workers.map((other) =>
+                getNamedRegisters({
+                  namedRegisters: namedRegisters[other.id],
+                  possibleCounts: possibleCounts[other.id],
+                }),
+              ),
+            )
+          : undefined;
       case "config":
         return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
@@ -917,7 +928,19 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   for (let index = 1; index < workers.length; index++) {
     registers[index] = new Map(registers[0]);
     namedRegisters[index] = new Map(namedRegisters[0]);
+    possibleCounts[index] = new Map(possibleCounts[0]);
   }
+  const initialCounts = new Map(possibleCounts[0]);
+  runtime.sumPossibleCounts = () => {
+    const totals = new Map(possibleCounts[0]);
+    for (let index = 1; index < workers.length; index++) {
+      for (const [name, count] of possibleCounts[index]) {
+        // Deviation from TLC: _Possible#counts adds the Simulator's counts of the initial states once per worker, as each worker starts from a copy.
+        totals.set(name, (totals.get(name) ?? 0) + count - (initialCounts.get(name) ?? 0));
+      }
+    }
+    return totals;
+  };
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;
@@ -933,6 +956,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     runtime.getRandom = worker.getRandom;
     runtime.registers = registers[worker.id];
     runtime.namedRegisters = namedRegisters[worker.id];
+    runtime.possibleCounts = possibleCounts[worker.id];
     if (generator) generator.random = worker.random;
     const outcome = (() => {
       try {
@@ -965,6 +989,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   runtime.getRandom = getSimulatorRandom;
   runtime.registers = registers[0];
   runtime.namedRegisters = namedRegisters[0];
+  runtime.possibleCounts = possibleCounts[0];
   runtime.setSimulationRegister = (key, value) => {
     for (let index = 0; index < workers.length; index++) {
       if (typeof key === "number") registers[index].set(key, value);

@@ -33,6 +33,7 @@ import {
   EMPTY_STATE,
   getNamedRegisters,
   getPossibleCounts,
+  getPossibleTotals,
   NAMED_REGISTER_PREFIX,
   type CheckerRuntime,
 } from "../runtime";
@@ -443,7 +444,7 @@ export const createPossibleOperators = (
   defineStateOperator("_Counts", 0, () => getPossibleCounts(runtime)),
   defineStateOperator("_CheckName", 1, (args) => {
     const name = String(getValue(args, 0, "_CheckName"));
-    if (runtime.possibleCounts.get(name)) return true;
+    if (getPossibleTotals(runtime).get(name)) return true;
     print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile));
     return false;
   }),
