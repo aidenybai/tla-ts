@@ -244,12 +244,18 @@ export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
 // A page of ESCore's heap that CanonicalStateOf made, with the nodes that each of its records refers
-// to (see escore-canonical.ts), whose hidden class no other function shares.
+// to and where each record holds them (see escore-canonical.ts), whose hidden class no other
+// function shares.
 export interface CanonicalPage extends FunctionValue {
   edges: Int32Array;
+  locations: (number[] | undefined)[];
 }
 
-export const createCanonicalPage = (records: Value[], edges: Int32Array): CanonicalPage => ({
+export const createCanonicalPage = (
+  records: Value[],
+  edges: Int32Array,
+  locations: (number[] | undefined)[],
+): CanonicalPage => ({
   kind: "Function",
   domain: getIntervalDomain(records.length),
   range: records,
@@ -259,6 +265,7 @@ export const createCanonicalPage = (records: Value[], edges: Int32Array): Canoni
   functionClass: "tuple",
   flags: VALUE_CANONICAL,
   edges,
+  locations,
 });
 
 export const isCanonicalPage = (value: Value): value is CanonicalPage =>
@@ -4525,6 +4532,16 @@ const findKeyIndexLikeTlc = (
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
   return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
+};
+
+// The position of the key in a function's domain whose value applying the function to argument
+// gives.
+export const getKeyPosition = (functionValue: FunctionValue, argument: Value) => {
+  const position = findKeyIndexLikeTlc(functionValue, argument, describeMissingArgument);
+  if (position === -1) {
+    throw new TlaEvaluationError(describeMissingArgument(functionValue, argument));
+  }
+  return position;
 };
 
 const describeBoundArgument = (
