@@ -809,11 +809,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (number === 0) throw new TlaEvaluationError("A reference to a dropped node");
     return number;
   };
-  const renameValue = (value: Value): Value => {
-    if (getString(value, "type") !== "object") return value;
-    const id = getNumber(value, "id");
-    if (id <= realm.objects) return value;
-    const number = getNew(id);
+  const renameRef = (value: Value, id: number, number: number) => {
     if (!isPlainOf(value, "record") || value.domain.length !== 2) {
       return createRecord([
         ["type", "object"],
@@ -824,6 +820,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const range = value.range.slice();
     range[findFieldIndex(value.domain, "id")] = number;
     return createChangedFunction(value, range);
+  };
+  const renameValue = (value: Value): Value => {
+    if (getString(value, "type") !== "object") return value;
+    const id = getNumber(value, "id");
+    return id <= realm.objects ? value : renameRef(value, id, getNew(id));
   };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
@@ -1062,7 +1063,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const range = openRanges[open];
       const position = located[at + 2 + depth] >> 1;
       range[position] =
-        target > 0 ? renameValue(range[position]) : renameEnvironment(range[position]);
+        target > 0 ? renameRef(range[position], target, getNew(target)) : getNew(target);
     }
     for (; open > 0; open--) closeLevel(open);
     return createChangedFunction(root, openRanges[0]);
