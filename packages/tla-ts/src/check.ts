@@ -59,6 +59,7 @@ import {
   createLivenessChecker,
   type Lasso,
   type LivenessChecker,
+  type PeriodicGraph,
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
@@ -404,6 +405,13 @@ export const PERIODIC_START = 3000;
 export const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
+
+interface PeriodicWork {
+  at: number;
+  checkedCounts: number[];
+  runtimeRatio: number;
+  coverageCount: number;
+}
 
 const searchStates = (
   options: CheckOptions & CliSettings,
@@ -1343,8 +1351,52 @@ const searchStates = (
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
+  const createPeriodicWork = (): PeriodicWork => ({
+    at: performance.now() + PERIODIC_START,
+    checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
+    runtimeRatio: 0,
+    coverageCount: Math.trunc(options.coverage ?? 0),
+  });
+  const getGraphStates = (checker: PeriodicGraph) =>
+    checker.getStateCounts().reduce((sum, count) => sum + count, 0);
+  const updateRuntimeRatio = (periodic: PeriodicWork, delta: number) => {
+    const totalRuntime = performance.now() - startedAt - PROGRESS_INTERVAL - delta;
+    const livenessRuntime = Math.max(totalRuntime * periodic.runtimeRatio, 0);
+    periodic.runtimeRatio = (delta + livenessRuntime) / (totalRuntime + PROGRESS_INTERVAL + delta);
+  };
+  const findPeriodicViolation = (periodic: PeriodicWork, checker: PeriodicGraph) => {
+    const counts = checker.getStateCounts();
+    const isGrown = counts.some(
+      (count, branch) =>
+        (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
+    );
+    if (periodic.runtimeRatio > LIVENESS_RATIO || (!isGrown && config.periodic === undefined)) {
+      updateRuntimeRatio(periodic, 0);
+      return undefined;
+    }
+    // Here TLC checks below 0.2 and updates above it, so a ratio of exactly 0.2 stays.
+    if (periodic.runtimeRatio === LIVENESS_RATIO) return undefined;
+    const checkedAt = performance.now();
+    if (isGrown) {
+      periodic.checkedCounts = counts;
+      options.onProgress?.({
+        kind: "liveness-started",
+        branches: checker.branches,
+        isComplete: false,
+        states: getGraphStates(checker),
+        statistics: createResult("success"),
+      });
+      const lasso = checker.findViolation();
+      if (lasso) return lasso;
+      options.onProgress?.({ kind: "liveness-finished" });
+    }
+    updateRuntimeRatio(periodic, performance.now() - checkedAt);
+    return undefined;
+  };
   let isTypedInitialReported = false;
-  let typedProgressAt = Infinity;
+  let typedPeriodic: PeriodicWork | undefined;
+  let typedGraph: PeriodicGraph | undefined;
   const typedChecks =
     !isTypedTierSkipped &&
     !options.isContinued &&
@@ -1363,21 +1415,21 @@ const searchStates = (
       isDeadlockChecked: config.checkDeadlock,
       isFingerprinted: !options.isFingerprintDistanceSkipped,
       livenessCheck: options.livenessCheck ?? "default",
-      reportInitialStates: (initialStates) => {
+      reportInitialStates: (initialStates, graph) => {
+        typedGraph = graph;
         if (isTypedInitialReported) return;
         isTypedInitialReported = true;
         for (let count = 2; count < initialStates.generated; count *= 2) {
           reportInitialStatesProgress(count, options.onProgress);
         }
         options.onProgress?.({ kind: "initial-states-computed", initialStates });
-        typedProgressAt = performance.now() + PERIODIC_START;
+        typedPeriodic = createPeriodicWork();
       },
       reportProgress:
         options.onProgress &&
         ((generatedStates, distinctStates, queuedStates, depth) => {
-          const now = performance.now();
-          if (now < typedProgressAt) return;
-          typedProgressAt = now + PROGRESS_INTERVAL;
+          if (typedPeriodic === undefined || performance.now() < typedPeriodic.at) return;
+          if (isPeriodic && typedGraph) findPeriodicViolation(typedPeriodic, typedGraph);
           options.onProgress?.({
             kind: "progress",
             statistics: {
@@ -1388,6 +1440,7 @@ const searchStates = (
               coverage: undefined,
             },
           });
+          typedPeriodic.at = performance.now() + PROGRESS_INTERVAL;
         }),
     });
   const parallel = typed === undefined ? checkInParallel?.(search, getDescription()) : undefined;
@@ -1928,51 +1981,9 @@ const searchStates = (
             : createActionRecord(back?.action),
     );
   };
-  const isPeriodic = liveness !== undefined && (options.livenessCheck ?? "default") === "default";
   const hasPeriodicWork =
     isPeriodic || config.periodic !== undefined || options.onProgress !== undefined;
-  const periodic = {
-    at: performance.now() + PERIODIC_START,
-    checkedCounts: liveness?.getStateCounts().map(() => 1) ?? [],
-    runtimeRatio: 0,
-    coverageCount: Math.trunc(options.coverage ?? 0),
-  };
-  const getGraphStates = (checker: LivenessChecker) =>
-    checker.getStateCounts().reduce((sum, count) => sum + count, 0);
-  const updateRuntimeRatio = (delta: number) => {
-    const totalRuntime = performance.now() - startedAt - PROGRESS_INTERVAL - delta;
-    const livenessRuntime = Math.max(totalRuntime * periodic.runtimeRatio, 0);
-    periodic.runtimeRatio = (delta + livenessRuntime) / (totalRuntime + PROGRESS_INTERVAL + delta);
-  };
-  const findPeriodicViolation = (checker: LivenessChecker) => {
-    const counts = checker.getStateCounts();
-    const isGrown = counts.some(
-      (count, branch) =>
-        (count - periodic.checkedCounts[branch]) / periodic.checkedCounts[branch] > LIVENESS_GROWTH,
-    );
-    if (periodic.runtimeRatio > LIVENESS_RATIO || (!isGrown && config.periodic === undefined)) {
-      updateRuntimeRatio(0);
-      return undefined;
-    }
-    // Here TLC checks below 0.2 and updates above it, so a ratio of exactly 0.2 stays.
-    if (periodic.runtimeRatio === LIVENESS_RATIO) return undefined;
-    const checkedAt = performance.now();
-    if (isGrown) {
-      periodic.checkedCounts = counts;
-      options.onProgress?.({
-        kind: "liveness-started",
-        branches: checker.branches,
-        isComplete: false,
-        states: getGraphStates(checker),
-        statistics: createResult("success"),
-      });
-      const lasso = checker.findViolation();
-      if (lasso) return lasso;
-      options.onProgress?.({ kind: "liveness-finished" });
-    }
-    updateRuntimeRatio(performance.now() - checkedAt);
-    return undefined;
-  };
+  const periodic = createPeriodicWork();
   const findPeriodicResult = (name: string) => {
     try {
       if (!search.findFalsePeriodic()) return undefined;
@@ -2125,7 +2136,7 @@ const searchStates = (
     newStateCount = 0;
     if (hasPeriodicWork && performance.now() >= periodic.at) {
       runtime.setEveryWorkerRegister = setEveryWorkerRegister;
-      const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
+      const lasso = isPeriodic && liveness ? findPeriodicViolation(periodic, liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const periodicResult =
         config.periodic === undefined ? undefined : findPeriodicResult(config.periodic);

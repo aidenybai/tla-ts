@@ -53,6 +53,11 @@ export interface LivenessChecker {
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
 
+export interface PeriodicGraph extends Pick<
+  LivenessChecker,
+  "branches" | "getStateCounts" | "findViolation"
+> {}
+
 export interface TraceViolation extends TraceLasso {
   properties: string[];
   failures: TlaEvaluationError[];

@@ -22,6 +22,7 @@ import {
   type Lasso,
   type LiveAtom,
   type LiveSuccessor,
+  type PeriodicGraph,
 } from "./liveness-checker";
 import { permuteValue, type Images } from "./symmetry";
 import type { Solution } from "./tableau";
@@ -241,7 +242,10 @@ export interface TypedCheck {
   // When the interpreter looks for a violation of a temporal property: as it searches too, only at
   // the end, or never.
   livenessCheck: "default" | "final" | "off";
-  reportInitialStates: (initialStates: TypedResult["initialStates"]) => void;
+  reportInitialStates: (
+    initialStates: TypedResult["initialStates"],
+    graph: PeriodicGraph | undefined,
+  ) => void;
   reportProgress:
     | ((generated: number, distinct: number, queued: number, depth: number) => void)
     | undefined;
@@ -6680,7 +6684,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     initialStarts.data = new Int32Array(0);
   }
   const initialStates = { generated: statistics.generated, distinct: statistics.distinct };
-  check.reportInitialStates(initialStates);
+  check.reportInitialStates(
+    initialStates,
+    live && {
+      branches: live.branches,
+      getStateCounts: live.getStateCounts,
+      findViolation: () => (live.findViolation() ? deopt() : undefined),
+    },
+  );
   const level = { depth: 1, end: statistics.distinct };
   const expansion = { successors: 0, newStates: 0 };
   const liveSuccessors: LiveSuccessor<Plain[]>[] = [];
