@@ -1043,7 +1043,9 @@ const searchStates = (
   ) => {
     const depth = parent === -1 ? 1 : depths[parent] + 1;
     states.push(state);
-    fingerprintStates.push(fingerprintState);
+    fingerprintStates.push(
+      fingerprintState === state ? state : canonicalizeState(fingerprintState),
+    );
     parents.push(parent);
     actions.push(action);
     depths.push(depth);
