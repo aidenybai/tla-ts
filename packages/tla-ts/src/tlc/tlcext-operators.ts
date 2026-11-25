@@ -9,7 +9,6 @@ import {
 } from "../builtins";
 import {
   formatRange,
-  getUnexpectedException,
   TlaEndOfInputError,
   TlaEvaluationError,
   TlaModuleError,
@@ -118,17 +117,22 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
+const createBeforeCheckerError = (key: Value) =>
+  new TlaModuleError(
+    `TLCSet can't set ${prettyPrint(formatValue(key))} before model checking starts.`,
+  );
+
 export const setTlcValue = (
   runtime: CheckerRuntime,
   key: Value,
   value: Value,
   state: (Value | undefined)[] | undefined,
 ) => {
-  // TLC splits Next and evaluates constant definitions before its checker exists, so TLCSet there throws on a numbered register.
-  const isSplit = state === EMPTY_STATE;
+  // TLC splits Next, evaluates constant definitions and builds the liveness tableau before its checker exists.
+  const isBeforeChecker = state === EMPTY_STATE;
   if (typeof key === "number" && key >= 0) {
-    if (isSplit)
-      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+    // Deviation from TLC: TLCGetSet#TLCSet throws a NullPointerException on a numbered register before any checker exists.
+    if (isBeforeChecker) throw createBeforeCheckerError(key);
     if (runtime.setEveryWorkerRegister) runtime.setEveryWorkerRegister(key, value);
     else runtime.registers.set(key, value);
     return;
@@ -136,22 +140,19 @@ export const setTlcValue = (
   // Deviation from TLC: TLCGetSet#TLCSet drops the exit, the pause and a named register's write before any checker exists, so each fails here as a numbered register's does.
   if (key === "exit") {
     if (value !== true) return;
-    if (isSplit)
-      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+    if (isBeforeChecker) throw createBeforeCheckerError(key);
     runtime.isStopped = true;
     return;
   }
   if (key === "pause") {
     if (value !== true || !runtime.pause) return;
-    if (isSplit)
-      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+    if (isBeforeChecker) throw createBeforeCheckerError(key);
     runtime.printPrompt("Press enter to resume model checking.");
     runtime.pause();
     return;
   }
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
-    if (isSplit)
-      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
+    if (isBeforeChecker) throw createBeforeCheckerError(key);
     if (runtime.setEveryWorkerRegister) runtime.setEveryWorkerRegister(key, value);
     else runtime.namedRegisters.set(key, value);
     return;

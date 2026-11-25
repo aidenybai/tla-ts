@@ -55,6 +55,7 @@ import {
   withBoundFrames,
 } from "./instances";
 import { getArity, getKeyName } from "./resolve";
+import { EMPTY_STATE } from "./runtime";
 import {
   ACTION_LEVEL,
   CONSTANT_LEVEL,
@@ -169,7 +170,7 @@ const JUNCTIONS = new Map<string, "And" | "Or">([
 const getConstantContext = (environment: Environment, scope: Scope | undefined): Context => ({
   environment,
   scope,
-  state: undefined,
+  state: EMPTY_STATE,
   next: undefined,
 });
 
