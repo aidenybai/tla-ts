@@ -1101,35 +1101,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (!isEveryPositionKept) walkedLocations.set(node, undefined);
     return renamed;
   };
-  const changedSet = new Set(changed);
-  const objectSources: (Value | undefined)[] = [];
-  const objects = [
-    ...Array.from({ length: realm.objects }, (_, index) => {
-      const record = getObject(index + 1);
-      if (!changedSet.has(index + 1)) {
-        objectSources.push(undefined);
-        return record;
-      }
-      return rename(index + 1, record, renameObject, objectSources);
-    }),
-    ...order
-      .filter((node) => node > 0)
-      .map((node) => rename(node, getObject(node), renameObject, objectSources)),
-  ];
-  const environmentSources: (Value | undefined)[] = [];
-  const environments = [
-    ...Array.from({ length: realm.environments }, (_, index) =>
-      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord, environmentSources),
-    ),
-    ...order
-      .filter((node) => node < 0)
-      .map((node) =>
-        rename(node, getEnvironment(-node), renameEnvironmentRecord, environmentSources),
-      ),
-  ];
-  // The node that each new number names, in each heap.
-  const objectNodes = new Int32Array(objects.length + 1);
-  const environmentNodes = new Int32Array(environments.length + 1);
+  // The node that each new number names, in each heap, where a realm's object that no step changed
+  // names none.
+  const objectNodes = new Int32Array(realm.objects + objectCount + 1);
+  const environmentNodes = new Int32Array(realm.environments + environmentCount + 1);
   for (let environment = 1; environment <= realm.environments; environment++) {
     environmentNodes[environment] = -environment;
   }
@@ -1137,6 +1112,25 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   for (const node of order) {
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
+  }
+  const objectSources: (Value | undefined)[] = [];
+  const objects: Value[] = [];
+  for (let number = 1; number < objectNodes.length; number++) {
+    const node = objectNodes[number];
+    if (node === 0) {
+      objectSources.push(undefined);
+      objects.push(getObject(number));
+      continue;
+    }
+    objects.push(rename(node, getObject(node), renameObject, objectSources));
+  }
+  const environmentSources: (Value | undefined)[] = [];
+  const environments: Value[] = [];
+  for (let number = 1; number < environmentNodes.length; number++) {
+    const node = environmentNodes[number];
+    environments.push(
+      rename(node, getEnvironment(-node), renameEnvironmentRecord, environmentSources),
+    );
   }
   const getPageMaker =
     (nodes: Int32Array, sources: (Value | undefined)[]) => (records: Value[], page: number) => {
