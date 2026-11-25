@@ -44,18 +44,23 @@ export const getSourceString = (text: string) => {
   return { value, patches };
 };
 
-// A file's units that its source string holds as "?", as a function from position to unit, joined
-// in halves so that building it takes n log n rather than n^2 steps.
+// Items joined in halves, so that building the union of n functions takes n log n rather than n^2
+// steps.
+export const joinInHalves = <Item>(items: Item[], join: (left: Item, right: Item) => Item): Item =>
+  items.length === 1
+    ? items[0]
+    : join(
+        joinInHalves(items.slice(0, items.length >> 1), join),
+        joinInHalves(items.slice(items.length >> 1), join),
+      );
+
+// A file's units that its source string holds as "?", as a function from position to unit.
 export const getPatches = (patches: number[][]): Expression =>
   patches.length === 0
     ? tuple([])
-    : parenthesized(
-        patches.length === 1
-          ? apply(":>", [num(patches[0][0]), num(patches[0][1])])
-          : apply("@@", [
-              getPatches(patches.slice(0, patches.length >> 1)),
-              getPatches(patches.slice(patches.length >> 1)),
-            ]),
+    : joinInHalves(
+        patches.map((patch) => parenthesized(apply(":>", [num(patch[0]), num(patch[1])]))),
+        (left, right) => parenthesized(apply("@@", [left, right])),
       );
 
 // A text's code units as TLA+: those of its source string, with each unit that the string holds as

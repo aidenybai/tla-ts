@@ -1,5 +1,5 @@
 import { TlaError } from "../../errors";
-import { CHARACTERS } from "./units";
+import { CHARACTERS, joinInHalves } from "./units";
 import type { GeneratedDefinition, Library } from "./library";
 import type { HostRealm } from "./realm";
 import { CALENDAR_TABLES } from "../calendars";
@@ -2240,7 +2240,10 @@ export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) 
       : `[found |-> "error", error |-> "${format.error}"]`;
   return entries.length === 0
     ? `HostDateFormat(key) == [found |-> "unknown"]`
-    : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
+    : `HostDateFormat(key) ==\n  LET table == ${joinInHalves(
+        entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`),
+        (left, right) => `(${left}\n    @@ ${right})`,
+      )}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
 // The program's HostCalendarYear and HostCalendarMonthDay: the recorded tables (calendars.ts) of

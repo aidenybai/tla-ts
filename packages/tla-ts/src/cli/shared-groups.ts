@@ -60,7 +60,7 @@ const checkGroup = (argv: string[], group: SharedGroup) =>
     let report: GroupReport | undefined;
     new Worker(new URL("./cli.js", import.meta.url), {
       argv,
-      workerData: { sharedGroup: group },
+      workerData: { ...workerData, sharedGroup: group },
       resourceLimits: {
         stackSizeMb: CHECK_STACK_MB,
         maxOldGenerationSizeMb: resourceLimits.maxOldGenerationSizeMb,

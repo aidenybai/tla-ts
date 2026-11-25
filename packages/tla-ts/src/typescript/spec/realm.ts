@@ -199,8 +199,13 @@ export const recordHostRealm = (library: Library): HostRealm => {
     "__filename",
     "__dirname",
   ]);
-  const getHostOnlyGlobals = (host: object) =>
-    [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realmGlobals.has(name));
+  const getHostOnlyGlobals = (names: string[]) =>
+    [...names, ...HOST_TIMERS].filter((name) => !realmGlobals.has(name));
+  // A Node worker lists the globals V8 adds behind flags, such as WebAssembly, before Node's own.
+  const mainGlobals: unknown = Reflect.get(
+    Object(process.getBuiltinModule("node:worker_threads").workerData),
+    "mainGlobals",
+  );
   const known = new Set(
     [...library.definitions.values()].flatMap((definition) =>
       [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
@@ -245,8 +250,10 @@ export const recordHostRealm = (library: Library): HostRealm => {
   };
   const defaults = new Intl.DateTimeFormat().resolvedOptions();
   return {
-    scriptGlobals: getHostOnlyGlobals(scriptGlobal),
-    moduleGlobals: getHostOnlyGlobals(globalThis).map((name) => ({
+    scriptGlobals: getHostOnlyGlobals(Object.getOwnPropertyNames(scriptGlobal)),
+    moduleGlobals: getHostOnlyGlobals(
+      Array.isArray(mainGlobals) ? mainGlobals : Object.getOwnPropertyNames(globalThis),
+    ).map((name) => ({
       name,
       // Node warns where code reads localStorage without --localstorage-file, so tla-ts reads
       // only its descriptor, and a program that reads it stops.

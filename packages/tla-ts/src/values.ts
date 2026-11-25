@@ -50,7 +50,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
-  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL and
+  // VALUE_KEYS_ORDERLESS bits.
   flags: number;
 }
 
@@ -231,6 +232,8 @@ const VALUE_DEEPLY_NORMALIZED = 8;
 // A record of ESCore's heap that CanonicalStateOf made, which it keeps as it is where its
 // numbering leaves the record and what it refers to where they are (see escore-canonical.ts).
 const VALUE_CANONICAL = 16;
+// A function each key of whose domain isOrderless, which a key stays once it is.
+const VALUE_KEYS_ORDERLESS = 32;
 
 export const markCanonical = (value: FunctionValue) => {
   value.flags |= VALUE_CANONICAL;
@@ -883,10 +886,16 @@ export const markFingerprinted = (value: Value): void => {
     value.flags = flags | VALUE_FINGERPRINTED;
   }
   if (value.kind === "Function") {
-    value.domain.forEach(markFingerprinted);
-    value.range.forEach(markFingerprinted);
+    for (let index = 0; index < value.domain.length; index++) {
+      markFingerprinted(value.domain[index]);
+    }
+    for (let index = 0; index < value.range.length; index++) {
+      markFingerprinted(value.range[index]);
+    }
   } else if (value.kind === "Set" || value.kind === "MixedSet") {
-    value.elements.forEach(markFingerprinted);
+    for (let index = 0; index < value.elements.length; index++) {
+      markFingerprinted(value.elements[index]);
+    }
   } else if (isSetValue(value) && isEnumerable(value)) {
     cacheSet(value);
     toFiniteSet(value).elements.forEach(markFingerprinted);
@@ -1599,14 +1608,25 @@ export const createFunction = (pairs: [Value, Value][]): FunctionValue => {
 };
 
 // A key that holds no written order, so comparing it forgets none: TLC compares such keys without
-// anything observable but the result.
+// anything observable but the result. An untyped model value compares with any other value but a
+// function's key without failing.
 const isOrderless = (value: Value): boolean =>
   typeof value !== "object" ||
+  (value.kind === "ModelValue" && value.type === undefined) ||
   (value.kind === "Function" &&
     ((value.flags & VALUE_SELF_COMPARED) !== 0 ||
       (value.writtenKeys === undefined &&
-        value.domain.every(isOrderless) &&
+        value.domain.every(isOrderlessKey) &&
         value.range.every(isOrderless))));
+
+const isOrderlessKey = (key: Value) => !isModelValue(key) && isOrderless(key);
+
+const hasOrderlessKeys = (functionValue: FunctionValue) => {
+  if ((functionValue.flags & VALUE_KEYS_ORDERLESS) !== 0) return true;
+  if (!functionValue.domain.every(isOrderless)) return false;
+  functionValue.flags |= VALUE_KEYS_ORDERLESS;
+  return true;
+};
 
 // The keys and values of two sorted domains, merged by searching the longer for each key of the
 // shorter, or undefined where two keys compare equal.
@@ -1666,6 +1686,7 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
     return createWrittenFunction([...leftPairs, ...addedPairs]);
   }
   const combined = createSortedFunction(merged[0], merged[1]);
+  combined.flags |= VALUE_KEYS_ORDERLESS;
   return keys.every((key, index) => key === combined.domain[index])
     ? combined
     : setWrittenOrder(combined, keys);
@@ -1675,7 +1696,7 @@ export const combineFunctions = (left: FunctionValue, right: FunctionValue): Fun
 // no key holds a written order to forget, as TLC's equality loop finds them; or undefined, for the
 // loop to find them, where a comparison fails.
 const findDroppedKeys = (left: FunctionValue, right: FunctionValue) => {
-  if (!left.domain.every(isOrderless) || !right.domain.every(isOrderless)) return undefined;
+  if (!hasOrderlessKeys(left) || !hasOrderlessKeys(right)) return undefined;
   const dropped = new Set<Value>();
   try {
     left.domain.forEach((key) => {
@@ -1697,7 +1718,12 @@ const mergeCombined = (left: FunctionValue, right: FunctionValue, dropped: Set<V
     dropped.size === 0
       ? right.range
       : right.range.filter((_, index) => !dropped.has(right.domain[index]));
-  if (!left.domain.every(isOrderless) || !addedDomain.every(isOrderless)) return undefined;
+  if (
+    !hasOrderlessKeys(left) ||
+    !(dropped.size === 0 ? hasOrderlessKeys(right) : addedDomain.every(isOrderless))
+  ) {
+    return undefined;
+  }
   try {
     return mergeSorted(left.domain, left.range, addedDomain, addedRange);
   } catch (error) {
