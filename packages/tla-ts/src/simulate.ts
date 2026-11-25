@@ -49,6 +49,7 @@ import {
 import { getActionFlowGraph, type ActionStatistics } from "./tlc/action-graph";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { replayInitialStates } from "./tlc/replay";
+import { getRegisterFunction } from "./tlc/tlc-operators";
 import { formatTraceSpecState } from "./tlc/trace-spec";
 import {
   createActionRecord,
@@ -339,6 +340,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const covered = coverage && addActionCoverage(coverage, environment, description);
   // TLC's Simulator computes the initial states, prints the behaviors and checks the postcondition on its own thread, where TLCGet("diameter") is 0.
   let isOnWorker = false;
+  // TLC's Simulator sets a register of every worker and reads the first worker's.
+  const registers = workers.map(() => runtime.registers);
+  const namedRegisters = workers.map(() => runtime.namedRegisters);
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
@@ -353,6 +357,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
       case "action":
         return node && toActionValue(node.action);
+      case "all":
+        return workers.length > 1 ? getRegisterFunction(registers) : undefined;
+      case "all:named":
+        return workers.length > 1 ? getRegisterFunction(namedRegisters) : undefined;
       case "config":
         return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
@@ -901,13 +909,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
 
   const getSimulatorRandom = runtime.getRandom;
-  // TLC's Simulator sets a register of every worker and reads the first worker's.
-  const registers = workers.map((other) =>
-    other.id === 0 ? runtime.registers : new Map(runtime.registers),
-  );
-  const namedRegisters = workers.map((other) =>
-    other.id === 0 ? runtime.namedRegisters : new Map(runtime.namedRegisters),
-  );
+  for (let index = 1; index < workers.length; index++) {
+    registers[index] = new Map(registers[0]);
+    namedRegisters[index] = new Map(namedRegisters[0]);
+  }
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;

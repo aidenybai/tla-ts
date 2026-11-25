@@ -958,7 +958,7 @@ it("stops simulating about 150 states after an error that -continue can't contin
 });
 
 const WORKERS =
-  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\n====';
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\n====';
 
 const getWorkerLines = (
   config: string,
@@ -993,7 +993,10 @@ const getWorkerLines = (
         Date.now(),
       ),
   });
-  return { status, lines: lines.slice(lines.findIndex((line) => line.startsWith("Finished")) + 1) };
+  return {
+    status,
+    lines: lines.filter((line) => !line.startsWith("Computed ") && !line.startsWith("Finished ")),
+  };
 };
 
 it("simulates num behaviors on each worker and prints the statistics TLC's workers share", () => {
@@ -1071,6 +1074,39 @@ it("keeps the registers of each worker, which TLC's Simulator sets from the init
     "<<1, 2>>",
     "<<1, 3>>",
     "<<1, 4>>",
+  ]);
+});
+
+it.each([
+  [
+    "all",
+    "Counted",
+    "INIT CountingAll\nNEXT Counted\nPOSTCONDITION All",
+    ['<<"init", <<<<0, 0>>>>>>', '<<"all", <<<<4, 4>>>>>>'],
+  ],
+  ["all", "Extra", "INIT Counting\nNEXT Extra\nPOSTCONDITION All", ['<<"all", <<<<0, 0>>>>>>']],
+  [
+    "all:named",
+    "Named",
+    "INIT Counting\nNEXT Named\nPOSTCONDITION AllNamed",
+    ['<<"named", ("s:n" :> <<2, 1>> @@ "s:m" :> <<0, 1>>)>>'],
+  ],
+])(
+  "gives each register of the first worker a value per worker in TLCGet(%j) under NEXT %s, as TLC's Simulator does",
+  (_key, _next, config, printed) => {
+    const simulated = getWorkerLines(config, 2, 2n, 2);
+    expect([simulated.status, simulated.lines.filter((line) => line.startsWith('<<"'))]).toEqual([
+      0,
+      printed,
+    ]);
+  },
+);
+
+it("fails on a register that a worker never set in TLCGet(\"all\"), where TLC's Simulator puts null in the worker's tuple", () => {
+  const simulated = getWorkerLines("INIT Counting\nNEXT Only\nPOSTCONDITION All", 2, 2n, 2);
+  expect([simulated.status, simulated.lines[0].split("\n").at(-1)]).toEqual([
+    10,
+    "TLCGet(2) was undefined.",
   ]);
 });
 
