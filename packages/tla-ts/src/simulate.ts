@@ -140,6 +140,7 @@ interface SimulationWorker {
   scheduler: ReturnType<typeof createScheduler>;
   traceCount: number;
   traceId: number;
+  isRunning: boolean;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -297,6 +298,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       ),
       traceCount: 0,
       traceId: 0,
+      isRunning: true,
     };
   });
   let worker = workers[0];
@@ -712,6 +714,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     return { successors: keptSuccessors, error: failure };
   };
   let currentNode = initialStates[0];
+  let hasLivenessViolation = false;
   const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (!livenessChecks) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
@@ -719,7 +722,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       trace.map((node) => node.state),
       trace.map((node) => runtime.getFingerprint(node.state)),
     );
-    if (!found) return undefined;
+    // TLC's workers share LiveCheck1's errorFound, so a worker that finds a violation after another's carries on.
+    if (!found || hasLivenessViolation) return undefined;
+    hasLivenessViolation = true;
     const back = found.backPosition === undefined ? undefined : trace[found.backPosition];
     const lasso = found.positions.map((position) => trace[position]);
     const loopStart = back ? found.cyclePosition - 1 : lasso.length - 1;
@@ -939,11 +944,13 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     if (outcome === "stopped") break;
     worker.traceCount++;
     if (outcome) errors.push(outcome);
-    if (outcome?.isException) break;
-    if (BigInt(worker.traceCount) < traceLimit) startTrace(worker);
+    worker.isRunning = !outcome?.isException && BigInt(worker.traceCount) < traceLimit;
+    if (worker.isRunning) startTrace(worker);
     else runningWorkers--;
     if (runningWorkers === 0) break;
-    const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
+    const isStopping =
+      outcome !== undefined &&
+      (outcome.isException || !isContinued || FATAL_CODES.has(outcome.code));
     if (isStopping && stoppedStates === undefined) stoppedStates = statistics.generatedStates;
     if (
       stoppedStates !== undefined &&
@@ -952,7 +959,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       break;
     }
     do worker = workers[(worker.id + 1) % workers.length];
-    while (BigInt(worker.traceCount) >= traceLimit);
+    while (!worker.isRunning);
   }
   isOnWorker = false;
   runtime.getRandom = getSimulatorRandom;
@@ -962,12 +969,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
-  const trailing = errors[errors.length - 1];
-  // TLC's LiveCheck1 prints the violation the worker finds after the error it reported, without the Simulator's summary.
-  const printedErrors =
-    printed < errors.length - 1 && trailing.violation
-      ? [...reported, { ...trailing, isSummarized: false }]
-      : reported;
+  const trailing = errors.slice(printed + 1).find((error) => error.violation);
+  // TLC's LiveCheck1 prints the violation a worker finds after the error the Simulator reported, without the Simulator's summary.
+  const printedErrors = trailing ? [...reported, { ...trailing, isSummarized: false }] : reported;
   for (const error of printedErrors) {
     if (error.violation) {
       error.failures?.forEach((failure) =>

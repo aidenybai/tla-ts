@@ -958,7 +958,7 @@ it("stops simulating about 150 states after an error that -continue can't contin
 });
 
 const WORKERS =
-  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\n====';
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\nCountingAll == Counting /\\ PrintT(<<"init", TLCGet("all")>>)\nAll == PrintT(<<"all", TLCGet("all")>>)\nNamed == TLCSet("s:n", x) /\\ TLCSet("s:m", TLCGet("stats").worker) /\\ Next\nAllNamed == PrintT(<<"named", TLCGet("all:named")>>)\nOnly == (IF TLCGet("stats").worker = 0 THEN TLCSet(2, x) ELSE TLCSet(3, x)) /\\ Next\nExtra == (TLCGet("stats").worker = 1 => TLCSet(3, x)) /\\ Next\nFailing == IF TLCGet("stats").worker = 0 /\\ x >= 3 THEN 1 \\div 0 = 1 ELSE Next\nLive == <>(x > 100)\nFirstInv == TLCGet("stats").worker # 0 \\/ x < 7\n====';
 
 const getWorkerLines = (
   config: string,
@@ -1135,5 +1135,57 @@ it("prints the violations of every worker in turn under -continue", () => {
       [0, 2, 3, 4, 5, 7],
     ].flatMap(getViolation),
     "Progress: 36 states checked, 4 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+  ]);
+});
+
+it.each([
+  ["an evaluation error", "NEXT Failing", 255, 105],
+  ["a liveness violation", "NEXT Next\nPROPERTY Live", 13, 111],
+])(
+  "keeps the other worker simulating after %s ends one worker, as TLC's workers do until the Simulator stops them",
+  (_outcome, config, status, states) => {
+    const simulated = getWorkerLines(`INIT Init\n${config}`, 2, 10n, 5);
+    expect([
+      simulated.status,
+      simulated.lines.filter(
+        (line) => line.startsWith("Progress") || line.startsWith("The number of states"),
+      ),
+    ]).toEqual([
+      status,
+      [
+        `The number of states generated: ${states}\nSimulation using seed 4 and aril 0`,
+        `Progress: ${states} states checked, 11 traces generated (trace length: mean=3, var(x)=4, sd=2)`,
+      ],
+    ]);
+  },
+);
+
+it("reports the liveness violation another worker finds after the first worker's error, though the first worker finds more errors", () => {
+  const reported: string[] = [];
+  const status = simulate({
+    source: WORKERS,
+    config: "INIT Init\nNEXT Next\nINVARIANT FirstInv\nPROPERTY Live",
+    seed: 4n,
+    workers: 2,
+    traceDepth: 5,
+    traceCount: 10n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.level === MESSAGE_LEVEL.error)
+        reported.push(output.message);
+      if (output.kind === "summary") reported.push(`${output.statistics.generatedStates} states`);
+    },
+    onProgress: (progress) => {
+      if (progress.kind === "violation")
+        reported.push(
+          `${progress.violation.name}: ${progress.violation.trace.map((step) => formatValue(step.state.x)).join(" ")}`,
+        );
+    },
+  });
+  expect([status, reported]).toEqual([
+    12,
+    ["Invariant FirstInv is violated.", "91 states", "Live: 0 1 3 4 6 7"],
   ]);
 });
