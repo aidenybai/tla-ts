@@ -1167,6 +1167,7 @@ const searchStates = (
     const fingerprintState = isInModel ? getFingerprintState(state) : state;
     const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
+      // Deviation from TLC: ModelChecker's DoInitFunctor sets every worker's _Possible counts, so with -workers N _Possible#counts counts an initial state's witness N times.
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
     }

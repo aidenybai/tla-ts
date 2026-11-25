@@ -18,10 +18,11 @@ const checkPossible = async (configName: string) => {
   return [result.status, result.violation?.message, result.violation?.counts];
 };
 
-const checkModule = (body: string, config: string) =>
+const checkModule = (body: string, config: string, workers = 1) =>
   check({
     source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n${body}\n====`,
     config: `INIT Init\nNEXT Next\n${config}`,
+    workers,
   });
 
 describe("_POSSIBLE matches TLC", () => {
@@ -64,6 +65,15 @@ describe("_POSSIBLE matches TLC", () => {
     expect((await checkModule(body, "_POSSIBLE Mid Alpha Zeta")).violation?.counts).toBe(
       "[Zeta |-> 0, Alpha |-> 0, Mid |-> 0]",
     );
+  });
+
+  it("counts an initial state's witness once with -workers 2, where TLC counts it once per worker", async () => {
+    const result = await checkModule("Zero == x = 0\nNever == x = 5", "_POSSIBLE Zero Never", 2);
+    expect([result.status, result.violation?.message, result.violation?.counts]).toEqual([
+      "postcondition-violation",
+      `The _POSSIBLE predicate Never at line 7, col 10 to line 7, col 14 of module M ${NEVER_WITNESSED}`,
+      "[Zero |-> 2, Never |-> 0]",
+    ]);
   });
 
   it("pretty-prints the counts _PrintCounts and _CheckName print, as TLC's PrintT does", async () => {
