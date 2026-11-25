@@ -16764,6 +16764,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("holds UNCHANGED of an empty tuple in an action constraint, as TLC compares <<>> with itself", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nMoved == x' > x /\\ UNCHANGED <<>>\n====",
+      config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT Moved",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      4,
+      3,
+      3,
+    ]);
+  });
+
   it("orders the actions of an instance by its definition and keeps each of them, where TLC keeps one action per location", async () => {
     const result = await getInstanceCoverage(
       "I == INSTANCE Inner WITH K <- M, w <- y",
