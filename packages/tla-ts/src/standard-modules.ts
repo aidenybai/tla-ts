@@ -18,7 +18,7 @@ import {
   isOutOfRange,
   overrideWithJava,
 } from "./builtins";
-import type { Builtin, BuiltinArgument, Context } from "./evaluate";
+import type { Builtin, Context } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import type { CheckerRuntime } from "./runtime";
 import { BAGS_OPERATORS } from "./bags";
@@ -174,7 +174,7 @@ const defineShortCircuit = (
   name: string,
   compute: (left: boolean, right: () => boolean) => boolean,
 ): Builtin => {
-  const getArgument = (args: BuiltinArgument[], index: number) =>
+  const getArgument = (args: Value[], index: number) =>
     getBoolean([getThunk(args, index, name)()], 0, name);
   return {
     ...defineOperator(name, 2, (args) => compute(getArgument(args, 0), () => getArgument(args, 1))),
@@ -433,19 +433,19 @@ const INTEGERS_OPERATORS = [
   ),
 ];
 
-const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
+const getSequenceArgument = (args: Value[], index: number, message: string) => {
   const value = getValue(args, index, message);
   const elements = getSequenceElements(value);
   if (!elements) throw new TlaModuleError(`${message}\n${prettyPrint(formatValue(value))}`);
   return elements;
 };
 
-const getSequenceOrString = (args: BuiltinArgument[], index: number, message: string) => {
+const getSequenceOrString = (args: Value[], index: number, message: string) => {
   const value = getValue(args, index, message);
   return typeof value === "string" ? value : getSequenceArgument(args, index, message);
 };
 
-const getSubSeqIndex = (args: BuiltinArgument[], index: number, position: string) => {
+const getSubSeqIndex = (args: Value[], index: number, position: string) => {
   const value = getValue(args, index, "SubSeq");
   if (typeof value !== "number") {
     throw createModuleArgumentError(position, "SubSeq", "natural number", value);
@@ -637,7 +637,7 @@ export const getJavaOverrides = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
-  evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
+  evaluateReplaced: (name: string, args: Value[], context: Context | undefined) => Value,
   getVariableNames: () => string[],
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;

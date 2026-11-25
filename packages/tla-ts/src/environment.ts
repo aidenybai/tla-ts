@@ -35,7 +35,6 @@ import {
   evaluate,
   getDefinitionClosure,
   type Builtin,
-  type BuiltinArgument,
   type Context,
   type Environment,
   type StartupModule,
@@ -664,11 +663,7 @@ export const createEnvironment = (
 
   const linkSource = (name: string, importer: string, isHidden: boolean) => {
     const top = linkTopLevel(loadModule(name, importer), isHidden);
-    const evaluateReplaced = (
-      operator: string,
-      args: BuiltinArgument[],
-      context: Context | undefined,
-    ) => {
+    const evaluateReplaced = (operator: string, args: Value[], context: Context | undefined) => {
       const definition = replacedDefinitions.get(top.linked.visible.get(operator)?.key ?? operator);
       const expressions = args.flatMap((arg) =>
         typeof arg === "object" && arg.kind === "Operator" && arg.expression

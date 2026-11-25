@@ -10,7 +10,7 @@ import {
   overrideWithJava,
 } from "./builtins";
 import { TlaEvaluationError, TlaFileError, TlaSetBoundError, TlaUnsupportedError } from "./errors";
-import type { Builtin, BuiltinArgument, Context } from "./evaluate";
+import type { Builtin, Context } from "./evaluate";
 import { decodeJavaUtf8, trimJava } from "./java-string";
 import { readJson, type JsonElement } from "./json-reader";
 import { isEvalException } from "./tlc/messages";
@@ -345,7 +345,7 @@ export const createJsonOperators = (files: FileSystem): Builtin[] => [
 
 export const createIoUtilsOperators = (
   files: FileSystem,
-  evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
+  evaluateReplaced: (name: string, args: Value[], context: Context | undefined) => Value,
 ): Builtin[] => [
   overrideWithJava(
     {

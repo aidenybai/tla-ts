@@ -9,7 +9,7 @@ import {
   isOutOfRange,
 } from "./builtins";
 import { TlaModuleError } from "./errors";
-import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { Builtin } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
   createSortedFunction,
@@ -37,7 +37,7 @@ const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(
 
 const FINITE_FUNCTION = "a function with a finite domain";
 
-const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
+const getFunction = (args: Value[], index: number, name: string) => {
   const value = getValue(args, index, name);
   const functionValue = toFunction(value);
   if (!functionValue) throw createWrongValueError(name, FINITE_FUNCTION, value);
@@ -45,7 +45,7 @@ const getFunction = (args: BuiltinArgument[], index: number, name: string) => {
 };
 
 // Deviation from TLC: Bags#BagIn and Bags#CopiesIn read the null that toFcnRcd gives for a value that isn't a function and leak a NullPointerException, where tla-ts reports the argument as not a bag.
-const getCount = (args: BuiltinArgument[], name: string) => {
+const getCount = (args: Value[], name: string) => {
   const bag = getValue(args, 1, name);
   const functionValue = toFunction(bag);
   const count = functionValue && findCount(functionValue, getValue(args, 0, name));
@@ -56,11 +56,7 @@ const getCount = (args: BuiltinArgument[], name: string) => {
 };
 
 // Deviation from TLC: Bags#BagCup passes the null that toFcnRcd gives for a value that isn't a function to IsABag and leaks a NullPointerException, where tla-ts reports the argument as not a bag.
-const getAddedBag = (
-  args: BuiltinArgument[],
-  functions: (FunctionValue | undefined)[],
-  index: number,
-) => {
+const getAddedBag = (args: Value[], functions: (FunctionValue | undefined)[], index: number) => {
   const functionValue = functions[index];
   if (!functionValue || !isBag(functionValue)) {
     throw createModuleArgumentError(

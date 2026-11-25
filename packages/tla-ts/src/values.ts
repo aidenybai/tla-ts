@@ -1,3 +1,4 @@
+import type { Expression } from "./ast";
 import {
   isStackOverflow,
   TlaAliasFormatError,
@@ -167,6 +168,25 @@ export interface LazyFunctionValue {
   enumerated?: FunctionValue;
 }
 
+interface OperatorFields {
+  kind: "Operator";
+  name: string;
+  arity: number;
+  call: (args: Value[]) => Value;
+  expression?: Expression;
+}
+
+interface OpLambdaValue extends OperatorFields {
+  javaClass: "OpLambdaValue";
+}
+
+interface MethodValue extends OperatorFields {
+  javaClass: "MethodValue";
+  signature: string;
+}
+
+export type OperatorValue = OpLambdaValue | MethodValue;
+
 interface CountedLazyFunctionValue extends LazyFunctionValue {
   costModel: CostModel;
 }
@@ -197,7 +217,8 @@ export type Value =
   | SetOperationValue
   | FilteredSetValue
   | UnionValue
-  | LazyFunctionValue;
+  | LazyFunctionValue
+  | OperatorValue;
 
 export type ObjectValue = Exclude<Value, boolean | number | string>;
 
@@ -259,7 +280,8 @@ export const isSetValue = (value: Value) =>
   typeof value === "object" &&
   value.kind !== "ModelValue" &&
   value.kind !== "Function" &&
-  value.kind !== "LazyFunction";
+  value.kind !== "LazyFunction" &&
+  value.kind !== "Operator";
 
 export const isReducibleSet = (value: Value): value is SetValue | MixedSetValue | IntervalValue =>
   typeof value === "object" &&
@@ -279,6 +301,7 @@ const describeKind = (value: Value) => {
   if (typeof value === "number") return "integer";
   if (typeof value === "string") return "string";
   if (value.kind === "ModelValue") return "model value";
+  if (value.kind === "Operator") return "operator";
   return isSetValue(value) ? "set" : "function";
 };
 
@@ -1192,6 +1215,10 @@ const describeScalarMismatch = (
 
 const getComparisonVerb = (isEquality: boolean) => (isEquality ? "check equality of" : "compare");
 
+// Deviation from TLC: a string precedence bug in MethodValue#compareTo and #equals leaves only the other value in the message.
+const describeOperatorComparison = (isEquality: boolean, left: Value, right: Value) =>
+  `Attempted to ${getComparisonVerb(isEquality)} operator ${prettyPrint(formatValue(left))} with value:\n${prettyPrint(formatValue(right))}`;
+
 const describeFunctionComparison = (isEquality: boolean, left: Value, right: Value) =>
   `Attempted to ${getComparisonVerb(isEquality)} the function ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`;
 
@@ -1363,6 +1390,9 @@ const compareOrEqualLikeTlc = (left: Value, right: Value, isEquality: boolean): 
     if (!isModelValue(right)) return -1;
     if (!isEquality) return left.rank - right.rank;
     return left.name === right.name ? 0 : 1;
+  }
+  if (left.kind === "Operator") {
+    throw createAttemptError(describeOperatorComparison, isEquality, left, right);
   }
   if (isFunctionValue(left)) return compareFunctionLikeTlc(left, right, isEquality);
   return compareSetLikeTlc(left, right, isEquality);
@@ -2213,6 +2243,12 @@ const isNormalizedLikeTlc = (value: Value): boolean => {
       return value.sets.every(isNormalizedLikeTlc);
     case "ProductSet":
       return value.factors.every(isNormalizedLikeTlc);
+    case "Operator":
+      throw new TlaEvaluationError(
+        value.javaClass === "MethodValue"
+          ? "It is a TLC bug: Attempted to normalize an operator."
+          : "Should not normalize an operator.",
+      );
     default:
       return false;
   }
@@ -2256,14 +2292,14 @@ const hasLazyValue = (values: Value[]) => {
   return false;
 };
 
-const hasLazyComponent = (sets: Value[]) => {
+const hasLazyComponent = (sets: Value[], isConverted: boolean) => {
   for (let index = 0; index < sets.length; index++) {
-    if (hasLazyElements(sets[index])) return true;
+    if (hasLazyElements(sets[index], isConverted)) return true;
   }
   return false;
 };
 
-const hasLazyElements = (value: Value): boolean => {
+const hasLazyElements = (value: Value, isConverted: boolean): boolean => {
   if (typeof value !== "object") return false;
   switch (value.kind) {
     case "Set":
@@ -2273,21 +2309,52 @@ const hasLazyElements = (value: Value): boolean => {
     case "FilteredSet":
     case "Subset":
     case "Union":
-      return hasLazyElements(value.base);
+      return hasLazyElements(value.base, isConverted);
     case "SetOperation":
-      return hasLazyElements(value.left) || hasLazyElements(value.right);
+      return hasLazyElements(value.left, isConverted) || hasLazyElements(value.right, isConverted);
     case "FunctionSet":
-      return hasLazyElements(value.domain) || hasLazyElements(value.range);
+      return (
+        hasLazyElements(value.domain, isConverted) || hasLazyElements(value.range, isConverted)
+      );
     case "RecordSet":
-      return hasLazyComponent(value.sets);
+      return hasLazyComponent(value.sets, isConverted);
     case "ProductSet":
-      return hasLazyComponent(value.factors);
+      return hasLazyComponent(value.factors, isConverted);
+    case "Operator":
+      // TLC's toSetEnum reads OpLambdaValue#isNormalized, which throws, where its elements() doesn't.
+      return isConverted;
     default:
       return false;
   }
 };
 
-const isSortedLikeTlc = (value: Value) => !hasLazyElements(value) || isNormalizedLikeTlc(value);
+const isSortedLikeTlc = (value: Value, isConverted: boolean) =>
+  !hasLazyElements(value, isConverted) || isNormalizedLikeTlc(value);
+
+// TLC's toSetEnum reads whether the sets it combines are normalized before it enumerates them.
+const isConvertedSortedLikeTlc = (value: Value) => {
+  if (typeof value !== "object") return false;
+  switch (value.kind) {
+    case "ProductSet":
+    case "FunctionSet":
+    case "RecordSet":
+      return isSortedLikeTlc(value, true);
+    case "FilteredSet":
+      isNormalizedLikeTlc(value);
+      return true;
+    case "SetOperation":
+      if (value.operator !== "\\cup" && isNormalizedLikeTlc(value.left)) {
+        if (value.operator === "\\cap") isNormalizedLikeTlc(value.right);
+      }
+      return true;
+    case "MixedSet":
+    case "Union":
+    case "Subset":
+      return true;
+    default:
+      return false;
+  }
+};
 
 // TLC's elements() streams [S -> T], [l : S], S \X T and set filters past -maxSetSize, which bounds only toSetEnum.
 const getUnboundedElements = (value: Value): Value[] => {
@@ -2301,9 +2368,10 @@ const getUnboundedElements = (value: Value): Value[] => {
   ) {
     return toFiniteSet(value).elements;
   }
+  const isSorted = isConvertedSortedLikeTlc(value);
   // TLC's toSetEnum frames the set only as its elements() opens it.
   const opened = setTrace.sets ? openOperandStream(value, false) : undefined;
-  return collectUnboundedSet(value, opened, value.kind === "FilteredSet" || isSortedLikeTlc(value));
+  return collectUnboundedSet(value, opened, isSorted);
 };
 
 const collectUnboundedSet = (
@@ -2462,18 +2530,7 @@ const convertSet = (
   }
   const sets = setTrace.sets;
   if (!isFramedAsOpened) sets?.push(value);
-  const isSorted =
-    isSortedRead ??
-    (typeof value === "object" &&
-      (value.kind === "MixedSet" ||
-        value.kind === "Union" ||
-        value.kind === "SetOperation" ||
-        value.kind === "FilteredSet" ||
-        value.kind === "Subset" ||
-        ((value.kind === "ProductSet" ||
-          value.kind === "FunctionSet" ||
-          value.kind === "RecordSet") &&
-          isSortedLikeTlc(value))));
+  const isSorted = isSortedRead ?? isConvertedSortedLikeTlc(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   let elements: Value[];
@@ -2574,9 +2631,7 @@ const toChargedSet = (
   const cost = value.cost;
   if (cost?.charges === undefined) return convert(value);
   // SetOfRcdsValue#toSetEnum reads whether its sets are normalized before elements() normalizes them, which charging here does first.
-  const isSortedRead =
-    (value.kind !== "ProductSet" && value.kind !== "FunctionSet" && value.kind !== "RecordSet") ||
-    isSortedLikeTlc(value);
+  const isSortedRead = isConvertedSortedLikeTlc(value);
   if (!isSortedRead) stopFirstAttempt();
   const set = cost.charges.convertCharged(value, convert, isSortedRead);
   if (isCached) cost.charges = undefined;
@@ -3696,8 +3751,7 @@ export const getNormalizedSetElements = (value: Value, isBounded: boolean) => {
     return isBounded ? toBoundSet(value).elements : getUnboundedElements(value);
   }
   const isRepeated = (value.kind === "Union" || value.hasFilter) && hasObservedPass(value);
-  const isSorted =
-    value.kind === "SetOperation" || value.kind === "Union" || isSortedLikeTlc(value);
+  const isSorted = isConvertedSortedLikeTlc(value);
   // TLC frames the set as its elements() opens the stream, but not as toSetEnum collects it.
   const elements = enumerateSet(
     value,
@@ -3839,7 +3893,7 @@ const someElementOfStream = (
     (value.kind === "FunctionSet" || value.kind === "RecordSet" || value.kind === "ProductSet") &&
     !value.enumerated
   ) {
-    return isSortedLikeTlc(value)
+    return isSortedLikeTlc(value, false)
       ? collectUnboundedSet(
           value,
           setTrace.sets ? openOperandStream(value, false) : undefined,
@@ -3953,6 +4007,8 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
   switch (value.kind) {
     case "ModelValue":
       throw createAttemptError(describeModelValueCardinality, value);
+    case "Operator":
+      throw createAttemptError(describeScalarCardinality, value);
     case "Function":
       return value.domain.length;
     case "LazyFunction":
@@ -4028,7 +4084,7 @@ const describeInfiniteCheck = (value: Value) =>
   `Attempted to check if the set ${prettyPrint(formatValue(value))}is finite.`;
 
 export const isFiniteSet = (value: Value): boolean => {
-  if (typeof value !== "object" || value.kind === "ModelValue") {
+  if (typeof value !== "object" || value.kind === "ModelValue" || value.kind === "Operator") {
     throw new TlaEvaluationError(
       `Attempted to check if the ${describeKind(value)} ${prettyPrint(formatValue(value))} is a finite set.`,
     );
@@ -4166,6 +4222,10 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
+  // Deviation from TLC: a string precedence bug in MethodValue#member drops the message's first line.
+  if (typeof value === "object" && value.kind === "Operator") {
+    return `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of operator ${prettyPrint(formatValue(value))}`;
+  }
   const prefix = `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of the`;
   if (!isFunctionValue(value))
     return `${prefix} ${describeKind(value)} ${prettyPrint(formatValue(value))}`;
@@ -5952,6 +6012,13 @@ const writeValue = (
       }
       return writeText(writer, ")");
     }
+    case "Operator":
+      return writeText(
+        writer,
+        value.javaClass === "MethodValue"
+          ? `<Java Method: ${value.signature}>`
+          : `<Operator ${value.name}>`,
+      );
   }
 };
 

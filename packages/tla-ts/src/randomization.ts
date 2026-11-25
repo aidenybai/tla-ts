@@ -1,6 +1,6 @@
 import { createModuleArgumentError, defineOperator, getValue, overrideWithJava } from "./builtins";
 import { TlaEvaluationError } from "./errors";
-import type { Builtin, BuiltinArgument } from "./evaluate";
+import type { Builtin } from "./evaluate";
 import { parseJavaDouble } from "./java-string";
 import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
@@ -35,7 +35,7 @@ const tossSubsets = (elements: Value[], picks: number, probability: number, rand
     ),
   );
 
-const getRandomSetOfSubsets = (args: BuiltinArgument[], runtime: CheckerRuntime) => {
+const getRandomSetOfSubsets = (args: Value[], runtime: CheckerRuntime) => {
   const name = "RandomSetOfSubsets";
   const picks = getCount(getValue(args, 0, name), "first", name);
   const size = getCount(getValue(args, 1, name), "second", name);

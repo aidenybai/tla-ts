@@ -54,6 +54,7 @@ import {
   type Coverage,
   type NextStateMode,
 } from "./coverage";
+import { resolveSynonym } from "./tlc/jar-data";
 import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { InstanceLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
@@ -141,6 +142,7 @@ import {
   type LazyFunctionSource,
   type LazyFunctionValue,
   type ObjectValue,
+  type OperatorValue,
   type Value,
   markStreamedSet,
   normalizeDeeply,
@@ -151,21 +153,11 @@ import type { TlcVersion } from "./tlc/version";
 
 export type State = (Value | undefined)[];
 
-export interface OperatorValue {
-  kind: "Operator";
-  name: string;
-  arity: number;
-  call: (args: Value[]) => Value;
-  expression?: Expression;
-}
-
-export type BuiltinArgument = Value | OperatorValue;
-
 export interface Builtin {
   kind: "Builtin";
   name: string;
   arity: number;
-  evaluate: (args: BuiltinArgument[], context?: Context) => Value;
+  evaluate: (args: Value[], context?: Context) => Value;
   evaluateUnary: ((value: Value) => Value) | undefined;
   evaluateBinary: ((left: Value, right: Value) => Value) | undefined;
   isStateLevel?: boolean;
@@ -1361,7 +1353,13 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
   if (operator.kind === "Builtin" && operator.isLazy) {
     return operator.evaluate(
-      args.map((value) => ({ kind: "Operator", name: "argument", arity: 0, call: () => value })),
+      args.map((value) => ({
+        kind: "Operator",
+        javaClass: "OpLambdaValue",
+        name: "argument",
+        arity: 0,
+        call: () => value,
+      })),
       context,
     );
   }
@@ -1374,19 +1372,40 @@ const callOperatorWithValues = (operator: Operator, args: Value[], context: Cont
   return evaluate(operator.body, withScope(context, scope));
 };
 
-const toOperatorValue = (operator: Operator, context: Context): OperatorValue => {
+// Deviation from TLC: OpLambdaValue#eval throws a NullPointerException on a built-in operator such as SUBSET, whose OpDefNode has no body.
+const toOperatorValue = (operator: Operator, name: string, context: Context): OperatorValue => {
   if (operator.kind === "Operator") return operator;
   const coverage = context.environment.coverage;
-  return {
-    kind: "Operator",
-    name: operator.name,
-    arity: getArity(operator),
-    // TLC's OpLambdaValue#eval, which a Java override calls, evaluates the operator's body without a cost model.
-    call: coverage
-      ? (args) =>
-          runAtCoverageNode(coverage, -1, () => callOperatorWithValues(operator, args, context))
-      : (args) => callOperatorWithValues(operator, args, context),
-  };
+  const arity = getArity(operator);
+  // TLC's OpLambdaValue#eval, which a Java override or a split action calls, evaluates the operator's body without a cost model.
+  const call = coverage
+    ? (args: Value[]) =>
+        runAtCoverageNode(coverage, -1, () => callOperatorWithValues(operator, args, context))
+    : (args: Value[]) => callOperatorWithValues(operator, args, context);
+  return operator.kind === "Builtin" && operator.signature !== undefined
+    ? {
+        kind: "Operator",
+        javaClass: "MethodValue",
+        name,
+        arity,
+        call,
+        signature: operator.signature,
+      }
+    : { kind: "Operator", javaClass: "OpLambdaValue", name, arity, call };
+};
+
+export const evaluateOperatorValue = (expression: Expression, context: Context) => {
+  const operator = evaluateOperatorArgument(expression, context);
+  const symbol =
+    expression.kind === "OperatorReference" || expression.kind === "Lambda"
+      ? expression.operator
+      : undefined;
+  if (symbol !== undefined) return toOperatorValue(operator, resolveSynonym(symbol), context);
+  const instanceName =
+    expression.kind === "Identifier" && !isLocallyResolved(expression)
+      ? context.environment.instanceNames.get(expression.name)
+      : undefined;
+  return toOperatorValue(operator, instanceName ?? operator.name, context);
 };
 
 const isOperatorArgument = (expression: Expression, context: Context) => {
@@ -1399,9 +1418,7 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
 // Deviation from TLC: SymbolNodeValueLookupProvider#lookup takes an operator whose body is a literal for that literal, so a Java override rejects it as an argument.
 const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
   args.map((arg) =>
-    isOperatorArgument(arg, context)
-      ? toOperatorValue(evaluateOperatorArgument(arg, context), context)
-      : evaluate(arg, context),
+    isOperatorArgument(arg, context) ? evaluateOperatorValue(arg, context) : evaluate(arg, context),
   );
 
 const createArityError = (closure: Closure, count: number) =>
@@ -2222,6 +2239,7 @@ export const isValueArgument = (argument: Expression, environment: Environment) 
 const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
   args.map((arg) => ({
     kind: "Operator",
+    javaClass: "OpLambdaValue",
     name: "argument",
     arity: 0,
     call: () => evaluate(arg, context),
