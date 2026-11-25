@@ -229,6 +229,23 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
 
 const BEHAVIOR = "Error: The behavior up to this point is:";
 
+const simulateInvariant = (module: string, invariant: string) =>
+  runSpec(["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "1"], module, [
+    [`${module}.cfg`, `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`],
+  ]);
+
+const getFailure = (invariant: string, lines: string[]) =>
+  lines.slice(
+    lines.findIndex((line) => line === `Error: Evaluating invariant ${invariant} failed.`) + 1,
+    lines.indexOf(BEHAVIOR),
+  );
+
+const getPrinted = (lines: string[]) =>
+  lines.slice(
+    lines.findIndex((line) => line.startsWith("Finished computing initial")) + 1,
+    lines.indexOf(BEHAVIOR) + 1,
+  );
+
 describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaValue is', () => {
   it.each([
     [
@@ -268,30 +285,28 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
         "line 15, col 23 to line 15, col 31 of module OperatorValues",
       ],
     ],
+    [
+      "IsFinite",
+      76,
+      [
+        "Attempted to apply the operator overridden by the Java method",
+        "public static tlc2.value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(tlc2.value.impl.Value),",
+        "but it produced the following error:",
+        "Attempted to check if the operator <Operator Inc> is a finite set.",
+      ],
+    ],
+    ["Counts", 76, ["Attempted to compute cardinality of the value", "<Operator Inc>"]],
   ])("fails %s in -simulate with TLC's message", (invariant, status, message) => {
-    const run = runSpec(
-      ["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "1"],
-      "OperatorValues",
-      [["OperatorValues.cfg", `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`]],
-    );
-    const start = run.lines.findIndex((line) => line.startsWith("Error: Evaluating invariant"));
-    expect([run.status, run.lines.slice(start, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
-      status,
-      [`Error: Evaluating invariant ${invariant} failed.`, ...message, BEHAVIOR],
-    ]);
+    const run = simulateInvariant("OperatorValues", invariant);
+    expect([run.status, getFailure(invariant, run.lines)]).toEqual([status, message]);
   });
 
   it.each([
     ["Prints", ["<Operator Inc>", "<Operator Inc>", "<Operator Inc>"]],
     ["Shows", []],
   ])("prints the operator in %s as TLC does", (invariant, printed) => {
-    const run = runSpec(
-      ["-noGenerateSpecTE", "-simulate", "num=1", "-depth", "4", "-seed", "1"],
-      "OperatorValues",
-      [["OperatorValues.cfg", `INIT Init\nNEXT Next\nINVARIANT ${invariant}\n`]],
-    );
-    const start = run.lines.findIndex((line) => line.startsWith("Finished computing initial"));
-    expect([run.status, run.lines.slice(start + 1, run.lines.indexOf(BEHAVIOR) + 1)]).toEqual([
+    const run = simulateInvariant("OperatorValues", invariant);
+    expect([run.status, getPrinted(run.lines)]).toEqual([
       11,
       [...printed, "Error: Deadlock reached.", BEHAVIOR],
     ]);

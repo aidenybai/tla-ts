@@ -1,5 +1,5 @@
 ---- MODULE OperatorValues ----
-EXTENDS Naturals, TLC
+EXTENDS Naturals, FiniteSets, TLC
 VARIABLE x
 Step(F(_)) == x < 3 /\ x' = F(x)
 Inc(y) == y + 1
@@ -15,4 +15,6 @@ Applies == HasOp => Op[1] = 2
 HasDomain == HasOp => DOMAIN Op = {}
 Prints == HasOp => PrintT(Op)
 Shows == HasOp => ToString(Op) = "<Operator Inc>"
+IsFinite == HasOp => IsFiniteSet(Op)
+Counts == HasOp => Cardinality(Op) = 0
 ====
