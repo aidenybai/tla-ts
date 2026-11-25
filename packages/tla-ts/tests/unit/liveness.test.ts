@@ -636,4 +636,19 @@ describe("_PERIODIC matches TLC", () => {
     });
     expect(result.status).toBe("success");
   });
+
+  it("sets every worker's register from _PERIODIC with -workers 2, as TLC's main thread does, in TLCGet(\"all\")", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 1));
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE P ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 0)\nInit == x = 0\nNext == x\' = x + 1\nStop == x >= 0 /\\ (TLCGetOrDefault(2, 0) = 9 => TLCSet("exit", TRUE))\nPeriodic == TLCSet(2, 9)\nPost == PrintT(TLCGet("all"))\n====',
+      config:
+        "INIT Init\nNEXT Next\nINVARIANT Stop\n_PERIODIC Periodic\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed]).toEqual(["success", ["<<<<0, 0>>, <<9, 9>>>>"]]);
+  });
 });

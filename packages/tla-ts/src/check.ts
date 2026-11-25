@@ -2093,6 +2093,13 @@ const searchStates = (
     possibleCounts: new Map(runtime.possibleCounts),
   };
   runtime.idleWorker = idleWorker;
+  // TLC's periodic work, liveness checks and postconditions run on threads that aren't workers, where TLCGetSet#TLCSet sets every worker's register.
+  const setEveryWorkerRegister = (key: number | string, value: Value) => {
+    for (const worker of [runtime, idleWorker]) {
+      if (typeof key === "number") worker.registers.set(key, value);
+      else worker.namedRegisters.set(key, value);
+    }
+  };
   for (
     let index = typedLasso ? states.length : 0;
     index < states.length && !runtime.isStopped;
@@ -2117,6 +2124,7 @@ const searchStates = (
     outDegrees[getOutDegreeBucket()]++;
     newStateCount = 0;
     if (hasPeriodicWork && performance.now() >= periodic.at) {
+      runtime.setEveryWorkerRegister = setEveryWorkerRegister;
       const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const periodicResult =
@@ -2137,11 +2145,13 @@ const searchStates = (
         },
       });
       periodic.at = performance.now() + PROGRESS_INTERVAL;
+      runtime.setEveryWorkerRegister = undefined;
     }
   }
 
   current.index = -1;
   current.candidate = undefined;
+  runtime.setEveryWorkerRegister = setEveryWorkerRegister;
   const finalLiveness = options.livenessCheck === "off" ? undefined : liveness;
   if (finalLiveness) {
     options.onProgress?.({
@@ -2172,12 +2182,6 @@ const searchStates = (
   if (missingPostcondition) {
     return createFailureResult(createMissingOperatorError(missingPostcondition), { trace: [] });
   }
-  runtime.setEveryWorkerRegister = (key, value) => {
-    for (const worker of [runtime, idleWorker]) {
-      if (typeof key === "number") worker.registers.set(key, value);
-      else worker.namedRegisters.set(key, value);
-    }
-  };
   const postcondition = search.findPostconditionViolation();
   if (postcondition) {
     return createResult("postcondition-violation", {
