@@ -1041,6 +1041,27 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
     define("OrdinaryGetOwnProperty", 2, (args, context) =>
       getOwnDescriptor(getValue(args[0]), getValue(args[1]), getConstant(context, "Absent")),
     ),
+    define("UnhandledRejection", 1, (args, context) => {
+      const state = getValue(args[0]);
+      const objects = getField(state, "objs");
+      const size = getField(objects, "size");
+      const pages = getTuple(getField(objects, "pages"));
+      const empty = getConstant(context, "Empty");
+      if (state === undefined || typeof size !== "number" || pages === undefined) return undefined;
+      if (empty === undefined) return undefined;
+      for (let id = 1; id <= size; id++) {
+        const page = getTuple(pages[Math.floor((id - 1) / HEAP_PAGE_SIZE)]);
+        const object = page?.[(id - 1) % HEAP_PAGE_SIZE];
+        const objectClass = getField(object, "class");
+        if (typeof objectClass !== "string") return undefined;
+        if (objectClass !== "promise") continue;
+        const slots = getField(object, "slots");
+        const promiseState = getField(slots, "state");
+        if (typeof promiseState !== "string") return undefined;
+        if (promiseState === "rejected" && getField(slots, "isHandled") !== true) return undefined;
+      }
+      return createOk(state, typeShape(["undefined"]), empty);
+    }),
     createBindingOperator(callReplaced, "HasBinding", 3, getHasBinding),
     createBindingOperator(callReplaced, "GetBindingValue", 4, getBindingValue),
     // KeyIndex(list, v): the first index of the list whose entry isn't Empty and is SameValueZero to

@@ -5,6 +5,7 @@ import { prettyPrint } from "./pretty-print";
 import { writeStateFingerprint } from "./fingerprints";
 import {
   applyFunction,
+  createCanonicalPage,
   createChangedFunction,
   createFunction,
   createRecord,
@@ -15,6 +16,7 @@ import {
   getSequenceElements,
   getValueHash,
   isCanonical,
+  isCanonicalPage,
   markCanonical,
   setFunctionClass,
   toFiniteFunction,
@@ -31,6 +33,11 @@ import {
 // object value is [type |-> "object", id |-> n].
 const PAGE_SIZE = 256;
 const NAMED_BUCKET = -1;
+// A page's edges: the realm's sizes they were walked from, a bit for each record that is a WeakMap,
+// where each record's nodes start, and then the nodes.
+const WEAK_BITS = 2;
+const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
+const EDGE_NODES = EDGE_STARTS + PAGE_SIZE + 1;
 
 interface Realm {
   objects: number;
@@ -174,7 +181,12 @@ const createHeapReader = (heap: Value) => {
 
 // A heap of records, whose each page is the page of the heap before that a canonicalization made,
 // where that page holds the same records, or else a page of its own, which this one makes.
-const createHeap = (records: Value[], before: Value, isIncremental: boolean) => {
+const createHeap = (
+  records: Value[],
+  before: Value,
+  isIncremental: boolean,
+  getEdges: (page: number, count: number) => Int32Array,
+) => {
   const pagesBefore = get(before, "pages");
   const pages = getList(pagesBefore);
   return toRecord(before, [
@@ -187,12 +199,15 @@ const createHeap = (records: Value[], before: Value, isIncremental: boolean) => 
           const kept = records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
           const previous = pages[page];
           const previousRecords = previous === undefined ? [] : getList(previous);
-          return isIncremental &&
+          if (
+            isIncremental &&
             isCanonical(previous) &&
             previousRecords.length === kept.length &&
             previousRecords.every((record, index) => record === kept[index])
-            ? previous
-            : markCanonical(createTuple(kept));
+          ) {
+            return previous;
+          }
+          return createCanonicalPage(kept, getEdges(page, kept.length));
         }),
       ),
     ],
@@ -546,6 +561,21 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getObject = createHeapReader(objs);
   const getInitialObject = createHeapReader(initialObjs);
   const getEnvironment = createHeapReader(envs);
+  const environmentPages = getList(get(envs, "pages"));
+  // Pushes the nodes that a node's record refers to from the edges of its page, and gives whether
+  // it is a WeakMap, or -1 where its page holds no edges of this realm.
+  const pushPageEdges = (node: number, walked: number[]) => {
+    const index = (node > 0 ? node : -node) - 1;
+    const page = (node > 0 ? pages : environmentPages)[Math.floor(index / PAGE_SIZE)];
+    if (!isIncremental || !isCanonicalPage(page)) return -1;
+    const edges = page.edges;
+    if (edges[0] !== realm.objects || edges[1] !== realm.environments) return -1;
+    const slot = index % PAGE_SIZE;
+    for (let at = edges[EDGE_STARTS + slot]; at < edges[EDGE_STARTS + slot + 1]; at++) {
+      walked.push(edges[at]);
+    }
+    return (edges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1;
+  };
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
     if (valuesEqual(pages[position], page)) return;
@@ -568,7 +598,9 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const queue: number[] = [];
   for (let environment = 1; environment <= realm.environments; environment++) {
     const start = queue.length;
-    environmentRefs(getEnvironment(environment), realm, queue);
+    if (pushPageEdges(-environment, queue) === -1) {
+      environmentRefs(getEnvironment(environment), realm, queue);
+    }
     collect(-environment, queue, start);
   }
   for (const id of changed) {
@@ -607,13 +639,20 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       if (node > 0) {
         objectCount++;
         objectNumbers[node] = realm.objects + objectCount;
-        const object = getObject(node);
-        objectRefs(object, realm, walked);
-        if (getString(object, "class") === "weakMap") weakMaps.push(node);
+        const isWeakMap = pushPageEdges(node, walked);
+        if (isWeakMap === -1) {
+          const object = getObject(node);
+          objectRefs(object, realm, walked);
+          if (getString(object, "class") === "weakMap") weakMaps.push(node);
+        } else if (isWeakMap === 1) {
+          weakMaps.push(node);
+        }
       } else {
         environmentCount++;
         environmentNumbers[-node] = realm.environments + environmentCount;
-        environmentRefs(getEnvironment(-node), realm, walked);
+        if (pushPageEdges(node, walked) === -1) {
+          environmentRefs(getEnvironment(-node), realm, walked);
+        }
       }
       collect(node, walked, start);
       order.push(node);
@@ -884,9 +923,46 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       .filter((node) => node < 0)
       .map((node) => rename(node, getEnvironment(-node), renameEnvironmentRecord)),
   ];
+  // The node that each new number names, in each heap.
+  const objectNodes = new Int32Array(objects.length + 1);
+  const environmentNodes = new Int32Array(environments.length + 1);
+  for (let environment = 1; environment <= realm.environments; environment++) {
+    environmentNodes[environment] = -environment;
+  }
+  for (const node of order) {
+    if (node > 0) objectNodes[objectNumbers[node]] = node;
+    else environmentNodes[environmentNumbers[-node]] = node;
+  }
+  const getEdgeStart = (node: number) =>
+    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
+  // A new page's edges, of the nodes that its records' sources refer to by their new numbers.
+  const getEdges = (nodes: Int32Array) => (page: number, count: number) => {
+    let size = EDGE_NODES;
+    for (let slot = 0; slot < count; slot++) {
+      const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
+      if (start !== -1) size += edges[start];
+    }
+    const pageEdges = new Int32Array(size);
+    pageEdges[0] = realm.objects;
+    pageEdges[1] = realm.environments;
+    let at = EDGE_NODES;
+    for (let slot = 0; slot < PAGE_SIZE; slot++) {
+      pageEdges[EDGE_STARTS + slot] = at;
+      const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
+      const start = getEdgeStart(node);
+      if (start === -1) continue;
+      for (let index = start + 1; index <= start + edges[start]; index++) {
+        const target = edges[index];
+        pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
+      }
+      if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
+    }
+    pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
+    return pageEdges;
+  };
   return except(state, {
-    objs: () => createHeap(objects, objs, isIncremental),
-    envs: () => createHeap(environments, envs, isIncremental),
+    objs: () => createHeap(objects, objs, isIncremental, getEdges(objectNodes)),
+    envs: () => createHeap(environments, envs, isIncremental, getEdges(environmentNodes)),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
