@@ -226,16 +226,20 @@ const getRefBaseHash = (value: Value) => {
 // For each of a source's locations: the hashes of its key and its value in its holder, the base hash
 // of the object value there, and then the hashes of the key and the value of each holder on the way.
 const createHashPlan = (source: Value, located: number[]) => {
-  const plan: number[] = [];
+  let size = 0;
+  for (let at = 0; at < located.length; at += 2 + located[at + 1]) size += 1 + 2 * located[at + 1];
+  const plan = new Int32Array(size);
+  let planAt = 0;
   for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
     const depth = located[at + 1] - 1;
-    const leafAt = plan.length;
-    plan.push(0, 0, 0);
+    const leafAt = planAt;
+    planAt += 3;
     let holder = toFiniteFunction(source);
     for (let level = 0; level < depth; level++) {
       const position = located[at + 2 + level] >> 1;
       const inner = holder.range[position];
-      plan.push(getValueHash(holder.domain[position]), getValueHash(inner));
+      plan[planAt++] = getValueHash(holder.domain[position]);
+      plan[planAt++] = getValueHash(inner);
       holder = toFiniteFunction(inner);
     }
     const position = located[at + 2 + depth] >> 1;
@@ -244,7 +248,7 @@ const createHashPlan = (source: Value, located: number[]) => {
     plan[leafAt + 1] = getValueHash(leaf);
     plan[leafAt + 2] = typeof leaf === "object" ? getRefBaseHash(leaf) : 0;
   }
-  return Int32Array.from(plan);
+  return plan;
 };
 
 // The record at a slot of a canonical page: its source with the node of each of its edges at each
@@ -302,14 +306,19 @@ interface Slots {
   plans: (Int32Array | undefined)[];
   hashes: Int32Array;
   isInPlace: Uint8Array;
+  count: number;
 }
 
 const createSlots = (size: number): Slots => ({
-  records: [],
-  sources: [],
-  plans: [],
+  // eslint-disable-next-line unicorn/no-new-array
+  records: new Array<Value | undefined>(size),
+  // eslint-disable-next-line unicorn/no-new-array
+  sources: new Array<Value>(size),
+  // eslint-disable-next-line unicorn/no-new-array
+  plans: new Array<Int32Array | undefined>(size),
   hashes: new Int32Array(size),
   isInPlace: new Uint8Array(size),
+  count: 0,
 });
 
 const pushSlot = (
@@ -320,11 +329,12 @@ const pushSlot = (
   hash: number,
   isInPlace: boolean,
 ) => {
-  slots.hashes[slots.sources.length] = hash;
-  slots.isInPlace[slots.sources.length] = isInPlace ? 1 : 0;
-  slots.records.push(record);
-  slots.sources.push(source);
-  slots.plans.push(plan);
+  const at = slots.count++;
+  slots.hashes[at] = hash;
+  slots.isInPlace[at] = isInPlace ? 1 : 0;
+  slots.records[at] = record;
+  slots.sources[at] = source;
+  slots.plans[at] = plan;
 };
 
 // The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
@@ -352,15 +362,23 @@ const compareSteps = (located: number[], left: number, right: number) => {
 };
 
 const sortLocated = (located: number[]) => {
+  let isSorted = true;
+  let previous = -1;
+  for (let at = 0; isSorted && at < located.length; at += 2 + located[at + 1]) {
+    isSorted = previous === -1 || compareSteps(located, previous, at) <= 0;
+    previous = at;
+  }
+  if (isSorted) return located.slice();
   const starts: number[] = [];
   for (let at = 0; at < located.length; at += 2 + located[at + 1]) starts.push(at);
-  if (starts.length < 2) return located.slice();
-  const sorted: number[] = [];
+  // eslint-disable-next-line unicorn/no-new-array
+  const sorted = new Array<number>(located.length);
+  let sortedAt = 0;
   starts
     .sort((left, right) => compareSteps(located, left, right))
     .forEach((start) => {
       for (let index = start; index < start + 2 + located[start + 1]; index++) {
-        sorted.push(located[index]);
+        sorted[sortedAt++] = located[index];
       }
     });
   return sorted;
@@ -1319,10 +1337,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
       }
       pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
-      const locations: (number[] | undefined)[] = [];
+      // eslint-disable-next-line unicorn/no-new-array
+      const locations = new Array<number[] | undefined>(count);
       for (let slot = 0; slot < count; slot++) {
         const node = nodes[first + slot + 1];
-        locations.push(getLocated(node === 0 ? first + slot + 1 : node));
+        locations[slot] = getLocated(node === 0 ? first + slot + 1 : node);
       }
       return new CanonicalPage(
         pageEdges,
