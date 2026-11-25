@@ -16,12 +16,14 @@ import {
   formatValue,
   getEntryContribution,
   getKeyPosition,
+  getPageHash,
   getPageRecord,
   getSequenceElements,
   getValueHash,
   isCanonical,
   isCanonicalPage,
   isUnfingerprintableHash,
+  isWrittenSlot,
   markCanonical,
   PAGE_SIZE,
   setFunctionClass,
@@ -39,6 +41,7 @@ import {
 // records, an object's props maps a bucket to a function from key to descriptor, and a JavaScript
 // object value is [type |-> "object", id |-> n].
 const NAMED_BUCKET = -1;
+const PAGE_EDGES = -2;
 const EDGE_NODES = EDGE_STARTS + PAGE_SIZE + 1;
 
 interface Realm {
@@ -226,16 +229,20 @@ const getRefBaseHash = (value: Value) => {
 // For each of a source's locations: the hashes of its key and its value in its holder, the base hash
 // of the object value there, and then the hashes of the key and the value of each holder on the way.
 const createHashPlan = (source: Value, located: number[]) => {
-  const plan: number[] = [];
+  let size = 0;
+  for (let at = 0; at < located.length; at += 2 + located[at + 1]) size += 1 + 2 * located[at + 1];
+  const plan = new Int32Array(size);
+  let planAt = 0;
   for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
     const depth = located[at + 1] - 1;
-    const leafAt = plan.length;
-    plan.push(0, 0, 0);
+    const leafAt = planAt;
+    planAt += 3;
     let holder = toFiniteFunction(source);
     for (let level = 0; level < depth; level++) {
       const position = located[at + 2 + level] >> 1;
       const inner = holder.range[position];
-      plan.push(getValueHash(holder.domain[position]), getValueHash(inner));
+      plan[planAt++] = getValueHash(holder.domain[position]);
+      plan[planAt++] = getValueHash(inner);
       holder = toFiniteFunction(inner);
     }
     const position = located[at + 2 + depth] >> 1;
@@ -244,7 +251,7 @@ const createHashPlan = (source: Value, located: number[]) => {
     plan[leafAt + 1] = getValueHash(leaf);
     plan[leafAt + 2] = typeof leaf === "object" ? getRefBaseHash(leaf) : 0;
   }
-  return Int32Array.from(plan);
+  return plan;
 };
 
 // The record at a slot of a canonical page: its source with the node of each of its edges at each
@@ -302,14 +309,19 @@ interface Slots {
   plans: (Int32Array | undefined)[];
   hashes: Int32Array;
   isInPlace: Uint8Array;
+  count: number;
 }
 
 const createSlots = (size: number): Slots => ({
-  records: [],
-  sources: [],
-  plans: [],
+  // eslint-disable-next-line unicorn/no-new-array
+  records: new Array<Value | undefined>(size),
+  // eslint-disable-next-line unicorn/no-new-array
+  sources: new Array<Value>(size),
+  // eslint-disable-next-line unicorn/no-new-array
+  plans: new Array<Int32Array | undefined>(size),
   hashes: new Int32Array(size),
   isInPlace: new Uint8Array(size),
+  count: 0,
 });
 
 const pushSlot = (
@@ -320,11 +332,12 @@ const pushSlot = (
   hash: number,
   isInPlace: boolean,
 ) => {
-  slots.hashes[slots.sources.length] = hash;
-  slots.isInPlace[slots.sources.length] = isInPlace ? 1 : 0;
-  slots.records.push(record);
-  slots.sources.push(source);
-  slots.plans.push(plan);
+  const at = slots.count++;
+  slots.hashes[at] = hash;
+  slots.isInPlace[at] = isInPlace ? 1 : 0;
+  slots.records[at] = record;
+  slots.sources[at] = source;
+  slots.plans[at] = plan;
 };
 
 // The classes of weak collections, whose renaming keeps the entries whose keys the walk reaches.
@@ -352,15 +365,23 @@ const compareSteps = (located: number[], left: number, right: number) => {
 };
 
 const sortLocated = (located: number[]) => {
+  let isSorted = true;
+  let previous = -1;
+  for (let at = 0; isSorted && at < located.length; at += 2 + located[at + 1]) {
+    isSorted = previous === -1 || compareSteps(located, previous, at) <= 0;
+    previous = at;
+  }
+  if (isSorted) return located.slice();
   const starts: number[] = [];
   for (let at = 0; at < located.length; at += 2 + located[at + 1]) starts.push(at);
-  if (starts.length < 2) return located.slice();
-  const sorted: number[] = [];
+  // eslint-disable-next-line unicorn/no-new-array
+  const sorted = new Array<number>(located.length);
+  let sortedAt = 0;
   starts
     .sort((left, right) => compareSteps(located, left, right))
     .forEach((start) => {
       for (let index = start; index < start + 2 + located[start + 1]; index++) {
-        sorted.push(located[index]);
+        sorted[sortedAt++] = located[index];
       }
     });
   return sorted;
@@ -779,15 +800,25 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const getInitialObject = createHeapReader(initialObjs);
   const getEnvironment = createHeapReader(envs);
   const environmentPages = getList(get(envs, "pages"));
-  const getPage = (node: number) => {
-    const index = (node > 0 ? node : -node) - 1;
-    const page = (node > 0 ? pages : environmentPages)[Math.floor(index / PAGE_SIZE)];
-    return isIncremental &&
+  // A heap's pages that canonicalStateOf made against this realm, whose records' edges it reads.
+  const getCanonicalPages = (heapPages: Value[]) =>
+    heapPages.map((page) =>
+      isIncremental &&
       isCanonicalPage(page) &&
       page.edges[0] === realm.objects &&
       page.edges[1] === realm.environments
-      ? page
-      : undefined;
+        ? page
+        : undefined,
+    );
+  const objectCanonicalPages = getCanonicalPages(pages);
+  const environmentCanonicalPages = getCanonicalPages(environmentPages);
+  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
+  // The page of a node whose record a step didn't write since CanonicalStateOf made the page.
+  const getPage = (node: number) => {
+    const page = (node > 0 ? objectCanonicalPages : environmentCanonicalPages)[
+      Math.floor(((node > 0 ? node : -node) - 1) / PAGE_SIZE)
+    ];
+    return page === undefined || isWrittenSlot(page, getSlot(node)) ? undefined : page;
   };
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
@@ -798,10 +829,22 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
   });
   // The nodes that each walked record refers to, an object by its id and an environment by its
-  // number negated: from where a node's edges start, its count and then the nodes.
+  // number negated: from where a node's edges start, its count and then the nodes. A node whose
+  // edges the walk read from its page starts at PAGE_EDGES, and they stay there.
   const edges: number[] = [];
   const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
   const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
+  const getEdgeStart = (node: number) =>
+    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
+  const getEdgeArray = (node: number) =>
+    (getEdgeStart(node) === PAGE_EDGES ? getPage(node)?.edges : undefined) ?? edges;
+  const getEdgeFirst = (node: number, array: ArrayLike<number>) =>
+    array === edges ? getEdgeStart(node) + 1 : array[EDGE_STARTS + getSlot(node)];
+  const getEdgeEnd = (node: number, array: ArrayLike<number>) => {
+    if (array !== edges) return array[EDGE_STARTS + getSlot(node) + 1];
+    const start = getEdgeStart(node);
+    return start + 1 + edges[start];
+  };
   const startEdges = (node: number) => {
     const start = edges.length;
     if (node > 0) objectEdgeStarts[node] = start;
@@ -820,17 +863,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   // Gives whether the record is a WeakMap.
   const walkRecord = (node: number) => {
-    const start = startEdges(node);
     const page = getPage(node);
     if (page !== undefined) {
-      const pageEdges = page.edges;
-      const slot = ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
-      for (let at = pageEdges[EDGE_STARTS + slot]; at < pageEdges[EDGE_STARTS + slot + 1]; at++) {
-        edges.push(pageEdges[at]);
-      }
-      edges[start] = edges.length - start - 1;
-      return ((pageEdges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
+      if (node > 0) objectEdgeStarts[node] = PAGE_EDGES;
+      else environmentEdgeStarts[-node] = PAGE_EDGES;
+      const slot = getSlot(node);
+      return ((page.edges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
     }
+    const start = startEdges(node);
     if (node < 0) {
       environmentRefs(getEnvironment(-node), realm, edges, path);
       endWalked(node, start);
@@ -862,18 +902,20 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     order.push(node);
   };
-  const reachEdges = (start: number) => {
-    for (let index = start + 1; index <= start + edges[start]; index++) reach(edges[index]);
+  const reachEdges = (node: number) => {
+    const array = getEdgeArray(node);
+    const end = getEdgeEnd(node, array);
+    for (let index = getEdgeFirst(node, array); index < end; index++) reach(array[index]);
   };
   for (let environment = 1; environment <= realm.environments; environment++) {
     walkRecord(-environment);
-    reachEdges(environmentEdgeStarts[environment]);
+    reachEdges(-environment);
   }
   for (const id of changed) {
     const start = startEdges(id);
     objectRefs(getObject(id), realm, edges, path);
     endWalked(id, start);
-    reachEdges(start);
+    reachEdges(id);
   }
   const roots: number[] = [];
   const rootPath: Path = { steps: [], located: [], count: 0 };
@@ -896,7 +938,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     for (; head < order.length; head++) {
       const node = order[head];
       if (walkRecord(node)) weakMaps.push(node);
-      reachEdges(node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node]);
+      reachEdges(node);
     }
   };
   walk();
@@ -1122,17 +1164,15 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     node > 0
       ? node <= realm.objects || objectNumbers[node] === node
       : -node <= realm.environments || environmentNumbers[-node] === -node;
-  const getEdgeStart = (node: number) =>
-    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
   const isEveryEdgeUnmoved = (node: number) => {
-    const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
-    if (start === -1) return false;
-    for (let index = start + 1; index <= start + edges[start]; index++) {
-      if (!isUnmoved(edges[index])) return false;
+    if (getEdgeStart(node) === -1) return false;
+    const array = getEdgeArray(node);
+    const end = getEdgeEnd(node, array);
+    for (let index = getEdgeFirst(node, array); index < end; index++) {
+      if (!isUnmoved(array[index])) return false;
     }
     return true;
   };
-  const getSlot = (node: number) => ((node > 0 ? node : -node) - 1) % PAGE_SIZE;
   const getLocated = (node: number) =>
     walkedLocations.has(node) ? walkedLocations.get(node) : getPage(node)?.locations[getSlot(node)];
   const hashSteps: number[] = [];
@@ -1151,7 +1191,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   // their new numbers, at located, from the source's plan.
   const getMadeHash = (node: number, hash: number, located: number[], plan: Int32Array) => {
     levelHashes[0] = hash;
-    const start = getEdgeStart(node);
+    const array = getEdgeArray(node);
+    const first = getEdgeFirst(node, array);
     let open = 0;
     let planAt = 0;
     for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
@@ -1167,7 +1208,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         levelBases[open + 1] = plan[planAt + 4 + 2 * open];
         levelHashes[open + 1] = levelBases[open + 1];
       }
-      const target = edges[start + 1 + located[at]];
+      const target = array[first + located[at]];
       const numberHash = getValueHash(getNew(target));
       const key = plan[planAt];
       const previous = plan[planAt + 1];
@@ -1294,14 +1335,20 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const first = page * PAGE_SIZE;
       const count = Math.min(PAGE_SIZE, slots.sources.length - first);
       const previous = pagesBefore[page];
-      let isKept = isIncremental && isCanonicalPage(previous) && previous.domain.length === count;
+      let isKept =
+        isIncremental &&
+        isCanonicalPage(previous) &&
+        previous.writtenSlots === undefined &&
+        previous.domain.length === count;
       for (let slot = 0; isKept && slot < count; slot++)
         isKept = slots.isInPlace[first + slot] === 1;
       if (isKept) return previous;
       let size = EDGE_NODES;
       for (let slot = 0; slot < count; slot++) {
-        const start = getEdgeStart(nodes[first + slot + 1]);
-        if (start !== -1) size += edges[start];
+        const node = nodes[first + slot + 1];
+        if (getEdgeStart(node) === -1) continue;
+        const array = getEdgeArray(node);
+        size += getEdgeEnd(node, array) - getEdgeFirst(node, array);
       }
       const pageEdges = new Int32Array(size);
       pageEdges[0] = realm.objects;
@@ -1310,28 +1357,33 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       for (let slot = 0; slot < PAGE_SIZE; slot++) {
         pageEdges[EDGE_STARTS + slot] = at;
         const node = slot < count ? nodes[first + slot + 1] : 0;
-        const start = getEdgeStart(node);
-        if (start === -1) continue;
-        for (let index = start + 1; index <= start + edges[start]; index++) {
-          const target = edges[index];
+        if (getEdgeStart(node) === -1) continue;
+        const array = getEdgeArray(node);
+        const end = getEdgeEnd(node, array);
+        for (let index = getEdgeFirst(node, array); index < end; index++) {
+          const target = array[index];
           pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
         }
         if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
       }
       pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
-      const locations: (number[] | undefined)[] = [];
+      // eslint-disable-next-line unicorn/no-new-array
+      const locations = new Array<number[] | undefined>(count);
       for (let slot = 0; slot < count; slot++) {
         const node = nodes[first + slot + 1];
-        locations.push(getLocated(node === 0 ? first + slot + 1 : node));
+        locations[slot] = getLocated(node === 0 ? first + slot + 1 : node);
       }
+      const hashes = slots.hashes.slice(first, first + count);
       return new CanonicalPage(
         pageEdges,
         locations,
         slots.plans.slice(first, first + count),
         slots.sources.slice(first, first + count),
         slots.records.slice(first, first + count),
-        slots.hashes.slice(first, first + count),
+        hashes,
+        getPageHash(hashes),
         makeRecord,
+        undefined,
       );
     };
   return except(state, {

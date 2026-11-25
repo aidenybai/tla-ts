@@ -13,7 +13,9 @@ import {
   createSortedFunction,
   createTuple,
   getDomain,
+  getPageRecord,
   getSequenceElements,
+  isCanonicalPage,
   isElementOf,
   isEqualLikeTlc,
   isModelValue,
@@ -821,12 +823,19 @@ const getBucket = (units: number[]) =>
 const getConstant = (context: Context | undefined, name: string) =>
   context?.environment.constants.get(`${name}@ESRuntime`);
 
+// A heap page's record at a slot, of which a canonical page makes only that one.
+const getPageEntry = (page: Value | undefined, slot: number) => {
+  if (page === undefined || !isCanonicalPage(page)) return getTuple(page)?.[slot];
+  return slot < page.records.length ? getPageRecord(page, slot) : undefined;
+};
+
 // The record of a heap's pages at an index, HeapGet(h, i), or undefined.
 const getHeapEntry = (pages: Value | undefined, index: Value) =>
   typeof index === "number" && Number.isInteger(index) && index >= 1
-    ? getTuple(getTuple(pages)?.[Math.floor((index - 1) / HEAP_PAGE_SIZE)])?.[
-        (index - 1) % HEAP_PAGE_SIZE
-      ]
+    ? getPageEntry(
+        getTuple(pages)?.[Math.floor((index - 1) / HEAP_PAGE_SIZE)],
+        (index - 1) % HEAP_PAGE_SIZE,
+      )
     : undefined;
 
 // OrdinaryGetOwnProperty(o, k): the descriptor of k in o's props, or absent, or undefined where o
@@ -1049,16 +1058,24 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
       const empty = getConstant(context, "Empty");
       if (state === undefined || typeof size !== "number" || pages === undefined) return undefined;
       if (empty === undefined) return undefined;
-      for (let id = 1; id <= size; id++) {
-        const page = getTuple(pages[Math.floor((id - 1) / HEAP_PAGE_SIZE)]);
-        const object = page?.[(id - 1) % HEAP_PAGE_SIZE];
-        const objectClass = getField(object, "class");
-        if (typeof objectClass !== "string") return undefined;
-        if (objectClass !== "promise") continue;
-        const slots = getField(object, "slots");
-        const promiseState = getField(slots, "state");
-        if (typeof promiseState !== "string") return undefined;
-        if (promiseState === "rejected" && getField(slots, "isHandled") !== true) return undefined;
+      for (let first = 0; first < size; first += HEAP_PAGE_SIZE) {
+        const page = pages[first / HEAP_PAGE_SIZE];
+        const canonical = page !== undefined && isCanonicalPage(page) ? page : undefined;
+        const records = canonical?.records ?? getTuple(page);
+        if (records === undefined) return undefined;
+        for (let slot = 0; slot < HEAP_PAGE_SIZE && first + slot < size; slot++) {
+          // A canonical page's record that it hasn't made differs from its source only in its refs'
+          // ids, which this doesn't read.
+          const object = records[slot] ?? canonical?.sources[slot];
+          const objectClass = getField(object, "class");
+          if (typeof objectClass !== "string") return undefined;
+          if (objectClass !== "promise") continue;
+          const slots = getField(object, "slots");
+          const promiseState = getField(slots, "state");
+          if (typeof promiseState !== "string") return undefined;
+          if (promiseState === "rejected" && getField(slots, "isHandled") !== true)
+            return undefined;
+        }
       }
       return createOk(state, typeShape(["undefined"]), empty);
     }),
