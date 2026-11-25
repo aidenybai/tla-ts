@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { check, TlaError } from "../../src";
+import { check, TlaError, type CheckResult } from "../../src";
+import { printResult } from "../../src/cli/tlc-output";
 import { getErrorExitCode, getUnexpectedException, STACK_OVERFLOW_MESSAGE } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { checkFixture, formatCallStackLines } from "./check-harness";
@@ -9,6 +10,30 @@ import { checkFixture, formatCallStackLines } from "./check-harness";
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
 const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
+
+const CHAIN =
+  '---- MODULE Chain ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 40 /\\ PrintT(x) /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_x\nLive == <>(x >= 0)\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("distinct")>>)\nTruth == TRUE\n====';
+
+const getPrintedResult = (result: CheckResult) => {
+  const printed: string[] = [];
+  printResult(
+    result,
+    {
+      isTool: false,
+      isDiffTrace: false,
+      version: "master",
+      print: (_code, _level, text) => printed.push(text),
+      printOutput: () => {},
+    },
+    {
+      startTime: Date.now(),
+      isParsed: true,
+      livenessStartTime: undefined,
+      lastProgress: undefined,
+    },
+  );
+  return printed;
+};
 
 const checkGithub710 = (configName: string, version?: TlcVersion) =>
   checkFixture("github710", "Github710d", configName, { version });
@@ -103,6 +128,33 @@ describe("liveness matches TLC", () => {
           if (progress.kind !== "liveness-started" || progress.isComplete) return;
           checkedAt.push(now);
           now += checkDuration;
+        },
+      });
+      expect([result.status, checkedAt]).toEqual(["success", expected]);
+    },
+  );
+
+  it.each([
+    ["", [3000, 123_750, 244_500]],
+    ["\n_PERIODIC Truth", [3000]],
+  ])(
+    "keeps a runtime ratio of exactly 0.2 while the graph hasn't grown only when a _PERIODIC is set, as TLC skips its early return, with config %j",
+    async (periodic, expected) => {
+      let now = 0;
+      let stateDuration = 100;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      const checkedAt: number[] = [];
+      const result = await check({
+        source: CHAIN,
+        config: `SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE${periodic}`,
+        onPrint: () => {
+          now += stateDuration;
+        },
+        onProgress: (progress) => {
+          if (progress.kind !== "liveness-started" || progress.isComplete) return;
+          checkedAt.push(now);
+          now += 750;
+          stateDuration = 30_000;
         },
       });
       expect([result.status, checkedAt]).toEqual(["success", expected]);
@@ -495,4 +547,80 @@ describe("liveness matches TLC", () => {
       );
     },
   );
+});
+
+describe("_PERIODIC matches TLC", () => {
+  it.each([
+    ["False", "periodic-violation", undefined, []],
+    [
+      "Divided",
+      "error",
+      255,
+      [`${getUnexpectedException("tlc2.tool.EvalException")}The second argument of \\div is 0.`],
+    ],
+    [
+      "Number",
+      "error",
+      255,
+      [
+        `${getUnexpectedException("java.lang.RuntimeException")}Attempted to compare equality of boolean FALSE with non-boolean:\n42`,
+      ],
+    ],
+    [
+      "State",
+      "error",
+      255,
+      [
+        `${getUnexpectedException("java.lang.RuntimeException")}In evaluation, the identifier x is either undefined or not an operator.\nline 11, col 10 to line 11, col 10 of module Chain`,
+      ],
+    ],
+  ])(
+    "stops at the first periodic work when _PERIODIC %s isn't TRUE and prints what TLC prints",
+    async (name, status, exitCode, messages) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      const result = await check({
+        source: CHAIN,
+        config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n_PERIODIC ${name}`,
+        onPrint: () => {
+          now += 100;
+        },
+      });
+      expect([result.status, result.failure?.exitCode, getPrintedResult(result)]).toEqual([
+        status,
+        exitCode,
+        [
+          ...messages,
+          "31 states generated, 31 distinct states found, 1 states left on queue.",
+          "The depth of the complete state graph search is 31.",
+        ],
+      ]);
+    },
+  );
+
+  it("evaluates _PERIODIC after the periodic liveness check and before the progress line", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const events: string[] = [];
+    await check({
+      source: CHAIN,
+      config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE\n_PERIODIC Printed",
+      onPrint: (text) => {
+        now += 100;
+        if (text.startsWith("<<")) events.push(text);
+      },
+      onProgress: (progress) => {
+        if (progress.kind === "liveness-started")
+          events.push(`${progress.kind} ${progress.states}`);
+        if (progress.kind === "liveness-finished" || progress.kind === "progress")
+          events.push(progress.kind);
+      },
+    });
+    expect(events.slice(0, 4)).toEqual([
+      "liveness-started 30",
+      "liveness-finished",
+      '<<"periodic", 31>>',
+      "progress",
+    ]);
+  });
 });

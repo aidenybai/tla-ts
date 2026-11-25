@@ -505,6 +505,22 @@ describe("check with workers matches TLC", () => {
     expect(await getClockReads(4)).toEqual(await getClockReads(1));
   });
 
+  it("stops at a FALSE _PERIODIC with workers as with one, as TLC does", async () => {
+    const getResult = async (workers: number) => {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
+      const result = await tlaTs.check({
+        source:
+          "---- MODULE Counter ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1\nFalse == FALSE\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n_PERIODIC False",
+        workers,
+      });
+      return [result.status, result.generatedStates];
+    };
+    const sequential = await getResult(1);
+    expect([sequential[0], await getResult(4)]).toEqual(["periodic-violation", sequential]);
+  });
+
   it("hands a worker a converted function over SUBSET as the FcnLambdaValue it is", async () => {
     const result = await check({
       source:

@@ -41,6 +41,7 @@ const STATUS_TITLES: Record<CheckStatus, string> = {
   "property-violation": "Property violated",
   "liveness-violation": "Temporal property violated",
   "postcondition-violation": "Postcondition is false",
+  "periodic-violation": "Periodic is false",
   deadlock: "Deadlock reached",
   error: "Error",
 };

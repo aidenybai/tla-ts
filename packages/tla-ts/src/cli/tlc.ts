@@ -94,6 +94,7 @@ const EXIT_CODES: Record<CheckStatus, number> = {
   "property-violation": EXIT_STATUS.safetyViolation,
   "liveness-violation": EXIT_STATUS.livenessViolation,
   "postcondition-violation": EXIT_STATUS.assumptionViolation,
+  "periodic-violation": EXIT_STATUS.assumptionViolation,
   error: EXIT_STATUS.error,
 };
 
