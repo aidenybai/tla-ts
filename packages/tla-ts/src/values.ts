@@ -872,6 +872,13 @@ const cacheSet = (value: Value) => {
   }
 };
 
+const isMarkedFingerprinted = (value: Value) =>
+  typeof value !== "object" ||
+  value.kind === "ModelValue" ||
+  value.kind === "Interval" ||
+  value.kind === "InfiniteSet" ||
+  ((value.flags ?? 0) & VALUE_FINGERPRINTED) !== 0;
+
 export const markFingerprinted = (value: Value): void => {
   if (!hasStreamedSet || typeof value !== "object") return;
   if (value.kind === "ModelValue" || value.kind === "Interval" || value.kind === "InfiniteSet") {
@@ -4844,21 +4851,25 @@ const getReadyHash = (value: Value): number => {
   return hash;
 };
 
-// A function of a source's domain and class with a range that changes some of its values, whose
-// hash follows from the source's where each changed value's hash is ready.
 export const createChangedFunction = (source: FunctionValue, range: Value[]) => {
   const changed = setFunctionClass(
     createSortedFunction(source.domain, range),
     source.functionClass,
   );
-  if (source.hash === 0 || source.hash === UNFINGERPRINTABLE_HASH) return changed;
+  let isHashed = source.hash !== 0 && source.hash !== UNFINGERPRINTABLE_HASH;
+  let isFingerprinted = (source.flags & VALUE_FINGERPRINTED) !== 0;
   let hash = source.hash;
-  for (let index = 0; index < range.length; index++) {
+  for (let index = 0; index < range.length && (isHashed || isFingerprinted); index++) {
     const previous = source.range[index];
     const next = range[index];
     if (next === previous) continue;
+    if (isFingerprinted && !isMarkedFingerprinted(next)) isFingerprinted = false;
+    if (!isHashed) continue;
     const nextHash = getReadyHash(next);
-    if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) return changed;
+    if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) {
+      isHashed = false;
+      continue;
+    }
     const keyHash = getValueHash(source.domain[index]);
     hash =
       (hash -
@@ -4866,7 +4877,8 @@ export const createChangedFunction = (source: FunctionValue, range: Value[]) => 
         getEntryContribution(keyHash, nextHash)) |
       0;
   }
-  changed.hash = hash;
+  if (isHashed) changed.hash = hash;
+  if (isFingerprinted) changed.flags = VALUE_FINGERPRINTED;
   return changed;
 };
 
