@@ -243,6 +243,27 @@ export const markCanonical = (value: FunctionValue) => {
 export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
+// A page of ESCore's heap that CanonicalStateOf made, with the nodes that each of its records refers
+// to (see escore-canonical.ts), whose hidden class no other function shares.
+export interface CanonicalPage extends FunctionValue {
+  edges: Int32Array;
+}
+
+export const createCanonicalPage = (records: Value[], edges: Int32Array): CanonicalPage => ({
+  kind: "Function",
+  domain: getIntervalDomain(records.length),
+  range: records,
+  hash: 0,
+  fingerprint: 0,
+  writtenKeys: undefined,
+  functionClass: "tuple",
+  flags: VALUE_CANONICAL,
+  edges,
+});
+
+export const isCanonicalPage = (value: Value): value is CanonicalPage =>
+  typeof value === "object" && "edges" in value;
+
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
 
