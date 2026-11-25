@@ -168,14 +168,24 @@ export interface LazyFunctionValue {
   enumerated?: FunctionValue;
 }
 
-export interface OperatorValue {
+interface OperatorFields {
   kind: "Operator";
   name: string;
   arity: number;
   call: (args: Value[]) => Value;
   expression?: Expression;
-  signature?: string;
 }
+
+interface OpLambdaValue extends OperatorFields {
+  javaClass: "OpLambdaValue";
+}
+
+interface MethodValue extends OperatorFields {
+  javaClass: "MethodValue";
+  signature: string;
+}
+
+export type OperatorValue = OpLambdaValue | MethodValue;
 
 interface CountedLazyFunctionValue extends LazyFunctionValue {
   costModel: CostModel;
@@ -5981,9 +5991,9 @@ const writeValue = (
     case "Operator":
       return writeText(
         writer,
-        value.signature === undefined
-          ? `<Operator ${value.name}>`
-          : `<Java Method: ${value.signature}>`,
+        value.javaClass === "MethodValue"
+          ? `<Java Method: ${value.signature}>`
+          : `<Operator ${value.name}>`,
       );
   }
 };

@@ -1353,7 +1353,13 @@ const evaluateOperatorArgument = (expression: Expression, context: Context): Ope
 const callOperatorWithValues = (operator: Operator, args: Value[], context: Context): Value => {
   if (operator.kind === "Builtin" && operator.isLazy) {
     return operator.evaluate(
-      args.map((value) => ({ kind: "Operator", name: "argument", arity: 0, call: () => value })),
+      args.map((value) => ({
+        kind: "Operator",
+        javaClass: "OpLambdaValue",
+        name: "argument",
+        arity: 0,
+        call: () => value,
+      })),
       context,
     );
   }
@@ -1370,17 +1376,22 @@ const callOperatorWithValues = (operator: Operator, args: Value[], context: Cont
 const toOperatorValue = (operator: Operator, name: string, context: Context): OperatorValue => {
   if (operator.kind === "Operator") return operator;
   const coverage = context.environment.coverage;
-  return {
-    kind: "Operator",
-    name,
-    arity: getArity(operator),
-    signature: operator.kind === "Builtin" ? operator.signature : undefined,
-    // TLC's OpLambdaValue#eval, which a Java override or a split action calls, evaluates the operator's body without a cost model.
-    call: coverage
-      ? (args) =>
-          runAtCoverageNode(coverage, -1, () => callOperatorWithValues(operator, args, context))
-      : (args) => callOperatorWithValues(operator, args, context),
-  };
+  const arity = getArity(operator);
+  // TLC's OpLambdaValue#eval, which a Java override or a split action calls, evaluates the operator's body without a cost model.
+  const call = coverage
+    ? (args: Value[]) =>
+        runAtCoverageNode(coverage, -1, () => callOperatorWithValues(operator, args, context))
+    : (args: Value[]) => callOperatorWithValues(operator, args, context);
+  return operator.kind === "Builtin" && operator.signature !== undefined
+    ? {
+        kind: "Operator",
+        javaClass: "MethodValue",
+        name,
+        arity,
+        call,
+        signature: operator.signature,
+      }
+    : { kind: "Operator", javaClass: "OpLambdaValue", name, arity, call };
 };
 
 export const evaluateOperatorValue = (expression: Expression, context: Context) => {
@@ -2228,6 +2239,7 @@ export const isValueArgument = (argument: Expression, environment: Environment) 
 const getLazyArguments = (args: Expression[], context: Context): OperatorValue[] =>
   args.map((arg) => ({
     kind: "Operator",
+    javaClass: "OpLambdaValue",
     name: "argument",
     arity: 0,
     call: () => evaluate(arg, context),

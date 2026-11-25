@@ -177,7 +177,6 @@ const JAVA_CLASSES: Record<string, string> = {
   LazyFunction: "FcnLambdaValue",
   Union: "UnionValue",
   MixedSet: "SetEnumValue",
-  Operator: "OpLambdaValue",
 };
 
 const SET_OPERATION_CLASSES = {
@@ -222,7 +221,7 @@ export const getJavaClassName = (value: Value) => {
   if (typeof value === "string") return "StringValue";
   if (typeof value === "boolean") return "BoolValue";
   if (value.kind === "SetOperation") return SET_OPERATION_CLASSES[value.operator];
-  if (value.kind === "Operator" && value.signature !== undefined) return "MethodValue";
+  if (value.kind === "Operator") return value.javaClass;
   if (value.kind !== "Function") return JAVA_CLASSES[value.kind];
   const functionClass = getFunctionClass(value);
   return functionClass === undefined ? "FcnRcdValue" : FUNCTION_CLASSES[functionClass];
