@@ -53,6 +53,7 @@ import {
   markSeenState,
   type StateTable,
 } from "./fingerprints";
+import { getInstanceFrame } from "./instances";
 import type { JavaOverride } from "./java-overrides";
 import {
   createLivenessChecker,
@@ -1839,7 +1840,9 @@ const searchStates = (
         text: `The stuttering counterexample above may be caused by the absence of a behavior specification (SPECIFICATION). Only INIT and NEXT have been provided, so TLC permits infinite stuttering. To rule out such counterexamples, use SPECIFICATION Spec, with Spec asserting a suitable fairness constraint ${book}`,
       };
     }
-    const range = getDefinition(getRootKey(name, environment), environment)?.location.range;
+    const definition = getDefinition(getRootKey(name, environment), environment);
+    // Liveness#printStutteringCounterExampleWarning locates the root's OpDefNode, which SANY builds on the INSTANCE that substitutes into the definition.
+    const range = definition && (getInstanceFrame(definition.body) ?? definition).location.range;
     if (spec.temporals.length > 0 || !range) return undefined;
     return {
       code: MESSAGE_CODE.noFairnessButProperty,
