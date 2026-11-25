@@ -108,7 +108,7 @@ const getRuntimeValue = (
       return createTlcRecord([
         ["mode", "bfs"],
         ["deadlock", runtime.checkDeadlock],
-        ["worker", 1],
+        ["worker", runtime.workers],
         ["seed", String(runtime.seed)],
         ["fingerprint", String(BigInt.asIntN(64, getFingerprintPolynomial()))],
         ["install", "unknown"],

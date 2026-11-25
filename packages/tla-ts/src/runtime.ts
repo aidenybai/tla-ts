@@ -32,6 +32,7 @@ export interface CheckerRuntime {
   hasUserFile: boolean;
   version: TlcVersion;
   seed: bigint;
+  workers: number;
   isSeen: (state: Value[]) => boolean;
   markExplored: ((state: Value[]) => void) | undefined;
   getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
@@ -138,6 +139,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     hasUserFile: false,
     version: "master",
     seed,
+    workers: 1,
     generatedStates: 0,
     distinctStates: 0,
     initialStates: 0,
