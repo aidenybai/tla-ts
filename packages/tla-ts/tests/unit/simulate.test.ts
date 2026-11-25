@@ -1448,3 +1448,78 @@ it("prints the coverage with every second progress report under -coverage 2, as 
   });
   expect(kinds).toEqual(["progress", "progress", "coverage", "progress", "coverage", "summary"]);
 });
+
+const STALL =
+  '---- MODULE D ----\nEXTENDS Naturals, TLC\nCONSTANT N\nVARIABLE x\nInit == x = 0\nStall == x = 0 /\\ TLCGet("stats").traces = 12 => \\A i \\in 1..N : \\A j \\in 1..N : i + j > 1\nNext == x\' = x + 1 /\\ Stall\nInv == x < 9\nView == IF x < 2 THEN x ELSE x = "s"\n====';
+
+const getStalledLines = (config: string, isDiffTrace: boolean) => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  const lines: string[] = [];
+  const status = simulate({
+    source: STALL,
+    config: `CONSTANT N = 1\nINIT Init\nNEXT Next\nINVARIANT Inv${config}`,
+    seed: 4n,
+    traceDepth: 10,
+    traceCount: 12n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isContinued: true,
+    isDiffTrace,
+    onPrint: (text) => lines.push(text),
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return [
+    status,
+    lines.slice(lines.findIndex((line) => line.startsWith("Finished computing")) + 1),
+  ];
+};
+
+const getStalledStates = (count: number) => [
+  "Error: Invariant Inv is violated.",
+  "Error: The behavior up to this point is:",
+  "State 1: <Init line 5, col 9 to line 5, col 13 of module D>\nx = 0\n",
+  ...Array.from(
+    { length: count - 1 },
+    (_value, index) =>
+      `State ${index + 2}: <Next line 7, col 9 to line 7, col 27 of module D>\nx = ${index + 1}\n`,
+  ),
+];
+
+it("prints the violations found before a progress report under -continue before it, as TLC's Simulator does while its worker stalls past the report", () => {
+  const getViolation = (states: number) => [
+    ...getStalledStates(10),
+    `The number of states generated: ${states}\nSimulation using seed 4 and aril 0`,
+  ];
+  expect(getStalledLines("", false)).toEqual([
+    12,
+    [
+      ...Array.from({ length: 11 }, () => getViolation(100)).flat(),
+      "Progress: 100 states checked, 12 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+      ...getViolation(109),
+      "Progress: 109 states checked, 12 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+    ],
+  ]);
+});
+
+it("stops at a VIEW that fails under -difftrace -continue in a violation a progress report prints, as TLC's Simulator does", () => {
+  expect(getStalledLines("\nVIEW View", true)).toEqual([
+    255,
+    [
+      ...getStalledStates(2),
+      'Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 2 with non-integer:\n"s"',
+    ],
+  ]);
+});
