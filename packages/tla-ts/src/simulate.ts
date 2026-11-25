@@ -641,6 +641,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   let isReporterDead = false;
   let periodicStatus: number = EXIT_STATUS.success;
   let stoppedStates: number | undefined;
+  let flushedErrorCount = 0;
+  let flushFailureStatus: number | undefined;
   const reporterRandom = createJavaRandom(seed);
   const reportProgress = () => {
     output({ kind: "progress", statistics: { ...statistics } });
@@ -683,6 +685,20 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     stepsUntilClock = REPORT_CLOCK_STEPS;
     if (isReporterDead || stoppedStates !== undefined || performance.now() < reportAt) {
       return false;
+    }
+    if (flushedErrorCount < errors.length) {
+      isOnWorker = false;
+      runtime.getRandom = getSimulatorRandom;
+      useRegisters(0);
+      runtime.setEveryWorkerRegister = setEveryWorkerRegister;
+      while (flushedErrorCount < errors.length) {
+        flushFailureStatus = printError(errors[flushedErrorCount++]);
+        if (flushFailureStatus !== undefined) return true;
+      }
+      isOnWorker = true;
+      runtime.getRandom = worker.getRandom;
+      useRegisters(worker.id);
+      runtime.setEveryWorkerRegister = undefined;
     }
     reportProgress();
     reportAt = performance.now() + PROGRESS_INTERVAL;
@@ -997,6 +1013,46 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     if (traceSpec !== undefined) output({ kind: "trace-spec", text: traceSpec });
   };
 
+  const printError = (error: WorkerError) => {
+    if (error.violation) {
+      error.failures?.forEach((failure) =>
+        reportMessage(failure.code, failure.message, failure.toolMessage),
+      );
+      options.onProgress?.({
+        kind: "violation",
+        status: "liveness-violation",
+        violation: error.violation,
+      });
+      if (error.isSummarized) printSummary();
+      if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
+      return undefined;
+    }
+    reportMessage(error.code, error.message, error.toolMessage);
+    const trace = getTrace(error.node, search.getTlcOrder());
+    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW, function or value such as Nat fails to fingerprint crashes TLC without -difftrace too.
+    const shown =
+      options.isDiffTrace && traceDepth !== INFINITE_DEPTH
+        ? getDiffTracePositions(trace)
+        : { positions: trace.map((_node, index) => index), failure: undefined };
+    printBehavior(trace, shown.positions);
+    const failure = shown.failure;
+    if (failure) {
+      reportMessage(failure.code, failure.message, failure.toolMessage);
+      return getMessageExitStatus(failure.code);
+    }
+    const omitted = trace.length - shown.positions.length;
+    if (omitted > 0) {
+      reportMessage(
+        MESSAGE_CODE.general,
+        `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
+        undefined,
+        MESSAGE_LEVEL.none,
+      );
+    }
+    if (error.isSummarized) printSummary();
+    return undefined;
+  };
+
   const getSimulatorRandom = runtime.getRandom;
   for (let index = 1; index < workers.length; index++) {
     registers[index] = new Map(registers[0]);
@@ -1059,6 +1115,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   runtime.getRandom = getSimulatorRandom;
   useRegisters(0);
   runtime.setEveryWorkerRegister = setEveryWorkerRegister;
+  if (flushFailureStatus !== undefined) return flushFailureStatus;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
@@ -1066,43 +1123,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const trailing = errors.slice(printed + 1).find((error) => error.violation);
   // TLC's LiveCheck1 prints the violation a worker finds after the error the Simulator reported, without the Simulator's summary.
   const printedErrors = trailing ? [...reported, { ...trailing, isSummarized: false }] : reported;
-  for (const error of printedErrors) {
-    if (error.violation) {
-      error.failures?.forEach((failure) =>
-        reportMessage(failure.code, failure.message, failure.toolMessage),
-      );
-      options.onProgress?.({
-        kind: "violation",
-        status: "liveness-violation",
-        violation: error.violation,
-      });
-      if (error.isSummarized) printSummary();
-      if (error.traceSpec !== undefined) output({ kind: "trace-spec", text: error.traceSpec });
-      continue;
-    }
-    reportMessage(error.code, error.message, error.toolMessage);
-    const trace = getTrace(error.node, search.getTlcOrder());
-    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW, function or value such as Nat fails to fingerprint crashes TLC without -difftrace too.
-    const shown =
-      options.isDiffTrace && traceDepth !== INFINITE_DEPTH
-        ? getDiffTracePositions(trace)
-        : { positions: trace.map((_node, index) => index), failure: undefined };
-    printBehavior(trace, shown.positions);
-    const failure = shown.failure;
-    if (failure) {
-      reportMessage(failure.code, failure.message, failure.toolMessage);
-      return getMessageExitStatus(failure.code);
-    }
-    const omitted = trace.length - shown.positions.length;
-    if (omitted > 0) {
-      reportMessage(
-        MESSAGE_CODE.general,
-        `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
-        undefined,
-        MESSAGE_LEVEL.none,
-      );
-    }
-    if (error.isSummarized) printSummary();
+  for (const error of printedErrors.slice(flushedErrorCount)) {
+    const failureStatus = printError(error);
+    if (failureStatus !== undefined) return failureStatus;
   }
   // Deviation from TLC: under -continue, Simulator#simulate keeps the worker's last result, a success, so TLC exits 0 after a violation and prints the summary again; tla-ts exits with the first violation's status, as check() does.
   const last = reported[reported.length - 1];
