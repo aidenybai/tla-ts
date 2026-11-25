@@ -17,5 +17,4 @@ const hasSolution = (seq: number[], wt: number): boolean => {
   );
 };
 
-/** @assume */
 export const isSolvable = () => hasSolution([], w);
