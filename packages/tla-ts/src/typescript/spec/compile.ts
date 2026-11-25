@@ -984,6 +984,33 @@ const loadFiles = (
 // The frames of Node 26 below the top level of the ES module it runs as its entry, where V8's stack
 // trace ends: the module job that evaluates the module, and the async frames of the loader that
 // awaits it.
+const NAME = String.raw`[A-Za-z_][A-Za-z0-9_]*`;
+
+// The names that a spec's text binds below its top level, each where it binds it: a LET's
+// definitions and their parameters, an operator's parameters, a quantifier's, CHOOSE's, a set's or
+// a function's bound names, and LAMBDA's parameters. A definition at the top level starts its
+// line; one in a LET follows LET or an indent.
+const getBindings = (text: string) => {
+  const list = String.raw`${NAME}(?:\s*,\s*${NAME})*`;
+  const patterns = [
+    new RegExp(String.raw`(?:\bLET\s+|\n[ \t]+)(${NAME})(?:\(([^()\n]*)\))?\s*==`, "g"),
+    new RegExp(String.raw`^${NAME}\(([^()\n]*)\)\s*==`, "gm"),
+    new RegExp(String.raw`(?:\\A|\\E|\bCHOOSE)\s+(${list})\s*(?:\\in\b|:)`, "g"),
+    new RegExp(String.raw`[{[,]\s*(${NAME})\s*\\in\b`, "g"),
+    new RegExp(String.raw`<<(${list})>>\s*\\in\b`, "g"),
+    new RegExp(String.raw`\bLAMBDA\s+(${list})\s*:`, "g"),
+  ];
+  return patterns.flatMap((pattern) =>
+    [...text.matchAll(pattern)].flatMap((match) =>
+      match
+        .slice(1)
+        .flatMap((group) => (group ?? "").split(","))
+        .flatMap((part) => new RegExp(String.raw`^\s*(${NAME})`).exec(part)?.[1] ?? [])
+        .map((name) => ({ name, index: match.index })),
+    ),
+  );
+};
+
 const ENTRY_MODULE_FRAMES = [
   "ModuleJob.run (node:internal/modules/esm/module_job:569:25)",
   "async node:internal/modules/esm/loader:650:26",
@@ -1286,6 +1313,24 @@ export const compileToEscore = (
   if (twice !== undefined) {
     throw new TlaTypeScriptError(
       `tla-ts can't name ${twice} in TLA+, which the program's spec defines twice or its runtime declares`,
+    );
+  }
+  // A name that the runtime declares, or that the program's code or its steps define before, which
+  // a LET, a parameter, or a bound of the steps binds again, as a LET of a step may bind an
+  // export's name, which TLA+ rejects too.
+  const defined = new Set([...runtime.names, ...definitions.map((definition) => definition.name)]);
+  const stepDefinitions = new Map(
+    [...steps.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)(?:\([^)\n]*\))? ==/gm)]
+      .toReversed()
+      .map((match) => [match[1], match.index] as const),
+  );
+  const rebound = getBindings(steps).find(
+    (binding) =>
+      defined.has(binding.name) || (stepDefinitions.get(binding.name) ?? Infinity) < binding.index,
+  )?.name;
+  if (rebound !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't name ${rebound} in TLA+, which the program's spec binds again after it defines it`,
     );
   }
   // The names that the code, its steps, the modules they extend and the root read, of which the

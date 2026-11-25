@@ -43,7 +43,17 @@ const stop = (what: string): never => {
   );
 };
 
-const get = (record: Value, field: string) => applyFunction(record, field);
+const get = (record: Value, field: string) => {
+  if (
+    typeof record === "object" &&
+    record.kind === "Function" &&
+    record.functionClass === "record"
+  ) {
+    const index = record.domain.indexOf(field);
+    if (index !== -1) return record.range[index];
+  }
+  return applyFunction(record, field);
+};
 
 const getNumber = (record: Value, field: string) => {
   const value = get(record, field);
@@ -72,38 +82,87 @@ const isModelValue = (value: Value, name: string) =>
 const isAbsentOrEmpty = (value: Value) =>
   isModelValue(value, "Absent") || isModelValue(value, "Empty");
 
+const isPlainOf = (
+  value: Value,
+  functionClass: FunctionValue["functionClass"],
+): value is FunctionValue =>
+  typeof value === "object" &&
+  value.kind === "Function" &&
+  value.writtenKeys === undefined &&
+  value.functionClass === functionClass;
+
+const isEveryKept = (changed: Value[], values: Value[]) =>
+  changed.length === values.length && changed.every((inner, index) => inner === values[index]);
+
 // A function with each of its values changed, which keeps its domain and its class.
 const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): FunctionValue => {
   const functionValue = toFiniteFunction(value);
-  return setFunctionClass(
-    createSortedFunction(
-      functionValue.domain,
-      functionValue.range.map((inner, index) => change(inner, functionValue.domain[index])),
-    ),
-    functionValue.functionClass,
+  const range = functionValue.range.map((inner, index) =>
+    change(inner, functionValue.domain[index]),
   );
+  return functionValue.writtenKeys === undefined && isEveryKept(range, functionValue.range)
+    ? functionValue
+    : setFunctionClass(
+        createSortedFunction(functionValue.domain, range),
+        functionValue.functionClass,
+      );
 };
 
-// [record EXCEPT !.field = change(@), ...].
-const except = (record: Value, changes: Record<string, (inner: Value) => Value>) =>
-  mapRange(record, (inner, key) =>
-    typeof key === "string" && Object.hasOwn(changes, key) ? changes[key](inner) : inner,
-  );
+const toTuple = (list: Value, elements: Value[]) =>
+  isPlainOf(list, "tuple") && isEveryKept(elements, list.range) ? list : createTuple(elements);
 
-const heapGet = (heap: Value, index: number) => {
+const toRecord = (record: Value, fields: [string, Value][]) =>
+  isPlainOf(record, "record") &&
+  record.domain.length === fields.length &&
+  fields.every((field) => {
+    const index = record.domain.indexOf(field[0]);
+    return index !== -1 && record.range[index] === field[1];
+  })
+    ? record
+    : createRecord(fields);
+
+// [record EXCEPT !.field = change(@), ...].
+const except = (record: Value, changes: Record<string, (inner: Value) => Value>) => {
+  const functionValue = toFiniteFunction(record);
+  let range: Value[] | undefined;
+  for (const key in changes) {
+    const index = functionValue.domain.indexOf(key);
+    if (index === -1) continue;
+    const changed = changes[key](functionValue.range[index]);
+    if (changed === functionValue.range[index]) continue;
+    range ??= functionValue.range.slice();
+    range[index] = changed;
+  }
+  return range === undefined && functionValue.writtenKeys === undefined
+    ? functionValue
+    : setFunctionClass(
+        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
+        functionValue.functionClass,
+      );
+};
+
+// The record at each index of a heap, which reads each page's records once.
+const createHeapReader = (heap: Value) => {
   const pages = getList(get(heap, "pages"));
-  return getList(pages[Math.floor((index - 1) / PAGE_SIZE)])[(index - 1) % PAGE_SIZE];
+  const pageRecords: Value[][] = [];
+  return (index: number) => {
+    const page = Math.floor((index - 1) / PAGE_SIZE);
+    pageRecords[page] ??= getList(pages[page]);
+    return pageRecords[page][(index - 1) % PAGE_SIZE];
+  };
 };
 
 // A heap of records, whose each page is the page of the heap before that a canonicalization made,
 // where that page holds the same records, or else a page of its own, which this one makes.
 const createHeap = (records: Value[], before: Value, isIncremental: boolean) => {
-  const pages = getList(get(before, "pages"));
-  return createRecord([
+  const pagesBefore = get(before, "pages");
+  const pages = getList(pagesBefore);
+  return toRecord(before, [
     ["size", records.length],
     [
       "pages",
-      createTuple(
+      toTuple(
+        pagesBefore,
         Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, page) => {
           const kept = records.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
           const previous = pages[page];
@@ -307,33 +366,37 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
 const getIndex = (key: Value) =>
   getList(get(key, "value")).reduce<number>((total, unit) => total * 10 + Number(unit) - 48, 0);
 
+const KEY_TYPES = ["string", "symbol"];
+
 // The descriptors of an object's properties in OwnKeysOf's order: index keys ascending, then the
 // string keys and the symbol keys in the order they were added.
 const getDescriptors = (object: Value) => {
   const props = toFiniteFunction(get(object, "props"));
-  const buckets = props.domain
-    .map((bucket, position) => ({ bucket, position }))
-    .filter((entry) => entry.bucket !== NAMED_BUCKET)
-    .sort((left, right) => Number(left.bucket) - Number(right.bucket));
-  const indexed = buckets.flatMap((entry) => {
-    const bucket = toFiniteFunction(props.range[entry.position]);
-    return bucket.domain
+  const buckets: { bucket: Value; position: number }[] = [];
+  let named: Value | undefined;
+  for (let position = 0; position < props.domain.length; position++) {
+    const bucket = props.domain[position];
+    if (bucket === NAMED_BUCKET) named = props.range[position];
+    else buckets.push({ bucket, position });
+  }
+  buckets.sort((left, right) => Number(left.bucket) - Number(right.bucket));
+  const descriptors: Value[] = [];
+  for (let index = 0; index < buckets.length; index++) {
+    const bucket = toFiniteFunction(props.range[buckets[index].position]);
+    bucket.domain
       .map((key, position) => ({ index: getIndex(key), descriptor: bucket.range[position] }))
       .sort((left, right) => left.index - right.index)
-      .map((pair) => pair.descriptor);
-  });
+      .forEach((pair) => descriptors.push(pair.descriptor));
+  }
   const keys = getList(get(object, "keys"));
-  const named = props.domain.includes(NAMED_BUCKET)
-    ? applyFunction(props, NAMED_BUCKET)
-    : undefined;
-  const byType = (type: string) =>
-    keys
-      .filter((key) => getString(key, "type") === type)
-      .map((key) => {
-        if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
-        return applyFunction(named, key);
-      });
-  return [...indexed, ...byType("string"), ...byType("symbol")];
+  for (const type of KEY_TYPES) {
+    for (let index = 0; index < keys.length; index++) {
+      if (getString(keys[index], "type") !== type) continue;
+      if (named === undefined) throw new TlaEvaluationError("A key has no bucket");
+      descriptors.push(applyFunction(named, keys[index]));
+    }
+  }
+  return descriptors;
 };
 
 const objectRefs = (object: Value, realm: Realm, refs: number[]) => {
@@ -396,8 +459,8 @@ const moduleRefs = (module: Value, realm: Realm, refs: number[]) => {
 const NULL = createRecord([["type", "null"]]);
 
 // CanonicalStateOf of a state. Where isIncremental, a record that a canonicalization made stays as
-// it is, rather than renamed anew, where the walk numbers it and each node it refers to as their
-// numbers already are, which renaming gives back equal; and so does a page of such records. The
+// it is, rather than renamed anew, where the walk numbers each node it refers to as their numbers
+// already are, which renaming gives back equal; and so does a page of such records. The
 // state is then the same value, whose records and pages that a step left alone are the same
 // objects as before it, whose hashes they hold.
 const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean): Value => {
@@ -426,27 +489,37 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const pages = getList(get(objs, "pages"));
   const initialPages = getList(get(initialObjs, "pages"));
+  const getObject = createHeapReader(objs);
+  const getInitialObject = createHeapReader(initialObjs);
+  const getEnvironment = createHeapReader(envs);
   const changed: number[] = [];
   initialPages.forEach((page, position) => {
     if (valuesEqual(pages[position], page)) return;
     const high = Math.min((position + 1) * PAGE_SIZE, realm.objects);
     for (let id = position * PAGE_SIZE + 1; id <= high; id++) {
-      if (!valuesEqual(heapGet(objs, id), heapGet(initialObjs, id))) changed.push(id);
+      if (!valuesEqual(getObject(id), getInitialObject(id))) changed.push(id);
     }
   });
-  // The nodes that each walked record refers to, by its node: an object by its id, and an
-  // environment by its number negated.
-  const references = new Map<number, number[]>();
-  const collect = (node: number, refs: number[], add: () => void) => {
-    const start = refs.length;
-    add();
-    references.set(node, refs.slice(start));
+  // The nodes that each walked record refers to, an object by its id and an environment by its
+  // number negated: from where edgeStarts has a node, its count and then the nodes.
+  const edges: number[] = [];
+  const edgeStarts = new Map<number, number>();
+  const collect = (node: number, refs: number[], start: number) => {
+    edgeStarts.set(node, edges.length);
+    edges.push(refs.length - start);
+    for (let index = start; index < refs.length; index++) edges.push(refs[index]);
   };
   const queue: number[] = [];
   for (let environment = 1; environment <= realm.environments; environment++) {
-    collect(-environment, queue, () => environmentRefs(heapGet(envs, environment), realm, queue));
+    const start = queue.length;
+    environmentRefs(getEnvironment(environment), realm, queue);
+    collect(-environment, queue, start);
   }
-  changed.forEach((id) => collect(id, queue, () => objectRefs(heapGet(objs, id), realm, queue)));
+  for (const id of changed) {
+    const start = queue.length;
+    objectRefs(getObject(id), realm, queue);
+    collect(id, queue, start);
+  }
   const templates = toFiniteFunction(get(state, "templates"));
   templates.domain
     .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
@@ -470,15 +543,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     for (let head = 0; head < walked.length; head++) {
       const node = walked[head];
       if (numbers.has(node)) continue;
+      const start = walked.length;
       if (node > 0) {
         objectCount++;
         numbers.set(node, realm.objects + objectCount);
-        collect(node, walked, () => objectRefs(heapGet(objs, node), realm, walked));
+        objectRefs(getObject(node), realm, walked);
       } else {
         environmentCount++;
         numbers.set(node, realm.environments + environmentCount);
-        collect(node, walked, () => environmentRefs(heapGet(envs, -node), realm, walked));
+        environmentRefs(getEnvironment(-node), realm, walked);
       }
+      collect(node, walked, start);
       order.push(node);
     }
   };
@@ -498,7 +573,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     order
       .filter((node) => node > 0)
       .forEach((node) => {
-        const object = heapGet(objs, node);
+        const object = getObject(node);
         if (getString(object, "class") !== "weakMap") return;
         const data = toFiniteFunction(get(get(object, "slots"), "weakMapData"));
         data.domain
@@ -520,7 +595,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const renameValue = (value: Value): Value =>
     getString(value, "type") === "object" && getNumber(value, "id") > realm.objects
-      ? createRecord([
+      ? toRecord(value, [
           ["type", "object"],
           ["id", getNew(getNumber(value, "id"))],
         ])
@@ -530,7 +605,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     typeof environment === "number" && environment > realm.environments
       ? getNew(-environment)
       : environment;
-  const renameValues = (list: Value) => createTuple(getList(list).map(renameMaybe));
+  const renameValues = (list: Value) => toTuple(list, getList(list).map(renameMaybe));
   const renameDescriptor = (descriptor: Value) =>
     except(descriptor, { value: renameMaybe, get: renameMaybe, set: renameMaybe });
   const renameElement = (element: Value) => {
@@ -539,14 +614,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       ? except(renamed, { init: renameMaybe, initializers: renameValues })
       : renamed;
   };
-  const renameElements = (list: Value) => createTuple(getList(list).map(renameElement));
+  const renameElements = (list: Value) => toTuple(list, getList(list).map(renameElement));
   const renameSlots = (object: Value) => {
     const objectClass = getString(object, "class");
     const slots = get(object, "slots");
     if (PLAIN_CLASSES.has(objectClass)) {
       return except(slots, {
         initializers: renameValues,
-        trace: () => createRecord([["dropped", true]]),
+        trace: (trace) => toRecord(trace, [["dropped", true]]),
       });
     }
     if (VIEW_CLASSES.has(objectClass)) return except(slots, { buffer: renameMaybe });
@@ -564,11 +639,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       case "map":
         return except(slots, {
           mapData: (inner) =>
-            createTuple(
+            toTuple(
+              inner,
               getList(inner)
                 .filter((entry) => !isModelValue(entry, "Empty"))
                 .map((entry) =>
-                  createRecord([
+                  toRecord(entry, [
                     ["key", renameMaybe(get(entry, "key"))],
                     ["value", renameMaybe(get(entry, "value"))],
                   ]),
@@ -578,7 +654,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       case "set":
         return except(slots, {
           setData: (inner) =>
-            createTuple(
+            toTuple(
+              inner,
               getList(inner)
                 .filter((entry) => !isModelValue(entry, "Empty"))
                 .map(renameMaybe),
@@ -647,13 +724,19 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
             ? []
             : [{ key: buckets.domain[position], bucket: mapRange(bucket, renameDescriptor) }],
         );
-        return setFunctionClass(
-          createSortedFunction(
-            kept.map((entry) => entry.key),
+        return buckets.writtenKeys === undefined &&
+          isEveryKept(
             kept.map((entry) => entry.bucket),
-          ),
-          buckets.functionClass,
-        );
+            buckets.range,
+          )
+          ? buckets
+          : setFunctionClass(
+              createSortedFunction(
+                kept.map((entry) => entry.key),
+                kept.map((entry) => entry.bucket),
+              ),
+              buckets.functionClass,
+            );
       },
       privs: renameElements,
       slots: () => renameSlots(object),
@@ -685,32 +768,37 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     node > 0
       ? node <= realm.objects || numbers.get(node) === node
       : -node <= realm.environments || numbers.get(node) === -node;
+  const isEveryEdgeUnmoved = (node: number) => {
+    const start = edgeStarts.get(node);
+    if (start === undefined) return false;
+    for (let index = start + 1; index <= start + edges[start]; index++) {
+      if (!isUnmoved(edges[index])) return false;
+    }
+    return true;
+  };
   // A record renamed, or as it is where renaming would give it back.
   const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) =>
     isIncremental &&
     isCanonical(record) &&
-    isUnmoved(node) &&
     (node < 0 || !WEAK_CLASSES.has(getString(record, "class"))) &&
-    references.get(node)?.every(isUnmoved) === true
+    isEveryEdgeUnmoved(node)
       ? record
       : markCanonical(renameRecord(record));
   const changedSet = new Set(changed);
   const objects = [
     ...Array.from({ length: realm.objects }, (_, index) => {
-      const record = heapGet(objs, index + 1);
+      const record = getObject(index + 1);
       return changedSet.has(index + 1) ? rename(index + 1, record, renameObject) : record;
     }),
-    ...order
-      .filter((node) => node > 0)
-      .map((node) => rename(node, heapGet(objs, node), renameObject)),
+    ...order.filter((node) => node > 0).map((node) => rename(node, getObject(node), renameObject)),
   ];
   const environments = [
     ...Array.from({ length: realm.environments }, (_, index) =>
-      rename(-(index + 1), heapGet(envs, index + 1), renameEnvironmentRecord),
+      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord),
     ),
     ...order
       .filter((node) => node < 0)
-      .map((node) => rename(node, heapGet(envs, -node), renameEnvironmentRecord)),
+      .map((node) => rename(node, getEnvironment(-node), renameEnvironmentRecord)),
   ];
   return except(state, {
     objs: () => createHeap(objects, objs, isIncremental),
@@ -721,7 +809,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     hostHandler: renameMaybe,
     hostImport: renameMaybe,
     modules: (inner) =>
-      createTuple(
+      toTuple(
+        inner,
         getList(inner).map((module) =>
           except(module, {
             env: (environment) =>
@@ -735,7 +824,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
             capability: (capability) =>
               isModelValue(capability, "Empty")
                 ? capability
-                : createRecord([
+                : toRecord(capability, [
                     ["promise", renameValue(get(capability, "promise"))],
                     ["resolve", renameMaybe(get(capability, "resolve"))],
                     ["reject", renameMaybe(get(capability, "reject"))],
@@ -743,14 +832,22 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           }),
         ),
       ),
-    hoisted: (inner) =>
-      createSet(
-        toFiniteSet(inner)
-          .elements.map(getList)
-          .filter((pair) => Number(pair[0]) <= realm.environments || numbers.has(-Number(pair[0])))
-          .map((pair) => createTuple([renameEnvironment(pair[0]), pair[1]])),
-      ),
-    out: () => createTuple([]),
+    hoisted: (inner) => {
+      const set = toFiniteSet(inner);
+      const elements = set.elements
+        .filter((pair) => {
+          const environment = Number(getList(pair)[0]);
+          return environment <= realm.environments || numbers.has(-environment);
+        })
+        .map((pair) => {
+          const elements = getList(pair);
+          return toTuple(pair, [renameEnvironment(elements[0]), elements[1]]);
+        });
+      return set.writtenElements === undefined && isEveryKept(elements, set.elements)
+        ? set
+        : createSet(elements);
+    },
+    out: (inner) => toTuple(inner, []),
   });
 };
 

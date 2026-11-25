@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { getUnitsOf } from "./runtime";
+import { joinInHalves } from "./units";
 
 type Validator = (value: unknown) => boolean;
 
@@ -1290,10 +1291,19 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       options: unknown,
     ) => { resolvedOptions: () => Record<string, unknown> };
     const bags = getBags(service, literals);
+    const isResolving = RESOLVING.has(service.name);
+    const reads = bags.map((bag) => (isResolving ? undefined : getRead(service, bag)));
     for (const locales of getLocaleCandidates(service, literals)) {
       const requested = getCanonical(locales);
       if (requested === undefined) continue;
-      for (const bag of bags) {
+      const units = requested.map(getUnitsOf).join(", ");
+      for (const [position, bag] of bags.entries()) {
+        if (
+          !isResolving &&
+          (reads[position] === undefined || configs.has(`<<<<${units}>>, ${reads[position]}>>`))
+        ) {
+          continue;
+        }
         const object = (() => {
           try {
             return new Constructor(locales, bag);
@@ -1301,7 +1311,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
             // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
             if (service.name === "DurationFormat") {
               entries.set(
-                `<<"${service.name}", <<<<${requested.map(getUnitsOf).join(", ")}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
+                `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
                 `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
               );
             }
@@ -1312,11 +1322,9 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         const resolved = { ...object.resolvedOptions() };
         const pairs = Object.entries(resolved).map(([key, value]) => [key, getEscoreValue(value)]);
         if (pairs.some((pair) => pair[1] === undefined)) continue;
-        const read = RESOLVING.has(service.name)
-          ? service.getConfig(bag, resolved)
-          : getRead(service, bag);
+        const read = isResolving ? service.getConfig(bag, resolved) : reads[position];
         if (read === undefined) continue;
-        const config = `<<<<${requested.map(getUnitsOf).join(", ")}>>, ${read}>>`;
+        const config = `<<<<${units}>>, ${read}>>`;
         if (configs.has(config)) continue;
         configs.set(config, object);
         entries.set(
@@ -1424,7 +1432,10 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     ...tables.map((table) => ({
       name: table.name,
       arity: 0,
-      text: `${table.name} ==\n  ${table.entries.map(([key, value]) => `(${key} :> ${value})`).join("\n  @@ ")}`,
+      text: `${table.name} ==\n  ${joinInHalves(
+        table.entries.map(([key, value]) => `(${key} :> ${value})`),
+        (left, right) => `(${left}\n  @@ ${right})`,
+      )}`,
     })),
     {
       name: "HostIntl",

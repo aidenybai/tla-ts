@@ -238,6 +238,57 @@ const STEP_OF = String.raw`StepOf(s, name, converted) ==
   LET r == Completed(ModelCall(converted.s, name, converted.args)) IN
   IF r.s.written THEN {StepEnd(r.s)} ELSE {}`;
 
+// The names that the model's steps bind in a LET, as a parameter, or as a bound after an export's
+// definition, which no export may take as its definition's name, as TLA+ allows no LET to define
+// one again: an export named x takes another.
+const LOCAL_NAMES = new Set(
+  (
+    "listHead listRest listValues keyOrder choiceList converted constructed before s0 ka va ts " +
+    "a e f g i j k m n r s t v x"
+  ).split(" "),
+);
+
+// The function that the module gets appended that makes a callback of its table's keys and values.
+const TABLE = "$tlaTsTable";
+
+// Whether a domain is the set of records of one field, which a frame tags a set's values with, as
+// [bigint |-> i] is a BigInt and [callback |-> t] a callback of the table t.
+const isTagged = (domain: Expression, field: string) =>
+  domain.kind === "SetMap" &&
+  domain.expression.kind === "Record" &&
+  domain.expression.fields.length === 1 &&
+  domain.expression.fields[0].name === field;
+
+// The constructor and the bounds of its arguments of a domain of the values that a constructor
+// makes, [constructed |-> [name |-> args]]: a set of one, or the set of each list of arguments.
+const getConstructed = (domain: Expression) => {
+  const record =
+    domain.kind === "SetMap"
+      ? domain.expression
+      : domain.kind === "SetEnumeration" && domain.elements.length === 1
+        ? domain.elements[0]
+        : undefined;
+  const inner =
+    record?.kind === "Record" &&
+    record.fields.length === 1 &&
+    record.fields[0].name === "constructed"
+      ? record.fields[0].value
+      : undefined;
+  return inner?.kind === "Record" && inner.fields.length === 1
+    ? { name: inner.fields[0].name, bounds: domain.kind === "SetMap" ? domain.bounds : [] }
+    : undefined;
+};
+
+// Whether a domain's values hold a callback or a constructed value anywhere, which only ESCore
+// makes.
+const holdsFunction = (node: unknown): boolean =>
+  typeof node === "object" &&
+  node !== null &&
+  (("kind" in node &&
+    (isTagged(node as Expression, "callback") ||
+      getConstructed(node as Expression) !== undefined)) ||
+    Object.values(node).some(holdsFunction));
+
 // The global that holds the values the initial state chose for the state variables without an
 // initializer, as the module's top level runs.
 const INITIAL = "$tlaTsInitial";
@@ -357,7 +408,7 @@ export const planModel = (
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
-  const today = frameModel(source, fileName, library, runtime.names, setBound);
+  const today = frameModel(source, fileName, library, runtime.names, setBound, LOCAL_NAMES);
   if (today.isScript) {
     return { isScript: true, notes: today.notes, isAugmented: today.isAugmented };
   }
@@ -533,8 +584,45 @@ export const planModel = (
     const name = createConverter(domain, type);
     const converter = { name, lowered: lowerings.get(name) };
     converters.set(key, converter);
+    if (holdsFunction(domain)) opaque.add(name);
     return converter;
   };
+  // The definitions of a constructor's call in a state with the arguments of the value x of a
+  // domain of constructed values, whose completion r is.
+  const getConstructedCall = (domain: Expression, state: string) => {
+    const constructed = getConstructed(domain);
+    const parts = (constructed?.bounds ?? []).map((bound) => getConverter(bound.set).name);
+    entries.add(constructed?.name ?? "");
+    return `${parts.map((part, index) => `e${index + 1} == ${part}(${index === 0 ? state : `e${index}.s`}, x.constructed.${constructed?.name}[${index + 1}])\n      `).join("")}r == ModelCall(${parts.length === 0 ? state : `e${parts.length}.s`}, ${getUnits(constructed?.name ?? "")}, <<${parts.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`;
+  };
+  // An expression whose sets of constructed values hold only those that their constructors make,
+  // in the state that the module's top level leaves: a list of arguments whose call throws makes
+  // none.
+  const filterConstructed = (expression: Expression): Expression =>
+    JSON.parse(JSON.stringify(expression), (_, value: unknown) => {
+      if (typeof value !== "object" || value === null || !("kind" in value)) return value;
+      const set = value as Expression;
+      if (getConstructed(set) === undefined) return value;
+      const state = lowered === undefined ? "ModelStartState" : "ModelState(ModelInitial)";
+      const operator = define(
+        "Constructs",
+        (name) => `${name}(x) ==\n  LET ${getConstructedCall(set, state)}\n  IN r.c.type # "throw"`,
+      );
+      const location = set.location;
+      return {
+        kind: "SetFilter",
+        bound: { pattern: { kind: "Name", name: "constructed" }, set },
+        predicate: {
+          kind: "Apply",
+          operator,
+          args: [{ kind: "Identifier", name: "constructed", location }],
+          location,
+        },
+        location,
+      };
+    });
+  // The converters whose values hold a function, which no native call takes.
+  const opaque = new Set<string>();
   // The lowered converter of each converter, by name, where the values it makes lower: its
   // lowered value, which LowerValue gives of the objects that the converter makes, built
   // directly, as a TLA+ value of its own.
@@ -595,7 +683,7 @@ export const planModel = (
     define(
       "ConvertList",
       (name) =>
-        `RECURSIVE ${name}(_, _)\n${name}(s, values) ==\n  IF values = <<>> THEN [s |-> s, args |-> <<>>]\n  ELSE LET head == ${element}(s, Head(values))\n           rest == ${name}(head.s, Tail(values))\n       IN [s |-> rest.s, args |-> <<head.v>> \\o rest.args]`,
+        `RECURSIVE ${name}(_, _)\n${name}(s, listValues) ==\n  IF listValues = <<>> THEN [s |-> s, args |-> <<>>]\n  ELSE LET listHead == ${element}(s, Head(listValues))\n           listRest == ${name}(listHead.s, Tail(listValues))\n       IN [s |-> listRest.s, args |-> <<listHead.v>> \\o listRest.args]`,
     );
   const createConverter = (domain: Expression, type?: ts.TypeNode): string => {
     const plain = (body: string) =>
@@ -610,13 +698,40 @@ export const planModel = (
         : undefined;
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
-    if (
-      domain.kind === "SetMap" &&
-      domain.expression.kind === "Record" &&
-      domain.expression.fields.length === 1 &&
-      domain.expression.fields[0].name === "bigint"
-    ) {
-      return plain("BigInt(BigIntFromInt(x.bigint))");
+    if (isTagged(domain, "bigint")) return plain("BigInt(BigIntFromInt(x.bigint))");
+    // A value that a constructor of the module makes: the constructor's call with its arguments,
+    // which the domain's filter keeps to those that return.
+    if (getConstructed(domain) !== undefined) {
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${getConstructedCall(domain, "s")}\n  IN IF r.c.type = "throw" THEN Assert(FALSE, "tla-ts can't construct a value whose constructor throws: " \\o ThrownText(r)) ELSE [s |-> r.s, v |-> Val(r)]`,
+        ),
+        undefined,
+      );
+    }
+    // A callback, the record of its table: the function that the module gets appended makes it of
+    // the table's keys and values, and returns the value at the key that its first argument is.
+    if (isTagged(domain, "callback")) {
+      const table = domain.kind === "SetMap" ? domain.bounds[0].set : domain;
+      if (table.kind !== "FunctionSet") return unsupported(domain, type);
+      const keys = getConverter(table.domain);
+      const values = getConverter(table.range);
+      if (!entries.has(TABLE)) {
+        appended.push(
+          `const ${TABLE} = (keys, values) => (key) => {\n  for (let index = 0; index < keys.length; index += 1) if (keys[index] === key) return values[index];\n  return undefined;\n};`,
+        );
+        entries.add(TABLE);
+      }
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET keyOrder == SetToSeq(DOMAIN x.callback)\n      k == ${defineList(keys.name)}(s, keyOrder)\n      e == ${defineList(values.name)}(k.s, [i \\in DOMAIN keyOrder |-> x.callback[keyOrder[i]]])\n      ka == NewArray(e.s, k.args)\n      va == NewArray(ka.s, e.args)\n      r == Completed(ModelCall(va.s, ${getUnits(TABLE)}, <<ka.v, va.v>>))\n  IN [s |-> r.s, v |-> Val(r)]`,
+        ),
+        undefined,
+      );
     }
     if (domain.kind === "Identifier") {
       const definition = definitions.get(domain.name);
@@ -709,7 +824,7 @@ export const planModel = (
         define("Convert", (name) =>
           keys === undefined
             ? `${name}(s, x) ==\n  LET e == ${defineList(range.name)}(s, x) IN NewArray(e.s, e.args)`
-            : `${name}(s, x) ==\n  LET order == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, order)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN order |-> x[order[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN order |-> [key |-> k.args[i], value |-> e.args[i]]])`,
+            : `${name}(s, x) ==\n  LET keyOrder == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, keyOrder)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN keyOrder |-> x[keyOrder[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN keyOrder |-> [key |-> k.args[i], value |-> e.args[i]]])`,
         ),
         keys === undefined
           ? lowered(
@@ -719,7 +834,7 @@ export const planModel = (
           : lowered(
               [keys, range],
               (names) =>
-                `LET order == SetToSeq(DOMAIN x) IN [type |-> "lmap", keys |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])], vals |-> [i \\in DOMAIN order |-> ${names[1]}(x[order[i]])]]`,
+                `LET keyOrder == SetToSeq(DOMAIN x) IN [type |-> "lmap", keys |-> [i \\in DOMAIN keyOrder |-> ${names[0]}(keyOrder[i])], vals |-> [i \\in DOMAIN keyOrder |-> ${names[1]}(x[keyOrder[i]])]]`,
             ),
       );
     }
@@ -792,7 +907,7 @@ export const planModel = (
         lowered(
           [element],
           (names) =>
-            `LET order == SetToSeq(x) IN [type |-> "lset", elems |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])]]`,
+            `LET keyOrder == SetToSeq(x) IN [type |-> "lset", elems |-> [i \\in DOMAIN keyOrder |-> ${names[0]}(keyOrder[i])]]`,
         ),
       );
     }
@@ -944,7 +1059,7 @@ export const planModel = (
         `tla-ts can't read today's state in ${printExpression(expression)} on ESCore yet`,
       );
     }
-    return copyDefinitions(renameModelValues(expression));
+    return filterConstructed(copyDefinitions(renameModelValues(expression)));
   };
   // The exported function that an action or a fairness condition applies, with the names it
   // passes as arguments.
@@ -1147,7 +1262,7 @@ export const planModel = (
           ? undefined
           : `LET g == ${call} IN IF g.type = "bail" \\/ g.v.type # "lset" \\/ ~LPrimitives(g.v) \\/ ~\\E e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)} THEN LBail ELSE CHOOSE e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)}`;
       }
-      return converter === undefined
+      return converter === undefined || opaque.has(converter)
         ? undefined
         : lowerings.get(converter) !== undefined
           ? `${lowerings.get(converter)}(${values(index)})`
@@ -1450,7 +1565,7 @@ export const planModel = (
       .join("")}${
       choose.length === 0
         ? "\n      s == ModelStart(s0)"
-        : `\n      list == NewArray(c${choose.length}.s, <<${choose.map((_, index) => `c${index + 1}.v`).join(", ")}>>)\n      g == Completed(CreateDataPropertyOrThrow(list.s, Intrinsic(list.s, "GlobalObject"), Str(${getUnits(INITIAL)}), list.v))\n      s == ModelStart(g.s)`
+        : `\n      choiceList == NewArray(c${choose.length}.s, <<${choose.map((_, index) => `c${index + 1}.v`).join(", ")}>>)\n      g == Completed(CreateDataPropertyOrThrow(choiceList.s, Intrinsic(choiceList.s, "GlobalObject"), Str(${getUnits(INITIAL)}), choiceList.v))\n      s == ModelStart(g.s)`
     }\n  IN IF ${initially.length === 0 ? "TRUE" : initially.map((name) => `HoldsOf(s, ${getUnits(name)}, <<>>)`).join(" /\\ ")} THEN {StepEnd(s)} ELSE {}`,
     `InitialStates(s) ==\n  UNION {ApplyTo(InitialChoice, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}}`,
     // The initial states are a constant, which TLC and tla-ts evaluate once, as they start.

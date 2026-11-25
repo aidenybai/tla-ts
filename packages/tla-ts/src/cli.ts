@@ -22,6 +22,7 @@ if (isMainThread) {
   let isOutOfHeap = false;
   new Worker(new URL(import.meta.url), {
     argv: process.argv.slice(2),
+    workerData: { mainGlobals: Object.getOwnPropertyNames(globalThis) },
     resourceLimits: { stackSizeMb: CHECK_STACK_MB, maxOldGenerationSizeMb: heapMb },
   })
     .on("error", (error: Error & { code?: string }) => {

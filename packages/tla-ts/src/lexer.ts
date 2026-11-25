@@ -606,8 +606,20 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
           advanceOver(2);
           continue;
         }
-        characters.push(source[index]);
-        advanceOver(1);
+        let end = index + 1;
+        for (; end < source.length; end++) {
+          const inner = source.charCodeAt(end);
+          if (
+            inner === CODE_QUOTE ||
+            inner === CODE_BACKSLASH ||
+            inner === CODE_NEWLINE ||
+            inner === CODE_RETURN
+          ) {
+            break;
+          }
+        }
+        characters.push(source.slice(index, end));
+        index = end;
       }
       advanceOver(1);
       tokens.push({

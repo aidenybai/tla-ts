@@ -616,6 +616,7 @@ export const generateEvaluator = (
     locals: new Map(),
   };
   const body = generateExpression(generator, expression, frame);
+  if (body === "reference0(context)") return getEvaluator(expression, environment);
   generatedHelpers ??= createGeneratedHelpers();
   // An expression that reads more values than that, such as a tuple of a long string's code
   // units, the interpreter evaluates.

@@ -2048,7 +2048,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     it("checks the other functions where a parameter's type has values it can't list", async () => {
       const result = await checkModel(`
         let count = 0;
-        export const run = (step: () => void) => { step(); count++; };
+        export const run = (step: (value: unknown) => void) => { step(count); count++; };
         export const increment = () => { if (count < 2) count++; };
         export const isBounded = () => count <= 2;
       `);

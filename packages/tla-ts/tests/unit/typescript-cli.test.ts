@@ -67,6 +67,18 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  it("lists globalThis's names in the order of Node's main thread, not of the CLI's worker", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "order.mts"),
+      'const names = Object.getOwnPropertyNames(globalThis);\nif (names.indexOf("WebAssembly") < names.indexOf("process")) throw new Error("order");\n',
+    );
+    expect(runNode(directory, "order.mts").status).toBe(0);
+    const result = runCli(directory, ["order.mts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+  });
+
   // The input stays as long as the one that overflowed the stack, whose throw string.ts checks in
   // about 24 s.
   it.each(["string.ts", "array.ts"] as const)(
@@ -102,11 +114,13 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("Invariant showsNoNegativeCount is violated.");
   });
 
+  // apply's transform, a callback of a number to a number, is any of 7 ** 7 = 823,543 tables, more
+  // than a call with values in place of a type makes on any rung, as a number's values don't shrink.
   it("prints a line for each exported function that it calls nowhere, and checks the rest", () => {
     const result = runCli(copyFixtures("passing"), ["library.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      "tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list",
+      "tla-ts calls no apply: its parameters make 823,543 argument lists with callbacks as tables of their first argument, more than the 10,000 it calls with values in place of a type",
     );
     expect(result.stdout).toContain("Model checking completed. No error has been found.");
   });
@@ -331,6 +345,233 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A step's LET binds e1 to the first argument it converts, which TLA+ rejects after an export
+  // named e1, so the compile stops where a name that the spec defines is bound again, rather than
+  // the spec failing to parse. An export named otherwise is checked as Node runs it.
+  describe("stops where the spec binds an export's name again after it defines it", () => {
+    const getModel = (name: string) =>
+      `export const ${name} = (flag: boolean) => {\n  if (flag) throw new Error("${name} " + flag);\n  return 1;\n};\nexport const two = (flag: boolean) => {\n  if (flag) throw new Error("two " + flag);\n  return 2;\n};\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel("e1"));
+      expect(runNode(directory, "pair.ts").status).toBe(0);
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).toBe(255);
+      expect(result.stderr).toBe(
+        "TlaTypeScriptError: tla-ts can't name e1 in TLA+, which the program's spec binds again after it defines it\n",
+      );
+      expect(result.stdout).not.toContain("Semantic errors");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel("one"));
+      const node = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", 'import { one } from "./pair.ts"; one(true);'],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(node.stderr).toContain("Error: one true");
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain('"one throws: one true"');
+    });
+  });
+
+  // A type parameter without a constraint takes 0, 1, and 2, an iterable each array of its
+  // elements up to 3 long, and a callback each table from its first argument's values to its
+  // result's, as the note says. Node, calling count with each of those, finds no throw where the
+  // count never reaches 4, and finds count 3 where it does reach 3.
+  describe("calls a generic export with an iterable and a callback by the values its note states", () => {
+    const getModel = (limit: number) =>
+      `export const count = <A>(self: Iterable<A>, predicate: (a: A) => boolean): number => {\n  let found = 0;\n  for (const a of self) if (predicate(a)) found += 1;\n  if (found === ${limit}) throw new Error("count " + found);\n  return found;\n};\n`;
+    const NOTE =
+      "tla-ts calls count with A := {0, 1, 2}; iterables as arrays up to length 3; callbacks as tables of their first argument";
+    // Every message that count throws in Node over those values, in order.
+    const getThrown = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { count } from "./count.ts";
+          const values = [0, 1, 2];
+          const arrays = [0, 1, 2, 3].flatMap((length) => Array.from({ length: 3 ** length }, (_, code) => Array.from({ length }, (_, index) => Math.floor(code / 3 ** index) % 3)));
+          const tables = Array.from({ length: 8 }, (_, code) => values.map((value) => Math.floor(code / 2 ** value) % 2 === 1));
+          const thrown = new Set();
+          for (const array of arrays) for (const table of tables) {
+            try { count(array, (key) => table[values.indexOf(key)]); } catch (error) { thrown.add(error.message); }
+          }
+          console.log(JSON.stringify([...thrown]));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim();
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "count.ts"), getModel(4));
+      expect(getThrown(directory)).toBe("[]");
+      const result = runCli(directory, ["count.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "count.ts"), getModel(3));
+      expect(getThrown(directory)).toBe('["count 3"]');
+      const result = runCli(directory, ["count.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"count throws: count 3"');
+    });
+  });
+
+  // A callback of no argument is each table of undefined, the argument it's called with: here a
+  // function that returns each of 0, 1, and 2, which orElse returns where its value is undefined,
+  // as the note says. Node, calling orElse with each, finds no throw where it throws on 3, and
+  // finds fallback 2 where it throws on 2.
+  describe("calls an export with a callback of no argument by each value it returns", () => {
+    const getModel = (limit: number) =>
+      `export const orElse = (value: 0 | 1 | undefined, fallback: () => 0 | 1 | 2): number => {\n  const result = value === undefined ? fallback() : value;\n  if (result === ${limit}) throw new Error("fallback " + result);\n  return result;\n};\n`;
+    const NOTE = "tla-ts calls orElse with callbacks as tables of no argument";
+    // Every message that orElse throws in Node over those values.
+    const getThrown = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { orElse } from "./lazy.ts";
+          const thrown = new Set();
+          for (const value of [0, 1, undefined]) for (const result of [0, 1, 2]) {
+            try { orElse(value, () => result); } catch (error) { thrown.add(error.message); }
+          }
+          console.log(JSON.stringify([...thrown]));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim();
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "lazy.ts"), getModel(3));
+      expect(getThrown(directory)).toBe("[]");
+      const result = runCli(directory, ["lazy.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`${NOTE}\n`);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "lazy.ts"), getModel(2));
+      expect(getThrown(directory)).toBe('["fallback 2"]');
+      const result = runCli(directory, ["lazy.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(`${NOTE}\n`);
+      expect(result.stdout).toContain('"orElse throws: fallback 2"');
+    });
+  });
+
+  // With 0, 1, and 2 and arrays up to 3 long, pair's parameters make 40 * 40 * 27 = 43,200
+  // argument lists, more than the 10,000 that a call with values in place of its types makes, so
+  // it takes 0 and 1 and arrays up to 2 long: 7 * 7 * 4 = 196 lists, as its note says. Node,
+  // calling pair with each of those, finds no throw where the count never reaches 5, and finds
+  // pair 4 where it does reach 4.
+  describe("calls a generic export with smaller values where its argument lists are too many", () => {
+    const getModel = (limit: number) =>
+      `export const pair = <A, B>(xs: Iterable<A>, ys: Iterable<B>, f: (a: A) => B): number => {\n  let found = 0;\n  for (const x of xs) for (const y of ys) if (f(x) === y) found += 1;\n  if (found === ${limit}) throw new Error("pair " + found);\n  return found;\n};\n`;
+    const NOTE =
+      "tla-ts calls pair with A := {0, 1}; B := {0, 1}; iterables as arrays up to length 2; callbacks as tables of their first argument";
+    // Every message that pair throws in Node over those values.
+    const getThrown = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { pair } from "./pair.ts";
+          const values = [0, 1];
+          const arrays = [[], [0], [1], [0, 0], [0, 1], [1, 0], [1, 1]];
+          const tables = [[0, 0], [0, 1], [1, 0], [1, 1]];
+          const thrown = new Set();
+          for (const xs of arrays) for (const ys of arrays) for (const table of tables) {
+            try { pair(xs, ys, (key) => table[values.indexOf(key)]); } catch (error) { thrown.add(error.message); }
+          }
+          console.log(JSON.stringify([...thrown]));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim();
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel(5));
+      expect(getThrown(directory)).toBe("[]");
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "pair.ts"), getModel(4));
+      expect(getThrown(directory)).toBe('["pair 4"]');
+      const result = runCli(directory, ["pair.ts"]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"pair throws: pair 4"');
+    });
+  });
+
+  // A parameter of a data type that the module declares and lists no values of takes each value
+  // that the module's constructors of it make, as the note says: make of each number and fromBig of
+  // each BigInt from -3 to 3, but those whose call throws, which make none. TLC compares the two
+  // constructors' values, whose arguments it can't compare, by their names first. Node, calling
+  // half with each of those, finds no throw where half throws above 3, and finds odd 3 where it
+  // throws above 1.
+  describe("calls an export with a value that the module's constructor makes", () => {
+    const getModel = (limit: number) =>
+      `export interface Cents {\n  readonly amount: number;\n  pipe(): unknown;\n}\nexport const make = (amount: number): Cents => {\n  if (amount < 0) throw new RangeError("negative " + amount);\n  return { amount, pipe: () => amount };\n};\nexport const fromBig = (amount: bigint): Cents => make(Number(amount));\nexport const half = (self: Cents): number => {\n  if (self.amount % 2 === 1 && self.amount > ${limit}) throw new Error("odd " + self.amount);\n  return self.amount / 2;\n};\n`;
+    const NOTE = "tla-ts calls half with Cents := make(amount), fromBig(amount)";
+    // Every message that half throws in Node over those values, in order.
+    const getThrown = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import { make, fromBig, half } from "./cents.ts";
+          const values = [-3, -2, -1, 0, 1, 2, 3].flatMap((amount) => [() => make(amount), () => fromBig(BigInt(amount))]).flatMap((construct) => { try { return [construct()]; } catch { return []; } });
+          const thrown = new Set();
+          for (const value of values) { try { half(value); } catch (error) { thrown.add(error.message); } }
+          console.log(JSON.stringify([values.length, ...thrown]));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim();
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "cents.ts"), getModel(3));
+      expect(getThrown(directory)).toBe("[8]");
+      const result = runCli(directory, ["cents.ts"]);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"make throws: negative -3"');
+      expect(result.stdout).not.toContain("half throws");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "cents.ts"), getModel(1));
+      expect(getThrown(directory)).toBe('[8,"odd 3"]');
+      const result = runCli(directory, ["cents.ts"]);
+      expect(result.stdout).toContain(NOTE);
+      expect(result.stdout).toContain('"half throws: odd 3"');
+    });
+  });
+
   // A state variable whose name TLA+ can't spell, as $ and _, takes a name of its own in TLA+, and
   // the trace shows it by its binding's name, in the order of TLC's ranks of the names, as TLC
   // shows a function. Real TLC, on the program's modules under its root, shows $, b, then _.
@@ -488,7 +729,7 @@ describe("the CLI with TypeScript files", () => {
   // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {
     const getModel = (check: string) =>
-      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const open = (box: Box) => box.size;\nexport const name = (shape: Shape | undefined) => shape?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\nexport const either = (value: string | number) => value;\nexport const mixed = (value: bigint | number) => value;\n`;
+      `class Box {\n  size = 1;\n}\ninterface Shape {\n  name: string;\n  area(): number;\n}\ninterface Store {\n  name: string;\n  load(): unknown;\n}\nconst count = [1, 2].length;\nexport const isSmall = () => ${check};\nexport const identity = <T,>(value: T) => value;\nexport const apply = (transform: (value: number) => number) => transform(count);\nexport const measure = (shape: Shape) => shape.area();\nexport const fetch = (store: Store) => store.load();\nexport const open = (box: Box) => box.size;\nexport const name = (store: Store | undefined) => store?.name;\nexport const echo = (value: unknown) => value;\nexport const loose = (value: any) => value;\nexport const either = (value: string | number) => value;\nexport const mixed = (value: bigint | number) => value;\n`;
 
     it("agrees with Node", () => {
       const directory = copyFixtures("passing");
@@ -498,15 +739,23 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("Model checking completed. No error has been found.");
       [
-        "identity: its parameter value is a type parameter",
-        "apply: its parameter transform is a function",
-        "measure: its parameter shape is an object with methods",
+        "fetch: its parameter store is an object with methods",
         "open: its parameter box is an instance of a class",
-        "name: its parameter shape is a union with an object with methods",
+        "name: its parameter store is a union with an object with methods",
         "echo: its parameter value is unknown",
         "loose: its parameter value is any, as an untyped parameter is",
       ].forEach((note) =>
         expect(result.stdout).toContain(`tla-ts calls no ${note}, whose values tla-ts can't list`),
+      );
+      // A type parameter takes 0, 1, and 2, a method that takes nothing and returns a number is a
+      // table of undefined, and a callback of a number to a number has more tables than any rung
+      // calls.
+      expect(result.stdout).toContain("tla-ts calls identity with T := {0, 1, 2}\n");
+      expect(result.stdout).toContain(
+        "tla-ts calls measure with methods as tables of no argument\n",
+      );
+      expect(result.stdout).toContain(
+        "tla-ts calls no apply: its parameters make 823,543 argument lists with callbacks as tables of their first argument",
       );
       expect(result.stdout).toContain(
         "tla-ts calls no either: its parameter value is a union of string and number, whose values TLC can't compare",
@@ -617,8 +866,8 @@ describe("the CLI with TypeScript files", () => {
     ],
     [
       "an error in a module whose exported functions it calls none of",
-      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 2) throw new RangeError("total " + total);\n',
-      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 1) throw new RangeError("total " + total);\n',
+      'export const apply = (f: (value: unknown) => number) => f(0);\nconst total = [1].length;\nif (total !== 2) throw new RangeError("total " + total);\n',
+      'export const apply = (f: (value: unknown) => number) => f(0);\nconst total = [1].length;\nif (total !== 1) throw new RangeError("total " + total);\n',
     ],
     [
       "a throw in an async function",

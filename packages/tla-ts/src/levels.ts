@@ -1,6 +1,8 @@
 import {
+  isRecursiveConstruction,
   type AssumeProve,
   type Bound,
+  type BoundPattern,
   type Definition,
   type Expression,
   type Fact,
@@ -165,6 +167,21 @@ type ScopeEntry =
   | { kind: "ExceptAt"; parts: LevelData[] };
 
 const EXCEPT_AT = "@";
+
+type ConstantLocal =
+  | { kind: "Formal"; name: string; bit: number }
+  | { kind: "Bound"; name: string }
+  | {
+      kind: "Let";
+      name: string;
+      params: number;
+      applied: number | undefined;
+      allParams: Set<string> | undefined;
+      nonLeibnizParams: Set<string> | undefined;
+    }
+  | { kind: "Pending"; name: string };
+
+const MAX_CONSTANT_NAMES = 30;
 
 export type Scope = Map<string, ScopeEntry>;
 
@@ -1997,6 +2014,403 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const staleDefinitions = new Set<Definition>();
   const sectionBodies = new Map<Definition, OperatorLevels | undefined>();
 
+  const getConstantCallee = (name: string, arity: number) => {
+    if (context.variables.has(name)) return undefined;
+    const definition = context.getDefinition(name);
+    if (definition) {
+      const levels = context.getPreparedLevels?.(name) ?? analyzeDefinition(definition, new Map());
+      return levels.formals.length === arity ? levels : undefined;
+    }
+    return getSignatureLevels(name);
+  };
+
+  const analyzeConstantOperator = (definition: Definition & { kind: "Operator" }) => {
+    const bits = new Map<string, number>();
+    const names: string[] = [];
+    const maxima = new Uint8Array(MAX_CONSTANT_NAMES).fill(TEMPORAL_LEVEL);
+    let constrained = 0;
+    const argConstraints = new Map<string, number>();
+    let allParams: Set<string> | undefined;
+    let nonLeibnizParams: Set<string> | undefined;
+    let applied: number | undefined;
+    const locals: ConstantLocal[] = [];
+    let boundCount = 0;
+    const getBit = (name: string) => {
+      const known = bits.get(name);
+      if (known !== undefined || names.length === MAX_CONSTANT_NAMES) return known;
+      bits.set(name, names.length);
+      names.push(name);
+      return names.length - 1;
+    };
+    const isShadowed = (name: string) =>
+      boundCount > 0 && locals.some((local) => local.kind === "Bound" && local.name === name);
+    const constrain = (params: number, maximum: number) => {
+      constrained |= params;
+      for (let rest = params; rest !== 0; rest &= rest - 1) {
+        const bit = 31 - Math.clz32(rest & -rest);
+        maxima[bit] = Math.min(maxima[bit], maximum);
+      }
+    };
+    const getBits = (params: ReadonlySet<string>, formals: OperatorParam[] = []) => {
+      let bitset = 0;
+      for (const param of params) {
+        if (formals.some((formal) => formal.name === param)) continue;
+        const bit = isShadowed(param) ? undefined : getBit(param);
+        if (bit === undefined) return undefined;
+        bitset |= 1 << bit;
+      }
+      return bitset;
+    };
+    const isFree = (bitset: number) =>
+      names.every((name, bit) => (bitset & (1 << bit)) === 0 || !isShadowed(name));
+    const addAllParams = (added: ReadonlySet<string>) => {
+      for (const name of added) {
+        if (isShadowed(name)) return false;
+        allParams ??= new Set();
+        allParams.add(name);
+      }
+      return true;
+    };
+    const addNonLeibnizParams = (added: ReadonlySet<string>) => {
+      for (const name of added) {
+        if (isShadowed(name)) return false;
+        nonLeibnizParams ??= new Set();
+        nonLeibnizParams.add(name);
+      }
+      return true;
+    };
+    const apply = (
+      callee: OperatorLevels,
+      expressions: Expression[],
+      exceptAt: number | undefined,
+      rangeParams = 0,
+      rangeApplied: number | undefined = undefined,
+    ) => {
+      if (
+        callee.level !== CONSTANT_LEVEL ||
+        !callee.isCorrect ||
+        callee.formals.some((formal) => formal.arity > 0) ||
+        callee.nonLeibniz.size > 0
+      ) {
+        return undefined;
+      }
+      let params = getBits(callee.params);
+      const calleeApplied = getBits(callee.appliedParams ?? callee.params, callee.formals);
+      if (params === undefined || calleeApplied === undefined) return undefined;
+      for (const [name, level] of callee.constraints) {
+        const bit = isShadowed(name) ? undefined : getBit(name);
+        if (bit === undefined) return undefined;
+        constrain(1 << bit, level);
+      }
+      if (!addAllParams(callee.allParams) || !addNonLeibnizParams(callee.nonLeibnizParams)) {
+        return undefined;
+      }
+      callee.argConstraints.forEach((level, key) => putArgConstraint(argConstraints, key, level));
+      let isApplying = callee.appliedParams !== undefined || rangeApplied !== undefined;
+      let appliedParams = calleeApplied | (rangeApplied ?? rangeParams);
+      const operands: number[] = [];
+      for (let index = 0; index < expressions.length; index++) {
+        const operand = walk(expressions[index], exceptAt);
+        if (operand === undefined) return undefined;
+        if (getWeight(callee, index) === 1) params |= operand;
+        constrain(operand, getMaxLevel(callee, index));
+        if (isApplied(callee, index)) {
+          if (applied !== undefined) isApplying = true;
+          appliedParams |= applied ?? operand;
+        }
+        operands.push(operand);
+      }
+      for (const parameter of callee.argParams.values()) {
+        const position = callee.formals.findIndex((formal) => formal.name === parameter.param);
+        if (position !== -1) {
+          putArgConstraint(
+            argConstraints,
+            getArgumentKey(parameter.operator, parameter.index),
+            CONSTANT_LEVEL,
+          );
+        }
+        if (callee.formals.some((formal) => formal.name === parameter.operator)) continue;
+        if (position === -1 || operands[position] !== 0) return undefined;
+      }
+      applied = isApplying ? appliedParams : undefined;
+      return params;
+    };
+    const applyBound = (
+      callee: OperatorLevels,
+      expressions: Expression[],
+      sets: Expression[],
+      patterns: BoundPattern[],
+      exceptAt: number | undefined,
+    ) => {
+      let params = 0;
+      let isApplying = false;
+      let rangeApplied = 0;
+      for (const set of sets) {
+        const setParams = walk(set, exceptAt);
+        if (setParams === undefined) return undefined;
+        params |= setParams;
+        if (applied !== undefined) isApplying = true;
+        rangeApplied |= applied ?? setParams;
+      }
+      const depth = locals.length;
+      for (const pattern of patterns) {
+        if (pattern.kind !== "Name") {
+          locals.length = depth;
+          return undefined;
+        }
+        locals.push({ kind: "Bound", name: pattern.name });
+      }
+      boundCount += locals.length - depth;
+      const inner = apply(
+        callee,
+        expressions,
+        exceptAt,
+        params,
+        isApplying ? rangeApplied : undefined,
+      );
+      boundCount -= locals.length - depth;
+      locals.length = depth;
+      return inner === undefined ? undefined : params | inner;
+    };
+    const walkName = (name: string, args: Expression[], exceptAt: number | undefined) => {
+      const local = locals.findLast((candidate) => candidate.name === name);
+      if (local !== undefined) {
+        applied = undefined;
+        if (args.length > 0 || local.kind === "Pending") return undefined;
+        if (local.kind === "Bound") return 0;
+        if (local.kind === "Formal") {
+          allParams ??= new Set();
+          allParams.add(name);
+          return 1 << local.bit;
+        }
+        if (
+          !addAllParams(local.allParams ?? EMPTY_PARAMS) ||
+          !addNonLeibnizParams(local.nonLeibnizParams ?? EMPTY_PARAMS) ||
+          !isFree(local.params | (local.applied ?? 0))
+        ) {
+          return undefined;
+        }
+        applied = local.applied;
+        return local.params;
+      }
+      const arity = context.constants.get(name);
+      if (arity !== undefined) {
+        applied = undefined;
+        const bit = arity > 0 || args.length > 0 ? undefined : getBit(name);
+        if (bit === undefined) return undefined;
+        allParams ??= new Set();
+        allParams.add(name);
+        return 1 << bit;
+      }
+      const callee = getConstantCallee(name, args.length);
+      return callee && apply(callee, args, exceptAt);
+    };
+    const walk = (expression: Expression, exceptAt: number | undefined): number | undefined => {
+      switch (expression.kind) {
+        case "Number":
+        case "Decimal":
+        case "String":
+          applied = undefined;
+          return 0;
+        case "ExceptAt":
+          applied = undefined;
+          return exceptAt;
+        case "Identifier":
+          return context.goalSelections?.has(expression)
+            ? undefined
+            : walkName(expression.name, [], exceptAt);
+        case "Apply":
+          return walkName(expression.operator, expression.args, exceptAt);
+        case "And":
+        case "Or":
+          return apply(
+            expression.kind === "And" ? AND_LEVELS : OR_LEVELS,
+            expression.operands,
+            exceptAt,
+          );
+        case "If":
+          return apply(
+            IF_LEVELS,
+            [expression.condition, expression.consequent, expression.alternative],
+            exceptAt,
+          );
+        case "Case":
+          return apply(
+            CASE_LEVELS,
+            [
+              ...expression.arms.flatMap((arm) => [arm.condition, arm.body]),
+              ...(expression.other ? [expression.other] : []),
+            ],
+            exceptAt,
+          );
+        case "Let": {
+          if (expression.recursive || expression.instances) return undefined;
+          const depth = locals.length;
+          expression.definitions.forEach((inner) =>
+            locals.push({ kind: "Pending", name: inner.name }),
+          );
+          for (let index = 0; index < expression.definitions.length; index++) {
+            const inner = expression.definitions[index];
+            const outerAllParams = allParams;
+            const outerNonLeibnizParams = nonLeibnizParams;
+            allParams = undefined;
+            nonLeibnizParams = undefined;
+            const params =
+              inner.kind === "Operator" && inner.params.length === 0
+                ? walk(inner.body, exceptAt)
+                : undefined;
+            locals[depth + index] = {
+              kind: "Let",
+              name: inner.name,
+              params: params ?? 0,
+              applied,
+              allParams,
+              nonLeibnizParams,
+            };
+            allParams = outerAllParams;
+            nonLeibnizParams = outerNonLeibnizParams;
+            if (params === undefined) {
+              locals.length = depth;
+              return undefined;
+            }
+          }
+          const body = walk(expression.body, exceptAt);
+          locals.length = depth;
+          return body;
+        }
+        case "Forall":
+        case "Exists":
+          return applyBound(
+            expression.kind === "Forall" ? FORALL_LEVELS : EXISTS_LEVELS,
+            [expression.body],
+            expression.bounds.map((bound) => bound.set),
+            expression.bounds.map((bound) => bound.pattern),
+            exceptAt,
+          );
+        case "Choose":
+          return applyBound(
+            expression.set ? BOUNDED_CHOOSE_LEVELS : UNBOUNDED_CHOOSE_LEVELS,
+            [expression.body],
+            expression.set ? [expression.set] : [],
+            [expression.pattern],
+            exceptAt,
+          );
+        case "SetEnumeration":
+          return apply(SET_ENUMERATE_LEVELS, expression.elements, exceptAt);
+        case "Tuple":
+          return apply(TUPLE_LEVELS, expression.elements, exceptAt);
+        case "SetFilter":
+          return applyBound(
+            SUBSET_OF_LEVELS,
+            [expression.predicate],
+            [expression.bound.set],
+            [expression.bound.pattern],
+            exceptAt,
+          );
+        case "SetMap":
+          return applyBound(
+            SET_OF_ALL_LEVELS,
+            [expression.expression],
+            expression.bounds.map((bound) => bound.set),
+            expression.bounds.map((bound) => bound.pattern),
+            exceptAt,
+          );
+        case "FunctionConstruction":
+          return isRecursiveConstruction(expression)
+            ? undefined
+            : applyBound(
+                FCN_CONSTRUCTOR_LEVELS,
+                [expression.body],
+                expression.bounds.map((bound) => bound.set),
+                expression.bounds.map((bound) => bound.pattern),
+                exceptAt,
+              );
+        case "Record":
+          return apply(
+            RCD_CONSTRUCTOR_LEVELS,
+            expression.fields.map((field) => field.value),
+            exceptAt,
+          );
+        case "Except": {
+          let params = walk(expression.function, exceptAt);
+          if (params === undefined) return undefined;
+          let isApplying = applied !== undefined;
+          let appliedParams = applied ?? params;
+          constrain(params, getMaxLevel(EXCEPT_LEVELS, 0));
+          for (const update of expression.updates) {
+            const before = params;
+            const operands = [
+              ...update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])),
+              update.value,
+            ];
+            for (let index = 0; index < operands.length; index++) {
+              const operand =
+                index === operands.length - 1
+                  ? walk(operands[index], before)
+                  : walk(operands[index], exceptAt);
+              if (operand === undefined) return undefined;
+              if (applied !== undefined) isApplying = true;
+              appliedParams |= applied ?? operand;
+              params |= operand;
+              constrain(operand, getMaxLevel(EXCEPT_LEVELS, 0));
+            }
+          }
+          applied = isApplying ? appliedParams : undefined;
+          return params;
+        }
+        case "FunctionApplication": {
+          if (expression.args.length === 0) return undefined;
+          const fn = walk(expression.function, exceptAt);
+          if (fn === undefined) return undefined;
+          const fnApplied = applied;
+          const args =
+            expression.args.length === 1
+              ? walk(expression.args[0], exceptAt)
+              : apply(TUPLE_LEVELS, expression.args, exceptAt);
+          if (args === undefined) return undefined;
+          constrain(fn, getMaxLevel(APPLY_LEVELS, 0));
+          constrain(args, getMaxLevel(APPLY_LEVELS, 1));
+          applied =
+            fnApplied === undefined && applied === undefined
+              ? undefined
+              : (fnApplied ?? fn) | (applied ?? args);
+          return fn | args;
+        }
+        case "FieldAccess": {
+          const record = walk(expression.record, exceptAt);
+          if (record !== undefined) constrain(record, getMaxLevel(SELECT_LEVELS, 0));
+          return record;
+        }
+        default:
+          return undefined;
+      }
+    };
+    for (const formal of definition.params) {
+      const bit = formal.arity === 0 ? getBit(formal.name) : undefined;
+      if (bit === undefined) return undefined;
+      locals.push({ kind: "Formal", name: formal.name, bit });
+    }
+    const body = walk(definition.body, undefined);
+    if (body === undefined) return undefined;
+    const constraints = new Map<string, number>();
+    names.forEach((name, bit) => {
+      if ((constrained & (1 << bit)) !== 0) constraints.set(name, maxima[bit]);
+    });
+    const getNames = (bitset: number) =>
+      new Set(names.filter((_name, bit) => (bitset & (1 << bit)) !== 0));
+    return toOperatorLevels(definition.name, definition.params, {
+      level: CONSTANT_LEVEL,
+      isCorrect: true,
+      params: getNames(body),
+      constraints,
+      argConstraints,
+      argParams: new Map(),
+      allParams: allParams ?? EMPTY_PARAMS,
+      nonLeibnizParams: nonLeibnizParams ?? EMPTY_PARAMS,
+      appliedParams: applied === undefined ? undefined : getNames(applied),
+    });
+  };
+
   const analyzeStatement = (statement: Expression | AssumeProve): LevelData => {
     const cached = statementLevels.get(statement);
     if (cached) return cached;
@@ -2021,7 +2435,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? analyzeInstanced(definition, copy, scope)
       : "statement" in definition
         ? toOperatorLevels(definition.name, [], analyzeStatement(definition.statement))
-        : analyzeOperator(
+        : (definition.kind === "Operator" &&
+            scope.size === 0 &&
+            members === undefined &&
+            foreignParams.size === 0 &&
+            analyzeConstantOperator(definition)) ||
+          analyzeOperator(
             definition.name,
             getFormals(definition),
             getDefinitionBody(definition),
