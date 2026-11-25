@@ -883,6 +883,7 @@ export interface Search {
   spec: Specification;
   getFingerprintState: (state: Value[], viewEnvironment?: Environment) => Value[];
   getViewState: (state: Value[]) => Value[];
+  getViewFingerprint: (viewState: Value[]) => bigint;
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
@@ -1474,12 +1475,12 @@ export const createSearch = (
       ? representative
       : [getViewValue(view.expression, representative, viewEnvironment)];
   };
-  const getTlcStateFingerprint = (state: Value[], viewEnvironment = environment) => {
-    const viewState = getViewState(state, viewEnvironment);
-    return getTlcFingerprint(
+  const getViewFingerprint = (viewState: Value[]) =>
+    getTlcFingerprint(
       view === undefined ? getTlcOrder().map((index) => viewState[index]) : viewState,
     );
-  };
+  const getTlcStateFingerprint = (state: Value[], viewEnvironment = environment) =>
+    getViewFingerprint(getViewState(state, viewEnvironment));
   const findFailedInitialPredicate = (state: Value[]) =>
     properties.initialPredicates.find((predicate, index) => {
       const value =
@@ -1772,6 +1773,7 @@ export const createSearch = (
         ? [String(getTlcStateFingerprint(state, viewEnvironment))]
         : getViewState(state, viewEnvironment),
     getViewState,
+    getViewFingerprint,
     findViolatedInvariant: (state, parent) => {
       const violated =
         coverage === undefined

@@ -803,7 +803,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const currentView = search.getViewState(current);
     const lastView = search.getViewState(last);
     if (!isUnfingerprintable(currentView) && !isUnfingerprintable(lastView)) {
-      return runtime.getFingerprint(current) === runtime.getFingerprint(last);
+      return search.getViewFingerprint(currentView) === search.getViewFingerprint(lastView);
     }
     return currentView.every((value, index) =>
       computeOnFailure(valuesEqual, isIdentical, value, lastView[index]),

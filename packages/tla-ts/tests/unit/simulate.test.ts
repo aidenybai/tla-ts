@@ -669,6 +669,28 @@ it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Si
   ]);
 });
 
+it("evaluates the VIEW of both states once per -difftrace comparison, as TLC's Simulator#printBehavior does", () => {
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nInv == x < 2\nView == IF PrintT(<<"view", x>>) THEN x ELSE x\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace: true,
+    onSimulation: () => {},
+    onPrint: (text) => printed.push(text),
+  });
+  expect([status, printed]).toEqual([
+    12,
+    ['<<"view", 1>>', '<<"view", 0>>', '<<"view", 2>>', '<<"view", 1>>'],
+  ]);
+});
+
 const FAILING_VIEW =
   "Next == y' = y + 1 /\\ z' = z\nInv == y < 3\nView == IF y < 2 THEN y ELSE y = \"s\"";
 
