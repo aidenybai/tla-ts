@@ -263,7 +263,7 @@ const getModuleBinding = (name: string, unit: Unit, range: SourceRange | undefin
     : undefined;
 };
 
-const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefined) =>
+export const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefined) =>
   left !== undefined && right !== undefined && formatRange(left) === formatRange(right);
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {

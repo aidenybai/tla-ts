@@ -2,12 +2,29 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, type CheckProgress, TlaUnsupportedError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/overrides");
 
 const loadClass = (name: string) => {
   const path = join(DIRECTORY, `${name}.class`);
   return existsSync(path) ? readFileSync(path) : undefined;
+};
+
+const PARAMETERIZED = "---- MODULE Overrides ----\nCONSTANT N\nFlag == N = {}\nG == Flag\n====";
+
+const checkMatched = async (source: string, config: string, modules: Map<string, string>) => {
+  const matched: string[] = [];
+  const result = await check({
+    source,
+    config,
+    loadModule: (name) => modules.get(name),
+    loadClass,
+    onProgress: (progress) => {
+      if (progress.kind === "java-override" && progress.isMatched) matched.push(progress.operator);
+    },
+  });
+  return [result.status, result.violation?.name, matched];
 };
 
 describe("Java module overrides match TLC", () => {
@@ -48,6 +65,129 @@ describe("Java module overrides match TLC", () => {
       })),
     );
   });
+
+  it.each([
+    [
+      "an extended module's LOCAL INSTANCE",
+      "EXTENDS Mid\nASSUME MidFlag",
+      "assumption-violation",
+      "line 3, col 8 to line 3, col 14 of module Root",
+      false,
+    ],
+    [
+      "a named INSTANCE",
+      "O == INSTANCE Overrides\nASSUME O!Flag",
+      "assumption-violation",
+      "line 3, col 8 to line 3, col 13 of module Root",
+      false,
+    ],
+    [
+      "the root's LOCAL INSTANCE",
+      "LOCAL INSTANCE Overrides\nASSUME Flag",
+      "success",
+      undefined,
+      true,
+    ],
+  ])(
+    "overrides an operator reached through %s only where the root sees its name",
+    async (_name, body, status, assumption, isFlagMatched) => {
+      expect(
+        await checkMatched(
+          `---- MODULE Root ----\n${body}\n====`,
+          "",
+          new Map([
+            ["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="],
+            ["Mid", "---- MODULE Mid ----\nLOCAL INSTANCE Overrides\nMidFlag == Flag\n===="],
+          ]),
+        ),
+      ).toEqual([status, assumption, isFlagMatched ? ["Flag"] : []]);
+    },
+  );
+
+  it("overrides no operator the root sees through an unnamed INSTANCE with substitutions", async () => {
+    expect(
+      await checkMatched(
+        "---- MODULE Root ----\nINSTANCE Overrides WITH N <- {1}\nASSUME Flag\n====",
+        "",
+        new Map([["Overrides", PARAMETERIZED]]),
+      ),
+    ).toEqual(["assumption-violation", "line 3, col 8 to line 3, col 11 of module Root", []]);
+  });
+
+  it("overrides an instance's copy of an operator that reads a substitution", async () => {
+    expect(
+      await checkMatched(
+        "---- MODULE Root ----\nEXTENDS Overrides\nO == INSTANCE Overrides WITH N <- {1}\nASSUME O!G /\\ O!Flag /\\ \\A i \\in {1} : O!Flag\n====",
+        "CONSTANT N = {}",
+        new Map([["Overrides", PARAMETERIZED]]),
+      ),
+    ).toEqual(["success", undefined, ["Flag"]]);
+  });
+
+  it("counts a substitution's level only where a Java override leaves it read", async () => {
+    const constantInvariants: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE Root ----\nEXTENDS Overrides\nVARIABLE x\nO == INSTANCE Overrides WITH N <- {x}\nInit == x = 0\nNext == UNCHANGED x\nInv == O!G\n====",
+      config: "CONSTANT N = {}\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: () => PARAMETERIZED,
+      loadClass,
+      onProgress: (progress) => {
+        if (progress.kind === "constant-level-invariant") constantInvariants.push(progress.name);
+      },
+    });
+    expect([result.status, constantInvariants]).toEqual(["success", ["Inv"]]);
+  });
+
+  it.each([
+    [
+      "Flag <- [Overrides] Other",
+      "O == INSTANCE Overrides\nOther == FALSE\nASSUME O!Flag",
+      "assumption-violation",
+      "line 5, col 8 to line 5, col 13 of module Root",
+    ],
+    ["Flag = [Root] FALSE", "ASSUME Flag", "success", undefined],
+  ])(
+    "applies a Java override after a module's configured values and before its substitutions: %s",
+    async (constant, body, status, assumption) => {
+      expect(
+        await checkMatched(
+          `---- MODULE Root ----\nEXTENDS Overrides\n${body}\n====`,
+          `CONSTANT ${constant}`,
+          new Map([["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="]]),
+        ),
+      ).toEqual([status, assumption, ["Flag"]]);
+    },
+  );
+
+  it.each([
+    [
+      "unknown operator",
+      "Flag == Undefined",
+      "VARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nASSUME Flag",
+      "line 2, col 9 to line 2, col 17 of module Overrides",
+      "Unknown operator: `Undefined'.",
+    ],
+    [
+      "level error",
+      "VARIABLE x\nFlag == x' = x",
+      "Init == x = 0\nNext == UNCHANGED x\nASSUME Flag",
+      "line 5, col 1 to line 5, col 11 of module Root",
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+    ],
+  ])(
+    "reports SANY's %s in the TLA+ body a Java override replaces",
+    async (_name, overridden, body, location, message) => {
+      await expect(
+        check({
+          source: `---- MODULE Root ----\nEXTENDS Overrides\n${body}\n====`,
+          config: "",
+          loadModule: () => `---- MODULE Overrides ----\n${overridden}\n====`,
+          loadClass,
+        }),
+      ).rejects.toThrow(createSanyError([{ location, message }]));
+    },
+  );
 
   it("rejects an override whose method computes its value", async () => {
     await expect(
