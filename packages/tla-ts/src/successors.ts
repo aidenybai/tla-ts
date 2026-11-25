@@ -36,6 +36,7 @@ import {
   getReevaluatedDefinitions,
   getStartupValue,
   getSubstituteClosure,
+  getUnassignedVariables,
   getUnchangedVariables,
   getZeroArityBody,
   isUnchangedState,
@@ -1490,7 +1491,7 @@ export const createIncompleteSuccessorError = (
   action: string | undefined,
   environment: Environment,
 ) => {
-  const missing = environment.variables.filter((_name, index) => partial[index] === undefined);
+  const missing = getUnassignedVariables(partial, environment.variables);
   return new TlaIncompleteSuccessorError(
     `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
     partial,
