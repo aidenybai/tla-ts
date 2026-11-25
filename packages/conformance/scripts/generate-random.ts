@@ -166,9 +166,10 @@ const createGenerator = (getNext: () => number) => {
   return { getExpression, pick };
 };
 
-// Deviation from TLC: TLC runs out of memory, or past the JVM's array limit, on these, and UnionValue#toString fails in place of the message on 384 and 879.
+// Deviation from TLC: TLC runs out of memory, or past the JVM's array limit, on these, and UnionValue#toString fails in place of the message or the printed value on 141, 384, 879, 6743, 7328 and 9028.
 const TLC_BUG_INDEXES = new Set([
-  102, 384, 879, 1576, 2309, 2420, 3226, 3504, 3717, 4041, 5211, 5311, 6258, 6550, 7052, 8304,
+  102, 141, 384, 879, 1576, 2309, 2420, 3226, 3504, 3717, 4041, 5211, 5311, 6258, 6550, 6743, 7052,
+  7328, 8304, 9028,
 ]);
 
 export const generateRandomExpressions = () => {
