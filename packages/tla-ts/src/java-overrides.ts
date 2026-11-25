@@ -24,6 +24,11 @@ export interface JavaOverride {
   isMatched: boolean;
 }
 
+export interface ModuleOverrides {
+  values: Map<string, Value>;
+  overrides: JavaOverride[];
+}
+
 interface LiteralValue {
   literal: Value;
 }
@@ -302,7 +307,7 @@ export const getModuleOverrides = (
   module: Module,
   bytes: Uint8Array,
   isVisibleInRoot: (name: string) => boolean,
-): { values: Map<string, Value>; overrides: JavaOverride[] } => {
+): ModuleOverrides => {
   const classFile = readClassFile(bytes);
   const arities = new Map(
     module.definitions
