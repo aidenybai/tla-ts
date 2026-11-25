@@ -5352,18 +5352,20 @@ export const createUnfingerprintableError = (value: Value) =>
     `TLC has found a state in which the value of a variable contains ${prettyPrint(formatValue(value))}`,
   );
 
+const getFingerprintedParts = (value: ObjectValue) => {
+  if (isSetValue(value)) return toFiniteSet(value).elements;
+  const functionValue = toFiniteFunction(value);
+  return functionValue.domain.flatMap((argument, index) => [argument, functionValue.range[index]]);
+};
+
 const fingerprintValue = (value: Value): void => {
   if (typeof value !== "object" || value.kind === "ModelValue") return;
-  if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
-    throw createUnfingerprintableError(value);
-  }
-  if (isSetValue(value)) {
-    toFiniteSet(value).elements.forEach(fingerprintValue);
-    return;
-  }
-  const functionValue = toFiniteFunction(value);
-  functionValue.domain.forEach(fingerprintValue);
-  functionValue.range.forEach(fingerprintValue);
+  callTracedMethod(value, () => {
+    if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
+      throw createUnfingerprintableError(value);
+    }
+    getFingerprintedParts(value).forEach(fingerprintValue);
+  });
 };
 
 export const getFingerprintError = (value: Value) => {
@@ -5377,31 +5379,18 @@ export const getFingerprintError = (value: Value) => {
   }
 };
 
-export const getHeldValues = (value: ObjectValue): Value[] => {
-  switch (value.kind) {
-    case "Set":
-    case "MixedSet":
-      return value.elements;
-    case "Function":
-      return [...value.domain, ...value.range];
-    case "Subset":
-    case "SequenceSet":
-    case "FilteredSet":
-    case "Union":
-      return [value.base];
-    case "FunctionSet":
-      return [value.domain, value.range];
-    case "RecordSet":
-      return value.sets;
-    case "ProductSet":
-      return value.factors;
-    case "SetOperation":
-      return [value.left, value.right];
-    case "LazyFunction":
-      return [value.domain];
-    default:
-      return [];
+export const getFingerprintReceivers = (value: Value) => {
+  const outerSets = setTrace.sets;
+  const sets: Value[] = [];
+  setTrace.sets = sets;
+  try {
+    fingerprintValue(value);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+  } finally {
+    setTrace.sets = outerSets;
   }
+  return sets;
 };
 
 export const getValueHash = (value: Value): number => {

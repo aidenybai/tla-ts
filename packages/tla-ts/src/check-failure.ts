@@ -10,13 +10,14 @@ import {
 } from "./errors";
 import {
   createTracingEnvironment,
+  getValueSources,
   type CallStack,
   type Environment,
   type FingerprintFailure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
 import { getCodedMessage, getFailureMessage, isEvalException } from "./tlc/messages";
-import { getFingerprintError, getHeldValues, type Value } from "./values";
+import { getFingerprintError, getFingerprintReceivers, type Value } from "./values";
 
 export const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
   ...getFailureMessage(
@@ -105,16 +106,6 @@ export const getReplayFailure = (
   }
 };
 
-const findFailedSources = (value: Value, sources: CallStack["sources"]): Expression[] => {
-  if (typeof value !== "object") return [];
-  const source = sources.get(value);
-  const failed = getHeldValues(value).find((held) => getFingerprintError(held) !== undefined);
-  return [
-    ...(source ? [source] : []),
-    ...(failed === undefined ? [] : findFailedSources(failed, sources)),
-  ];
-};
-
 export const fingerprintReplayed = (
   fingerprintState: Value[],
   callStack: CallStack | undefined,
@@ -124,7 +115,10 @@ export const fingerprintReplayed = (
     const error = getFingerprintError(value);
     if (!error) continue;
     const sources = callStack
-      ? runUncounted(coverage, () => findFailedSources(value, callStack.sources))
+      ? getValueSources(
+          callStack,
+          runUncounted(coverage, () => getFingerprintReceivers(value)),
+        )
       : [];
     if (callStack && sources.length > 0) {
       callStack.expressions.length = 0;

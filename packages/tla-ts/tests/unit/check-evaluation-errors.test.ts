@@ -220,6 +220,30 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    ["UNION {Nat}", ["line 5, col 51 to line 5, col 61 of module M"]],
+    ["SUBSET {Nat}", ["line 5, col 51 to line 5, col 62 of module M"]],
+    ["[{0} -> {Nat}]", ["line 5, col 51 to line 5, col 64 of module M"]],
+    [
+      "SUBSET {[a |-> Nat]}",
+      [
+        "line 5, col 51 to line 5, col 70 of module M",
+        "line 5, col 59 to line 5, col 69 of module M",
+      ],
+    ],
+    ["Seq({Nat})", undefined],
+    ["[s \\in {{}, {Nat}} |-> IF s = {} THEN Nat ELSE 0]", undefined],
+  ])(
+    "reports the sources of the values TLC fingerprints down to the one that fails in %s",
+    async (value, sources) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' = IF x = 1 THEN ${value} ELSE 0\nInv == x < 3\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect(formatFingerprintLines(result)).toEqual(sources);
+    },
+  );
+
   it.each(["\\E t \\in U : x' = t", "x' = CHOOSE t \\in U : TRUE"])(
     "reports a union of tuples and strings that %s fails to sort like TLC",
     async (next) => {
