@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, type CheckProgress, TlaUnsupportedError } from "../../src";
+import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/overrides");
 
@@ -156,6 +157,35 @@ describe("Java module overrides match TLC", () => {
           new Map([["Overrides", "---- MODULE Overrides ----\nFlag == FALSE\n===="]]),
         ),
       ).toEqual([status, assumption, ["Flag"]]);
+    },
+  );
+
+  it.each([
+    [
+      "unknown operator",
+      "Flag == Undefined",
+      "VARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nASSUME Flag",
+      "line 2, col 9 to line 2, col 17 of module Overrides",
+      "Unknown operator: `Undefined'.",
+    ],
+    [
+      "level error",
+      "VARIABLE x\nFlag == x' = x",
+      "Init == x = 0\nNext == UNCHANGED x\nASSUME Flag",
+      "line 5, col 1 to line 5, col 11 of module Root",
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+    ],
+  ])(
+    "reports SANY's %s in the TLA+ body a Java override replaces",
+    async (_name, overridden, body, location, message) => {
+      await expect(
+        check({
+          source: `---- MODULE Root ----\nEXTENDS Overrides\n${body}\n====`,
+          config: "",
+          loadModule: () => `---- MODULE Overrides ----\n${overridden}\n====`,
+          loadClass,
+        }),
+      ).rejects.toThrow(createSanyError([{ location, message }]));
     },
   );
 
