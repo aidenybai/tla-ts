@@ -94,7 +94,12 @@ import {
   getSubstitutedName,
   substitutionFrames,
 } from "./instances";
-import { getPossibleCounts, getPossibleTotals, type CheckerRuntime } from "./runtime";
+import {
+  getPossibleCounts,
+  getPossibleTotals,
+  PERIODIC_STATE,
+  type CheckerRuntime,
+} from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
   getSpecDescription,
@@ -1926,7 +1931,7 @@ export const createSearch = (
     },
     isPeriodicFalse: () =>
       periodic !== undefined &&
-      isEqualLikeTlc(false, evaluate(periodic, getContext(environment, undefined, undefined))),
+      isEqualLikeTlc(false, evaluate(periodic, getContext(environment, PERIODIC_STATE, undefined))),
     findPostconditionViolation: (isAfterViolation = false) => {
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions

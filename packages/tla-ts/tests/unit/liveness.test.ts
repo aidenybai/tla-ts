@@ -12,7 +12,7 @@ const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
 
 const CHAIN =
-  '---- MODULE Chain ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 40 /\\ PrintT(x) /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_x\nLive == <>(x >= 0)\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("distinct")>>)\nTruth == TRUE\n====';
+  '---- MODULE Chain ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 40 /\\ PrintT(x) /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_x\nLive == <>(x >= 0)\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("distinct")>>)\nTruth == TRUE\nLeveled == TLCGet("level") = 1\n====';
 
 const getPrintedResult = (result: CheckResult) => {
   const printed: string[] = [];
@@ -622,5 +622,18 @@ describe("_PERIODIC matches TLC", () => {
       '<<"periodic", 31>>',
       "progress",
     ]);
+  });
+
+  it("evaluates _PERIODIC in TLC's empty state, whose level is 1", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const result = await check({
+      source: CHAIN,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n_PERIODIC Leveled",
+      onPrint: () => {
+        now += 100;
+      },
+    });
+    expect(result.status).toBe("success");
   });
 });
