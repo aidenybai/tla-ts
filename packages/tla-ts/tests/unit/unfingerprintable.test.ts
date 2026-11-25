@@ -190,6 +190,100 @@ it("fails -dfid on a state that holds Nat with TLC's message", () => {
   ]);
 });
 
+describe("a state or action that holds UNION {Nat}, which TLC's UnionValue#toString fails to print", () => {
+  const step = "line 5, col 9 to line 5, col 68 of module StateUnion";
+
+  it("prints each state of a simulated behavior, as TLC does for UNION {{0, 1}}", () => {
+    const run = runSpec("StateUnion", ["-noGenerateSpecTE", ...SIMULATE, "-config", "Inv.cfg"]);
+    expect([run.status, run.lines]).toEqual([
+      12,
+      [
+        "Error: Invariant Inv is violated.",
+        "Error: The behavior up to this point is:",
+        "State 1: <Init line 4, col 9 to line 4, col 22 of module StateUnion>",
+        "/\\ x = 0",
+        "/\\ y = 0",
+        "",
+        `State 2: <Next ${step}>`,
+        "/\\ x = 1",
+        "/\\ y = 0",
+        "",
+        `State 3: <Next ${step}>`,
+        "/\\ x = 2",
+        "/\\ y = UNION({Nat})",
+        "",
+        `State 4: <Next ${step}>`,
+        "/\\ x = 3",
+        "/\\ y = 0",
+        "",
+        "The number of states generated: 4",
+        "Simulation using seed 1 and aril 0",
+        PROGRESS,
+      ],
+    ]);
+  });
+
+  it("prints the state that fails to fingerprint at the end of a -dfid behavior", () => {
+    const run = runSpec("StateUnion", ["-noGenerateSpecTE", "-dfid", "6", "-config", "Inv.cfg"]);
+    expect([run.status, run.lines]).toEqual([
+      255,
+      [
+        "Starting level 2: 1 states generated, 1 distinct states found.",
+        "Starting level 3: 2 states generated, 2 distinct states found.",
+        "Error: TLC threw an unexpected exception.",
+        "This was probably caused by an error in the spec or model.",
+        "The error occurred when TLC was computing the set of next states.",
+        "The exception was a java.lang.RuntimeException",
+        ": Attempted to enumerate UNION(s), but some element of s is nonenumerable.",
+        "Error: The behavior up to this point is:",
+        "State 1:",
+        "/\\ x = 0",
+        "/\\ y = 0",
+        "",
+        "State 2:",
+        "/\\ x = 1",
+        "/\\ y = 0",
+        "",
+        "State 3:",
+        "/\\ x = 2",
+        "/\\ y = UNION({Nat})",
+        "",
+        "Error: The error occurred when TLC was evaluating the nested",
+        "expressions at the following positions:",
+        "    The error call stack is empty.",
+        "",
+        "5 states generated, 2 distinct states found.",
+      ],
+    ]);
+  });
+
+  it("prints an action's argument in each state's label", () => {
+    const run = runSpec("ContextUnion", ["-noGenerateSpecTE", "-config", "Inv.cfg"]);
+    const label = "<Step(UNION({Nat})) line 4, col 12 to line 4, col 30 of module ContextUnion>";
+    expect([run.status, run.lines]).toEqual([
+      12,
+      [
+        "Error: Invariant Inv is violated.",
+        "Error: The behavior up to this point is:",
+        "State 1: <Initial predicate>",
+        "x = 0",
+        "",
+        `State 2: ${label}`,
+        "x = 1",
+        "",
+        `State 3: ${label}`,
+        "x = 2",
+        "",
+        `State 4: ${label}`,
+        "x = 3",
+        "",
+        "4 states generated, 4 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 4.",
+      ],
+    ]);
+  });
+});
+
 it("fails to write the trace file of an action that binds Nat with TLC's message, and writes no file where TLC leaves 20 bytes", () => {
   const run = runSpec("ContextNat", [...SIMULATE, "-config", "Inv.cfg"]);
   const step = "<Step(Nat) line 4, col 12 to line 4, col 30 of module ContextNat>";

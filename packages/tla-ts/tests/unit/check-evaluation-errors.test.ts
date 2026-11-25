@@ -138,6 +138,13 @@ describe("evaluation errors match TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
+  it("prints UNION {Nat} in the message of a failed Len, where TLC's UnionValue#toString fails to enumerate it", async () => {
+    const result = await checkModule("ASSUME Len(UNION {Nat, Nat}) = 0");
+    expect(result.violation?.message).toBe(
+      "The argument of Len should be a sequence, but instead it is:\nUNION({Nat})",
+    );
+  });
+
   it.each(["[a |-> Len(3), s |-> CASE 1 -> 2]", "[a : Len(3), s : CASE 1 -> 2]"])(
     "evaluates the fields of %s in the order they're written, like TLC",
     async (expression) => {

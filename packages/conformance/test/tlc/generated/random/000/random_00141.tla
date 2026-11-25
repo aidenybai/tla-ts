@@ -3,11 +3,17 @@ description: Evaluates a random function expression, seed 262, number 141.
 ref: tlc2/tool/impl/Tool.java#evalImpl
 features:
   - random-expression
+  - tlc-bug
 flags:
   - expression
 contexts:
   - assume
 outcome: any
+correct:
+  all:
+    exit: 0
+    transcript: |-
+      | [b221 \in 1..3 \cup UNION({{{}, {1}}, 1..3}) |-> <expression line 20, col 108 to line 20, col 225 of module random_00141>]
 ---*)
 ---- MODULE random_00141 ----
 EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
@@ -18,7 +24,7 @@ Test == PrintT([b221 \in (DOMAIN [b222 \in 1..3 |-> 2] \cup UNION {(1 .. 3), (2.
 all:
   exit: 10
   transcript: |-
-    2105:1 Evaluating assumption line 15, col 8 to line 15, col 11 of module random_00141 failed.
+    2105:1 Evaluating assumption line 21, col 8 to line 21, col 11 of module random_00141 failed.
     2154:0 Attempted to apply the operator overridden by the Java method
     public static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),
     but it produced the following error:
