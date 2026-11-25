@@ -52,6 +52,55 @@ it.each([1, 2, 3])(
   },
 );
 
+const REGISTERS_SOURCE =
+  '---- MODULE A ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(1, 0) /\\ TLCSet("s:n", 0) /\\ PrintT(TLCGet("all"))\nInit == x = 0\nNext == x < 3 /\\ x\' = x + 1\nCount == TLCSet(1, TLCGet(1) + 1) /\\ TLCSet("s:n", TLCGet("s:n") + 1)\nQ == x = 2\nSet == TLCSet(2, 9)\nPost == PrintT(TLCGet("all")) /\\ PrintT(TLCGet("all:named"))\nMark == x = 1 => TLCSet(3, 7)\nMarked == PrintT(TLCGet("all"))\n====';
+
+it.each([
+  [1, ["<<<<0>>>>", "<<<<4>>, <<9>>>>", '("s:n" :> <<4>> @@ "s:_possible" :> <<[Q |-> 1]>>)']],
+  [
+    2,
+    [
+      "<<<<0, 0>>>>",
+      "<<<<4, 1>>, <<9, 9>>>>",
+      '("s:n" :> <<4, 1>> @@ "s:_possible" :> <<[Q |-> 1], [Q |-> 0]>>)',
+    ],
+  ],
+  [
+    3,
+    [
+      "<<<<0, 0, 0>>>>",
+      "<<<<4, 1, 1>>, <<9, 9, 9>>>>",
+      '("s:n" :> <<4, 1, 1>> @@ "s:_possible" :> <<[Q |-> 1], [Q |-> 0], [Q |-> 0]>>)',
+    ],
+  ],
+])(
+  'gives each register a value per worker in TLCGet("all") and TLCGet("all:named") with -workers %i, as TLC does when its first worker takes every state',
+  async (workers, expected) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: REGISTERS_SOURCE,
+      config:
+        "INIT Init\nNEXT Next\nINVARIANT Count\n_POSSIBLE Q\nPOSTCONDITION Set\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE",
+      workers,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed]).toEqual(["success", expected]);
+  },
+);
+
+// Deviation from TLC: TLC's PrintT throws 'Cannot invoke "tlc2.value.impl.Value.deepCopy()" because "this.elems[i]" is null'.
+it('fails on a register that only the first worker set in TLCGet("all") with -workers 2, where TLC puts null in the other worker\'s tuple', async () => {
+  const result = await check({
+    source: REGISTERS_SOURCE,
+    config: "INIT Init\nNEXT Next\nINVARIANT Mark\nPOSTCONDITION Marked\nCHECK_DEADLOCK FALSE",
+    workers: 2,
+  });
+  expect([result.status, result.violation?.message?.split("\n").at(-1)]).toEqual([
+    "postcondition-violation",
+    "TLCGet(3) was undefined.",
+  ]);
+});
+
 // Deviation from TLC: TLC finds no step for the trace once the statistics forbid it, and prints "Failed to recover the initial state from its fingerprint." with a TLC bug(4), or a bug(2) before the trace.
 it.each([
   ["3", "2", [0, 1, 2]],

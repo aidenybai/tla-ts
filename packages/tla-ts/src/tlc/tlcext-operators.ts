@@ -129,7 +129,7 @@ export const setTlcValue = (
   if (typeof key === "number" && key >= 0) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    if (runtime.setEveryWorkerRegister) runtime.setEveryWorkerRegister(key, value);
     else runtime.registers.set(key, value);
     return;
   }
@@ -152,7 +152,7 @@ export const setTlcValue = (
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
     if (isSplit)
       throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
-    if (runtime.setSimulationRegister) runtime.setSimulationRegister(key, value);
+    if (runtime.setEveryWorkerRegister) runtime.setEveryWorkerRegister(key, value);
     else runtime.namedRegisters.set(key, value);
     return;
   }

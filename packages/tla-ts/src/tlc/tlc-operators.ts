@@ -58,12 +58,17 @@ export const getRegisterFunction = <Key extends Value>(workerRegisters: Map<Key,
       createTuple(
         workerRegisters.map((registers) => {
           const value = registers.get(key);
-          // Deviation from TLC: Simulator#getAllValues puts null in the tuple of a worker that never set the first worker's register, which TLC's operators then crash on or compare unequal.
+          // Deviation from TLC: AbstractChecker#getAllValues and Simulator#getAllValues put null in the tuple of a worker that never set the first worker's register, which TLC's operators then crash on or compare unequal.
           if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
           return value;
         }),
       ),
     ]),
+  );
+
+const getWorkers = (runtime: CheckerRuntime) =>
+  Array.from({ length: runtime.workers }, (_value, index) =>
+    index === 0 ? runtime : (runtime.idleWorker ?? runtime),
   );
 
 const CHECKER_KEYS = new Set([
@@ -143,9 +148,9 @@ const getRuntimeValue = (
     case "action":
       return createActionRecord(undefined);
     case "all":
-      return getRegisterFunction([runtime.registers]);
+      return getRegisterFunction(getWorkers(runtime).map((worker) => worker.registers));
     case "all:named":
-      return getRegisterFunction([getNamedRegisters(runtime)]);
+      return getRegisterFunction(getWorkers(runtime).map((worker) => getNamedRegisters(worker)));
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
     const value = state === EMPTY_STATE ? undefined : getNamedRegisters(runtime).get(key);

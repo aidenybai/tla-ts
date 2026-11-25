@@ -22,7 +22,7 @@ export interface CheckerRuntime {
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
-  setSimulationRegister: ((key: number | string, value: Value) => void) | undefined;
+  setEveryWorkerRegister: ((key: number | string, value: Value) => void) | undefined;
   sumPossibleCounts: (() => Map<string, number>) | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
@@ -48,6 +48,7 @@ export interface CheckerRuntime {
   namedRegisters: Map<string, Value>;
   properties: Map<string, string>;
   possibleCounts: Map<string, number>;
+  idleWorker: Pick<CheckerRuntime, "registers" | "namedRegisters" | "possibleCounts"> | undefined;
   isStopped: boolean;
   isStarted: boolean;
   checkDeadlock: boolean;
@@ -76,7 +77,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
     getSimulationValue: undefined,
-    setSimulationRegister: undefined,
+    setEveryWorkerRegister: undefined,
     sumPossibleCounts: undefined,
     getRandom: () => {
       if (isStartup) return startupRandom;
@@ -153,6 +154,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     namedRegisters: new Map(),
     properties: new Map(),
     possibleCounts: new Map(),
+    idleWorker: undefined,
     isStopped: false,
     isStarted: false,
     checkDeadlock,
