@@ -1,10 +1,12 @@
 import {
+  createUnfingerprintableError,
   getStringRank,
   isFunctionValue,
   isModelValue,
   toFiniteFunction,
   toFiniteSet,
   type ModelValue,
+  type ObjectValue,
   type Value,
 } from "../values";
 
@@ -317,6 +319,13 @@ const extendFunction = (length: number) => {
   extendInt(length);
 };
 
+const toFingerprintedSet = (value: ObjectValue) => {
+  if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
+    throw createUnfingerprintableError(value);
+  }
+  return toFiniteSet(value);
+};
+
 // TLC's Value#fingerPrint normalizes the value in place, which sorts the fields of its records.
 const extendValue = (value: Value) => {
   if (typeof value !== "object" || isModelValue(value)) {
@@ -330,7 +339,7 @@ const extendValue = (value: Value) => {
       extendValue(functionValue.range[index]);
     }
   } else {
-    const set = toFiniteSet(value);
+    const set = value.kind === "Set" ? value : toFingerprintedSet(value);
     if (!set.isNormalized) set.isNormalized = true;
     const elements = set.elements;
     extendSet(elements.length);

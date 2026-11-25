@@ -5287,12 +5287,15 @@ const computeValueHash = (value: SetValue | FunctionValue) => {
   return hash;
 };
 
+export const createUnfingerprintableError = (value: Value) =>
+  new TlaEvaluationError(
+    `TLC has found a state in which the value of a variable contains ${prettyPrint(formatValue(value))}`,
+  );
+
 const fingerprintValue = (value: Value): void => {
   if (typeof value !== "object" || value.kind === "ModelValue") return;
   if (value.kind === "InfiniteSet" || value.kind === "SequenceSet") {
-    throw new TlaEvaluationError(
-      `TLC has found a state in which the value of a variable contains ${prettyPrint(formatValue(value))}`,
-    );
+    throw createUnfingerprintableError(value);
   }
   if (isSetValue(value)) {
     toFiniteSet(value).elements.forEach(fingerprintValue);

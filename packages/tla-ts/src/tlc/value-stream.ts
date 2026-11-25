@@ -16,6 +16,7 @@ import {
   createRecord,
   createSet,
   createTuple,
+  createUnfingerprintableError,
   formatValue,
   getFunctionClass,
   getModelValues,
@@ -174,6 +175,9 @@ const serializeValue = (value: Value, variableNames: string[]) => {
       writeInt(inner.low);
       writeInt(inner.high);
       return;
+    }
+    if (inner.kind === "InfiniteSet" || inner.kind === "SequenceSet") {
+      throw createUnfingerprintableError(inner);
     }
     const handle = objectHandles.get(inner);
     if (handle !== undefined) {
@@ -617,6 +621,7 @@ export const createTlcTraceOperators = (
   overrideWithJava(
     defineStateOperator("_TLCTraceSerialize", 2, (args) => {
       const path = getPath(getValue(args, 1, "_TLCTraceSerialize"));
+      // Deviation from TLC: _TLCTrace#ioSerialize opens the trace file before it fingerprints the value, so a value it can't fingerprint leaves a 20-byte file.
       files.writeFile?.(
         path,
         serializeValue(getValue(args, 0, "_TLCTraceSerialize"), getVariableNames()),
