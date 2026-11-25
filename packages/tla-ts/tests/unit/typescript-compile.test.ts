@@ -345,13 +345,12 @@ describe("tags", () => {
     expect((await checkModel(getTicker(""))).status).toBe("liveness-violation");
   });
 
-  it("checks a step property against the state before the step", async () => {
+  it("checks a function whose parameter holds the state before a step against every step", async () => {
     const result = await checkModel(`
       let count = 0;
       export const step = () => {
         count = count === 2 ? 0 : count + 1;
       };
-      /** @always */
       export const neverDecreases = (before: { count: number }) => count >= before.count;
     `);
     expect(result.status).toBe("liveness-violation");
@@ -366,7 +365,6 @@ describe("tags", () => {
         count = count === 2 ? 0 : count + 1;
       };
       const isGrowing = (from: State, to: State) => to.count >= from.count;
-      /** @always */
       export const neverDecreases = (before: State) => isGrowing(before, { count });
     `);
     expect(result.violation?.name).toBe("neverDecreases");
@@ -532,6 +530,14 @@ describe("errors", () => {
   it("rejects an invariant with parameters", () => {
     expect(() =>
       compile(`let count = 0;\nexport const isBelow = (limit: 1 | 2) => count < limit;`),
+    ).toThrow("spec.ts:2:25 Invariants can't take parameters");
+    expect(() =>
+      compile(
+        `let count = 0;\nexport const isBelow = (before: { total: number }) => count < before.total;`,
+      ),
+    ).toThrow("spec.ts:2:25 Invariants can't take parameters");
+    expect(() =>
+      compile(`let count = 0;\nexport const isBelow = (before: { count: string }) => count < 2;`),
     ).toThrow("spec.ts:2:25 Invariants can't take parameters");
   });
 });
