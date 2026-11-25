@@ -65,14 +65,20 @@ export const PlaygroundSettings = () => {
   );
 };
 
+// Runs right after the built file's name, and writes the name of the file a link carries in its
+// place, so the name's button has its width from the first paint.
+const SHARED_NAME_SCRIPT = `{const shared = new URLSearchParams(location.hash.slice(1)); const name = shared.get("file") ?? (shared.has("code") ? "example.ts" : null); if (name !== null) document.currentScript.previousElementSibling.textContent = name;}`;
+
 export const PlaygroundFiles = () => {
   const playground = usePlayground();
+  const isHydrated = useIsHydrated();
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger className={cn(buttonVariants(), "min-w-0 shrink text-foreground")}>
-        <span data-file-name className="truncate">
+        <span suppressHydrationWarning className="truncate">
           {playground.fileName}
         </span>
+        {!isHydrated && <script dangerouslySetInnerHTML={{ __html: SHARED_NAME_SCRIPT }} />}
         <CaretDown className="size-3.5 text-faint" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end">
