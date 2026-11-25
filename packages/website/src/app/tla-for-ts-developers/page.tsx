@@ -11,8 +11,8 @@ const Page = () => (
       <Hero.Title>TLA+ for TypeScript developers</Hero.Title>
       <Hero.Body>
         <p>
-          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link> lets you check every order
-          your code can run in. This guide teaches it by translating a TypeScript file.
+          <Link href="/">TLA-ts</Link> runs a TypeScript file and checks every state the file can
+          reach. This guide shows how it reads your code, and how to write a file it can check.
         </p>
       </Hero.Body>
     </Hero.Root>
@@ -21,12 +21,11 @@ const Page = () => (
       <Section.Root>
         <Section.Title>Next steps</Section.Title>
         <p className="text-pretty">
-          Try more files in the <Link href="/playground">playground</Link>. For the full language,
-          read{" "}
-          <Link href="https://lamport.azurewebsites.net/tla/summary-standalone.pdf">
-            Leslie Lamport's summary of TLA+
-          </Link>
-          .
+          Try your own file in the <Link href="/playground">playground</Link>. The{" "}
+          <Link href="https://github.com/aidenybai/tla-ts/blob/main/docs/typescript.md">
+            TypeScript reference
+          </Link>{" "}
+          lists every type, tag, and limit.
         </p>
       </Section.Root>
     </div>

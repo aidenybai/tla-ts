@@ -203,6 +203,7 @@ const tutorial = (): Plugin => ({
         blocks: lesson.blocks.map((block): ContentBlock => {
           if (typeof block === "string") return { kind: "paragraph", text: block };
           if ("heading" in block) return { kind: "heading", text: block.heading };
+          if ("rows" in block) return { kind: "table", header: block.header, rows: block.rows };
           if ("tla" in block) {
             return {
               kind: "comparison",
