@@ -113,6 +113,32 @@ describe("POSTCONDITION with a dumped trace matches TLC", () => {
     },
   );
 
+  it("writes the fields of each action of a lasso in TLC's order to JSON, though the spec's location and d sort before name and r", async () => {
+    let written = "";
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE location\nSteps == {d \\in 1..1 : TRUE}\nMove(r, d) == location < 2 /\\ location' = location + d\nNext == \\E r \\in {0}, d \\in Steps : Move(r, d)\nSpec == location = 0 /\\ [][Next]_location\nLive == <>(location = 5)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+      moduleOperators: [
+        {
+          kind: "postcondition",
+          module: "_JsonTrace",
+          operator: "_JsonTrace",
+          constants: { _JsonTraceFile: "t.json" },
+        },
+      ],
+      onPrint: () => {},
+      writeFile: (_path, content) => {
+        written = typeof content === "string" ? content : new TextDecoder().decode(content);
+      },
+    });
+    const action = (from: number, to: number) =>
+      `[[${from},{"location":${from - 1}}],{"name":"Move","location":{"beginLine":5,"beginColumn":15,"endLine":5,"endColumn":54,"module":"M"},"context":{"r":0,"d":1},"parameters":["r","d"]},[${to},{"location":${to - 1}}]]`;
+    expect(written).toBe(
+      `{"counterexample":{"action":[${action(1, 2)},${action(2, 3)},${action(3, 3)}],"state":[[1,{"location":0}],[2,{"location":1}],[3,{"location":2}]]},"vars":["location"]}`,
+    );
+  });
+
   it("orders the fields of CounterExample by the strings of _TLCTrace, which the binary trace of the trace spec adds to the modules the root extends", async () => {
     const result = await check({
       source,

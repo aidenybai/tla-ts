@@ -56,11 +56,11 @@ import {
 } from "../values";
 
 export const createActionRecord = (action: string | undefined) =>
-  createRecord([
+  createTlcRecord([
     ["name", action ?? "UnnamedAction"],
     [
       "location",
-      createRecord([
+      createTlcRecord([
         ["beginLine", 0],
         ["beginColumn", 0],
         ["endLine", 0],
