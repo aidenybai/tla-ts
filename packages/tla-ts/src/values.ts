@@ -962,16 +962,17 @@ export const markFingerprinted = (value: Value): void => {
     if ((flags & VALUE_FINGERPRINTED) !== 0) return;
     value.flags = flags | VALUE_FINGERPRINTED;
   }
+  if (value instanceof CanonicalPage) {
+    // A page's domain is integers, and a record that it hasn't made holds what its source holds,
+    // apart from the nodes.
+    for (let slot = 0; slot < value.records.length; slot++) {
+      markFingerprinted(value.records[slot] ?? value.sources[slot]);
+    }
+    return;
+  }
   if (value.kind === "Function") {
     for (let index = 0; index < value.domain.length; index++) {
       markFingerprinted(value.domain[index]);
-    }
-    if (value instanceof CanonicalPage) {
-      // A record that a page hasn't made holds what its source holds, apart from the nodes.
-      for (let slot = 0; slot < value.records.length; slot++) {
-        markFingerprinted(value.records[slot] ?? value.sources[slot]);
-      }
-      return;
     }
     for (let index = 0; index < value.range.length; index++) {
       markFingerprinted(value.range[index]);
