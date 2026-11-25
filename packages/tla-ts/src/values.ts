@@ -251,37 +251,62 @@ export const PAGE_SIZE = 256;
 export const WEAK_BITS = 2;
 export const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
 
-// A page of ESCore's heap that CanonicalStateOf made, with the nodes that each of its records refers
-// to, where each record holds them, and the record that each was renamed from, where renaming it
-// gives a record of that source and its edges alone (see escore-canonical.ts), whose hidden class no
-// other function shares.
-export interface CanonicalPage extends FunctionValue {
+// A page of ESCore's heap that CanonicalStateOf made. Its edges hold the nodes that each record
+// refers to, and its locations where the record holds them. Each record is its source with those
+// nodes at those locations, which makeRecord makes as a reader first reads it (see
+// escore-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
+// its locations in its source.
+export class CanonicalPage implements FunctionValue {
+  readonly kind = "Function";
+  domain: Value[];
+  hash: number;
+  fingerprint = 0;
+  writtenKeys: Value[] | undefined = undefined;
+  functionClass: FunctionValue["functionClass"] = "tuple";
+  flags = VALUE_CANONICAL | VALUE_PAGE;
   edges: Int32Array;
   locations: (number[] | undefined)[];
-  sources: (Value | undefined)[];
+  plans: (Int32Array | undefined)[];
+  sources: Value[];
+  records: (Value | undefined)[];
+  hashes: Int32Array;
+  makeRecord: (page: CanonicalPage, slot: number) => Value;
+  made: Value[] | undefined = undefined;
+
+  constructor(
+    edges: Int32Array,
+    locations: (number[] | undefined)[],
+    plans: (Int32Array | undefined)[],
+    sources: Value[],
+    records: (Value | undefined)[],
+    hashes: Int32Array,
+    makeRecord: (page: CanonicalPage, slot: number) => Value,
+  ) {
+    this.domain = getIntervalDomain(records.length);
+    this.hash = getPageHash(hashes);
+    this.edges = edges;
+    this.locations = locations;
+    this.plans = plans;
+    this.sources = sources;
+    this.records = records;
+    this.hashes = hashes;
+    this.makeRecord = makeRecord;
+  }
+
+  get range(): Value[] {
+    if (this.made !== undefined) return this.made;
+    const made = this.records.map((record, slot) => record ?? this.makeRecord(this, slot));
+    this.records = made;
+    this.made = made;
+    return made;
+  }
 }
 
-export const createCanonicalPage = (
-  records: Value[],
-  edges: Int32Array,
-  locations: (number[] | undefined)[],
-  sources: (Value | undefined)[],
-): CanonicalPage => ({
-  kind: "Function",
-  domain: getIntervalDomain(records.length),
-  range: records,
-  hash: 0,
-  fingerprint: 0,
-  writtenKeys: undefined,
-  functionClass: "tuple",
-  flags: VALUE_CANONICAL | VALUE_PAGE,
-  edges,
-  locations,
-  sources,
-});
-
 export const isCanonicalPage = (value: Value): value is CanonicalPage =>
-  typeof value === "object" && "edges" in value;
+  value instanceof CanonicalPage;
+
+export const getPageRecord = (page: CanonicalPage, slot: number) =>
+  (page.records[slot] ??= page.makeRecord(page, slot));
 
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
@@ -941,6 +966,13 @@ export const markFingerprinted = (value: Value): void => {
     for (let index = 0; index < value.domain.length; index++) {
       markFingerprinted(value.domain[index]);
     }
+    if (value instanceof CanonicalPage) {
+      // A record that a page hasn't made holds what its source holds, apart from the nodes.
+      for (let slot = 0; slot < value.records.length; slot++) {
+        markFingerprinted(value.records[slot] ?? value.sources[slot]);
+      }
+      return;
+    }
     for (let index = 0; index < value.range.length; index++) {
       markFingerprinted(value.range[index]);
     }
@@ -1057,22 +1089,21 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
     }
     return true;
   };
-  // Records renamed from one source by the same numbers are the same.
+  // Records made from one source by the same numbers are the same.
   const areSamePages = (left: CanonicalPage, right: CanonicalPage) => {
-    if (left.range.length !== right.range.length) return false;
     const isSameRealm = left.edges[0] === right.edges[0] && left.edges[1] === right.edges[1];
-    for (let slot = 0; slot < left.range.length; slot++) {
-      if (left.range[slot] === right.range[slot]) continue;
-      const source = left.sources[slot];
+    for (let slot = 0; slot < left.domain.length; slot++) {
+      const record = left.records[slot];
+      if (record !== undefined && record === right.records[slot]) continue;
+      if (left.hashes[slot] !== right.hashes[slot]) return false;
       if (
         isSameRealm &&
-        source !== undefined &&
-        source === right.sources[slot] &&
+        left.sources[slot] === right.sources[slot] &&
         areSameEdges(left.edges, right.edges, slot)
       ) {
         continue;
       }
-      if (!isSame(left.range[slot], right.range[slot])) return false;
+      if (!isSame(getPageRecord(left, slot), getPageRecord(right, slot))) return false;
     }
     return true;
   };
@@ -5030,10 +5061,21 @@ const FUNCTION_HASH_SEED = 0x66d1b4f7;
 const getElementContribution = (elementHash: number) =>
   finalizeHash((elementHash + 0x9e3779b9) | 0);
 
-const getEntryContribution = (keyHash: number, valueHash: number) =>
+export const getEntryContribution = (keyHash: number, valueHash: number) =>
   finalizeHash((Math.imul(keyHash, 0x27d4eb2d) + valueHash) | 0);
 
 const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
+
+export const isUnfingerprintableHash = (hash: number) => hash === UNFINGERPRINTABLE_HASH;
+
+const getPageHash = (hashes: Int32Array) => {
+  let hash = FUNCTION_HASH_SEED;
+  for (let slot = 0; slot < hashes.length; slot++) {
+    if (hashes[slot] === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
+    hash = (hash + getEntryContribution(getValueHash(slot + 1), hashes[slot])) | 0;
+  }
+  return hash;
+};
 
 const computeValueHash = (value: SetValue | FunctionValue) => {
   if (value.kind === "Set") {
