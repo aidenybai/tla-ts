@@ -23,6 +23,7 @@ import {
   evaluate,
   getDefinition,
   getRootKey,
+  getUnassignedVariables,
   type Builtin,
   type Environment,
 } from "../evaluate";
@@ -238,7 +239,7 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       const variables = context?.environment.variables ?? [];
       const state = context?.state ?? variables.map(() => undefined);
       if (!context || state.length < variables.length || !isCompleteState(state)) {
-        const unassigned = variables.filter((_name, index) => state[index] === undefined);
+        const unassigned = getUnassignedVariables(state, variables);
         throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,
         );

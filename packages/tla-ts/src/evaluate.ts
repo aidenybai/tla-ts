@@ -637,6 +637,10 @@ export const isUnchangedState = (
   return true;
 };
 
+// TLC's TLCStateMut#getUnassigned sorts the variables by name.
+export const getUnassignedVariables = (state: State, variables: string[]) =>
+  variables.filter((_name, index) => state[index] === undefined).sort();
+
 export const getBuiltin = (name: string, environment: Environment) =>
   environment.builtins.get(environment.substitutions.get(name) ?? name);
 

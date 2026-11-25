@@ -2347,6 +2347,42 @@ describe("the CLI fails to print an initial state through -view as TLC does", ()
   );
 });
 
+it.each([
+  [
+    [],
+    "Error: Successor state is not completely specified by the next-state action. The following variables are not defined: a, b.",
+  ],
+  [
+    ["-dfid", "3"],
+    "Error: Successor state is not completely specified by the next-state action. The following variables are not defined: a, b.",
+  ],
+  [
+    ["-simulate", "num=1", "-depth", "3"],
+    "Error: Successor state is not completely specified by the next-state action. The following variables are not defined: a, b.",
+  ],
+  [
+    ["-config", "Trace.cfg"],
+    "In evaluating TLCExt!Trace, the state is not completely specified yet (variables a, b, y undefined).",
+  ],
+])(
+  "lists the unassigned variables by name under %j, as TLC's TLCStateMut#getUnassigned does",
+  (args, error) => {
+    const directory = mkdtempSync(join(FIXTURES, "unassigned-"));
+    writeFileSync(
+      join(directory, "U.tla"),
+      "---- MODULE U ----\nEXTENDS TLC, TLCExt\nVARIABLES y, b, a\nInit == y = 0 /\\ b = 0 /\\ a = 0\nNext == y' = 1\nTraceInit == PrintT(Trace) /\\ y = 0 /\\ b = 0 /\\ a = 0\n====\n",
+    );
+    writeFileSync(join(directory, "U.cfg"), "INIT Init\nNEXT Next\n");
+    writeFileSync(join(directory, "Trace.cfg"), "INIT TraceInit\nNEXT Next\n");
+    const result = runCliWith(directory, [...args, "U.tla"]);
+    rmSync(directory, { recursive: true });
+    expect([
+      result.status,
+      result.stdout.split("\n").filter((line) => line.includes("not completely specified")),
+    ]).toEqual([75, [error]]);
+  },
+);
+
 describe("the CLI takes -checkpoint only where it writes no checkpoint", () => {
   it.each(["5", "30"])("rejects -checkpoint %s, as tla-ts doesn't write checkpoints", (minutes) => {
     const result = runCli("counter", "Counter", ["-noGenerateSpecTE", "-checkpoint", minutes]);

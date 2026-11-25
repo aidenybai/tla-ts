@@ -9,7 +9,7 @@ import {
   TlaStackOverflowError,
   TlaTooManyStatesError,
 } from "./errors";
-import { createTracingEnvironment, type State } from "./evaluate";
+import { createTracingEnvironment, getUnassignedVariables, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import {
@@ -523,9 +523,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           return report(
             MESSAGE_CODE.incompleteSuccessor,
             getIncompleteSuccessorMessage(
-              environment.variables.filter(
-                (_variable, position) => incomplete[position] === undefined,
-              ),
+              getUnassignedVariables(incomplete, environment.variables),
               action.name,
               nextActions.length,
               options.version,
