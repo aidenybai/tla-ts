@@ -144,6 +144,40 @@ describe("an action with operators for arguments splits as TLC's Tool#getActions
     ]);
   });
 
+  it("records no coverage in the body of an operator it calls as a value, as TLC's OpLambdaValue#eval does", () => {
+    const run = runSpec(
+      ["-deadlock", "-coverage", "1", "-config", "OperatorCoverage.cfg"],
+      "OperatorCoverage",
+    );
+    const module = "of module OperatorCoverage";
+    expect([
+      run.status,
+      run.lines.slice(
+        run.lines.findIndex((line) => line.startsWith("<x ")),
+        run.lines.indexOf("End of statistics."),
+      ),
+    ]).toEqual([
+      0,
+      [
+        `<x line 3, col 10 to line 3, col 10 ${module}>: 4`,
+        `<Init line 7, col 1 to line 7, col 4 ${module}>: 1:1`,
+        `  line 7, col 9 to line 7, col 13 ${module}: 1`,
+        `<Step line 6, col 1 to line 6, col 10 ${module}>: 1:3`,
+        `  line 6, col 15 to line 6, col 19 ${module}: 3`,
+        `  |line 6, col 15 to line 6, col 15 ${module}: 5`,
+        `  line 6, col 24 to line 6, col 32 ${module}: 3`,
+        `<Next line 8, col 1 to line 8, col 4 ${module} (8 23 8 72)>: 3:3`,
+        `  line 8, col 23 to line 8, col 27 ${module}: 3`,
+        `  |line 8, col 23 to line 8, col 23 ${module}: 5`,
+        `  line 8, col 32 to line 8, col 72 ${module}: 3`,
+        `<Inv line 9, col 1 to line 9, col 3 ${module}>`,
+        `  line 9, col 8 to line 9, col 27 ${module}: 5`,
+        `  |line 9, col 8 to line 9, col 13 ${module}: 5`,
+        `  |line 9, col 18 to line 9, col 27 ${module}: 2`,
+      ],
+    ]);
+  });
+
   it("splits an instanced action by its operator arguments", () => {
     const run = runSpec(["-simulate", "num=1", "-depth", "4", "-seed", "2"], "Outer");
     const step = "line 4, col 1 to line 4, col 31 of module Outer";
