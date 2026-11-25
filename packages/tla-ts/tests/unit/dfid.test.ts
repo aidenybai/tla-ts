@@ -345,6 +345,48 @@ it("reports an initial conjunct it evaluates whole at the instance that holds it
   });
 });
 
+const getSecondInitialLines = (next: string, config: string) => {
+  const lines: string[] = [];
+  checkDepthFirst({
+    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in {0, 1}\n${next}\n====`,
+    config,
+    maxDepth: 3,
+    onOutput: (output) => {
+      if (output.kind === "message") lines.push(output.message);
+      if (output.kind === "behavior") lines.push(...output.states);
+    },
+  });
+  return lines;
+};
+
+it("prints the state that breaks an invariant from the second initial state, where TLC's DFIDWorker#printInvariantTrace prints only State 1", () => {
+  expect(
+    getSecondInitialLines(
+      "Next == x' = x + 2\nInv == x # 3",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    ),
+  ).toEqual([
+    "Finished computing initial states: 2 states generated, with 2 of them distinct.",
+    "Starting level 2: 2 states generated, 2 distinct states found.",
+    "Invariant Inv is violated.",
+    "The behavior up to this point is:",
+    "x = 1\n",
+    "x = 3\n",
+    "4 states generated, 4 distinct states found.",
+  ]);
+});
+
+it("prints a deadlocked second initial state once, where TLC's DFIDWorker#printErrorTrace prints it as State 1 and State 2", () => {
+  expect(getSecondInitialLines("Next == x = 0 /\\ x' = 0", "INIT Init\nNEXT Next")).toEqual([
+    "Finished computing initial states: 2 states generated, with 2 of them distinct.",
+    "Starting level 2: 2 states generated, 2 distinct states found.",
+    "Deadlock reached.",
+    "The behavior up to this point is:",
+    "x = 1\n",
+    "3 states generated, 2 distinct states found.",
+  ]);
+});
+
 it("checks the assumptions of a specification without variables and then completes with no initial state, as TLC's DFIDModelChecker does without an initial predicate", () => {
   const outputs: DepthFirstOutput[] = [];
   const printed: string[] = [];
