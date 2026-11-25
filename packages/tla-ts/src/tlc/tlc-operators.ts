@@ -57,7 +57,7 @@ export const getRegisterFunction = <Key extends Value>(workerRegisters: Map<Key,
       createTuple(
         workerRegisters.map((registers) => {
           const value = registers.get(key);
-          // Deviation from TLC: Simulator#getAllValues puts null in the tuple of a worker that never set the first worker's register, and TLC fails when it uses the tuple.
+          // Deviation from TLC: Simulator#getAllValues puts null in the tuple of a worker that never set the first worker's register, which TLC's operators then crash on or compare unequal.
           if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
           return value;
         }),
