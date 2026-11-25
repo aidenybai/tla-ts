@@ -426,4 +426,37 @@ describe("liveness matches TLC", () => {
       result.distinctStates,
     ]).toEqual(["invariant-violation", 4, 9, 7]);
   });
+
+  it.each([
+    [
+      "---- MODULE A ----\nVARIABLE x\nINSTANCE Inner\n====",
+      "line 3, col 1 to line 3, col 14 of module A",
+    ],
+    ["---- MODULE B ----\nEXTENDS Mid\n====", "line 4, col 1 to line 4, col 14 of module Mid"],
+    [
+      "---- MODULE C ----\nVARIABLE y\n  INSTANCE Mid\n    WITH x <- y\n====",
+      "line 3, col 3 to line 4, col 15 of module C",
+    ],
+    [
+      "---- MODULE D ----\nVARIABLE x\nLOCAL INSTANCE Inner\n====",
+      "line 3, col 1 to line 3, col 20 of module D",
+    ],
+  ])(
+    "locates the unfair Spec that %j instantiates at the INSTANCE that substitutes into it, as SANY builds the OpDefNode TLC names there",
+    async (source, location) => {
+      const result = await check({
+        source,
+        config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1\nSpec == Init /\\ [][Next]_x\nLive == <>[](x = 0)\n===="
+            : name === "Mid"
+              ? "---- MODULE Mid ----\nVARIABLE x\n\nINSTANCE Inner\n===="
+              : undefined,
+      });
+      expect(result.violation?.warning?.text).toBe(
+        `The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at ${location}. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).`,
+      );
+    },
+  );
 });

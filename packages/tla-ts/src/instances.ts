@@ -48,9 +48,12 @@ export const isSubstitutionDefinition = (definition: Definition) =>
 
 export const isCalledCopy = (definition: Definition) => definition.name.includes(KEY_SEPARATOR);
 
+export const getInstanceFrame = (expression: Expression) =>
+  substitutionFrames.get(expression)?.find((frame) => frameSubstitutions.has(frame));
+
 // TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
 export const getActionPredicate = (expression: Expression) =>
-  substitutionFrames.get(expression)?.find((frame) => frameSubstitutions.has(frame)) ?? expression;
+  getInstanceFrame(expression) ?? expression;
 
 const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };

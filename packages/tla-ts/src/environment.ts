@@ -261,12 +261,7 @@ const createLocalFunction = (definition: FunctionDefinition, key: string) => ({
 });
 
 const getInstanceRange = (instance: Instance): SourceRange =>
-  instance.definitionRange
-    ? {
-        ...instance.definitionRange,
-        start: { line: instance.location.line, column: instance.location.column },
-      }
-    : instance.instanceRange;
+  instance.location.range ?? instance.instanceRange;
 
 const getSubstitutionFrame = (instance: Instance): Expression => {
   const range = getInstanceRange(instance);
@@ -950,7 +945,7 @@ export const createEnvironment = (
         instanceActions.set(copy, {
           name,
           location: instance.location,
-          head: instance.head ?? instance.location.range,
+          head: instance.head ?? instance.instanceRange,
           body: frame?.location.range,
         });
       }

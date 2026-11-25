@@ -2148,6 +2148,27 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    ["LOCAL INSTANCE Inner WITH x <- y", "Action line 4, col 1 to line 4, col 32 of module M"],
+    [
+      "  LOCAL I == INSTANCE Inner WITH x <- y\nSpec == I!Spec",
+      "Action line 4, col 3 to line 4, col 39 of module M",
+    ],
+  ])(
+    "labels the steps of a spec that %j brings in from its LOCAL keyword, as SANY locates the instance",
+    async (instance, label) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\n${instance}\nInv == y < 2\n====`,
+        config: "SPECIFICATION Spec\nINVARIANT Inv",
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE x\nSpec == x = 0 /\\ [][x' = x + 1]_x\n===="
+            : undefined,
+      });
+      expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label, label]);
+    },
+  );
+
   it("labels steps after evaluating the initial predicate again like TLC", async () => {
     const result = await checkFixture("tlc-get-non-determinism", "TLCGetNonDeterminism");
     expect(result.violation?.trace.map((step) => step.label)).toEqual([
@@ -16891,6 +16912,12 @@ ASSUME TLCFP(a) = -887695703
       "A line 5, col 1 to line 5, col 38",
     ],
     [
+      "LOCAL INSTANCE Inner WITH K <- M + 1, w <- y",
+      "A",
+      "Q /\\ G >= 0",
+      "A line 5, col 7 to line 5, col 44",
+    ],
+    [
       "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
       "\\E p \\in {1, 2} : I(p, M)!A",
       "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
@@ -17803,6 +17830,16 @@ describe("initial predicate and next-state relation match TLC", () => {
       `${theoremBase}INSTANCE Base WITH v <- x\nP == Baz /\\ [](x \\in {0, 1})`,
       "INIT Init\nNEXT Next\nPROPERTY P",
       "The operator Baz, which equals line 12, col 1 to line 12, col 25 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}LOCAL INSTANCE Base WITH v <- x\nP == Baz /\\ [](x \\in {0, 1})`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator Baz, which equals line 12, col 1 to line 12, col 31 of module M,\ncannot be used as a property",
+    ],
+    [
+      `${theoremBase}LOCAL I == INSTANCE Base WITH v <- x\nP == I!Foo`,
+      "INIT Init\nNEXT Next\nPROPERTY P",
+      "The operator I!Foo, which equals line 12, col 1 to line 12, col 36 of module M,\ncannot be used as a property",
     ],
     [
       `${theoremBase}${theoremChain}I == INSTANCE L2 WITH w <- x\nP == I!J!Baz /\\ [](x \\in {0, 1})`,
