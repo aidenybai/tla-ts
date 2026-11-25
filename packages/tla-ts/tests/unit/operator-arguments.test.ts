@@ -296,6 +296,11 @@ describe('an operator TLCGet("action") binds is a value only as TLC\'s OpLambdaV
       ],
     ],
     ["Counts", 76, ["Attempted to compute cardinality of the value", "<Operator Inc>"]],
+    [
+      "Subsets",
+      76,
+      ["Attempted to compute the number of elements in the operator <Operator Inc>."],
+    ],
   ])("fails %s in -simulate with TLC's message", (invariant, status, message) => {
     const run = simulateInvariant("OperatorValues", invariant);
     expect([run.status, getFailure(invariant, run.lines)]).toEqual([status, message]);

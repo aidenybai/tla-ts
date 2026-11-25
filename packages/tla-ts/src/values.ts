@@ -3973,6 +3973,8 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
   switch (value.kind) {
     case "ModelValue":
       throw createAttemptError(describeModelValueCardinality, value);
+    case "Operator":
+      throw createAttemptError(describeScalarCardinality, value);
     case "Function":
       return value.domain.length;
     case "LazyFunction":

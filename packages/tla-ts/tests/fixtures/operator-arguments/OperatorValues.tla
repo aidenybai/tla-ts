@@ -17,4 +17,5 @@ Prints == HasOp => PrintT(Op)
 Shows == HasOp => ToString(Op) = "<Operator Inc>"
 IsFinite == HasOp => IsFiniteSet(Op)
 Counts == HasOp => Cardinality(Op) = 0
+Subsets == HasOp => SUBSET Op = {}
 ====
