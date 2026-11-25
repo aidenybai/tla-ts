@@ -132,6 +132,15 @@ interface WorkerError {
   traceSpec?: string;
 }
 
+interface SimulationWorker {
+  id: number;
+  random: JavaRandom;
+  getRandom: () => JavaRandom;
+  scheduler: ReturnType<typeof createScheduler>;
+  traceCount: number;
+  traceId: number;
+}
+
 const FATAL_CODES = new Set<number>([
   MESSAGE_CODE.invariantEvaluationFailed,
   MESSAGE_CODE.actionPropertyEvaluationFailed,
@@ -249,7 +258,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const traceLimit = options.traceCount ?? (1n << 63n) - 1n;
   const random = createJavaRandom(seed);
   for (let index = 0n; index < options.aril; index++) random.nextDouble();
-  const workerRandom = createJavaRandom(random.nextLong());
   const statistics: SimulationStatistics = {
     generatedStates: 0,
     traces: 0,
@@ -272,6 +280,25 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
+  const workers = Array.from({ length: options.workers ?? 1 }, (_value, id): SimulationWorker => {
+    const workerRandom = createJavaRandom(random.nextLong());
+    const enumerableRandom = createJavaRandom(seed);
+    return {
+      id,
+      random: workerRandom,
+      getRandom: () => enumerableRandom,
+      scheduler: createScheduler(
+        options.scheduler,
+        nextActions,
+        workerRandom,
+        runtime.getFingerprint,
+        search.getReward,
+      ),
+      traceCount: 0,
+      traceId: 0,
+    };
+  });
+  let worker = workers[0];
   const actionFlow = options.actionStatistics && {
     statistics: options.actionStatistics,
     actions: [...initActions, ...nextActions],
@@ -310,8 +337,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
   const coverage = prepared.coverage;
   const covered = coverage && addActionCoverage(coverage, environment, description);
-  let traceCount = 0;
-  let currentTrace = 0;
   // TLC's Simulator computes the initial states, prints the behaviors and checks the postcondition on its own thread, where TLCGet("diameter") is 0.
   let isOnWorker = false;
   let evaluatedAction: SpecAction | undefined;
@@ -321,7 +346,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const node = state && nodes.get(state);
     switch (key) {
       case "diameter":
-        return isOnWorker ? traceCount + 1 : 0;
+        return isOnWorker ? worker.traceCount + 1 : 0;
       case "generated":
       case "distinct":
       case "queue":
@@ -332,11 +357,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         return createTlcRecord([
           ["mode", options.isGenerating ? "generate" : "simulate"],
           ["depth", traceDepth === INFINITE_DEPTH ? -1 : traceDepth],
-          ["traces", Number(BigInt.asIntN(32, traceLimit))],
+          ["traces", Number(BigInt.asIntN(32, BigInt(workers.length) * traceLimit))],
           ["deadlock", config.checkDeadlock],
           ["seed", String(seed)],
           ["aril", String(options.aril)],
-          ["worker", 1],
+          ["worker", workers.length],
           ["install", "unknown"],
           ["sched", options.scheduler],
         ]);
@@ -357,10 +382,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
             "behavior",
             createTlcRecord([
               ["actions", createTlcRecord(counts)],
-              ["id", currentTrace],
+              ["id", worker.traceId],
             ]),
           ],
-          ["worker", 0],
+          ["worker", isOnWorker ? worker.id : 0],
           ["distinct", -1],
           ["distinctvalues", -1],
           ["retries", -1],
@@ -581,7 +606,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     isException: false,
     isSummarized: true,
   });
-  const generator = options.isGenerating ? { random: workerRandom, kept: 0 } : undefined;
+  const generator = options.isGenerating ? { random: worker.random, kept: 0 } : undefined;
   const getSuccessors = (current: TraceNode, index: number) => {
     const action = nextActions[index];
     const coveredAction = covered?.actions[index];
@@ -679,13 +704,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     return { successors: keptSuccessors, error: failure };
   };
   let currentNode = initialStates[0];
-  const scheduler = createScheduler(
-    options.scheduler,
-    nextActions,
-    workerRandom,
-    runtime.getFingerprint,
-    search.getReward,
-  );
   const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (!livenessChecks) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
@@ -720,6 +738,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
+    const workerRandom = worker.random;
+    const scheduler = worker.scheduler;
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     let currentActionId = initActions.length - 1;
     for (let depth = 0; depth < traceDepth; depth++) {
@@ -760,7 +780,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     // Deviation from TLC: it learns after file= drops the stuttering steps, and RLSimulationWorker#postTrace then walks past the initial state into a NullPointerException.
     if (options.scheduler === "rl") scheduler.learnTrace(currentNode);
     if (options.behaviorFile !== undefined) {
-      const fileName = `${options.behaviorFile}_0_${traceCount}`;
+      const fileName = `${options.behaviorFile}_${worker.id}_${worker.traceCount}`;
       const states = getTrace(currentNode, search.getTlcOrder()).map(
         (node, index) =>
           `\\* <${getActionLabel(node.action, options.version)}>\nSTATE_${index + 1} == \n${formatState(toRecord(node.state))}\n\n`,
@@ -881,15 +901,29 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
 
   const getSimulatorRandom = runtime.getRandom;
-  const enumerableRandom = createJavaRandom(seed);
-  runtime.getRandom = () => enumerableRandom;
+  // TLC's Simulator sets a register of every worker and reads the first worker's.
+  const registers = workers.map((other) =>
+    other.id === 0 ? runtime.registers : new Map(runtime.registers),
+  );
+  const namedRegisters = workers.map((other) =>
+    other.id === 0 ? runtime.namedRegisters : new Map(runtime.namedRegisters),
+  );
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;
   let stoppedStates: number | undefined;
-  while (true) {
+  let runningWorkers = workers.length;
+  const startTrace = (started: SimulationWorker) => {
     statistics.traces++;
-    currentTrace = statistics.traces;
+    started.traceId = statistics.traces;
+  };
+  // TLC's workers race, so tla-ts starts every worker's first behavior and then finishes one behavior per worker in turn, as workers of the same speed would.
+  workers.forEach(startTrace);
+  while (true) {
+    runtime.getRandom = worker.getRandom;
+    runtime.registers = registers[worker.id];
+    runtime.namedRegisters = namedRegisters[worker.id];
+    if (generator) generator.random = worker.random;
     const outcome = (() => {
       try {
         return simulateTrace();
@@ -898,22 +932,27 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       }
     })();
     if (outcome === "stopped") break;
-    traceCount++;
+    worker.traceCount++;
     if (outcome) errors.push(outcome);
     if (outcome?.isException) break;
-    if (BigInt(traceCount) >= traceLimit) break;
+    if (BigInt(worker.traceCount) < traceLimit) startTrace(worker);
+    else runningWorkers--;
+    if (runningWorkers === 0) break;
     const isStopping = outcome !== undefined && (!isContinued || FATAL_CODES.has(outcome.code));
     if (isStopping && stoppedStates === undefined) stoppedStates = statistics.generatedStates;
     if (
       stoppedStates !== undefined &&
       statistics.generatedStates - stoppedStates >= STOP_DELAY_STATES
     ) {
-      statistics.traces++;
       break;
     }
+    do worker = workers[(worker.id + 1) % workers.length];
+    while (BigInt(worker.traceCount) >= traceLimit);
   }
   isOnWorker = false;
   runtime.getRandom = getSimulatorRandom;
+  runtime.registers = registers[0];
+  runtime.namedRegisters = namedRegisters[0];
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );

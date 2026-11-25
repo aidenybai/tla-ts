@@ -1,7 +1,8 @@
 import { expect, it } from "vite-plus/test";
 import { formatValue } from "../../src";
+import { printSimulation } from "../../src/cli/tlc-output";
 import { simulate, type SimulationStatistics } from "../../src/simulate";
-import { MESSAGE_LEVEL } from "../../src/tlc/messages";
+import { formatMessage, MESSAGE_LEVEL } from "../../src/tlc/messages";
 
 const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
 
@@ -954,4 +955,149 @@ it("stops simulating about 150 states after an error that -continue can't contin
     true,
   );
   expect(totals).toEqual([76, 153, 77]);
+});
+
+const WORKERS =
+  '---- MODULE W ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 7\nShow == PrintT(<<TLCGet("stats").worker, TLCGet("diameter"), x>>)\nShown == Show /\\ Next\nDrawn == Show /\\ x\' = x + RandomElement({1, 2})\nCounted == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<TLCGet("stats").worker, TLCGet(1)>>) /\\ Next\nCounting == x = 0 /\\ TLCSet(1, 0)\nCount == PrintT(<<"post", TLCGet(1)>>)\nConfig == PrintT(<<TLCGet("config").traces, TLCGet("config").worker>>)\n====';
+
+const getWorkerLines = (
+  config: string,
+  workers: number,
+  traceCount: bigint,
+  traceDepth: number,
+  isContinued = false,
+) => {
+  const lines: string[] = [];
+  const status = simulate({
+    source: WORKERS,
+    config,
+    seed: 4n,
+    workers,
+    traceDepth,
+    traceCount,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isContinued,
+    onPrint: (text) => lines.push(text),
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return { status, lines: lines.slice(lines.findIndex((line) => line.startsWith("Finished")) + 1) };
+};
+
+it("simulates num behaviors on each worker and prints the statistics TLC's workers share", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next", 2, 5n, 10);
+  expect([simulated.status, simulated.lines]).toEqual([
+    0,
+    [
+      "Progress: 201 states checked, 10 traces generated (trace length: mean=7, var(x)=13, sd=4)",
+      "The number of states generated: 201\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it.each([
+  [
+    2,
+    [
+      ["<<0, 1, 0>>", "<<0, 1, 2>>", "<<0, 1, 3>>", "<<0, 2, 0>>", "<<0, 2, 2>>", "<<0, 2, 4>>"],
+      ["<<0, 3, 0>>", "<<0, 3, 2>>", "<<0, 3, 4>>"],
+      ["<<1, 1, 0>>", "<<1, 1, 1>>", "<<1, 1, 3>>", "<<1, 2, 0>>", "<<1, 2, 1>>", "<<1, 2, 3>>"],
+      ["<<1, 3, 0>>", "<<1, 3, 1>>", "<<1, 3, 2>>"],
+    ].flat(),
+    "Progress: 37 states checked, 6 traces generated (trace length: mean=1, var(x)=4, sd=2)",
+  ],
+  [
+    3,
+    [
+      ["<<0, 1, 0>>", "<<0, 1, 2>>", "<<0, 1, 3>>", "<<0, 2, 0>>", "<<0, 2, 2>>", "<<0, 2, 4>>"],
+      ["<<0, 3, 0>>", "<<0, 3, 2>>", "<<0, 3, 4>>"],
+      ["<<1, 1, 0>>", "<<1, 1, 1>>", "<<1, 1, 3>>", "<<1, 2, 0>>", "<<1, 2, 1>>", "<<1, 2, 3>>"],
+      ["<<1, 3, 0>>", "<<1, 3, 1>>", "<<1, 3, 2>>"],
+      ["<<2, 1, 0>>", "<<2, 1, 1>>", "<<2, 1, 2>>", "<<2, 2, 0>>", "<<2, 2, 1>>", "<<2, 2, 2>>"],
+      ["<<2, 3, 0>>", "<<2, 3, 1>>", "<<2, 3, 3>>"],
+    ].flat(),
+    "Progress: 55 states checked, 9 traces generated (trace length: mean=1, var(x)=4, sd=2)",
+  ],
+])(
+  "draws the behaviors of each of %i workers from the generator TLC's Simulator seeds for it",
+  (workers, printed, progress) => {
+    const lines = getWorkerLines("INIT Init\nNEXT Shown", workers, 3n, 3).lines;
+    expect([lines.filter((line) => line.startsWith("<<")).sort(), lines.at(-2)]).toEqual([
+      printed,
+      progress,
+    ]);
+  },
+);
+
+it("draws RandomElement from a generator of each worker's own, as TLC's RandomEnumerableValues does per thread", () => {
+  const lines = getWorkerLines("INIT Init\nNEXT Drawn", 2, 2n, 3).lines;
+  expect(lines.filter((line) => line.startsWith("<<")).sort()).toEqual([
+    "<<0, 1, 0>>",
+    "<<0, 1, 2>>",
+    "<<0, 1, 4>>",
+    "<<0, 2, 0>>",
+    "<<0, 2, 2>>",
+    "<<0, 2, 3>>",
+    "<<1, 1, 0>>",
+    "<<1, 1, 2>>",
+    "<<1, 1, 4>>",
+    "<<1, 2, 0>>",
+    "<<1, 2, 2>>",
+    "<<1, 2, 3>>",
+  ]);
+});
+
+it("keeps the registers of each worker, which TLC's Simulator sets from the initial predicate and reads from the first worker", () => {
+  const lines = getWorkerLines("INIT Counting\nNEXT Counted\nPOSTCONDITION Count", 2, 2n, 2).lines;
+  expect(lines.filter((line) => line.startsWith("<<")).sort()).toEqual([
+    '<<"post", 4>>',
+    "<<0, 1>>",
+    "<<0, 2>>",
+    "<<0, 3>>",
+    "<<0, 4>>",
+    "<<1, 1>>",
+    "<<1, 2>>",
+    "<<1, 3>>",
+    "<<1, 4>>",
+  ]);
+});
+
+it('counts the behaviors of every worker in TLCGet("config")', () => {
+  const lines = getWorkerLines("INIT Init\nNEXT Next\nINVARIANT Config", 2, 3n, 2).lines;
+  expect(lines[0]).toBe("<<6, 2>>");
+});
+
+it("prints the violations of every worker in turn under -continue", () => {
+  const simulated = getWorkerLines("INIT Init\nNEXT Next\nINVARIANT Inv", 2, 2n, 10, true);
+  const getViolation = (values: number[]) => [
+    "Error: Invariant Inv is violated.",
+    "Error: The behavior up to this point is:",
+    ...values.map((value, index) =>
+      index === 0
+        ? `State 1: <Init line 4, col 9 to line 4, col 13 of module W>\nx = ${value}\n`
+        : `State ${index + 1}: <Next line 5, col 9 to line 5, col 29 of module W>\nx = ${value}\n`,
+    ),
+    "The number of states generated: 36\nSimulation using seed 4 and aril 0",
+  ];
+  expect(simulated.lines).toEqual([
+    ...[
+      [0, 2, 3, 5, 7],
+      [0, 1, 3, 4, 6, 7],
+      [0, 2, 3, 5, 7],
+      [0, 2, 3, 4, 5, 7],
+    ].flatMap(getViolation),
+    "Progress: 36 states checked, 4 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+  ]);
 });
