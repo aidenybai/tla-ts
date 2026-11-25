@@ -629,7 +629,11 @@ export const createEnvironment = (
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
       SOURCE_STANDARD_MODULES.has(name) ||
-      [name, ...dependencies].some((module) => order.getLoadedSource(module) !== undefined)
+      [name, ...dependencies].some(
+        (module) =>
+          order.getPreparedModule(module) !== undefined ||
+          order.getLoadedSource(module) !== undefined,
+      )
     )
       return undefined;
     const symbols = addStandardModule(name);
