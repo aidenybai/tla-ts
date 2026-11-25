@@ -909,8 +909,6 @@ const SERVICES: Service[] = [
     getConfig: () => "",
     getMethods: (format: Intl.DateTimeFormat, literals, words, most) => {
       const methods = new Map<string, string | undefined>();
-      // ESCore's local time zone is UTC, which the host's must be for a format without one.
-      if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
       // NaN, which a range with a Temporal object meets after its TypeError.
       const times = [...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))];
       const isFormat = words.has("format") || words.has("formatToParts");
@@ -1333,8 +1331,14 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         );
       }
     }
-    // The answers of each object, in the order of its literals, while the table holds them.
-    for (const [config, object] of configs) {
+    // The answers of each object, in the order of its literals, while the table holds them, which
+    // a full table holds none of. A DateTimeFormat answers none where the host's time zone isn't
+    // ESCore's local one, UTC, as a format without one reads it.
+    const isAnswering =
+      service.name !== "DateTimeFormat" ||
+      new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";
+    for (const [config, object] of isAnswering ? configs : []) {
+      if (entries.size >= MOST_ENTRIES) break;
       const answers = service.getMethods(
         object as never,
         literals,
