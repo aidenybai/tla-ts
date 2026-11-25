@@ -12,6 +12,7 @@ import {
   createSet,
   createSortedFunction,
   createTuple,
+  EDGE_STARTS,
   formatValue,
   getKeyPosition,
   getSequenceElements,
@@ -19,6 +20,7 @@ import {
   isCanonical,
   isCanonicalPage,
   markCanonical,
+  PAGE_SIZE,
   setFunctionClass,
   toFiniteFunction,
   toFiniteSet,
@@ -26,6 +28,7 @@ import {
   type FunctionValue,
   type Value,
   valuesEqual,
+  WEAK_BITS,
 } from "./values";
 
 // ESCanonical's CanonicalStateOf, which tla-ts runs natively while TLC runs the module's TLA+
@@ -33,12 +36,7 @@ import {
 // value. ESCore's state is a record whose objs and envs are heaps [size, pages] of pages of 256
 // records, an object's props maps a bucket to a function from key to descriptor, and a JavaScript
 // object value is [type |-> "object", id |-> n].
-const PAGE_SIZE = 256;
 const NAMED_BUCKET = -1;
-// A page's edges: the realm's sizes they were walked from, a bit for each record that is a WeakMap,
-// where each record's edges start, and then each record's edges, as canonicalStateOf collects them.
-const WEAK_BITS = 2;
-const EDGE_STARTS = WEAK_BITS + PAGE_SIZE / 32;
 const EDGE_NODES = EDGE_STARTS + PAGE_SIZE + 1;
 
 interface Realm {
@@ -1070,12 +1068,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   // Dropping an emptied bucket moves the values after it.
   let isEveryPositionKept = true;
-  // A record renamed, or as it is where renaming would give it back.
-  const rename = (node: number, record: Value, renameRecord: (inner: Value) => FunctionValue) => {
-    const isKept =
-      isIncremental &&
-      isCanonical(record) &&
-      (node < 0 || !WEAK_CLASSES.has(getString(record, "class")));
+  // A record renamed, or as it is where renaming would give it back, whose source a weak record's
+  // renaming doesn't stand for, as the walk's other nodes decide which entries it keeps.
+  const rename = (
+    node: number,
+    record: Value,
+    renameRecord: (inner: Value) => FunctionValue,
+    sources: (Value | undefined)[],
+  ) => {
+    const isWeak = node > 0 && WEAK_CLASSES.has(getString(record, "class"));
+    sources.push(isWeak ? undefined : record);
+    const isKept = isIncremental && isCanonical(record) && !isWeak;
     if (isKept && isEveryEdgeUnmoved(node)) return record;
     const located =
       isKept && (node < 0 || !ENTRY_CLASSES.has(getString(record, "class")))
@@ -1088,20 +1091,30 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     return renamed;
   };
   const changedSet = new Set(changed);
+  const objectSources: (Value | undefined)[] = [];
   const objects = [
     ...Array.from({ length: realm.objects }, (_, index) => {
       const record = getObject(index + 1);
-      return changedSet.has(index + 1) ? rename(index + 1, record, renameObject) : record;
+      if (!changedSet.has(index + 1)) {
+        objectSources.push(undefined);
+        return record;
+      }
+      return rename(index + 1, record, renameObject, objectSources);
     }),
-    ...order.filter((node) => node > 0).map((node) => rename(node, getObject(node), renameObject)),
+    ...order
+      .filter((node) => node > 0)
+      .map((node) => rename(node, getObject(node), renameObject, objectSources)),
   ];
+  const environmentSources: (Value | undefined)[] = [];
   const environments = [
     ...Array.from({ length: realm.environments }, (_, index) =>
-      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord),
+      rename(-(index + 1), getEnvironment(index + 1), renameEnvironmentRecord, environmentSources),
     ),
     ...order
       .filter((node) => node < 0)
-      .map((node) => rename(node, getEnvironment(-node), renameEnvironmentRecord)),
+      .map((node) =>
+        rename(node, getEnvironment(-node), renameEnvironmentRecord, environmentSources),
+      ),
   ];
   // The node that each new number names, in each heap.
   const objectNodes = new Int32Array(objects.length + 1);
@@ -1109,45 +1122,54 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   for (let environment = 1; environment <= realm.environments; environment++) {
     environmentNodes[environment] = -environment;
   }
+  for (const id of changed) objectNodes[id] = id;
   for (const node of order) {
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
   }
-  const getPageMaker = (nodes: Int32Array) => (records: Value[], page: number) => {
-    const count = records.length;
-    let size = EDGE_NODES;
-    for (let slot = 0; slot < count; slot++) {
-      const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
-      if (start !== -1) size += edges[start];
-    }
-    const pageEdges = new Int32Array(size);
-    pageEdges[0] = realm.objects;
-    pageEdges[1] = realm.environments;
-    let at = EDGE_NODES;
-    for (let slot = 0; slot < PAGE_SIZE; slot++) {
-      pageEdges[EDGE_STARTS + slot] = at;
-      const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
-      const start = getEdgeStart(node);
-      if (start === -1) continue;
-      for (let index = start + 1; index <= start + edges[start]; index++) {
-        const target = edges[index];
-        pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
+  const getPageMaker =
+    (nodes: Int32Array, sources: (Value | undefined)[]) => (records: Value[], page: number) => {
+      const count = records.length;
+      let size = EDGE_NODES;
+      for (let slot = 0; slot < count; slot++) {
+        const start = getEdgeStart(nodes[page * PAGE_SIZE + slot + 1]);
+        if (start !== -1) size += edges[start];
       }
-      if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
-    }
-    pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
-    return createCanonicalPage(
-      records,
-      pageEdges,
-      Array.from({ length: count }, (_, slot) => {
-        const node = nodes[page * PAGE_SIZE + slot + 1];
-        return node === 0 ? undefined : getLocated(node);
-      }),
-    );
-  };
+      const pageEdges = new Int32Array(size);
+      pageEdges[0] = realm.objects;
+      pageEdges[1] = realm.environments;
+      let at = EDGE_NODES;
+      for (let slot = 0; slot < PAGE_SIZE; slot++) {
+        pageEdges[EDGE_STARTS + slot] = at;
+        const node = slot < count ? nodes[page * PAGE_SIZE + slot + 1] : 0;
+        const start = getEdgeStart(node);
+        if (start === -1) continue;
+        for (let index = start + 1; index <= start + edges[start]; index++) {
+          const target = edges[index];
+          pageEdges[at++] = target > 0 ? getNew(target) : -getNew(target);
+        }
+        if (weakMaps.includes(node)) pageEdges[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
+      }
+      pageEdges[EDGE_STARTS + PAGE_SIZE] = at;
+      return createCanonicalPage(
+        records,
+        pageEdges,
+        Array.from({ length: count }, (_, slot) => {
+          const node = nodes[page * PAGE_SIZE + slot + 1];
+          return node === 0 ? undefined : getLocated(node);
+        }),
+        sources.slice(page * PAGE_SIZE, page * PAGE_SIZE + count),
+      );
+    };
   return except(state, {
-    objs: () => createHeap(objects, objs, isIncremental, getPageMaker(objectNodes)),
-    envs: () => createHeap(environments, envs, isIncremental, getPageMaker(environmentNodes)),
+    objs: () => createHeap(objects, objs, isIncremental, getPageMaker(objectNodes, objectSources)),
+    envs: () =>
+      createHeap(
+        environments,
+        envs,
+        isIncremental,
+        getPageMaker(environmentNodes, environmentSources),
+      ),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
