@@ -29,6 +29,7 @@ interface Expansion {
   next: Value[][];
   fingerprintStates: Value[][];
   breakAt: number;
+  canonicalize: (state: Value[]) => Value[];
 }
 
 const runWorker = (start: StartMessage, parent: Port) => {
@@ -56,13 +57,13 @@ const runWorker = (start: StartMessage, parent: Port) => {
   if (nextAction === undefined)
     return parent.postMessage({ type: "abort" } satisfies WorkerMessage);
   const workerIndex = start.index;
-  const canonicalize = createCanonicalizer();
   const decode = createStateDecoder(environment.variables.length);
   let sharedFingerprints = createSharedFingerprintsFromBuffers(start.fingerprints);
   const requests = start.requests;
   const remaining = start.remaining;
   const counts = start.counts;
   const generatedStates = search.isSymmetric ? createFingerprintTable() : undefined;
+  const isCanonicalizedFirst = search.isSymmetric;
   const fingerprint = new Int32Array(2);
   let resumeLevel = () => {};
   let receiveLoot = (_states: EncodedStates) => {};
@@ -70,7 +71,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
     port?.addEventListener("message", (event) => receiveLoot(event.data as EncodedStates));
     port?.start?.();
   });
-  let frontier = decode(start.frontier).map(canonicalize);
+  let frontier = decode(start.frontier).map(createCanonicalizer());
   let isDrawnAfterNext = false;
   let isWarned = false;
   environment.runtime.warn = () => {
@@ -127,10 +128,11 @@ const runWorker = (start: StartMessage, parent: Port) => {
           writeStateFingerprint(successor.state, fingerprint);
           if (!generatedStates.insert(fingerprint[0], fingerprint[1])) continue;
         }
-        canonicalize(successor.state);
+        if (isCanonicalizedFirst) expansion.canonicalize(successor.state);
         const fingerprintState = search.getFingerprintState(successor.state);
         writeStateFingerprint(fingerprintState, fingerprint);
         if (!insertSharedFingerprint(sharedFingerprints, fingerprint[0], fingerprint[1])) continue;
+        if (!isCanonicalizedFirst) expansion.canonicalize(successor.state);
         if (search.findViolatedInvariant(successor.state, state)) return undefined;
         if (!search.satisfiesConstraints(successor.state, state)) continue;
         expansion.next.push(successor.state);
@@ -164,7 +166,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
         skipped.add(victim);
         continue;
       }
-      expansion.states = decode(loot).map(canonicalize);
+      expansion.states = decode(loot).map(expansion.canonicalize);
       expansion.origin = 0;
       expansion.end = expansion.states.length;
       unlockRequests(expansion);
@@ -195,6 +197,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
       next: [],
       fingerprintStates: [],
       breakAt: performance.now() + BREAK_INTERVAL,
+      canonicalize: createCanonicalizer(),
     };
     environment.runtime.getCurrentState = () => {
       if (expansion.successors !== undefined) isDrawnAfterNext = true;
