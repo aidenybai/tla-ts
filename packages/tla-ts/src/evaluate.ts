@@ -2401,7 +2401,7 @@ const compileApply = (
   if (called?.kind === "Builtin" && called.name === "TLCEval" && args.length > 0) {
     // Deviation from TLC: Tool#evalAppl passes TLCEval an instance's arguments too, so through an instance with parameters it answers with the first.
     const forwarded = args.slice(args.length - 1);
-    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
+    // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE) or TLCGet("action"), once in an empty state.
     const isCached =
       !contextualApplications.has(expression) && !isNonconstant(forwarded[0], environment);
     const tlcEvalValues = environment.tlcEvalValues;
