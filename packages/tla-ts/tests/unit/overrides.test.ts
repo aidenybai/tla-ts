@@ -123,6 +123,21 @@ describe("Java module overrides match TLC", () => {
     ).toEqual(["success", undefined, ["Flag"]]);
   });
 
+  it("counts a substitution's level only where a Java override leaves it read", async () => {
+    const constantInvariants: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE Root ----\nEXTENDS Overrides\nVARIABLE x\nO == INSTANCE Overrides WITH N <- {x}\nInit == x = 0\nNext == UNCHANGED x\nInv == O!G\n====",
+      config: "CONSTANT N = {}\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: () => PARAMETERIZED,
+      loadClass,
+      onProgress: (progress) => {
+        if (progress.kind === "constant-level-invariant") constantInvariants.push(progress.name);
+      },
+    });
+    expect([result.status, constantInvariants]).toEqual(["success", ["Inv"]]);
+  });
+
   it.each([
     [
       "Flag <- [Overrides] Other",

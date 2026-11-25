@@ -18,6 +18,7 @@ interface DefinitionNames extends Pick<
   | "substitutions"
   | "constants"
   | "bodyValues"
+  | "boundSubstitutions"
   | "variableIndex"
   | "builtins"
   | "variables"
@@ -113,6 +114,11 @@ interface Edge {
   isSubstitute: boolean;
 }
 
+interface Substitute {
+  body: Expression;
+  substitutes: ReadonlyMap<string, Substitute> | undefined;
+}
+
 const collectLocalFacts = (
   expressions: Expression[],
   environment: DefinitionNames,
@@ -140,7 +146,7 @@ const collectLocalFacts = (
     node: Expression,
     isLevelCounted: boolean,
     isOperatorArgument: boolean,
-    substitutes: ReadonlyMap<string, Expression> | undefined,
+    substitutes: ReadonlyMap<string, Substitute> | undefined,
   ) => {
     const kind = node.kind;
     if (kind === "Selection") {
@@ -226,20 +232,26 @@ const collectLocalFacts = (
       }
     }
     const substitute = isLocal ? substitutes?.get(name) : undefined;
-    if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
-    // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
+    if (substitute) {
+      visit(substitute.body, isInnerLevelCounted, isOperatorArgument, substitute.substitutes);
+    }
+    // TLC's SubstInNode binds an instance's substitute lazily, so its level counts only where the instanced definition reads it.
     if (
       kind === "Let" &&
-      node.definitions.some(
-        (definition) => isLetSubstitute(definition) || "standardDefinition" in definition,
-      )
+      (environment.boundSubstitutions.lets.has(node) ||
+        node.definitions.some(
+          (definition) => isLetSubstitute(definition) || "standardDefinition" in definition,
+        ))
     ) {
+      const isBound = environment.boundSubstitutions.lets.has(node);
       const innerSubstitutes = new Map(substitutes);
       node.definitions.forEach((definition) => {
-        if (isLetSubstitute(definition)) innerSubstitutes.set(definition.name, definition.body);
+        if (isBound || isLetSubstitute(definition)) {
+          innerSubstitutes.set(definition.name, { body: definition.body, substitutes });
+        }
       });
       node.definitions.forEach((definition) => {
-        if (isLetSubstitute(definition)) return;
+        if (isBound || isLetSubstitute(definition)) return;
         // TLC's getLevelBound reads a standard operator's TLA+ definition, not the builtin a LET instance's alias forwards to.
         if ("standardDefinition" in definition) {
           visit(definition.body, isInnerLevelCounted, true, innerSubstitutes);

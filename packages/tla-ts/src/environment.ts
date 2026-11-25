@@ -2087,6 +2087,7 @@ export const createEnvironment = (
       substitutions,
       constants,
       bodyValues,
+      boundSubstitutions,
       variableIndex,
       builtins,
       variables,
