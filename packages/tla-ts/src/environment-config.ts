@@ -1,4 +1,11 @@
-import type { Declaration, Definition, Expression } from "./ast";
+import {
+  getChildren,
+  getDefinitionExpressions,
+  type Assumption,
+  type Declaration,
+  type Definition,
+  type Expression,
+} from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
@@ -43,8 +50,10 @@ interface LinkedSpecification {
   rootKeys: Map<string, string>;
   moduleSymbols: Map<string, Symbols>;
   definitions: Map<string, Definition>;
+  assumptions: Assumption[];
   builtins: Map<string, Builtin>;
   copySources: Map<string, CopySource>;
+  exportedCopies: Set<string>;
   standardAliasBodies: Set<Expression>;
   operatorConstants: Map<string, Value>;
   order: TlcOrder;
@@ -483,6 +492,60 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     );
     linked.definitions.set(key, alias);
   });
+  const rootOverridden = new Set(
+    [...config.constants, ...config.substitutions].flatMap((item) => {
+      const symbol = item.module === undefined ? linked.root.visible.get(item.name) : undefined;
+      return symbol?.kind === "Definition" ? [symbol.key] : [];
+    }),
+  );
+  // TLC sets a root override on the definition's OpDefNode, which the bodies an instance copies still name, but I!D is a node of its own.
+  const getRootOverride = (key: string, prefix: number): CopySource | undefined => {
+    const copy = linked.copySources.get(key);
+    if (!copy || linked.exportedCopies.has(key)) return undefined;
+    const copyPrefix = prefix + copy.prefix;
+    return rootOverridden.has(copy.source)
+      ? { source: copy.source, prefix: copyPrefix }
+      : getRootOverride(copy.source, copyPrefix);
+  };
+  const getRootAlias = (definition: Definition, key: string) => {
+    const override = getRootOverride(key, 0);
+    if (!override) return definition;
+    const params = definition.kind === "Operator" ? definition.params : [];
+    return createLocalAlias(
+      key,
+      override.source,
+      params,
+      params.slice(override.prefix),
+      definition.location,
+    );
+  };
+  linked.copySources.forEach((_copy, key) => {
+    const definition = linked.definitions.get(key);
+    if (definition) linked.definitions.set(key, getRootAlias(definition, key));
+  });
+  const isLetOverridden = [...linked.copySources.keys()].some(
+    (key) => !linked.definitions.has(key) && getRootOverride(key, 0) !== undefined,
+  );
+  if (isLetOverridden) {
+    const visited = new Set<Expression>();
+    const pending = [
+      ...[...linked.definitions.values()].flatMap(getDefinitionExpressions),
+      ...linked.assumptions.map((assumption) => assumption.expression),
+    ];
+    for (let expression = pending.pop(); expression; expression = pending.pop()) {
+      if (visited.has(expression)) continue;
+      visited.add(expression);
+      if (
+        expression.kind === "Let" &&
+        expression.definitions.some((definition) => getRootOverride(definition.name, 0))
+      ) {
+        expression.definitions = expression.definitions.map((definition) =>
+          getRootAlias(definition, definition.name),
+        );
+      }
+      for (const child of getChildren(expression)) pending.push(child);
+    }
+  }
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
   return { constants, bodyValues, substitutions, overriddenOperatorConstants };
 };
