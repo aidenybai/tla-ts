@@ -1,4 +1,4 @@
-import type { CheckOptions, TraceStep, Violation } from "./check";
+import { PROGRESS_INTERVAL, type CheckOptions, type TraceStep, type Violation } from "./check";
 import type { CoverageOutput } from "./coverage";
 import {
   FILE_NOT_FOUND_EXCEPTION,
@@ -15,7 +15,7 @@ import {
   UNEXPECTED_EXCEPTION,
   WRONG_INVOCATION_EXCEPTION,
 } from "./errors";
-import type { State } from "./evaluate";
+import { describeNode, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
 import { getHashMapOrder, getJavaHashCode } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
@@ -152,6 +152,8 @@ const FATAL_CODES = new Set<number>([
 
 // TLC's worker keeps simulating after an error until its main thread stops it, about 150 states later.
 const STOP_DELAY_STATES = 150;
+
+const REPORT_CLOCK_STEPS = 100;
 
 const INFINITE_DEPTH = 2147483647;
 
@@ -320,18 +322,22 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       throw error;
     }
   };
+  const reportReporterDied = () =>
+    reportMessage(
+      MESSAGE_CODE.reporterDied,
+      "Progress report thread died.",
+      undefined,
+      MESSAGE_LEVEL.tlcBug,
+    );
   const writeActionFlowGraph = () => {
-    if (!actionFlow) return;
+    if (!actionFlow) return true;
     try {
       writeOutputFile(`${specification.rootName}_actions.dot`, getActionFlowGraph(actionFlow));
+      return true;
     } catch (error) {
       if (!(error instanceof TlaFileError)) throw error;
-      reportMessage(
-        MESSAGE_CODE.reporterDied,
-        "Progress report thread died.",
-        undefined,
-        MESSAGE_LEVEL.tlcBug,
-      );
+      reportReporterDied();
+      return false;
     }
   };
   const printSummary = () => {
@@ -347,6 +353,17 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const registers = workers.map(() => runtime.registers);
   const namedRegisters = workers.map(() => runtime.namedRegisters);
   const possibleCounts = workers.map(() => runtime.possibleCounts);
+  const useRegisters = (id: number) => {
+    runtime.registers = registers[id];
+    runtime.namedRegisters = namedRegisters[id];
+    runtime.possibleCounts = possibleCounts[id];
+  };
+  const setEveryWorkerRegister = (key: number | string, value: Value) => {
+    for (let index = 0; index < workers.length; index++) {
+      if (typeof key === "number") registers[index].set(key, value);
+      else namedRegisters[index].set(key, value);
+    }
+  };
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
@@ -618,6 +635,59 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   );
   // TLC's Simulator deep-normalizes the initial states, which sorts their records.
   initialStates.forEach((node) => node.state.forEach(markNormalized));
+  let reportAt = performance.now() + PROGRESS_INTERVAL;
+  let stepsUntilClock = REPORT_CLOCK_STEPS;
+  let coverageCount = Math.trunc(options.coverage ?? 0);
+  let isReporterDead = false;
+  let periodicStatus: number = EXIT_STATUS.success;
+  let stoppedStates: number | undefined;
+  const reporterRandom = createJavaRandom(seed);
+  const reportProgress = () => {
+    output({ kind: "progress", statistics: { ...statistics } });
+    if (coverageCount > 1) {
+      coverageCount--;
+    } else {
+      reportCoverage();
+      coverageCount = Math.trunc(options.coverage ?? 0);
+    }
+    isReporterDead = !writeActionFlowGraph();
+    if (isReporterDead) return;
+    const wasOnWorker = isOnWorker;
+    const getWorkerRandom = runtime.getRandom;
+    isOnWorker = false;
+    runtime.getRandom = () => reporterRandom;
+    useRegisters(0);
+    runtime.setEveryWorkerRegister = setEveryWorkerRegister;
+    try {
+      const periodic = search.findFalsePeriodic();
+      if (periodic) {
+        reportMessage(
+          MESSAGE_CODE.assumptionFalse,
+          `Assumption ${describeNode(periodic)} is false.`,
+        );
+        periodicStatus = EXIT_STATUS.assumptionViolation;
+      }
+    } catch (error) {
+      if (!(error instanceof TlaEvaluationError)) throw error;
+      reportReporterDied();
+      isReporterDead = true;
+      periodicStatus = EXIT_STATUS.error;
+    }
+    isOnWorker = wasOnWorker;
+    runtime.getRandom = getWorkerRandom;
+    if (!wasOnWorker) return;
+    useRegisters(worker.id);
+    runtime.setEveryWorkerRegister = undefined;
+  };
+  const isStoppedByReport = () => {
+    stepsUntilClock = REPORT_CLOCK_STEPS;
+    if (isReporterDead || stoppedStates !== undefined || performance.now() < reportAt) {
+      return false;
+    }
+    reportProgress();
+    reportAt = performance.now() + PROGRESS_INTERVAL;
+    return periodicStatus === EXIT_STATUS.assumptionViolation;
+  };
 
   const toWorkerError = (code: number, text: string, node: TraceNode): WorkerError => ({
     code,
@@ -767,7 +837,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     currentNode = initialStates[Math.floor(workerRandom.nextDouble() * initialStates.length)];
     let currentActionId = initActions.length - 1;
     for (let depth = 0; depth < traceDepth; depth++) {
-      if (runtime.isStopped) return "stopped";
+      if (runtime.isStopped || (--stepsUntilClock === 0 && isStoppedByReport())) {
+        return "stopped";
+      }
       let actionIndex = scheduler.getNextActionIndex(currentNode);
       const prime = nextPrime(workerRandom);
       let successors: TraceNode[] = [];
@@ -944,7 +1016,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
   isOnWorker = true;
-  let stoppedStates: number | undefined;
   let runningWorkers = workers.length;
   const startTrace = (started: SimulationWorker) => {
     statistics.traces++;
@@ -954,9 +1025,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   workers.forEach(startTrace);
   while (true) {
     runtime.getRandom = worker.getRandom;
-    runtime.registers = registers[worker.id];
-    runtime.namedRegisters = namedRegisters[worker.id];
-    runtime.possibleCounts = possibleCounts[worker.id];
+    useRegisters(worker.id);
     if (generator) generator.random = worker.random;
     const outcome = (() => {
       try {
@@ -987,15 +1056,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   }
   isOnWorker = false;
   runtime.getRandom = getSimulatorRandom;
-  runtime.registers = registers[0];
-  runtime.namedRegisters = namedRegisters[0];
-  runtime.possibleCounts = possibleCounts[0];
-  runtime.setEveryWorkerRegister = (key, value) => {
-    for (let index = 0; index < workers.length; index++) {
-      if (typeof key === "number") registers[index].set(key, value);
-      else namedRegisters[index].set(key, value);
-    }
-  };
+  useRegisters(0);
+  runtime.setEveryWorkerRegister = setEveryWorkerRegister;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
@@ -1054,12 +1116,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;
   const status = Math.max(errorStatus, postconditionStatus);
-  output({ kind: "progress", statistics: { ...statistics } });
-  // TLC's ProgressReport prints the coverage again with its last progress unless -coverage spans more progress reports.
-  if (options.coverage !== undefined && options.coverage <= 1) reportCoverage();
-  writeActionFlowGraph();
+  if (!isReporterDead) reportProgress();
   if (status === EXIT_STATUS.success) printSummary();
-  return status;
+  // Deviation from TLC: its ProgressReport stops on a FALSE _PERIODIC and dies when _PERIODIC fails to evaluate, yet TLC exits 0; tla-ts exits as model checking does.
+  return status === EXIT_STATUS.success ? periodicStatus : status;
 };
 
 const toEvaluationError = (error: unknown) => {

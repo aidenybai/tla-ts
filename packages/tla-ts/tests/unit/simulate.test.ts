@@ -1,8 +1,12 @@
-import { expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { formatValue } from "../../src";
 import { printSimulation } from "../../src/cli/tlc-output";
 import { simulate, type SimulationStatistics } from "../../src/simulate";
 import { formatMessage, MESSAGE_LEVEL } from "../../src/tlc/messages";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const SAFETY_CONFIG = "INIT Init\nNEXT Next\nINVARIANT Inv";
 
@@ -1244,4 +1248,173 @@ it("reports the liveness violation another worker finds after the first worker's
     12,
     ["Invariant FirstInv is violated.", "91 states", "Live: 0 1 3 4 6 7"],
   ]);
+});
+
+const SIM =
+  '---- MODULE Sim ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' \\in {x + 1, x + 2}\nInv == x < 5\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("diameter")>>)\nRand == PrintT(<<RandomElement(1..1000000), RandomElement(1..1000000)>>)\nStepped == x\' = x + RandomElement({1, 2})\nLeveled == PrintT(<<"level", TLCGet("level")>>)\n====';
+
+const getSimulatedLines = (config: string, traceCount: bigint) => {
+  const lines: string[] = [];
+  const status = simulate({
+    source: SIM,
+    config: `INIT Init\n${config}`,
+    seed: 4n,
+    traceDepth: 10,
+    traceCount,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onPrint: (text) => lines.push(text),
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return [
+    status,
+    lines.slice(lines.findIndex((line) => line.startsWith("Finished computing")) + 1),
+  ];
+};
+
+it.each([
+  [
+    "False",
+    "Next",
+    10,
+    "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.",
+    101,
+  ],
+  ["Number", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["Divided", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["State", "Next", 255, "TLC Bug: Progress report thread died.", 101],
+  ["Printed", "Next", 0, '<<"periodic", 0>>', 101],
+  ["Leveled", "Next", 0, '<<"level", 1>>', 101],
+  ["Rand", "Stepped", 0, "<<730610, 918715>>", 51],
+])(
+  "evaluates _PERIODIC %s under %s after the last progress report, as TLC's ProgressReport thread does, and exits %i as model checking does",
+  (name, next, status, line, states) => {
+    expect(getSimulatedLines(`NEXT ${next}\n_PERIODIC ${name}`, 5n)).toEqual([
+      status,
+      [
+        `Progress: ${states} states checked, 5 traces generated (trace length: mean=10, var(x)=0, sd=0)`,
+        line,
+        `The number of states generated: ${states}\nSimulation using seed 4 and aril 0`,
+      ],
+    ]);
+  },
+);
+
+it("evaluates _PERIODIC after the summary of a behavior that violates an invariant, as TLC's ProgressReport does", () => {
+  expect(getSimulatedLines("NEXT Next\n_PERIODIC False\nINVARIANT Inv", 5n)).toEqual([
+    12,
+    [
+      "Error: Invariant Inv is violated.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Init line 4, col 9 to line 4, col 13 of module Sim>\nx = 0\n",
+      "State 2: <Next line 5, col 9 to line 5, col 29 of module Sim>\nx = 2\n",
+      "State 3: <Next line 5, col 9 to line 5, col 29 of module Sim>\nx = 3\n",
+      "State 4: <Next line 5, col 9 to line 5, col 29 of module Sim>\nx = 5\n",
+      "The number of states generated: 29\nSimulation using seed 4 and aril 0",
+      "Progress: 29 states checked, 5 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+      "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.",
+    ],
+  ]);
+});
+
+it("stops at the progress report every minute that finds _PERIODIC FALSE and reports again, as TLC's Simulator does, and exits 10 as model checking does", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  const progress =
+    "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)";
+  const error = "Error: Assumption line 7, col 10 to line 7, col 14 of module Sim is false.";
+  expect(getSimulatedLines("NEXT Next\n_PERIODIC False", 10n)).toEqual([
+    10,
+    [
+      progress,
+      error,
+      progress,
+      error,
+      "The number of states generated: 199\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it("reports no more progress once _PERIODIC fails to evaluate to a boolean, as TLC's ProgressReport dies, and exits 255 as model checking does", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  expect(getSimulatedLines("NEXT Next\n_PERIODIC Number", 10n)).toEqual([
+    255,
+    [
+      "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      "TLC Bug: Progress report thread died.",
+      "The number of states generated: 201\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it("reads the first worker's register and sets every worker's in a progress report's _PERIODIC with -workers 2, as TLC's ProgressReport thread does", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE SR ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == x\' = x + 1 /\\ TLCSet(1, TLCGet("stats").worker + 10)\nInv == x >= 0 /\\ (TLCGetOrDefault(2, 0) > 0 => TLCSet("exit", TRUE))\nPeriodic == TLCSet(2, TLCGet(1))\nPost == PrintT(TLCGet("all"))\n====',
+    config:
+      "INIT Init\nNEXT Next\nINVARIANT Inv\n_PERIODIC Periodic\nPOSTCONDITION Post\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    workers: 2,
+    traceDepth: 10,
+    traceCount: 20n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onPrint: (text) => printed.push(text),
+    onSimulation: () => {},
+  });
+  expect([status, printed]).toEqual([0, ["<<<<10, 11>>, <<10, 10>>>>"]]);
+});
+
+it("reads TLCGet(\"diameter\") as 0 in a progress report during a behavior, as TLC's ProgressReport thread isn't a SimulationWorker", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  expect(getSimulatedLines("NEXT Next\n_PERIODIC Printed", 10n)).toEqual([
+    0,
+    [
+      "Progress: 199 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      '<<"periodic", 0>>',
+      "Progress: 201 states checked, 10 traces generated (trace length: mean=10, var(x)=0, sd=0)",
+      '<<"periodic", 0>>',
+      "The number of states generated: 201\nSimulation using seed 4 and aril 0",
+    ],
+  ]);
+});
+
+it("prints the coverage with every second progress report under -coverage 2, as TLC's ProgressReport counts down", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => (now += 60000));
+  const kinds: string[] = [];
+  simulate({
+    source: SIM,
+    config: "INIT Init\nNEXT Next",
+    seed: 4n,
+    traceDepth: 10,
+    traceCount: 20n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    coverage: 2,
+    onPrint: () => {},
+    onSimulation: (output) => {
+      if (output.kind !== "message") kinds.push(output.kind);
+    },
+  });
+  expect(kinds).toEqual(["progress", "progress", "coverage", "progress", "coverage", "summary"]);
 });

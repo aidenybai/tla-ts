@@ -1975,7 +1975,7 @@ const searchStates = (
   };
   const findPeriodicResult = (name: string) => {
     try {
-      if (!search.isPeriodicFalse()) return undefined;
+      if (!search.findFalsePeriodic()) return undefined;
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
       return createFailureResult(setExitCode(toUnexpectedError(error), EXIT_STATUS.error), {

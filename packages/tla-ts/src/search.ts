@@ -936,7 +936,7 @@ export interface Search {
   trackActionPossible: (state: Value[], next: Value[]) => void;
   findUnwitnessedPossible: () => Postcondition | undefined;
   getReward: (state: Value[] | undefined, next: Value[], fallback: number) => number;
-  isPeriodicFalse: () => boolean;
+  findFalsePeriodic: () => Expression | undefined;
   findPostconditionViolation: (isAfterViolation?: boolean) => Postcondition | undefined;
 }
 
@@ -1929,9 +1929,11 @@ export const createSearch = (
       }
       return value;
     },
-    isPeriodicFalse: () =>
+    findFalsePeriodic: () =>
       periodic !== undefined &&
-      isEqualLikeTlc(false, evaluate(periodic, getContext(environment, PERIODIC_STATE, undefined))),
+      isEqualLikeTlc(false, evaluate(periodic, getContext(environment, PERIODIC_STATE, undefined)))
+        ? periodic
+        : undefined,
     findPostconditionViolation: (isAfterViolation = false) => {
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions
