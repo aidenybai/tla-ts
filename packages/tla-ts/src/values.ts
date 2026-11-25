@@ -386,7 +386,12 @@ const forgetOwnWrittenOrder = (value: Value) => {
   }
 };
 
-const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
+const isRecordDomain = (domain: Value[]) => {
+  for (let index = 0; index < domain.length; index++) {
+    if (typeof domain[index] !== "string") return false;
+  }
+  return true;
+};
 
 const isRecordMismatch = (left: Value[], right: Value[]) =>
   left.length > 0 && right.length > 0 && isRecordDomain(left) !== isRecordDomain(right);

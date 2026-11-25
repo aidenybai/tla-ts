@@ -403,6 +403,14 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
   return (value: Value) => {
+    if (
+      typeof value === "object" &&
+      value.kind === "Function" &&
+      value.functionClass === "record"
+    ) {
+      const index = value.domain.indexOf(field);
+      if (index !== -1) return value.range[index];
+    }
     if (!isFunctionValue(value)) {
       throw new TlaEvaluationError(
         `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
@@ -1058,7 +1066,11 @@ const toStartupValue = (definition: Definition, value: Value): Value => {
   }
 };
 
-const compileDefinitionBody = (definition: Definition, environment: Environment): Evaluator => {
+const compileDefinitionBody = (
+  definition: Definition,
+  environment: Environment,
+  getEntry = getEntryEvaluator,
+): Evaluator => {
   if (definition.kind === "Operator" && definition.params.length > 0) {
     return () => {
       throw new TlaEvaluationError(
@@ -1066,9 +1078,9 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
       );
     };
   }
-  if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
+  if (definition.kind !== "Function") return getEntry(definition.body, environment);
   const construction = getFunctionConstruction(definition);
-  if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
+  if (!definition.isSelfReferential) return getEntry(construction, environment);
   const isVaryingBody = isBodyVarying([definition.body], definition.body, environment);
   const evaluator: Evaluator = (context) =>
     createRecursiveFunction(
@@ -1090,7 +1102,7 @@ const CALLER_SCOPE: Scope = {
 const getDefinitionEvaluator = (definition: Definition, environment: Environment): Evaluator => {
   const compiled = environment.definitionEvaluators.get(definition);
   if (compiled) return compiled;
-  const body = compileDefinitionBody(definition, environment);
+  let body: Evaluator | undefined;
   const definitionId = environment.facts.ids.get(definition);
   const startupValues = environment.startupValues;
   const isInCallerContext =
@@ -1100,10 +1112,15 @@ const getDefinitionEvaluator = (definition: Definition, environment: Environment
   const evaluator: Evaluator = isInCallerContext
     ? (context) =>
         (definitionId === undefined ? undefined : startupValues[definitionId]) ??
-        body(withScope(context, isTlcContextEmpty(context.scope) ? undefined : CALLER_SCOPE))
+        (body ??= compileDefinitionBody(definition, environment))(
+          withScope(context, isTlcContextEmpty(context.scope) ? undefined : CALLER_SCOPE),
+        )
     : definitionId === undefined
-      ? (context) => body(withScope(context, undefined))
-      : (context) => startupValues[definitionId] ?? body(withScope(context, undefined));
+      ? (context) =>
+          (body ??= compileDefinitionBody(definition, environment))(withScope(context, undefined))
+      : (context) =>
+          startupValues[definitionId] ??
+          (body ??= compileDefinitionBody(definition, environment))(withScope(context, undefined));
   environment.definitionEvaluators.set(definition, evaluator);
   return evaluator;
 };
@@ -1148,7 +1165,10 @@ const evaluateAtStartup = (
   // SpecProcessor#evalConstantDefn evaluates in TLCState.Empty, before any checker exists.
   const context = { environment, scope: undefined, state: EMPTY_STATE, next: undefined };
   const value = environment.runtime.evaluateAtStartup(() =>
-    toStartupValue(definition, compileDefinitionBody(definition, environment)(context)),
+    toStartupValue(
+      definition,
+      compileDefinitionBody(definition, environment, getInterpretedEntryEvaluator)(context),
+    ),
   );
   markNormalized(value);
   environment.startupValues[definitionId] = value;
@@ -2453,21 +2473,38 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
   return evaluator;
 };
 
+const getBoundEvaluator = (
+  expression: Expression,
+  environment: Environment,
+  getBody: (entry: Expression, environment: Environment) => Evaluator,
+): Evaluator => {
+  const isBound = expression.kind === "Let" && environment.boundSubstitutions.lets.has(expression);
+  const entry = isBound ? expression.body : expression;
+  const body = getBody(entry, environment);
+  const definitions = isBound ? getBoundDefinitions(expression, environment) : [];
+  return definitions.length === 0
+    ? body
+    : (context) => body(withScope(context, bindDefinitions(definitions, context)));
+};
+
 export const getEntryEvaluator = (expression: Expression, environment: Environment) => {
   if (environment.callStack || environment.coverage) return getEvaluator(expression, environment);
   const compiled = environment.entryEvaluators.get(expression);
   if (compiled) return compiled;
-  const isBound = expression.kind === "Let" && environment.boundSubstitutions.lets.has(expression);
-  const entry = isBound ? expression.body : expression;
-  const body = generateEvaluator(entry, environment) ?? getEvaluator(entry, environment);
-  const definitions = isBound ? getBoundDefinitions(expression, environment) : [];
-  const evaluator: Evaluator =
-    definitions.length === 0
-      ? body
-      : (context) => body(withScope(context, bindDefinitions(definitions, context)));
+  const evaluator = getBoundEvaluator(
+    expression,
+    environment,
+    (entry) => generateEvaluator(entry, environment) ?? getEvaluator(entry, environment),
+  );
   environment.entryEvaluators.set(expression, evaluator);
   return evaluator;
 };
+
+const getInterpretedEntryEvaluator = (expression: Expression, environment: Environment) =>
+  environment.callStack || environment.coverage
+    ? getEvaluator(expression, environment)
+    : (environment.entryEvaluators.get(expression) ??
+      getBoundEvaluator(expression, environment, getEvaluator));
 
 export const evaluate = (expression: Expression, context: Context): Value =>
   getEntryEvaluator(expression, context.environment)(context);
