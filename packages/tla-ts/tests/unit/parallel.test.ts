@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { scheduler } from "node:timers/promises";
 import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { check } from "../../src";
@@ -202,9 +203,9 @@ describe("check with workers matches TLC", () => {
     const checked = tlaTs
       .check({
         source:
-          "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..4000\nNext == x <= 4000 /\\ (\\A i \\in 1..2000 : i > 0) /\\ x' = x + 4000\n====",
+          "---- MODULE Slow ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..500\nNext == x <= 500 /\\ (\\A i \\in 1..10000 : i > 0) /\\ x' = x + 500\n====",
         config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
-        workers: 3,
+        workers: 2,
         maxSetSize: INTERPRETED_SET_SIZE,
         onProgress: (progress) => {
           if (progress.kind === "progress") reported.push(progress.statistics);
@@ -215,20 +216,24 @@ describe("check with workers matches TLC", () => {
       });
     while (!isDone) {
       vi.advanceTimersByTime(PROGRESS_INTERVAL);
-      await new Promise((resolve) => setImmediate(resolve));
+      await scheduler.wait(1);
     }
     const result = await checked;
-    expect(getCounts(result)).toEqual([8000, 8000, 2]);
-    expect(reported.length).toBeGreaterThan(0);
+    expect(getCounts(result)).toEqual([1000, 1000, 2]);
+    expect(
+      reported.some(
+        (statistics) => statistics.distinctStates > 500 && statistics.distinctStates < 1000,
+      ),
+    ).toBe(true);
     reported.forEach((statistics, index) => {
       const previous = reported[index - 1] ?? statistics;
       expect(statistics.distinctStates).toBeGreaterThanOrEqual(previous.distinctStates);
       expect(statistics.generatedStates).toBeGreaterThanOrEqual(previous.generatedStates);
       expect(statistics.depth).toBeGreaterThanOrEqual(previous.depth);
       expect([
-        statistics.distinctStates >= 4000 && statistics.distinctStates <= 8000,
-        statistics.generatedStates >= 4000 && statistics.generatedStates <= 8000,
-        statistics.queuedStates >= 0 && statistics.queuedStates <= 4000 - 3,
+        statistics.distinctStates >= 500 && statistics.distinctStates <= 1000,
+        statistics.generatedStates >= 500 && statistics.generatedStates <= 1000,
+        statistics.queuedStates >= 0 && statistics.queuedStates <= 500 - 2,
         statistics.depth >= 1 && statistics.depth <= 2,
       ]).toEqual([true, true, true, true]);
     });
