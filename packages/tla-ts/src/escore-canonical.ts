@@ -50,8 +50,10 @@ const get = (record: Value, field: string) => {
     record.kind === "Function" &&
     record.functionClass === "record"
   ) {
-    const index = record.domain.indexOf(field);
-    if (index !== -1) return record.range[index];
+    const domain = record.domain;
+    for (let index = 0; index < domain.length; index++) {
+      if (domain[index] === field) return record.range[index];
+    }
   }
   return applyFunction(record, field);
 };
