@@ -4844,6 +4844,32 @@ const getReadyHash = (value: Value): number => {
   return hash;
 };
 
+// A function of a source's domain and class with a range that changes some of its values, whose
+// hash follows from the source's where each changed value's hash is ready.
+export const createChangedFunction = (source: FunctionValue, range: Value[]) => {
+  const changed = setFunctionClass(
+    createSortedFunction(source.domain, range),
+    source.functionClass,
+  );
+  if (source.hash === 0 || source.hash === UNFINGERPRINTABLE_HASH) return changed;
+  let hash = source.hash;
+  for (let index = 0; index < range.length; index++) {
+    const previous = source.range[index];
+    const next = range[index];
+    if (next === previous) continue;
+    const nextHash = getReadyHash(next);
+    if (nextHash === UNREADY_HASH || nextHash === UNFINGERPRINTABLE_HASH) return changed;
+    const keyHash = getValueHash(source.domain[index]);
+    hash =
+      (hash -
+        getEntryContribution(keyHash, getValueHash(previous)) +
+        getEntryContribution(keyHash, nextHash)) |
+      0;
+  }
+  changed.hash = hash;
+  return changed;
+};
+
 const setFunctionValue = (finite: FunctionValue, position: number, next: Value) => {
   const range = [...finite.range];
   const previous = finite.range[position];

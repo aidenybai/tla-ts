@@ -5,11 +5,11 @@ import { prettyPrint } from "./pretty-print";
 import { writeStateFingerprint } from "./fingerprints";
 import {
   applyFunction,
+  createChangedFunction,
   createFunction,
   createRecord,
   createSet,
   createSortedFunction,
-  createSortedRecord,
   createTuple,
   formatValue,
   getSequenceElements,
@@ -107,10 +107,7 @@ const mapRange = (value: Value, change: (inner: Value, key: Value) => Value): Fu
   }
   return range === undefined && functionValue.writtenKeys === undefined
     ? functionValue
-    : setFunctionClass(
-        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
-        functionValue.functionClass,
-      );
+    : createChangedFunction(functionValue, range ?? functionValue.range.slice());
 };
 
 const toTuple = (list: Value, elements: Value[]) =>
@@ -154,10 +151,7 @@ const except = (record: Value, changes: Record<string, (inner: Value, record: Va
   }
   return range === undefined && functionValue.writtenKeys === undefined
     ? functionValue
-    : setFunctionClass(
-        createSortedFunction(functionValue.domain, range ?? functionValue.range.slice()),
-        functionValue.functionClass,
-      );
+    : createChangedFunction(functionValue, range ?? functionValue.range.slice());
 };
 
 // The record at each index of a heap, which reads each page's records once.
@@ -664,7 +658,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (number === id) return value;
     const range = value.range.slice();
     range[value.domain.indexOf("id")] = number;
-    return createSortedRecord(value.domain, range);
+    return createChangedFunction(value, range);
   };
   const renameMaybe = (value: Value) => (isAbsentOrEmpty(value) ? value : renameValue(value));
   const renameEnvironment = (environment: Value) =>
