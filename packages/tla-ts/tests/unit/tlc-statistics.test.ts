@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
+import { getUnexpectedException } from "../../src/errors";
 import { printCheckProgress, type Timing } from "../../src/cli/tlc-output";
 import { simulate } from "../../src/simulate";
 import { MESSAGE_LEVEL, type MessagePrinter } from "../../src/tlc/messages";
@@ -313,6 +314,9 @@ it.each([
   },
 );
 
+const getPropertySource = (property: string) =>
+  `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n${property}\n====`;
+
 // Deviation from TLC: TLCGetSet#TLCSet drops a named register's write and the exit before any checker exists, so TLC finds the register undefined or never stops.
 describe("TLCSet writes that TLC drops before any checker exists", () => {
   it.each(TLCSET_FORMS)(
@@ -374,6 +378,16 @@ describe("TLCSet writes that TLC drops before any checker exists", () => {
     ]);
   });
 
+  it("fails where the liveness tableau would set the exit", async () => {
+    const result = check({
+      source: getPropertySource('Prop == <>(~(x < 10 \\/ TLCSet("exit", TRUE)))'),
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    await expect(result).rejects.toThrow(
+      `${getUnexpectedException("tlc2.tool.EvalException")}TLCSet can't set "exit" before model checking starts.`,
+    );
+  });
+
   it('labels Next == A(TLCSet("exit", TRUE)) by its call, as for a numbered register', async () => {
     const result = await check({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 7)\nInit == x = 0\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == A(TLCSet("exit", TRUE))\nInv == x < 1\n====`,
@@ -385,6 +399,25 @@ describe("TLCSet writes that TLC drops before any checker exists", () => {
       "A line 7, col 9 to line 7, col 31 of module M",
     ]);
   });
+});
+
+// Deviation from TLC: TLCGetSet#TLCSet throws a NullPointerException on a numbered register before any checker exists.
+it("fails where the liveness tableau would set a numbered register", async () => {
+  const result = check({
+    source: getPropertySource("Prop == <>(~(x < 10 \\/ TLCSet(1, 2)))"),
+    config: "SPECIFICATION Spec\nPROPERTY Prop",
+  });
+  await expect(result).rejects.toThrow(
+    `${getUnexpectedException("tlc2.tool.EvalException")}TLCSet can't set 1 before model checking starts.`,
+  );
+});
+
+it("checks a property operator at each state once the tableau fails to set the exit in its body, as TLC does", async () => {
+  const result = await check({
+    source: getPropertySource('P == x < 10 \\/ TLCSet("exit", TRUE)\nProp == <>(~P)'),
+    config: "SPECIFICATION Spec\nPROPERTY Prop",
+  });
+  expect([result.status, result.distinctStates]).toEqual(["liveness-violation", 3]);
 });
 
 it.each([
