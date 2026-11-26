@@ -55,7 +55,7 @@ describe("compiles JSX as the calls that TypeScript emits for it", () => {
 
   it("stops on the syntax error that TypeScript gives JSX", async () => {
     expect((await compileAndCheck("export const view = <b>text;\n", "unclosed.tsx")).error).toMatch(
-      /unclosed\.tsx\(1,22\): error TS17008: JSX element 'b' has no corresponding closing tag/,
+      /unclosed\.tsx:1:22 JSX element 'b' has no corresponding closing tag/,
     );
   });
 

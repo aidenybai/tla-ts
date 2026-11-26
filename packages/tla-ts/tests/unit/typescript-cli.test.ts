@@ -1562,6 +1562,43 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // A syntax error stops tla-ts at the place in the file that Node's caret points at.
+  it.each(["ts", "mts", "cts", "js", "mjs", "cjs"])(
+    "places a syntax error in a .%s file where Node places it",
+    (extension) => {
+      const directory = copyFixtures("passing");
+      const file = `syntax.${extension}`;
+      writeFileSync(join(directory, file), "const a = 1;\nconst b = ;\n");
+      const node = runNode(directory, file);
+      expect(node.stderr).toMatch(
+        new RegExp(`${file}:2\\n(?:const a = 1;\\n)?const b = ;\\n {10}\\^\\n`),
+      );
+      expect(getExit(runCli(directory, [file]))).toEqual([
+        255,
+        `TlaTypeScriptError: ${file}:2:11 Expression expected.\n`,
+      ]);
+      writeFileSync(join(directory, file), "const a = 1;\nconst b = a;\n");
+      expect(runNode(directory, file).status).toBe(0);
+      expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+    },
+  );
+
+  // Node compiles a CommonJS file's code as a function's body, where no wrapper's text comes
+  // before its first line, which V8 names alone where it rejects it.
+  it("places an import on the first line of a CommonJS file where Node places it", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "package.json"), '{ "type": "commonjs" }\n');
+    writeFileSync(join(directory, "dep.cjs"), "exports.v = 1;\n");
+    writeFileSync(join(directory, "first.js"), 'import { v } from "./dep.cjs";\nconsole.log(v);\n');
+    expect(runNode(directory, "first.js").stderr).toContain(
+      `${join(realpathSync(directory), "first.js")}:1\nimport { v } from "./dep.cjs";\n^^^^^^\n\nSyntaxError: Cannot use import statement outside a module`,
+    );
+    expect(getExit(runCli(directory, ["first.js"]))).toEqual([
+      255,
+      "TlaTypeScriptError: first.js:1:1 SyntaxError: Cannot use import statement outside a module\n",
+    ]);
+  });
+
   // tla-ts parses a TypeScript file's code as JavaScript, and names the file by its own name where
   // it stops in the code: the entry as it's given, as Node names it, and an import by its path.
   it("names an entry of TypeScript by its own name where its code has a syntax error", () => {

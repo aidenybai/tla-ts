@@ -260,13 +260,12 @@ export const getJsxText = (path: string, text: string) => {
     compilerOptions: { ...options, noEmit: false },
     reportDiagnostics: true,
   });
-  const syntaxErrors = emitted.diagnostics ?? [];
-  if (syntaxErrors.length > 0) {
+  const error = emitted.diagnostics?.at(0);
+  if (error !== undefined) {
     throw new TlaTypeScriptError(
-      ts.formatDiagnostics(
-        syntaxErrors,
-        ts.sys === undefined ? createLibraryHost(new Map()) : ts.createCompilerHost(options),
-      ),
+      ts.flattenDiagnosticMessageText(error.messageText, "\n"),
+      error.file,
+      error.start,
     );
   }
   return emitted.outputText;

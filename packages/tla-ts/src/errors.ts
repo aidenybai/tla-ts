@@ -480,10 +480,12 @@ export class PcalBugError extends TlaError {
   }
 }
 
+// A stop of a TypeScript or JavaScript file's compile, at a node of its code, or at start, a
+// position in the node's file, as a syntax error's.
 export class TlaTypeScriptError extends TlaError {
-  constructor(message: string, node?: ts.Node) {
+  constructor(message: string, node?: ts.Node, start = node?.getStart() ?? 0) {
     const sourceFile = node?.getSourceFile();
-    const position = sourceFile?.getLineAndCharacterOfPosition(node?.getStart() ?? 0);
+    const position = sourceFile?.getLineAndCharacterOfPosition(start);
     super(
       sourceFile === undefined || position === undefined
         ? message

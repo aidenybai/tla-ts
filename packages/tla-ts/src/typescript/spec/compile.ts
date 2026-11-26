@@ -416,7 +416,11 @@ const parseCode = (code: string, fileName: string, isModule: boolean) => {
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
   if (error !== undefined) {
-    throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+    throw new TlaTypeScriptError(
+      ts.flattenDiagnosticMessageText(error.messageText, "\n"),
+      sourceFile,
+      error.start,
+    );
   }
   return sourceFile;
 };
@@ -618,9 +622,10 @@ const atSourceLocations = <T>(fileName: string, compile: (names: ParsedNames) =>
     if (found === null) throw error;
     const path = names.paths.get(found[1]) ?? found[1];
     const isEntry = ts.sys?.fileExists(fileName) === true && path === resolve(fileName);
+    // A place in the wrapper, as the start of a line that V8 names alone, is the line's start.
     const column =
       Number(found[2]) === 1 && names.wrapped.has(found[1])
-        ? Number(found[3]) - WRAPPER[0].length
+        ? Math.max(1, Number(found[3]) - WRAPPER[0].length)
         : Number(found[3]);
     throw new TlaTypeScriptError(`${isEntry ? fileName : path}:${found[2]}:${column} ${found[4]}`);
   }
