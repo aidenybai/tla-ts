@@ -129,6 +129,7 @@ import {
   isReducibleSet,
   isSetValue,
   isSettledValue,
+  isTlcEnumerable,
   isTlcInteger,
   sortLikeFcnRcdValue,
   toBoundTuple,
@@ -270,11 +271,17 @@ const isSourced = (expression: Expression) =>
   (expression.kind === "Apply" && SOURCED_OPERATORS.has(expression.operator));
 
 const getReceiver = (expression: Expression, values: CallStack["values"]) => {
-  if (expression.kind === "FunctionApplication" || expression.kind === "Except") {
-    return expression.function;
+  if (expression.kind === "FunctionApplication") {
+    const applied = values.get(expression.function);
+    return applied !== undefined && isFunctionValue(applied) ? expression.function : undefined;
   }
+  if (expression.kind === "Except") return expression.function;
   if (expression.kind !== "Apply" || expression.args.length !== 2) return undefined;
-  if (["\\subseteq", "=", "#", "\\"].includes(expression.operator)) return expression.args[0];
+  if (["=", "#", "\\"].includes(expression.operator)) return expression.args[0];
+  if (expression.operator === "\\subseteq") {
+    const left = values.get(expression.args[0]);
+    return left !== undefined && isTlcEnumerable(left) ? expression.args[0] : undefined;
+  }
   if (expression.operator === "\\cap" || expression.operator === "\\cup") {
     const left = values.get(expression.args[0]);
     return left !== undefined && isReducibleSet(left) ? expression.args[0] : expression.args[1];
@@ -410,7 +417,7 @@ export const getDomainOperator = (expression: Expression) => (value: Value) => {
 export const getSubsetOperator =
   (expression: Expression, subset: (left: Value, right: Value) => Value) =>
   (left: Value, right: Value) => {
-    if (!isSetValue(left) || isOverriddenSet(left)) {
+    if (!isTlcEnumerable(left)) {
       throw new TlaEvaluationError(
         `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
       );
@@ -1881,15 +1888,9 @@ const traceEvaluator =
         receiver && !getChildren(expression).some((child) => child === failed)
           ? callStack.values.get(receiver)
           : undefined;
-      const value =
-        expression.kind === "FunctionApplication" &&
-        received !== undefined &&
-        !isFunctionValue(received)
-          ? undefined
-          : received;
       freezeCallStack(
         callStack,
-        [value, ...sets.slice(depth).filter((set) => set !== value)],
+        [received, ...sets.slice(depth).filter((set) => set !== received)],
         error,
       );
       throw error;
