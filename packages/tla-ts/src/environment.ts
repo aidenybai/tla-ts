@@ -146,6 +146,7 @@ interface EnvironmentOptions {
   moduleOperators?: ModuleOperator[];
   readLine?: () => string | undefined;
   printPrompt?: (text: string, code?: number) => void;
+  systemProperties?: ReadonlyMap<string, string>;
   runtimeInvariants?: RuntimeInvariant[];
   isCovered?: boolean;
 }
@@ -365,6 +366,7 @@ export const createEnvironment = (
   runtime.printPrompt =
     options.printPrompt ??
     ((text, code) => options.print(formatPrompt(runtime.isTool, text, code)));
+  runtime.properties = new Map(options.systemProperties);
   const linkedModules = new Map<string, LinkedModule>();
   const checkedModules = new Map<string, LinkedModule>();
   const linkOrder: LinkedModule[] = [];

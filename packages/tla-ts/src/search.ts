@@ -151,6 +151,7 @@ export interface CliSettings {
   hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
+  systemProperties?: ReadonlyMap<string, string>;
 }
 
 interface EnvironmentSettings
@@ -1088,6 +1089,7 @@ export const createCheckEnvironment = (
     moduleOperators: options.moduleOperators,
     readLine: options.readLine,
     printPrompt: options.printPrompt,
+    systemProperties: options.systemProperties,
     runtimeInvariants: options.runtimeInvariants,
     isCovered: options.coverage !== undefined,
   });

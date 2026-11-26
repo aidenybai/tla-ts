@@ -437,6 +437,7 @@ const checkSpec = async (
       printPrompt: (text, code) =>
         code === undefined ? console.log(text) : printer.print(code, MESSAGE_LEVEL.none, text),
       hasUserFile: args.userFile !== undefined,
+      systemProperties: java.systemProperties,
       runtimeInvariants: runtimeInvariants.map((invariant) => ({
         name: invariant.name,
         module: invariant.module,

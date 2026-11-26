@@ -2771,3 +2771,49 @@ describe("the CLI writes the behaviors of -simulate file=, as TLC does", () => {
     ]);
   });
 });
+
+describe("the CLI gives TLCGet the system properties of its Java launch, as TLC's System#getProperty does", () => {
+  const files = {
+    "P.tla": [
+      "---- MODULE P ----",
+      "EXTENDS Naturals, TLC",
+      "VARIABLE x",
+      'ASSUME PrintT(<<TLCGet("-Dfoo"), TLCGet("-Dempty"), TLCGet("-Dunset"), TLCGet("-DTLA-Library")>>)',
+      'ASSUME TLCSet("-Dset", "later") /\\ TLCSet("-Dfoo", 3) /\\ PrintT(<<TLCGet("-Dset"), TLCGet("-Dfoo")>>)',
+      "Init == x = 0",
+      "Next == x < 2 /\\ x' = x + 1",
+      'Inv == x < 2 \\/ TLCGet("-Dbar") = "baz"',
+      "====",
+    ].join("\n"),
+    "P.cfg": ["INIT Init", "NEXT Next", "INVARIANT Inv", "CHECK_DEADLOCK FALSE"].join("\n"),
+  };
+  const simulate = ["-simulate", "num=1", "-depth", "5"];
+  const set = ["-Dfoo=bar", "-Dempty", "-Dbar=baz", "-Dbar=qux", "-DTLA-Library=/nonexistent"];
+  const setLines = ['<<"bar", "", "-Dunset", "/nonexistent">>', '<<"\\"later\\"", "3">>'];
+  const unset = ["-Dfoo=bar", "-Dbar=baz"];
+  const unsetLines = ['<<"bar", "-Dempty", "-Dunset", "-DTLA-Library">>', '<<"\\"later\\"", "3">>'];
+
+  it.each([
+    ["checks", set, [], 12, [...setLines, "Error: Invariant Inv is violated."]],
+    ["simulates", set, simulate, 12, [...setLines, "Error: Invariant Inv is violated."]],
+    ["checks", unset, [], 0, [...unsetLines, "Model checking completed. No error has been found."]],
+    ["simulates", unset, simulate, 0, [...unsetLines, "The number of states generated: 3"]],
+  ])("when it %s with %j", (_mode, properties, modeArgs, status, lines) => {
+    const directory = mkdtempSync(join(FIXTURES, "properties-"));
+    Object.entries(files).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
+    const result = runCliWith(directory, [
+      ...properties,
+      "tlc2.TLC",
+      "-workers",
+      "1",
+      "-noGenerateSpecTE",
+      ...modeArgs,
+      "P",
+    ]);
+    rmSync(directory, { recursive: true });
+    expect([result.status, result.stdout.split("\n")]).toEqual([
+      status,
+      expect.arrayContaining(lines),
+    ]);
+  });
+});
