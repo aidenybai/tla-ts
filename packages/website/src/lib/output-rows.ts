@@ -73,14 +73,14 @@ export const getOutputRows = (input: OutputRowsInput): OutputRow[] => {
   for (let index = blocks.length - 1; index >= 0; index--)
     isShown[index] ??= isShown[index + 1] ?? false;
   for (const [index, block] of blocks.entries()) {
-    const region = input.lineMarks[block.start]?.at(0)?.name;
     if (!isShown[index]) {
       hidden.push(block);
       continue;
     }
     foldHidden();
-    const mark = input.sourceMarks.find((found) => found.name === region);
-    if (mark && !commented.has(mark.name)) {
+    for (const lineMark of input.lineMarks[block.start] ?? []) {
+      const mark = input.sourceMarks.find((found) => found.name === lineMark.name);
+      if (!mark || commented.has(mark.name)) continue;
       commented.add(mark.name);
       const [first, ...rest] = input.source.slice(mark.start, mark.end).trim().split("\n");
       rows.push({ kind: "comment", text: `\\* ${first}${rest.length > 0 ? " ..." : ""}` });

@@ -205,7 +205,9 @@ export const PlaygroundOutput = () => {
                   text={line.output.text}
                   hasGutter
                   className={cn(
-                    line.row.index > 0 && "pt-[0.85em]",
+                    line.row.index > 0 &&
+                      outputRows[line.row.index - 1].kind !== "comment" &&
+                      "pt-[0.85em]",
                     !playground.isSkeleton && "text-faint",
                   )}
                 />

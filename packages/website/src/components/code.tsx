@@ -132,7 +132,10 @@ const CodeContent = (props: ContentProps) => {
         <CodeComment
           key={`comment ${row.text}`}
           text={row.text}
-          className={cn("text-faint", index > 0 && "pt-[0.85em]")}
+          className={cn(
+            "text-faint",
+            index > 0 && code.rows[index - 1].kind !== "comment" && "pt-[0.85em]",
+          )}
         />
       );
     if (row.kind === "fold")
@@ -211,7 +214,9 @@ const CodeContent = (props: ContentProps) => {
           }
           className="text-sm text-muted-foreground"
         >
-          {isExpanded ? "Show less" : `Show ${hiddenCount.toLocaleString("en-US")} more lines`}
+          {isExpanded
+            ? "Show less"
+            : `Show ${hiddenCount.toLocaleString("en-US")} more ${hiddenCount === 1 ? "line" : "lines"}`}
         </Button>
       )}
     </>

@@ -78,7 +78,6 @@ const getExample = (
     typescript: highlight(typescript, "typescript"),
     tla: highlight(compiled.tla, "tlaplus"),
     sourceMarks: compiled.sourceMarks,
-    outputMarks: compiled.outputMarks,
   };
 };
 

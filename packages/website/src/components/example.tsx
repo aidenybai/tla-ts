@@ -148,22 +148,35 @@ const ExampleHint = () => {
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
 // A program's module runs to dozens of rows even with ESCore's own code folded, so the page shows
 // its start.
-const PREVIEW_LINES = 16;
+const PREVIEW_LINES = 28;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
-  const lineMarks = useMemo(
-    () => getLineMarks(example.tla.code.split("\n"), example.outputMarks),
-    [example],
-  );
+  // The page marks each declaration on the model's line for it: an exported function on its action
+  // or its check, and any other on Init, which the program's own statements make. The definitions
+  // that a declaration compiles to fold away with the rest of ESCore's code.
+  const lineMarks = useMemo(() => {
+    const code = example.tla.code;
+    return getLineMarks(
+      code.split("\n"),
+      example.sourceMarks.flatMap((mark) => {
+        const start = [mark.name, "Init"]
+          .map((name) => code.search(new RegExp(`^${name}(?:\\(.*\\))? ==`, "m")))
+          .find((found) => found !== -1);
+        if (start === undefined) return [];
+        const end = code.indexOf("\n", start);
+        return { name: mark.name, start, end: end === -1 ? code.length : end };
+      }),
+    );
+  }, [example]);
   const sourceLineMarks = useMemo(
     () => getLineMarks(example.typescript.code.split("\n"), example.sourceMarks),
     [example],
   );
   const colors = useMemo(
-    () => getHighlightColors(example.outputMarks.map((mark) => mark.name)),
+    () => getHighlightColors(example.sourceMarks.map((mark) => mark.name)),
     [example],
   );
   const result = state.result;
