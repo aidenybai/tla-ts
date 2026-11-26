@@ -1,12 +1,12 @@
 const sources = import.meta.glob<string>(
-  ["../examples/*.ts", "../../../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts"],
+  ["../examples/*.{ts,tsx}", "../../../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts"],
   { query: "?raw", import: "default", eager: true },
 );
 
 // Code from real libraries comes first, and the port of a TLA+ spec last.
 const FILE_NAMES = [
   "likes.ts",
-  "search-box.ts",
+  "search-box.tsx",
   "react-scheduler.ts",
   "react-lanes.ts",
   "solid-signals.ts",

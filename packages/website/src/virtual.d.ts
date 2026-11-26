@@ -20,3 +20,8 @@ declare module "virtual:typescript-libraries" {
   const libraries: ReadonlyMap<string, string>;
   export default libraries;
 }
+
+declare module "virtual:package-files" {
+  const files: ReadonlyMap<string, string>;
+  export default files;
+}

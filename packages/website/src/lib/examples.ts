@@ -3,7 +3,7 @@ import { getHighlightColors } from "./highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {
   "likes.ts": { article: "a", label: "like button" },
-  "search-box.ts": { article: "a", label: "React search box" },
+  "search-box.tsx": { article: "a", label: "React search box" },
   "hour-clock.ts": { article: "a", label: "TLA+ clock" },
 };
 
