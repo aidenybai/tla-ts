@@ -5471,14 +5471,15 @@ interface FormattedSetEnd {
 
 type FormatPart = string | FormattedValue | FormattedSetEnd;
 
+// Parts joined once: V8 keeps each += as a cons string, gigabytes for the states of a trace spec.
 interface ValueWriter {
-  text: string;
+  parts: string[];
   depth: number;
   pending: FormatPart[] | undefined;
 }
 
 const writeText = (writer: ValueWriter, text: string) => {
-  if (writer.pending === undefined) writer.text += text;
+  if (writer.pending === undefined) writer.parts.push(text);
   else writer.pending.push(text);
 };
 
@@ -5497,7 +5498,7 @@ const writeDeepValue = (
   writer.pending = pending;
   for (let part = pending.pop(); part !== undefined; part = pending.pop()) {
     if (typeof part === "string") {
-      writer.text += part;
+      writer.parts.push(part);
       continue;
     }
     if (part.kind === "SetEnd") {
@@ -5898,9 +5899,9 @@ const writeValue = (
 };
 
 export const formatValue = (value: Value, isStrict = false, isNormalized = false): string => {
-  const writer: ValueWriter = { text: "", depth: 0, pending: undefined };
+  const writer: ValueWriter = { parts: [], depth: 0, pending: undefined };
   writeValue(writer, value, isStrict, isNormalized);
-  return writer.text;
+  return writer.parts.join("");
 };
 
 const isUnchanged = (previous: Value | undefined, value: Value) => {
