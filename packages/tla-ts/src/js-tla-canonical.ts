@@ -1334,7 +1334,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       return makeLater(page.sources[slot], page.locations[slot], page.plans[slot], slots);
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
-    const isCanonicalRecord = isIncremental && isCanonical(record);
+    const isCanonicalRecord = isIncremental && (page !== undefined || isCanonical(record));
     const objectClass =
       isCanonicalRecord && node > 0 && page === undefined ? getString(record, "class") : "";
     const isKept =
