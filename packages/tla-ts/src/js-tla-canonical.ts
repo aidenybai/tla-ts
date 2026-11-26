@@ -198,17 +198,11 @@ const createHeapReader = (heap: Value) => {
   };
 };
 
-// A heap of size records whose pages makePage gives.
-const createHeap = (before: Value, size: number, makePage: (page: number) => Value) =>
+// A heap of size records in pages.
+const createHeap = (before: Value, size: number, pages: Value[]) =>
   toRecord(before, [
     ["size", size],
-    [
-      "pages",
-      toTuple(
-        get(before, "pages"),
-        Array.from({ length: Math.ceil(size / PAGE_SIZE) }, (_, page) => makePage(page)),
-      ),
-    ],
+    ["pages", toTuple(get(before, "pages"), pages)],
   ]);
 
 // The object value [type |-> "object", id |-> number] that value becomes.
@@ -1170,20 +1164,32 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
             : globalChanges,
     );
   };
-  // Whether the walk numbers a node as it was: the realm's, which it doesn't number, and each
-  // other node at the number it had.
-  const isUnmoved = (node: number) =>
-    node > 0
-      ? node <= realm.objects || objectNumbers[node] === node
-      : -node <= realm.environments || environmentNumbers[-node] === -node;
-  const isEveryEdgeUnmoved = (node: number, page: CanonicalPage | undefined) => {
-    if (getEdgeStart(node) === -1) return false;
+  // The edges of the page that the rename is making, which grows to hold the most of any page, and
+  // where its next edge goes.
+  let pageScratch = new Int32Array(EDGE_NODES + 4 * PAGE_SIZE);
+  let pageAt = EDGE_NODES;
+  // Adds a node's edges by their new numbers to the page, and gives whether the walk numbers each as
+  // it was.
+  const pushEdges = (node: number, page: CanonicalPage | undefined) => {
     const array = getEdgeArray(node, page);
+    const first = getEdgeFirst(node, array);
     const end = getEdgeEnd(node, array);
-    for (let index = getEdgeFirst(node, array); index < end; index++) {
-      if (!isUnmoved(array[index])) return false;
+    if (pageAt + end - first > pageScratch.length) {
+      const grown = new Int32Array(2 * (pageAt + end - first));
+      grown.set(pageScratch);
+      pageScratch = grown;
     }
-    return true;
+    const pushed = pageScratch;
+    let at = pageAt;
+    let isEveryUnmoved = true;
+    for (let index = first; index < end; index++) {
+      const target = array[index];
+      const number = getNew(target);
+      if (number !== (target > 0 ? target : -target)) isEveryUnmoved = false;
+      pushed[at++] = target > 0 ? number : -number;
+    }
+    pageAt = at;
+    return isEveryUnmoved;
   };
   const getLocated = (node: number, page: CanonicalPage | undefined) =>
     walkedLocations.has(node) ? walkedLocations.get(node) : page?.locations[getSlot(node)];
@@ -1199,11 +1205,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         getEntryContribution(levelKeys[level - 1], levelHashes[level])) |
       0;
   };
-  // The hash of the record that makeRecord makes of a source of the given hash with node's edges, by
-  // their new numbers, at located, from the source's plan.
+  // The hash of the record that makeRecord makes of a source of the given hash with the edges by
+  // their new numbers from first in renamedEdges, at located, from the source's plan.
   const getMadeHash = (
-    node: number,
-    page: CanonicalPage | undefined,
+    renamedEdges: Int32Array,
+    first: number,
     hash: number,
     located: number[],
     plan: Int32Array,
@@ -1215,8 +1221,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       levelHashes = new Int32Array(located.length);
     }
     levelHashes[0] = hash;
-    const array = getEdgeArray(node, page);
-    const first = getEdgeFirst(node, array);
     let open = 0;
     let planAt = 0;
     for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
@@ -1232,8 +1236,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         levelBases[open + 1] = plan[planAt + 4 + 2 * open];
         levelHashes[open + 1] = levelBases[open + 1];
       }
-      const target = array[first + located[at]];
-      const numberHash = getValueHash(getNew(target));
+      const target = renamedEdges[first + located[at]];
+      const numberHash = getValueHash(target > 0 ? target : -target);
       const key = plan[planAt];
       const previous = plan[planAt + 1];
       const next =
@@ -1276,8 +1280,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     );
   };
   const makeLater = (
-    node: number,
-    page: CanonicalPage | undefined,
     source: Value,
     located: number[] | undefined,
     plan: Int32Array | undefined,
@@ -1294,12 +1296,18 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       undefined,
       source,
       sourcePlan,
-      getMadeHash(node, page, hash, located, sourcePlan),
+      getMadeHash(
+        pageScratch,
+        pageScratch[EDGE_STARTS + (slots.count & (PAGE_SIZE - 1))],
+        hash,
+        located,
+        sourcePlan,
+      ),
       false,
     );
   };
-  // The slot of a node at a new number: as it is, where renaming would give it back, or renamed. A
-  // canonical record's renaming waits until a reader reads it.
+  // The slot of a node at a new number, after its edges on the page: as it is, where renaming would
+  // give it back, or renamed. A canonical record's renaming waits until a reader reads it.
   const rename = (
     node: number,
     number: number,
@@ -1309,16 +1317,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const isInPlace = (node > 0 ? node : -node) === number;
     const page = getPage(node);
     const slot = getSlot(node);
+    const isEveryEdgeUnmoved = pushEdges(node, page);
     if (page !== undefined && page.records[slot] === undefined) {
-      if (isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
-      return makeLater(
-        node,
-        page,
-        page.sources[slot],
-        page.locations[slot],
-        page.plans[slot],
-        slots,
-      );
+      if (isEveryEdgeUnmoved) return keepSlot(node, page, slots, isInPlace);
+      return makeLater(page.sources[slot], page.locations[slot], page.plans[slot], slots);
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
     const isCanonicalRecord = isIncremental && isCanonical(record);
@@ -1329,7 +1331,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       !(page === undefined
         ? WEAK_CLASSES.has(objectClass)
         : hasSlotBit(page.edges, WEAK_CLASS_BITS, slot));
-    if (isKept && isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
+    if (isKept && isEveryEdgeUnmoved) return keepSlot(node, page, slots, isInPlace);
     const isEntry =
       page === undefined
         ? ENTRY_CLASSES.has(objectClass)
@@ -1337,8 +1339,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const located = isKept && !isEntry ? getLocated(node, page) : undefined;
     if (located !== undefined) {
       return page === undefined
-        ? makeLater(node, page, record, located, undefined, slots)
-        : makeLater(node, page, page.sources[slot], located, page.plans[slot], slots);
+        ? makeLater(record, located, undefined, slots)
+        : makeLater(page.sources[slot], located, page.plans[slot], slots);
     }
     isEveryPositionKept = true;
     const renamed = markCanonical(renameRecord(record));
@@ -1357,26 +1359,25 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
   }
-  const objectSlots = createSlots(objectNodes.length - 1);
-  for (let number = 1; number < objectNodes.length; number++) {
-    const node = objectNodes[number];
-    if (node === 0) {
-      keepSlot(number, getPage(number), objectSlots, true);
-      continue;
-    }
-    rename(node, number, renameObject, objectSlots);
-  }
-  const environmentSlots = createSlots(environmentNodes.length - 1);
-  for (let number = 1; number < environmentNodes.length; number++) {
-    rename(environmentNodes[number], number, renameEnvironmentRecord, environmentSlots);
-  }
-  // The edges of the page that a page maker makes, which grows to hold the most of any page.
-  let pageScratch = new Int32Array(EDGE_NODES + 4 * PAGE_SIZE);
-  // A page of a heap, which is the page of the heap before where each of its slots is in place.
-  const getPageMaker =
-    (nodes: Int32Array, slots: Slots, pagesBefore: Value[]) => (page: number) => {
+  // Renames each node of a heap at its new number a page at a time, and makes each page, which is
+  // the page of the heap before where each of its slots is in place.
+  const renameHeap = (
+    nodes: Int32Array,
+    renameRecord: (inner: Value) => FunctionValue,
+    pagesBefore: Value[],
+  ) => {
+    const slots = createSlots(nodes.length - 1);
+    return Array.from({ length: Math.ceil(slots.sources.length / PAGE_SIZE) }, (_value, page) => {
       const first = page * PAGE_SIZE;
       const count = Math.min(PAGE_SIZE, slots.sources.length - first);
+      pageAt = EDGE_NODES;
+      for (let slot = 0; slot < count; slot++) {
+        const number = first + slot + 1;
+        pageScratch[EDGE_STARTS + slot] = pageAt;
+        if (nodes[number] === 0) keepSlot(number, getPage(number), slots, true);
+        else rename(nodes[number], number, renameRecord, slots);
+      }
+      const at = pageAt;
       const previous = pagesBefore[page];
       let isKept =
         isIncremental &&
@@ -1391,10 +1392,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       pageScratch[1] = realm.environments;
       // eslint-disable-next-line unicorn/no-new-array
       const locations = new Array<number[] | undefined>(count);
-      let at = EDGE_NODES;
       for (let slot = 0; slot < PAGE_SIZE; slot++) {
-        pageScratch[EDGE_STARTS + slot] = at;
-        if (slot >= count) continue;
+        if (slot >= count) {
+          pageScratch[EDGE_STARTS + slot] = at;
+          continue;
+        }
         const node = nodes[first + slot + 1];
         const heapNode = node === 0 ? first + slot + 1 : node;
         const nodePage = getPage(heapNode);
@@ -1410,19 +1412,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
           for (let bits = PROMISE_BITS; bits < EDGE_STARTS; bits += PAGE_SIZE / 32) {
             if (hasSlotBit(nodePage.edges, bits, nodeSlot)) setSlotBit(pageScratch, bits, slot);
           }
-        }
-        if (getEdgeStart(node) === -1) continue;
-        const array = getEdgeArray(node, nodePage);
-        const edgeFirst = getEdgeFirst(node, array);
-        const end = getEdgeEnd(node, array);
-        if (at + end - edgeFirst > pageScratch.length) {
-          const grown = new Int32Array(2 * (at + end - edgeFirst));
-          grown.set(pageScratch);
-          pageScratch = grown;
-        }
-        for (let index = edgeFirst; index < end; index++) {
-          const target = array[index];
-          pageScratch[at++] = target > 0 ? getNew(target) : -getNew(target);
         }
       }
       pageScratch[EDGE_STARTS + PAGE_SIZE] = at;
@@ -1445,17 +1434,18 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       );
       made.hash = getPageHash(made);
       return made;
-    };
+    });
+  };
+  const madeObjectPages = renameHeap(objectNodes, renameObject, pages);
+  const madeEnvironmentPages = renameHeap(
+    environmentNodes,
+    renameEnvironmentRecord,
+    environmentPages,
+  );
   return except(state, {
-    objs: () =>
-      createHeap(objs, objectSlots.sources.length, getPageMaker(objectNodes, objectSlots, pages)),
-    envs: () =>
-      createHeap(
-        envs,
-        environmentSlots.sources.length,
-        getPageMaker(environmentNodes, environmentSlots, environmentPages),
-      ),
-    envsHeld: () => environmentSlots.sources.length,
+    objs: () => createHeap(objs, objectNodes.length - 1, madeObjectPages),
+    envs: () => createHeap(envs, environmentNodes.length - 1, madeEnvironmentPages),
+    envsHeld: () => environmentNodes.length - 1,
     templates: (inner) => mapRange(inner, renameValue),
     required: (inner) => mapRange(inner, (entry) => except(entry, { module: renameValue })),
     hostHandler: renameMaybe,
