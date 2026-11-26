@@ -6140,6 +6140,36 @@ describe("evaluation errors match TLC", () => {
       ],
       INTERVAL_SIZE_REASON,
     ],
+    [
+      "\\E p \\in (0..2147483647) \\X {1} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 49 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "\\E f \\in [0..2147483647 -> {1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 49 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "\\E r \\in [a : 0..2147483647] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 53 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 53 in M",
+        "Line 5, column 28 to line 5, column 46 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
   ])(
     "sizes an interval past 32 bits where TLC's IntervalValue#equals, compareTo or isEmpty does: x' = x /\\ %s",
     async (comparison, callStack, fingerprintReason) => {
