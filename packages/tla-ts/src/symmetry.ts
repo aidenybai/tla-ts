@@ -115,7 +115,7 @@ export const getSymmetryGroup = (
   substitutions: Substitution[],
 ): Images[] | undefined => {
   const key = getRootKey(name, environment);
-  // Deviation from TLC: TLC ignores a [Mod] <- of the symmetry, or throws a ClassCastException for a literal body.
+  // Deviation from TLC: TLC throws a ClassCastException for a [Mod] <- of a symmetry whose body is a literal.
   const definition = getConfigNameDefinition(key, environment);
   if (
     definition === undefined &&
