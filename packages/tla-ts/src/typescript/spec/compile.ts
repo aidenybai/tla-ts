@@ -3,6 +3,7 @@ import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { getNodeParses, rejectEarlyErrors } from "../early-errors";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
+import { getHostSystem, type ProgramSystem } from "../system";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
@@ -41,14 +42,7 @@ import { stripTypes } from "./strip-types";
 import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
 
-// Node's files and paths, which only a program of files reads, so that a host without them, such as
-// a browser, compiles a script without loading them, and a program of the one file it has, whose
-// path it takes from the root.
-const readFileSync = (path: string, encoding: "utf8") =>
-  process.getBuiltinModule("node:fs").readFileSync(path, encoding);
-const resolve = (path: string) =>
-  globalThis.process?.getBuiltinModule?.("node:path").resolve(path) ??
-  decodeURIComponent(new URL(path, "file:///").pathname);
+// The URL of a file's absolute path, as Node's pathToFileURL gives it, where Node runs.
 const pathToFileURL = (path: string) =>
   globalThis.process?.getBuiltinModule?.("node:url").pathToFileURL(path) ??
   new URL(path, "file:///");
@@ -609,7 +603,11 @@ const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { 
 // Runs compile, whose stops name where they are in the code that tla-ts parses, as the file's own
 // code places them: in the file by its own name, the entry by the name the compile gives it, and a
 // file that Node wraps, as CommonJS, at its own columns, which the wrapper moves on its first line.
-const atSourceLocations = <T>(fileName: string, compile: (names: ParsedNames) => T): T => {
+const atSourceLocations = <T>(
+  fileName: string,
+  system: ProgramSystem,
+  compile: (names: ParsedNames) => T,
+): T => {
   const names: ParsedNames = { paths: new Map(), wrapped: new Set() };
   try {
     return compile(names);
@@ -621,7 +619,7 @@ const atSourceLocations = <T>(fileName: string, compile: (names: ParsedNames) =>
         : null;
     if (found === null) throw error;
     const path = names.paths.get(found[1]) ?? found[1];
-    const isEntry = ts.sys?.fileExists(fileName) === true && path === resolve(fileName);
+    const isEntry = system.fileExists(fileName) && path === system.resolvePath(fileName);
     // A place in the wrapper, as the start of a line that V8 names alone, is the line's start.
     const column =
       Number(found[2]) === 1 && names.wrapped.has(found[1])
@@ -690,15 +688,22 @@ const loadFiles = (
   isModule: boolean,
   host: Pick<EscoreSteps, "isTest262Host" | "candidates">,
   names: ParsedNames,
+  system: ProgramSystem,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
-    host.isTest262Host === true ? "module" : getModuleFormat(path, text);
+    host.isTest262Host === true ? "module" : getModuleFormat(path, text, system);
+  // The text of a file that the program loads, which its resolution found.
+  const readFile = (path: string) => {
+    const text = system.readFile(path);
+    if (text === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
+    return text;
+  };
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
     const sourceFile = record(
-      parse(transpile(getJsxText(fileName, source), fileName, false).code, fileName, false),
+      parse(transpile(getJsxText(fileName, source, system), fileName, false).code, fileName, false),
       fileName,
       names,
     );
@@ -714,14 +719,13 @@ const loadFiles = (
       },
     ];
   }
-  const resolveModule = createModuleResolver(fileName);
+  const resolveModule = createModuleResolver(fileName, system);
   // The file that a literal of a file's code loads, as Node loads it: a require's in CommonJS's
   // mode. TypeScript's program reads the types of the file that TypeScript resolves it to, so a
   // literal that the two resolve to different files stops.
   const resolve = (literal: ts.StringLiteralLike) => {
     const resolved = resolveModule(
-      literal.text,
-      literal.getSourceFile().fileName,
+      literal,
       ts.isCallExpression(literal.parent) &&
         ts.isIdentifier(literal.parent.expression) &&
         literal.parent.expression.text === "require",
@@ -738,8 +742,8 @@ const loadFiles = (
     }
     return resolved.file;
   };
-  const getRealPath = (path: string) => ts.sys?.realpath?.(ts.sys.resolvePath(path)) ?? path;
-  const entry = ts.sys?.fileExists(fileName) === true ? getRealPath(fileName) : fileName;
+  const getRealPath = (path: string) => system.realpath(system.resolvePath(path));
+  const entry = system.fileExists(fileName) ? getRealPath(fileName) : fileName;
   // Each file's number, by its path, in the order the program finds them.
   const numbers = new Map([[entry, 1]]);
   const files: ProgramFile[] = [];
@@ -770,7 +774,7 @@ const loadFiles = (
         literal !== undefined && ts.isStringLiteral(literal) ? resolve(literal) : undefined;
       if (resolved === undefined) continue;
       const target = getRealPath(resolved);
-      const targetText = readFileSync(target, "utf8");
+      const targetText = readFile(target);
       if (getKind(target, targetText) === "commonjs" || target.endsWith(".js")) {
         preparse(target, targetText).forEach((name) => names.add(name));
       }
@@ -790,7 +794,7 @@ const loadFiles = (
         ? ASYNC_HOOKS_FACADE
         : original !== undefined
           ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
-          : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
+          : getJsxText(path, path === entry ? source : readFile(path), system);
     if (path.endsWith(".json")) return { path, text, kind: "json" as const };
     // A module entry that no file holds runs as an ES module, as no package's type or syntax
     // makes it CommonJS for Node, but for a host without a file system, whose one file Node
@@ -802,7 +806,7 @@ const loadFiles = (
           ? getKind(path, text)
           : isScript
             ? "script"
-            : ts.sys === undefined || ts.sys.fileExists(entry)
+            : system.fileExists(entry)
               ? getKind(path, text)
               : "module";
     // Node reads a hashbang as a comment.
@@ -904,7 +908,7 @@ const loadFiles = (
             literal !== undefined &&
             isImportCall(literal.parent) &&
             isOnlyImportCalled(sourceFile, specifier) &&
-            resolveModule(literal.text, literal.getSourceFile().fileName, false).isMissing
+            resolveModule(literal, false).isMissing
           ) {
             return [[specifier, 0] as const];
           }
@@ -916,7 +920,7 @@ const loadFiles = (
             kind === "commonjs" &&
             !target.endsWith(".json") &&
             !facades.has(facade) &&
-            getKind(target, getJsxText(target, readFileSync(target, "utf8"))) === "module"
+            getKind(target, getJsxText(target, readFile(target), system)) === "module"
           ) {
             facades.set(facade, target);
             numbers.set(facade, numbers.size + 1);
@@ -1033,13 +1037,13 @@ const ENTRY_MODULE_FRAMES = [
 
 // Where Node places a file's code in a stack trace: a file URL, but for a JavaScript file that Node
 // loads as CommonJS, its path; none for a script, which tla-ts doesn't know how a host runs.
-const getHostFileLocation = (file: ProgramFile) =>
+const getHostFileLocation = (file: ProgramFile, system: ProgramSystem) =>
   file.kind === "script"
     ? "Empty"
     : getUnitsOf(
         file.kind === "commonjs" && !/\.[cm]?ts$/.test(file.path)
-          ? resolve(file.path)
-          : pathToFileURL(resolve(file.path)).href,
+          ? system.resolvePath(file.path)
+          : pathToFileURL(system.resolvePath(file.path)).href,
       );
 
 // The program's HostParseDate, where it names Date: the time value that the host's Date.parse
@@ -1072,14 +1076,19 @@ export const compileToEscore = (
   runtime: EscoreRuntime,
   isModule = false,
   model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
+  system = getHostSystem(),
 ): EscoreSpec => {
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
-  const { files, program } = atSourceLocations(fileName, (names) => {
-    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, names);
+  const { files, program } = atSourceLocations(fileName, system, (names) => {
+    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, names, system);
     return {
       files: loaded,
-      program: specialize(loaded, new Set([...runtime.internalKeys, ...model.entries])),
+      program: specialize(
+        loaded,
+        new Set([...runtime.internalKeys, ...model.entries]),
+        system.getEnvironmentVariable,
+      ),
     };
   });
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
@@ -1249,13 +1258,13 @@ export const compileToEscore = (
         {
           name: "HostFileLocation",
           arity: 1,
-          text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
+          text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file, system)}`).join("\n    [] ")}`,
         },
         {
           name: "HostFilePath",
           arity: 1,
           // The path of the file that the host loaded each module from, which import.meta gives.
-          text: `HostFilePath(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${file.kind === "module" ? getUnitsOf(resolve(file.path)) : "Empty"}`).join("\n    [] ")}`,
+          text: `HostFilePath(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${file.kind === "module" ? getUnitsOf(system.resolvePath(file.path)) : "Empty"}`).join("\n    [] ")}`,
         },
         {
           name: "HostDefaultStackTraceLimit",

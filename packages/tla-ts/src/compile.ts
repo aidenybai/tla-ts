@@ -9,6 +9,10 @@ export interface CompileOptions {
   // TypeScript's built-in declaration files, such as lib.es5.d.ts, by file name. A browser has no
   // disk to read them from, so it passes them here.
   libraries?: ReadonlyMap<string, string>;
+  // The files that the program runs on in place of the host's, by absolute path, as Node runs it
+  // from / in an empty environment. A browser has no disk, so it passes the packages a program
+  // imports here.
+  files?: ReadonlyMap<string, string>;
 }
 
 export interface CompiledSpec {

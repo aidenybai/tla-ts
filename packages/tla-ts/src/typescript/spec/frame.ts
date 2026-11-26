@@ -8,6 +8,7 @@ import { formatString } from "../../printer";
 import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
 import { createNames } from "../names";
 import { createProgram, type Library } from "../program";
+import type { ProgramSystem } from "../system";
 
 // A state variable of a model, which a trace shows by its binding's name.
 export interface StateVariable {
@@ -377,8 +378,9 @@ export const frameModel = (
   setBound = getSetBound(),
   // The names that the model binds below its spec's top level, which no export's definition takes.
   localNames: ReadonlySet<string> = new Set(),
+  system?: ProgramSystem,
 ) => {
-  const program = createProgram(source, fileName.replaceAll("\\", "/"), library);
+  const program = createProgram(source, fileName.replaceAll("\\", "/"), library, system);
   const sourceFile = program.sourceFile;
   const checker = program.checker;
   // The names of the exported functions and their parameters, which the model's code defines and

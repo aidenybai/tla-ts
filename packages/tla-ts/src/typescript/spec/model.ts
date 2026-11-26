@@ -14,6 +14,7 @@ import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
 import { getModuleFormat } from "./resolve";
+import { getHostSystem } from "../system";
 
 export interface EscoreModel extends EscoreSpec {
   isScript: false;
@@ -388,9 +389,10 @@ export const planModel = (
   isLowerable = true,
   // The most values that TLC puts in a set, as its -maxSetSize sets it.
   setBound?: number,
+  system = getHostSystem(),
 ): ModelPlan | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
-  const text = getJsxText(fileName, source);
+  const text = getJsxText(fileName, source, system);
   const file = parseFile(fileName, text);
   // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
   // The names that the file's code reads, of which a host's global may be one.
@@ -414,23 +416,26 @@ export const planModel = (
           statement.moduleSpecifier !== undefined &&
           !statement.isTypeOnly),
     ) ||
-    (getModuleFormat(fileName, text) === "module" &&
+    (getModuleFormat(fileName, text, system) === "module" &&
       hostGlobals.some((name) => identifiers.has(name)));
   // A CommonJS file whose exports name its functions, as exports.name = local does, runs as the
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
-  const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
+  const isCommonJs =
+    commonJsExports.size > 0 && getModuleFormat(fileName, text, system) === "commonjs";
   // The frame calls the functions that bindings name, which a function a CommonJS file exports
   // without one has none of.
   const unnamed =
-    getModuleFormat(fileName, text) === "commonjs" ? findUnnamedCommonJsExport(file) : undefined;
+    getModuleFormat(fileName, text, system) === "commonjs"
+      ? findUnnamedCommonJsExport(file)
+      : undefined;
   if (unnamed !== undefined) {
     throw new TlaTypeScriptError(
       `tla-ts can't check a function that ${unnamed.getText()} sets without a binding that names it, as exports.name = name names one`,
       unnamed,
     );
   }
-  const today = frameModel(source, fileName, library, runtime.names, setBound, LOCAL_NAMES);
+  const today = frameModel(source, fileName, library, runtime.names, setBound, LOCAL_NAMES, system);
   if (today.isScript) {
     return { isScript: true, notes: today.notes, isAugmented: today.isAugmented };
   }
@@ -1846,18 +1851,26 @@ export const compileModelToEscore = (
   library?: Library,
   isLowerable = true,
   setBound?: number,
+  system = getHostSystem(),
 ): EscoreModel | EscoreScript => {
-  const plan = planModel(source, fileName, runtime, library, isLowerable, setBound);
+  const plan = planModel(source, fileName, runtime, library, isLowerable, setBound, system);
   const augmented = plan.isAugmented ? [getAugmentedNote(fileName)] : [];
   if (plan.isScript) return { ...plan, notes: [...augmented, ...plan.notes] };
   const model = plan.finish(
-    compileToEscore(plan.code, fileName, runtime, plan.isModule, {
-      steps: plan.getSteps(1),
-      entries: [...plan.entries],
-      reads: plan.reads,
-      extensions: plan.extensions,
-      assumptions: plan.assumptions,
-    }),
+    compileToEscore(
+      plan.code,
+      fileName,
+      runtime,
+      plan.isModule,
+      {
+        steps: plan.getSteps(1),
+        entries: [...plan.entries],
+        reads: plan.reads,
+        extensions: plan.extensions,
+        assumptions: plan.assumptions,
+      },
+      system,
+    ),
   );
   return { ...model, notes: [...augmented, ...model.notes] };
 };

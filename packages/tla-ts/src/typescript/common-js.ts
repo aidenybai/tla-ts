@@ -8,12 +8,6 @@ const NODE_MODULES = new Set([
   "_http_incoming",
   "_http_outgoing",
   "_http_server",
-  "_stream_duplex",
-  "_stream_passthrough",
-  "_stream_readable",
-  "_stream_transform",
-  "_stream_wrap",
-  "_stream_writable",
   "_tls_common",
   "_tls_wrap",
   "assert",
@@ -84,7 +78,7 @@ const getDirectory = (path: string) => {
   return absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
 };
 
-const joinPath = (directory: string, relative: string) =>
+export const joinPath = (directory: string, relative: string) =>
   `${relative.startsWith("/") ? "" : directory}/${relative}`
     .split("/")
     .reduce<string[]>(
@@ -254,7 +248,7 @@ const isRelative = (specifier: string) =>
   specifier === "..";
 
 // A specifier of a module that Node builds in.
-const isNodeModule = (specifier: string) =>
+export const isNodeModule = (specifier: string) =>
   specifier.startsWith("node:") || NODE_MODULES.has(specifier);
 
 // The file that a require of a specifier loads, as Node's require resolves it from a module, or
