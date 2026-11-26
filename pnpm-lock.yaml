@@ -85,8 +85,8 @@ importers:
         specifier: ^3.14.26
         version: 3.14.26(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       allo-font:
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.1.0
+        version: 1.1.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1546,8 +1546,8 @@ packages:
   '@yuku-toolchain/types@0.19.0':
     resolution: {integrity: sha512-tFkNbsP4WXX9UMUC5syJGdK9dPMLK0PPaIuXCcCYH75sZ8MrebfBZ2XvCILRTw8AgLivSSCfDa4R67iYBDa4Kg==}
 
-  allo-font@1.0.0:
-    resolution: {integrity: sha512-lHuzg9QRgC7pJVWH2JHmmg530v6b2kF9g3PdctfN9N1EtVI5j3rD9esAZ6ZXDgM5hrZe6HdVbTXFZyOCU9/VrA==}
+  allo-font@1.1.0:
+    resolution: {integrity: sha512-qt6vqj9DIXjnOJaOzaY1kJU9EQa3gSrNTCcSkKupdP84Vsk03utBlx1z3dzJo+l+9nKf9qYdzHaPt1wYhVAb7w==}
 
   ansi-colors@4.1.3:
     resolution: {integrity: sha512-/6w/C21Pm1A7aZitlI5Ni/2J6FFQN8i1Cvz3kHABAAbw93v/NlvKdVOqz7CCWz/3iv/JplRSEEZ83XION15ovw==}
@@ -3732,7 +3732,7 @@ snapshots:
 
   '@yuku-toolchain/types@0.19.0': {}
 
-  allo-font@1.0.0: {}
+  allo-font@1.1.0: {}
 
   ansi-colors@4.1.3: {}
 
