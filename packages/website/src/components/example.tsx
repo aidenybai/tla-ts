@@ -1,8 +1,10 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "@/lib/examples";
+import { getLineMarks } from "@/lib/line-marks";
+import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
@@ -157,14 +159,36 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
-// ESCore's code of a program runs to hundreds of lines, so the page shows its start.
+// A program's module runs to dozens of rows even with ESCore's own code folded, so the page shows
+// its start.
 const PREVIEW_LINES = 16;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
+  const example = state.example;
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
+  const lineMarks = useMemo(
+    () => getLineMarks(example.tla.code.split("\n"), example.outputMarks),
+    [example],
+  );
+  const result = state.result;
+  const rows = useMemo(
+    () =>
+      getOutputRows({
+        lines: example.tla.lines,
+        lineMarks,
+        source: example.typescript.code,
+        sourceMarks: example.sourceMarks,
+        openFolds,
+        pinnedLines: getRunLines(result),
+      }),
+    [example, lineMarks, openFolds, result],
+  );
   return (
     <Code.Root
       source={state.isCompiled ? state.example.tla : state.example.typescript}
+      rows={state.isCompiled ? rows : undefined}
+      onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
       activeLine={state.result?.activeLine}
       notes={state.result?.notes}
       search={state.result?.search}

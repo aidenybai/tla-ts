@@ -16,6 +16,9 @@ export interface CompiledExample {
   typescript: Source;
   tla: Source;
   highlightNames: string[];
+  // Where each declaration of the TypeScript is, and where the TLA+ it compiles to is.
+  sourceMarks: Mark[];
+  outputMarks: Mark[];
 }
 
 export interface Benchmark {

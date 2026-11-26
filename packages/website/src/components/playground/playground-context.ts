@@ -4,7 +4,7 @@ import { createPartsContext } from "@/lib/utils";
 import { BUILT_OUTPUT_LINES } from "@/lib/compilation";
 import { getHighlightColors } from "@/lib/highlight-colors";
 import { getLineMarks } from "@/lib/line-marks";
-import { getOutputRows, type OutputRow } from "@/lib/output-rows";
+import { getOutputRows, getRunLines, type OutputRow } from "@/lib/output-rows";
 import type { Mark } from "@/lib/site-data";
 import { useCompile } from "@/hooks/use-compile";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
@@ -16,7 +16,6 @@ import { clearCrashNotes, takeCrashNote } from "@/lib/escore-worker";
 import { getErrorResult } from "@/lib/run-error";
 
 const NO_MARKS: Mark[] = [];
-const NO_LINES: number[] = [];
 
 export const usePlaygroundState = () => {
   const file = usePlaygroundFile();
@@ -87,15 +86,7 @@ export const usePlaygroundState = () => {
 
   const result = compiler.isCompiling || compiler.error ? undefined : runner.result;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
-  const pinnedLines = useMemo(
-    () =>
-      new Set([
-        ...(result?.notes.map((note) => note.line) ?? NO_LINES),
-        ...(result?.search?.states.flatMap((state) => state.line ?? NO_LINES) ?? NO_LINES),
-        ...(result?.activeLine === undefined ? NO_LINES : [result.activeLine]),
-      ]),
-    [result],
-  );
+  const pinnedLines = useMemo(() => getRunLines(result), [result]);
   const tla = compiler.tla;
   const outputRows = useMemo(
     () =>

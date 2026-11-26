@@ -1,3 +1,4 @@
+import type { RunResult } from "./run-worker";
 import type { Mark, Token } from "./site-data";
 
 // The definitions that every model has, which a reader looks for by name.
@@ -89,3 +90,11 @@ export const getOutputRows = (input: OutputRowsInput): OutputRow[] => {
   foldHidden();
   return rows;
 };
+
+// The lines that a run points at: its notes, the states it found, and the line it stopped on.
+export const getRunLines = (result: RunResult | undefined): ReadonlySet<number> =>
+  new Set([
+    ...(result?.notes.map((note) => note.line) ?? []),
+    ...(result?.search?.states.flatMap((state) => state.line ?? []) ?? []),
+    ...(result?.activeLine === undefined ? [] : [result.activeLine]),
+  ]);

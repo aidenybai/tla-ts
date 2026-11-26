@@ -1,4 +1,4 @@
-import { X } from "@phosphor-icons/react";
+import { CaretRight, X } from "@phosphor-icons/react";
 import { memo, type ReactNode } from "react";
 import { cn } from "cn";
 import type { Mark, Token } from "@/lib/site-data";
@@ -165,3 +165,58 @@ export const CodeLine = memo((props: CodeLineProps) => (
     )}
   </span>
 ));
+
+interface CodeCommentProps {
+  text: string;
+  hasGutter?: boolean;
+  className?: string;
+}
+
+// A row between lines of code that says where the lines after it came from.
+export const CodeComment = (props: CodeCommentProps) => (
+  <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
+    {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
+    <span className="min-w-0 flex-1 truncate">
+      <span data-token>{props.text}</span>
+    </span>
+  </span>
+);
+
+interface CodeFoldProps {
+  lineCount: number;
+  isOpen: boolean;
+  hasGutter?: boolean;
+  isDisabled?: boolean;
+  onToggle: () => void;
+  className?: string;
+}
+
+// A row that stands for the lines of ESCore's own code between two of a program's definitions.
+export const CodeFold = (props: CodeFoldProps) => (
+  <button
+    type="button"
+    aria-expanded={props.isOpen}
+    disabled={props.isDisabled}
+    onClick={props.onToggle}
+    className={cn(
+      "flex min-h-[1.7em] w-full cursor-pointer items-center text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground disabled:cursor-default",
+      props.hasGutter ? "gap-x-4" : "gap-x-2",
+      props.className,
+    )}
+  >
+    <span className={cn("flex shrink-0 justify-end", props.hasGutter && "min-w-[3ch]")}>
+      <CaretRight
+        weight="bold"
+        className={cn(
+          "size-3 transition-transform duration-150 ease-out",
+          props.isOpen && "rotate-90",
+          props.isDisabled && "invisible",
+        )}
+      />
+    </span>
+    <span data-token>
+      {props.isOpen ? "Hide" : "Show"} {props.lineCount.toLocaleString("en-US")}{" "}
+      {props.lineCount === 1 ? "line" : "lines"} of ESCore
+    </span>
+  </button>
+);

@@ -3,10 +3,11 @@ import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "@/lib/run-worker";
 import type { Search, SearchState } from "@/lib/search";
+import type { OutputRow } from "@/lib/output-rows";
 import type { Source } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useTokenMorph } from "@/hooks/use-token-morph";
-import { CodeLine } from "./code-line";
+import { CodeComment, CodeFold, CodeLine } from "./code-line";
 import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
 import { SearchCell } from "./search-cell";
@@ -26,6 +27,8 @@ interface Expanded {
 
 interface CodeState {
   source: Source;
+  rows: OutputRow[];
+  onToggleFold: (name: string) => void;
   isMultiline: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
@@ -40,6 +43,9 @@ const codeContext = createPartsContext<CodeState>("Code.Root");
 
 interface RootProps {
   source: Source;
+  // The rows shown of the source, where they are not its lines one by one.
+  rows?: OutputRow[];
+  onToggleFold?: (name: string) => void;
   activeLine?: number;
   notes?: LineNote[];
   search?: Search;
@@ -56,6 +62,10 @@ const CodeRoot = (props: RootProps) => {
     <codeContext.PartsContext
       value={{
         source: props.source,
+        rows:
+          props.rows ??
+          props.source.lines.map((tokens, index) => ({ kind: "line", number: index + 1, tokens })),
+        onToggleFold: props.onToggleFold ?? (() => {}),
         isMultiline,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
@@ -90,10 +100,10 @@ const CodeContent = (props: ContentProps) => {
   const [expanded, setExpanded] = useState<Expanded>();
   if (expanded && expanded.code !== code.source.code) setExpanded(undefined);
   const isExpanded = expanded?.code === code.source.code;
-  const limit = props.limit ?? code.source.lines.length;
+  const limit = props.limit ?? code.rows.length;
   const lineCount = isExpanded ? expanded.lineCount : limit;
-  const hiddenCount = Math.max(0, code.source.lines.length - limit);
-  const isAllShown = lineCount >= code.source.lines.length;
+  const hiddenCount = Math.max(0, code.rows.length - limit);
+  const isAllShown = lineCount >= code.rows.length;
   useEffect(() => {
     if (isAllShown) return;
     const frame = requestAnimationFrame(() =>
@@ -111,30 +121,47 @@ const CodeContent = (props: ContentProps) => {
         <CodeLine tokens={code.source.lines[0]} />
       </code>
     );
-  const lines = code.source.lines
-    .slice(0, lineCount)
-    .map((tokens, index) => ({ tokens, number: index + 1 }))
-    .map((line) => (
+  const lines = code.rows.slice(0, lineCount).map((row, index) => {
+    if (row.kind === "comment")
+      return (
+        <CodeComment
+          key={`comment ${row.text}`}
+          text={row.text}
+          className={cn("text-faint", index > 0 && "pt-[0.85em]")}
+        />
+      );
+    if (row.kind === "fold")
+      return (
+        <CodeFold
+          key={`fold ${row.name}`}
+          lineCount={row.lineCount}
+          isOpen={row.isOpen}
+          onToggle={() => code.onToggleFold(row.name)}
+          className="text-faint"
+        />
+      );
+    return (
       <CodeLine
-        key={line.number}
-        tokens={line.tokens}
-        note={code.notes.find((note) => note.line === line.number)}
-        isActive={activeLine === line.number}
-        isDimmed={code.path.length > 0 && code.path.every((state) => state.line !== line.number)}
+        key={row.number}
+        tokens={row.tokens}
+        note={code.notes.find((note) => note.line === row.number)}
+        isActive={activeLine === row.number}
+        isDimmed={code.path.length > 0 && code.path.every((state) => state.line !== row.number)}
         aside={
           code.search && (
             <SearchCell
               search={code.search}
-              line={line.number}
+              line={row.number}
               path={code.path}
               onHover={code.onHoverState}
               className="xl:hidden"
             />
           )
         }
-        className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
+        className={cn("-mr-4 -ml-4 pr-4 pl-4", index < 2 && "pr-14")}
       />
-    ));
+    );
+  });
   return (
     <>
       <code

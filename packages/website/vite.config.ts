@@ -85,6 +85,8 @@ const getExample = (
     highlightNames: [...module.variables, ...module.definitions]
       .map((declared) => declared.name)
       .filter((name) => words.has(name) && !GENERATED_NAMES.has(name)),
+    sourceMarks: compiled.sourceMarks,
+    outputMarks: compiled.outputMarks,
   };
 };
 

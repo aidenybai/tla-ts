@@ -1,4 +1,3 @@
-import { CaretRight } from "@phosphor-icons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, type ReactNode, type Ref } from "react";
 import { cn } from "cn";
@@ -9,7 +8,7 @@ import type { Mark, Token } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
-import { CodeLine } from "@/components/code-line";
+import { CodeComment, CodeFold, CodeLine } from "@/components/code-line";
 import { Connector } from "@/components/connector";
 import { usePlayground } from "./playground-context";
 import { Resizable } from "@/components/ui/resizable";
@@ -94,41 +93,23 @@ const OutputLine = (props: OutputLineProps) => {
   );
 };
 
-interface FoldProps {
+interface OutputFoldProps {
   name: string;
   lineCount: number;
   isOpen: boolean;
 }
 
-// The lines of ESCore's own code that a program's module holds between two of its definitions.
-const OutputFold = (props: FoldProps) => {
+const OutputFold = (props: OutputFoldProps) => {
   const playground = usePlayground();
   return (
-    <button
-      type="button"
-      aria-expanded={props.isOpen}
-      disabled={playground.isSkeleton}
-      onClick={() => playground.toggleFold(props.name)}
-      className={cn(
-        "flex min-h-[1.7em] w-full cursor-pointer items-center gap-x-4 text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground disabled:cursor-default",
-        !playground.isSkeleton && "text-faint",
-      )}
-    >
-      <span className="flex min-w-[3ch] shrink-0 justify-end">
-        <CaretRight
-          weight="bold"
-          className={cn(
-            "size-3 transition-transform duration-150 ease-out",
-            props.isOpen && "rotate-90",
-            playground.isSkeleton && "invisible",
-          )}
-        />
-      </span>
-      <span data-token>
-        {props.isOpen ? "Hide" : "Show"} {props.lineCount.toLocaleString("en-US")}{" "}
-        {props.lineCount === 1 ? "line" : "lines"} of ESCore
-      </span>
-    </button>
+    <CodeFold
+      lineCount={props.lineCount}
+      isOpen={props.isOpen}
+      hasGutter
+      isDisabled={playground.isSkeleton}
+      onToggle={() => playground.toggleFold(props.name)}
+      className={cn(!playground.isSkeleton && "text-faint")}
+    />
   );
 };
 
@@ -220,18 +201,14 @@ export const PlaygroundOutput = () => {
                 />
               )}
               {line.output.kind === "comment" && (
-                <span
+                <CodeComment
+                  text={line.output.text}
+                  hasGutter
                   className={cn(
-                    "flex min-h-[1.7em] gap-x-4",
                     line.row.index > 0 && "pt-[0.85em]",
                     !playground.isSkeleton && "text-faint",
                   )}
-                >
-                  <span className="min-w-[3ch] shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">
-                    <span data-token>{line.output.text}</span>
-                  </span>
-                </span>
+                />
               )}
               {line.output.kind === "fold" && (
                 <OutputFold
