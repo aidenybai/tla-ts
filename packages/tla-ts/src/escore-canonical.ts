@@ -1306,15 +1306,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       );
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
-    const isKept =
-      isIncremental &&
-      isCanonical(record) &&
-      !(node > 0 && WEAK_CLASSES.has(getString(record, "class")));
+    const isCanonicalRecord = isIncremental && isCanonical(record);
+    const objectClass = isCanonicalRecord && node > 0 ? getString(record, "class") : "";
+    const isKept = isCanonicalRecord && !WEAK_CLASSES.has(objectClass);
     if (isKept && isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
-    const located =
-      isKept && (node < 0 || !ENTRY_CLASSES.has(getString(record, "class")))
-        ? getLocated(node, page)
-        : undefined;
+    const located = isKept && !ENTRY_CLASSES.has(objectClass) ? getLocated(node, page) : undefined;
     if (located !== undefined) {
       return page === undefined
         ? makeLater(node, page, record, located, undefined, slots)
