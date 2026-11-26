@@ -388,13 +388,14 @@ export const createTraceBuilder = (context: TraceContext) => {
       return undefined;
     }).result;
   const findSuccessorWithFingerprint = (state: Value[], source: number, target: number) => {
-    const rebuilt = current.rebuilt;
-    rebuildFrom(state, depths[source]);
-    const successor = findTraceSuccessor(state, (candidate) =>
-      hasFingerprint(candidate.state, target),
-    );
-    current.rebuilt = rebuilt;
-    return successor;
+    const expanding = { ...current };
+    Object.assign(current, { index: source, isExpanding: true, candidate: undefined });
+    try {
+      rebuildFrom(state, depths[source]);
+      return findTraceSuccessor(state, (candidate) => hasFingerprint(candidate.state, target));
+    } finally {
+      Object.assign(current, expanding);
+    }
   };
   const getPathStates = (path: number[], nextFailure: string) => {
     const registers = new Map(runtime.registers);
