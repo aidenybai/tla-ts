@@ -108,6 +108,8 @@ const CodeWords = memo((props: CodeWordsProps) => {
 interface CodeLineProps {
   tokens: Token[];
   number?: number;
+  // Whether the line shows its number, which it has for the code around it to find it by.
+  isNumberHidden?: boolean;
   note?: LineNote;
   aside?: ReactNode;
   isActive?: boolean;
@@ -132,7 +134,7 @@ export const CodeLine = memo((props: CodeLineProps) => (
       props.className,
     )}
   >
-    {props.number !== undefined && <LineNumber number={props.number} />}
+    {props.number !== undefined && !props.isNumberHidden && <LineNumber number={props.number} />}
     <span
       className={cn(
         "min-w-0 flex-1",

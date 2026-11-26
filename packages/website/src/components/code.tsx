@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "@/lib/run-worker";
 import type { Search, SearchState } from "@/lib/search";
+import { getLineHoveredName } from "@/lib/line-marks";
 import type { OutputRow } from "@/lib/output-rows";
-import type { Source } from "@/lib/site-data";
+import type { Mark, Source } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
-import { useTokenMorph } from "@/hooks/use-token-morph";
 import { CodeComment, CodeFold, CodeLine } from "./code-line";
 import { CopyButton } from "./copy-button";
 import { RunIcon } from "./run-icon";
@@ -14,7 +14,7 @@ import { SearchCell } from "./search-cell";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 
-const NO_HIGHLIGHTS = {};
+const NO_MARKS: Mark[] = [];
 const NO_PATH: SearchState[] = [];
 // The lines past the limit are added a few to a frame. Adding hundreds at once holds the page still
 // for half a second.
@@ -29,14 +29,16 @@ interface CodeState {
   source: Source;
   rows: OutputRow[];
   onToggleFold: (name: string) => void;
+  lineMarks: Mark[][] | undefined;
+  colors: Record<string, string> | undefined;
   isMultiline: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
   search: Search | undefined;
   path: SearchState[];
   onHoverState: (stateId: string | undefined) => void;
-  highlights: Record<string, string>;
-  onMorphEnd: (() => void) | undefined;
+  hoveredName: string | undefined;
+  isHighlighted: boolean;
 }
 
 const codeContext = createPartsContext<CodeState>("Code.Root");
@@ -46,47 +48,75 @@ interface RootProps {
   // The rows shown of the source, where they are not its lines one by one.
   rows?: OutputRow[];
   onToggleFold?: (name: string) => void;
+  // Each line's marks, which tint the line's words in the color of the mark's name.
+  lineMarks?: Mark[][];
+  colors?: Record<string, string>;
   activeLine?: number;
   notes?: LineNote[];
   search?: Search;
   path?: SearchState[];
   onHoverState?: (stateId: string | undefined) => void;
-  highlights?: Record<string, string>;
-  onMorphEnd?: () => void;
+  // The name whose marks are tinted.
+  hoveredName?: string;
+  // Whether every mark is tinted, not only the hovered name's.
+  isHighlighted?: boolean;
   children: ReactNode;
 }
 
-const CodeRoot = (props: RootProps) => {
-  const isMultiline = props.source.lines.length > 1;
+// The code that the parts inside it show, for code that sits in a frame of its own making.
+const CodeProvider = (props: RootProps) => (
+  <codeContext.PartsContext
+    value={{
+      source: props.source,
+      rows:
+        props.rows ??
+        props.source.lines.map((tokens, index) => ({ kind: "line", number: index + 1, tokens })),
+      onToggleFold: props.onToggleFold ?? (() => {}),
+      lineMarks: props.lineMarks,
+      colors: props.colors,
+      isMultiline: props.source.lines.length > 1,
+      activeLine: props.activeLine,
+      notes: props.notes ?? [],
+      search: props.search,
+      path: props.path ?? NO_PATH,
+      onHoverState: props.onHoverState ?? (() => {}),
+      hoveredName: props.hoveredName,
+      isHighlighted: props.isHighlighted ?? false,
+    }}
+  >
+    {props.children}
+  </codeContext.PartsContext>
+);
+
+interface FrameProps {
+  className?: string;
+  children: ReactNode;
+}
+
+const CodeFrame = (props: FrameProps) => {
+  const code = codeContext.useParts();
   return (
-    <codeContext.PartsContext
-      value={{
-        source: props.source,
-        rows:
-          props.rows ??
-          props.source.lines.map((tokens, index) => ({ kind: "line", number: index + 1, tokens })),
-        onToggleFold: props.onToggleFold ?? (() => {}),
-        isMultiline,
-        activeLine: props.activeLine,
-        notes: props.notes ?? [],
-        search: props.search,
-        path: props.path ?? NO_PATH,
-        onHoverState: props.onHoverState ?? (() => {}),
-        highlights: props.highlights ?? NO_HIGHLIGHTS,
-        onMorphEnd: props.onMorphEnd,
-      }}
+    <div
+      className={cn(
+        "relative flex w-full flex-wrap gap-2 overflow-hidden bg-card pl-4 shadow-raised",
+        code.isMultiline ? "rounded-2xl py-4 pr-4" : "h-11 items-center rounded-xl pr-1.5",
+        props.className,
+      )}
     >
-      <div
-        className={cn(
-          "relative flex w-full flex-wrap gap-2 overflow-hidden bg-card pl-4 shadow-raised",
-          isMultiline ? "rounded-2xl py-4 pr-4" : "h-11 items-center rounded-xl pr-1.5",
-        )}
-      >
-        {props.children}
-      </div>
-    </codeContext.PartsContext>
+      {props.children}
+    </div>
   );
 };
+
+interface CodeRootProps extends RootProps {
+  className?: string;
+}
+
+const CodeRoot = (props: CodeRootProps) => (
+  <CodeProvider {...props}>
+    <CodeFrame className={props.className}>{props.children}</CodeFrame>
+  </CodeProvider>
+);
 
 interface ContentProps {
   // The most lines shown until the reader asks for the rest.
@@ -95,7 +125,6 @@ interface ContentProps {
 
 const CodeContent = (props: ContentProps) => {
   const code = codeContext.useParts();
-  const contentRef = useRef<HTMLElement>(null);
   // The code that the reader opened in full, so other code starts within the limit again.
   const [expanded, setExpanded] = useState<Expanded>();
   if (expanded && expanded.code !== code.source.code) setExpanded(undefined);
@@ -114,7 +143,6 @@ const CodeContent = (props: ContentProps) => {
     return () => cancelAnimationFrame(frame);
   }, [isAllShown, lineCount]);
   const activeLine = code.path.at(0)?.line ?? code.activeLine;
-  useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
     return (
       <code className="min-w-0 flex-1 truncate font-mono text-[13px]/[1.7] text-foreground">
@@ -144,6 +172,15 @@ const CodeContent = (props: ContentProps) => {
       <CodeLine
         key={row.number}
         tokens={row.tokens}
+        number={row.number}
+        isNumberHidden
+        marks={code.lineMarks?.at(row.number - 1)}
+        hoveredName={getLineHoveredName(
+          code.lineMarks?.at(row.number - 1) ?? NO_MARKS,
+          code.hoveredName,
+        )}
+        isHighlighted={code.isHighlighted}
+        colors={code.colors}
         note={code.notes.find((note) => note.line === row.number)}
         isActive={activeLine === row.number}
         isDimmed={code.path.length > 0 && code.path.every((state) => state.line !== row.number)}
@@ -154,7 +191,7 @@ const CodeContent = (props: ContentProps) => {
               line={row.number}
               path={code.path}
               onHover={code.onHoverState}
-              className="xl:hidden"
+              className="min-[94rem]:hidden"
             />
           )
         }
@@ -164,10 +201,7 @@ const CodeContent = (props: ContentProps) => {
   });
   return (
     <>
-      <code
-        ref={contentRef}
-        className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
-      >
+      <code className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground">
         {lines.slice(0, limit)}
         {lineCount > limit && (
           <div data-more className="transition-opacity duration-200 ease-out starting:opacity-0">
@@ -259,6 +293,7 @@ const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
 
 export const Code = {
   Root: CodeRoot,
+  Provider: CodeProvider,
   Content: CodeContent,
   Footer: CodeFooter,
   Actions: CodeActions,

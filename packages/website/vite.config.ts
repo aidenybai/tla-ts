@@ -6,7 +6,6 @@ import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
-import { parseModule } from "../tla-ts/src/parser";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
 import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/lib/compilation";
 import { getLineMarks } from "./src/lib/line-marks";
@@ -34,7 +33,6 @@ const PLAYGROUND_PATHS = [
   "./src/examples/*.ts",
   "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",
 ];
-const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
 const BENCHMARK_ROW =
   /^\| (?:\[(?<linked>[^\]]+)\]\([^)]*\)|(?<plain>[^|[]+?)) +\|[^|]*\| +(?<tlc>[\d.]+) s \| +(?<tlaTs>[\d.]+) s \| +(?<speedup>[\d.]+×) \|$/;
 
@@ -72,9 +70,6 @@ const getExample = (
   const typescript = readFileSync(path, "utf8").trim();
   const fileName = path.slice(path.lastIndexOf("/") + 1);
   const compiled = compileOnEscore(typescript, fileName);
-  const module = parseModule(compiled.tla);
-  // The names of the program's code that its TypeScript names too.
-  const words = new Set(typescript.match(/\w+/g));
   return {
     fileName,
     name: compiled.name,
@@ -82,9 +77,6 @@ const getExample = (
     modules: compiled.modules,
     typescript: highlight(typescript, "typescript"),
     tla: highlight(compiled.tla, "tlaplus"),
-    highlightNames: [...module.variables, ...module.definitions]
-      .map((declared) => declared.name)
-      .filter((name) => words.has(name) && !GENERATED_NAMES.has(name)),
     sourceMarks: compiled.sourceMarks,
     outputMarks: compiled.outputMarks,
   };
