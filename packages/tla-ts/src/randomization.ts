@@ -8,7 +8,6 @@ import {
   createSet,
   getCardinality,
   isTlcEnumerable,
-  isEnumerable,
   isFiniteSet,
   isOverriddenSet,
   isSetValue,
@@ -40,7 +39,7 @@ const getRandomSetOfSubsets = (args: Value[], runtime: CheckerRuntime) => {
   const picks = getCount(getValue(args, 0, name), "first", name);
   const size = getCount(getValue(args, 1, name), "second", name);
   const set = getValue(args, 2, name);
-  if (!isSetValue(set) || !isEnumerable(set)) {
+  if (!isTlcEnumerable(set) || !isFiniteSet(set)) {
     throw createModuleArgumentError("third", name, "finite set", set);
   }
   const elements = toFiniteSet(set).elements;
@@ -130,5 +129,8 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     }),
     RANDOM_SUBSET_SIGNATURE,
   ),
-  defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
+  overrideWithJava(
+    defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
+    "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSetOfSubsets(tlc2.value.impl.Value,tlc2.value.impl.Value,tlc2.value.impl.Value)",
+  ),
 ];

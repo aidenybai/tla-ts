@@ -262,7 +262,11 @@ export const createTlcOperators = (
     isStateLevel: false,
   },
   defineOperator("Permutations", 1, (args) => {
-    const elements = toEnumeratedSet(getValue(args, 0, "Permutations"), "Permutations").elements;
+    const elements = toEnumeratedSet(
+      getValue(args, 0, "Permutations"),
+      "Permutations",
+      "a finite set",
+    ).elements;
     return createSet(
       getPermutations(elements).map((permutation) =>
         createFunction(

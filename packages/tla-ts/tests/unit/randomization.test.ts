@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
 import type { OutputLine } from "../../src/check";
-import { checkFixture } from "./check-harness";
+import { checkFixture, checkInitAndNext } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
   checkFixture("randomization", name, name, { seed });
@@ -398,5 +398,64 @@ describe("random choices match TLC 1.7.4", () => {
     expect(result.failure?.message).toMatch(
       /RandomSubset\(tlc2\.value\.impl\.Value,tlc2\.value\.impl\.Value\),\nbut it produced the following error:\nAttempted to construct a set with too many elements \(>1000000\)\.$/,
     );
+  });
+});
+
+describe("Randomization checks its set argument as TLC does", () => {
+  const FINITE_REASON =
+    "Attempted to check if expression of form {x \\in S : p(x)} is a finite set, but cannot check if S:\nNat\nis finite.";
+  const DOMAIN_REASON =
+    "Attempted to enumerate a set of the form [D -> R],but the domain D:\nNat\ncannot be enumerated.";
+
+  const getJavaFailures = (method: string, reason: string) => {
+    const message = `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Randomization.${method},\nbut it produced the following error:\n${reason}`;
+    return [
+      message,
+      75,
+      0,
+      `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${message}`,
+      75,
+      1,
+    ];
+  };
+
+  it.each([
+    ["RandomSetOfSubsets(1, 1, {n \\in Nat : n < 3})", FINITE_REASON],
+    ["TestRandomSetOfSubsets(1, 1, {n \\in Nat : n < 3})", FINITE_REASON],
+    ["RandomSetOfSubsets(1, 1, [Nat -> {1}])", DOMAIN_REASON],
+  ])(
+    "reports the error of checking the set in %s from inside the Java override, in Init and in Next",
+    async (expression, reason) => {
+      expect(await checkInitAndNext("Integers, TLC, Randomization", expression)).toEqual(
+        getJavaFailures(
+          "RandomSetOfSubsets(tlc2.value.impl.Value,tlc2.value.impl.Value,tlc2.value.impl.Value)",
+          reason,
+        ),
+      );
+    },
+  );
+
+  // Deviation from TLC: RandomSubset normalizes the null that toSetEnum gives for the domain Nat and throws a NullPointerException.
+  it("reports the domain of [Nat -> {1}] that RandomSubset can't enumerate as TLC's enumeration of [D -> R] does, in Init and in Next", async () => {
+    expect(
+      await checkInitAndNext("Integers, TLC, Randomization", "RandomSubset(1, [Nat -> {1}])"),
+    ).toEqual(
+      getJavaFailures("RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)", DOMAIN_REASON),
+    );
+  });
+
+  it("draws <<>> from [{} -> Nat] without enumerating Nat, as TLC does", async () => {
+    const outputs: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC, Randomization\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(RandomSubset(1, [{} -> Nat]))\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (line) => outputs.push(line),
+    });
+    expect([result.status, result.generatedStates, outputs]).toEqual([
+      "success",
+      3,
+      ["{<<>>}", "{<<>>}"],
+    ]);
   });
 });
