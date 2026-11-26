@@ -180,6 +180,7 @@ export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
 export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 export const untracedExpressions = new WeakSet<Expression>();
+export const variableDeclarations = new WeakMap<Expression, SourceRange>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -1105,6 +1106,9 @@ const getSymbolArity = (
     unit.linkSymbol(symbol.key);
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
+    if (symbol.kind === "Variable" && symbol.range) {
+      variableDeclarations.set(expression, symbol.range);
+    }
     operandApplications.get(expression)?.forEach((application) => {
       application.operator = symbol.key;
     });

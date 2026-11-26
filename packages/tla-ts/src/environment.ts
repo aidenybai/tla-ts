@@ -273,6 +273,9 @@ const getSubstitutionFrame = (instance: Instance): Expression => {
   };
 };
 
+const getVariableRanges = (linked: LinkedModule) =>
+  new Map(linked.variables.map((name, index) => [name, linked.variableLocations[index].range]));
+
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
   new Set(declared).forEach((name) => index.set(getEnabledVariableName(name), index.size));
@@ -898,6 +901,7 @@ export const createEnvironment = (
           );
         }),
       ),
+      variableRanges: getVariableRanges(linked),
       enabledSubstitutions,
       boundSubstitutions,
       instanceArguments: subexpressionRecords.instanceArguments,
@@ -1290,6 +1294,7 @@ export const createEnvironment = (
         ]),
       ),
       substitutedVariables: new Set(linked.variables),
+      variableRanges: getVariableRanges(linked),
       enabledSubstitutions,
       boundSubstitutions,
       instanceArguments: subexpressionRecords.instanceArguments,
