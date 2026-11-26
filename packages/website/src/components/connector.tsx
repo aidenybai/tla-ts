@@ -6,14 +6,19 @@ const BEND_WIDTH_PX = 96;
 const HEAD_LENGTH_PX = 4;
 // How far past the pane's edge an arrow ends where its line is out of view.
 const OUT_OF_VIEW_PX = 48;
+// Where the panes are stacked, each arrow runs down its own lane in the margin left of the line
+// numbers. The lanes share this width, and sit at most the gap apart.
+const LANE_LEFT_PX = 3;
+const LANES_WIDTH_PX = 6;
+const LANE_GAP_PX = 3;
+const LANE_CORNER_PX = 4;
+const LANE_HEAD_PX = 13;
 
 interface Link {
   name: string;
-  fromX: number;
-  fromY: number;
-  bendX: number;
-  toX: number;
-  toY: number;
+  path: string;
+  headX: number;
+  headY: number;
   headAngle: number;
 }
 
@@ -31,7 +36,6 @@ interface ConnectorProps {
   // The first line of the output that each name is on, which places a name whose line the output
   // pane does not show.
   outputLines?: Record<string, number>;
-  className?: string;
 }
 
 // A name points at its first row in view, so code that is linked twice still gets an arrow when
@@ -122,26 +126,54 @@ export const Connector = (props: ConnectorProps) => {
       const origin = container.getBoundingClientRect();
       const sources = getBoxes(container, "source");
       const outputs = getBoxes(container, "output");
+      const sourceView = container.querySelector('[data-pane="source"]')?.getBoundingClientRect();
+      const outputView = container.querySelector('[data-pane="output"]')?.getBoundingClientRect();
+      if (!sourceView || !outputView) return setLinks([]);
+      const isStacked = outputView.top >= sourceView.bottom;
+      const ends = names.flatMap((name) => {
+        const source = sources.get(name);
+        const line = outputLines?.[name];
+        const output =
+          outputs.get(name) ?? (line === undefined ? undefined : getOutOfViewBox(container, line));
+        return source && output && (isStacked || !source.isClipped) ? { name, source, output } : [];
+      });
+      const laneGap = Math.min(LANE_GAP_PX, LANES_WIDTH_PX / Math.max(1, ends.length - 1));
       setLinks(
-        names.flatMap((name) => {
-          const source = sources.get(name);
-          const line = outputLines?.[name];
-          const output =
-            outputs.get(name) ??
-            (line === undefined ? undefined : getOutOfViewBox(container, line));
-          if (!source || !output || source.isClipped) return [];
-          const fromX = source.right - origin.left + 6;
-          const fromY = source.middle - origin.top;
-          const toX = output.left - origin.left + 10;
-          const toY = output.middle - origin.top;
+        ends.map((end, index) => {
+          const fromY = end.source.middle - origin.top;
+          const toY = end.output.middle - origin.top;
+          if (isStacked) {
+            const left = outputView.left - origin.left;
+            const laneX = left + LANE_LEFT_PX + index * laneGap;
+            const headX = left + LANE_HEAD_PX;
+            const lane = `M ${headX} ${fromY} H ${laneX + LANE_CORNER_PX} Q ${laneX} ${fromY} ${laneX} ${fromY + LANE_CORNER_PX}`;
+            const outputTop = outputView.top - origin.top;
+            // A line above the lines in view is past the top of its pane, which is where the
+            // source pane is, so its arrow ends as it enters the pane.
+            return toY < outputTop
+              ? {
+                  name: end.name,
+                  path: `${lane} V ${outputTop + HEAD_LENGTH_PX + 2}`,
+                  headX: laneX,
+                  headY: outputTop + HEAD_LENGTH_PX + 2,
+                  headAngle: 90,
+                }
+              : {
+                  name: end.name,
+                  path: `${lane} V ${toY - LANE_CORNER_PX} Q ${laneX} ${toY} ${laneX + LANE_CORNER_PX} ${toY} H ${headX}`,
+                  headX,
+                  headY: toY,
+                  headAngle: 0,
+                };
+          }
+          const fromX = end.source.right - origin.left + 6;
+          const toX = end.output.left - origin.left + 10;
           const bendX = Math.max(fromX, toX - BEND_WIDTH_PX);
           return {
-            name,
-            fromX,
-            fromY,
-            bendX,
-            toX,
-            toY,
+            name: end.name,
+            path: `M ${fromX} ${fromY} H ${bendX} C ${(bendX + toX) / 2} ${fromY}, ${(bendX + toX) / 2} ${toY}, ${toX} ${toY}`,
+            headX: toX,
+            headY: toY,
             headAngle: getHeadAngle(bendX, fromY, toX, toY),
           };
         }),
@@ -182,10 +214,7 @@ export const Connector = (props: ConnectorProps) => {
       fill="none"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={cn(
-        "pointer-events-none absolute inset-0 z-10 size-full overflow-hidden",
-        props.className,
-      )}
+      className="pointer-events-none absolute inset-0 z-10 size-full overflow-hidden"
     >
       {links.map((link) => (
         <g
@@ -196,13 +225,10 @@ export const Connector = (props: ConnectorProps) => {
             props.hoveredName !== undefined && props.hoveredName !== link.name && "opacity-15",
           )}
         >
-          <path
-            d={`M ${link.fromX} ${link.fromY} H ${link.bendX} C ${(link.bendX + link.toX) / 2} ${link.fromY}, ${(link.bendX + link.toX) / 2} ${link.toY}, ${link.toX} ${link.toY}`}
-            strokeWidth="1.5"
-          />
+          <path d={link.path} strokeWidth="1.5" />
           <path
             d={`M ${-HEAD_LENGTH_PX} -2.5 L 0 0 L ${-HEAD_LENGTH_PX} 2.5`}
-            transform={`translate(${link.toX} ${link.toY}) rotate(${link.headAngle})`}
+            transform={`translate(${link.headX} ${link.headY}) rotate(${link.headAngle})`}
             strokeWidth="1.25"
           />
         </g>
