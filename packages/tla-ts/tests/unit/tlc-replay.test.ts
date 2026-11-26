@@ -96,6 +96,51 @@ describe("the call stack of a replayed failure matches TLC", () => {
     });
   });
 
+  it("checks an initial state of a filtered set of records before it tests the next record, as TLC's SetPredValue streams them", async () => {
+    expect(
+      await getFailure(
+        "Init == x \\in {r \\in [a : 0..2] : 10 \\div (r.a - 2) # 99}\nNext == UNCHANGED x\nInv == 1 \\div x.a > 0",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual({ callStack: ["8.9-8.57", "10.8-10.21", "10.8-10.17"], exitCode: 75 });
+  });
+
+  it("evaluates the rest of an action for a record of a filtered set before it tests the next record, as TLC's SetPredValue streams them", async () => {
+    expect(
+      await getFailure(
+        "Init == x = [a |-> 1]\nNext == x' \\in {r \\in [a : 0..2] : 10 \\div (r.a - 2) # 99} /\\ 1 \\div x'.a > 0",
+      ),
+    ).toEqual({ callStack: ["9.9-9.77", "9.9-9.58", "9.63-9.77", "9.63-9.73"], exitCode: 255 });
+  });
+
+  it("ends the call stack at an initial state that fails to fingerprint, where TLC adds the frames of the filter's later tests", async () => {
+    expect(
+      await getFailure(
+        "Init == x \\in {r \\in [a : 0..2, b : BOOLEAN] : r.a = 0}\nNext == UNCHANGED x\nInv == x \\in SUBSET Nat",
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ),
+    ).toEqual({ callStack: ["8.9-8.55", "10.8-10.23", "10.14-10.23"], exitCode: 75 });
+  });
+
+  it.each([
+    ["[a : 0..2]", "10 \\div (r.a - 2) # 99", "x.a # 0", "[a |-> 0]"],
+    ["SUBSET (0..2)", "10 \\div (Cardinality(r) - 2) # 99", "x # {}", "{}"],
+  ])(
+    "checks an initial state of a filtered %s before it tests the next element under -coverage",
+    async (base, predicate, invariant, state) => {
+      const result = await check({
+        source: `---- MODULE M ----\n${HEADER}\nInit == x \\in {r \\in ${base} : ${predicate}}\nNext == UNCHANGED x\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: 1,
+        onPrint: () => {},
+      });
+      expect([
+        result.status,
+        result.violation?.trace.map((step) => formatValue(step.state.x)),
+      ]).toEqual(["invariant-violation", [state]]);
+    },
+  );
+
   it("checks an initial state inside the initial predicate", async () => {
     expect(
       await getFailure(
