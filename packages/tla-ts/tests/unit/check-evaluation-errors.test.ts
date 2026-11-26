@@ -156,6 +156,35 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  // Deviation from TLC: UnionValue#toString enumerates UNION {Nat} while TLC builds the message, and the enumeration's error replaces the argument error, with exit code 75.
+  it.each([
+    [
+      "Len(UNION {Nat})",
+      "The argument of Len should be a sequence, but instead it is:\nUNION({Nat})",
+    ],
+    [
+      "RandomSubset(1, UNION {Nat})",
+      "The second argument of RandomSubset should be a a finite set, but instead it is:\nUNION({Nat})",
+    ],
+    [
+      "RandomSetOfSubsets(1, 1, UNION {Nat})",
+      "The third argument of RandomSetOfSubsets should be a finite set, but instead it is:\nUNION({Nat})",
+    ],
+  ])(
+    "reports the argument error of %s in Next with its exit code, where TLC's UnionValue#toString fails to enumerate UNION {Nat}",
+    async (expression, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, Randomization\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(${expression})\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([result.failure?.message, result.failure?.exitCode, result.generatedStates]).toEqual([
+        message,
+        255,
+        1,
+      ]);
+    },
+  );
+
   it.each(["[a |-> Len(3), s |-> CASE 1 -> 2]", "[a : Len(3), s : CASE 1 -> 2]"])(
     "evaluates the fields of %s in the order they're written, like TLC",
     async (expression) => {
