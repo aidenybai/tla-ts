@@ -308,6 +308,19 @@ describe("check matches TLC 1.7.4", () => {
     expect(await getDistinctStates("1.7.4")).toBe(3);
   });
 
+  it("reads the level of the state a VIEW rebuilds the next step from, as TLC 1.7.4's Tool#getState does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ TLCGet(\"level\") = x + 1 /\\ x' = x + 1 /\\ y' = 1 - y\nInv == x < 3\nView == x\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      version: "1.7.4",
+    });
+    expect([result.status, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+      "invariant-violation",
+      [0, 1, 2, 3],
+    ]);
+  });
+
   it("evaluates TLCGet in a temporal property before it starts the model checker", async () => {
     const checkVersion = (version: TlcVersion) =>
       check({

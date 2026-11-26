@@ -109,6 +109,76 @@ describe("TLCExt matches TLC", () => {
     ]);
   });
 
+  it.each([
+    ["a VIEW", "Init == x = 0 /\\ y = 0", "y' = 1 - y", "View == x", "VIEW View"],
+    [
+      "a SYMMETRY",
+      "Init == x = 0 /\\ y \\in {{p} : p \\in P}",
+      "\\E p \\in P : y' = y \\cup {p}",
+      "Sym == Permutations(P)",
+      "SYMMETRY Sym",
+    ],
+  ])(
+    "rebuilds the trace through %s past steps whose action reads Trace, as TLC's ConcurrentTLCTrace does",
+    async (_reduction, init, step, reduction, config) => {
+      const getTrace = async (bound: number) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nCONSTANT P\nVARIABLES x, y\n${init}\nNext == x < ${bound} /\\ Len(Trace) = TLCGet("level") /\\ x' = x + 1 /\\ ${step}\nInv == x < ${bound}\n${reduction}\n====`,
+          config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${config}`,
+        });
+        return [result.status, result.violation?.trace.map((innerStep) => innerStep.state.x)];
+      };
+      expect([await getTrace(2), await getTrace(3)]).toEqual([
+        ["invariant-violation", [0, 1, 2]],
+        ["invariant-violation", [0, 1, 2, 3]],
+      ]);
+    },
+  );
+
+  it("goes on past a violation it rebuilds through a VIEW with the path of the state it expands, as TLC does under -continue", async () => {
+    const traces: unknown[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 4 /\\ Len(Trace) = TLCGet(\"level\") /\\ x' = x + 1 /\\ y' = 1 - y\nInv == x # 2 /\\ x # 3\nView == x\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      isContinued: true,
+      onProgress: (progress) => {
+        if (progress.kind === "violation") {
+          traces.push(progress.violation.trace.map((step) => step.state.x));
+        }
+      },
+    });
+    expect([result.status, traces, result.generatedStates, result.distinctStates]).toEqual([
+      "deadlock",
+      [
+        [0, 1, 2],
+        [0, 1, 2, 3],
+      ],
+      5,
+      5,
+    ]);
+  });
+
+  it("reads Trace of the next successor of a state as its path after it rebuilds a violation through a VIEW under -continue, as TLC does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' \\in {0, 1}\nInv == x # 2\nConstr == PrintT(<<x, y, Len(Trace)>>)\nView == <<x, y>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT Constr\nVIEW View",
+      isContinued: true,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      "<<0, 0, 1>>",
+      "<<1, 0, 2>>",
+      "<<1, 1, 2>>",
+      "<<2, 0, 3>>",
+      "<<2, 1, 3>>",
+      "<<2, 0, 3>>",
+      "<<2, 1, 3>>",
+    ]);
+  });
+
   // Deviation from TLC: it prints 773, 484, 773, 773, 773, 484, 484.
   it("draws after Trace as for the state the search expands, unlike TLC", async () => {
     expect(
@@ -226,6 +296,24 @@ describe("TLCExt matches TLC", () => {
       ["<<0, 1>>", "<<1, 2>>"],
     ]);
   });
+
+  // Deviation from TLC: it fails with "Index 32767 out of bounds for length 1".
+  it.each([
+    ["", "", ""],
+    [" through a VIEW", "\nView == x", "\nVIEW View"],
+  ])(
+    "rebuilds a liveness counterexample%s past steps whose action reads Trace, unlike TLC",
+    async (_reduction, view, config) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ Len(Trace) = TLCGet("level") /\\ x' = x + 1 /\\ y' = 1 - y\nSpec == Init /\\ [][Next]_<<x, y>>\nLive == <>(x > 2)${view}\n====`,
+        config: `SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE${config}`,
+      });
+      expect([result.status, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+        "liveness-violation",
+        [0, 1, 2],
+      ]);
+    },
+  );
 
   // Deviation from TLC: it reports 8:11-24, 8:11-20 and 8:15-19 in Constr and exits with 75.
   it("replays a failed step with a constraint that reads Trace, unlike TLC", async () => {
