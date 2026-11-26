@@ -1949,7 +1949,7 @@ export const createEnvironment = (
     unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
-      const levels = definitionLevels?.get(definition);
+      const levels = acceptedLevels && definitionLevels?.get(definition);
       if (levels) preparedLevels.set(key, levels);
       parameterized.set(key, !isParameterFree);
       // SANY's checks resolved every body of a module they accepted.
