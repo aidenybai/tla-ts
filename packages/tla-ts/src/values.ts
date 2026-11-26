@@ -1214,6 +1214,22 @@ const areSameEdges = (left: Int32Array, right: Int32Array, slot: number) => {
   return true;
 };
 
+const areSameIntegers = (left: Int32Array, right: Int32Array) => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
+const areSameReferences = (left: Value[], right: Value[]) => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
 const createSameValueCheck = (isClassSensitive: boolean) => {
   const areSameValues = (left: Value[], right: Value[]) => {
     if (left === right) return true;
@@ -1225,6 +1241,14 @@ const createSameValueCheck = (isClassSensitive: boolean) => {
   };
   // Records made from one source by the same numbers are the same.
   const areSamePages = (left: CanonicalPage, right: CanonicalPage) => {
+    if (
+      left.writtenSlots === undefined &&
+      right.writtenSlots === undefined &&
+      areSameIntegers(left.edges, right.edges) &&
+      areSameReferences(left.sources, right.sources)
+    ) {
+      return true;
+    }
     const isSameRealm = left.edges[0] === right.edges[0] && left.edges[1] === right.edges[1];
     for (let slot = 0; slot < left.domain.length; slot++) {
       const record = left.records[slot];
