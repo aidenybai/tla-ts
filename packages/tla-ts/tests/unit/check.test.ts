@@ -18558,6 +18558,25 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 
+  it.each([
+    ["Inv <- BadInv", "BadInv"],
+    ["Inv <- BadInv\n  Inv <- BadInv2", "BadInv2"],
+  ])(
+    "names the definition %j substitutes for an invariant that is not a state predicate",
+    async (substitution, name) => {
+      await expect(
+        checkBody(
+          "VARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x = 0\nBadInv == x' = x\nBadInv2 == x' # x",
+          `CONSTANT ${substitution}\nINVARIANT Inv\nINIT Init\nNEXT Next`,
+        ),
+      ).rejects.toThrow(
+        new TlaConfigError(
+          `The invariant ${name} is not a state predicate (one with no primes or temporal operators).\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.`,
+        ),
+      );
+    },
+  );
+
   it.each(["x'", "[](x = 0)"])(
     "rejects an instanced invariant whose substitute %s is not a state predicate",
     async (substitute) => {
