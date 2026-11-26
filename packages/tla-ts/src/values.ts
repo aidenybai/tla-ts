@@ -1185,6 +1185,7 @@ const toTlcRecord = (value: Value) => {
   if (!isFunctionValue(value)) return undefined;
   forgetOwnWrittenOrder(value);
   const functionValue = toFiniteFunction(value);
+  // Deviation from TLC: FcnLambdaValue#toRcd and FcnRcdValue#toRcd return null for a function on an interval, so RecordValue#equals fails on [i \in 1..0 |-> i] but not on the equal <<>>.
   if (!isRecordDomain(functionValue.domain)) return undefined;
   chargeConversionFromFunction(value);
   return functionValue;
@@ -4452,6 +4453,7 @@ const getFunctionSetMemberRange = (element: Value, set: FunctionSetValue) => {
 const getRecordSetMember = (element: Value, set: RecordSetValue) => {
   forgetOwnWrittenOrder(element);
   const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
+  // Deviation from TLC: FcnLambdaValue#toRcd and FcnRcdValue#toRcd return null for a function on an interval, so SetOfRcdsValue#member fails on [i \in 1..0 |-> i] but not on the equal <<>>.
   if (!functionValue || !isRecordDomain(functionValue.domain)) {
     if (isModelValue(element)) return isModelValueMember(element, set);
     throw createAttemptError(describeNonRecordMember, element, set);
