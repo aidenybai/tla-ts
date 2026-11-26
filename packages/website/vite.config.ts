@@ -6,9 +6,10 @@ import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
-import { parseModule } from "../tla-ts/src/parser";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
 import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/lib/compilation";
+import { getLineMarks } from "./src/lib/line-marks";
+import { getOutputRows } from "./src/lib/output-rows";
 import { getEscoreCompilation } from "./src/lib/escore";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
@@ -32,7 +33,6 @@ const PLAYGROUND_PATHS = [
   "./src/examples/*.ts",
   "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",
 ];
-const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
 const BENCHMARK_ROW =
   /^\| (?:\[(?<linked>[^\]]+)\]\([^)]*\)|(?<plain>[^|[]+?)) +\|[^|]*\| +(?<tlc>[\d.]+) s \| +(?<tlaTs>[\d.]+) s \| +(?<speedup>[\d.]+×) \|$/;
 
@@ -70,9 +70,6 @@ const getExample = (
   const typescript = readFileSync(path, "utf8").trim();
   const fileName = path.slice(path.lastIndexOf("/") + 1);
   const compiled = compileOnEscore(typescript, fileName);
-  const module = parseModule(compiled.tla);
-  // The names of the program's code that its TypeScript names too.
-  const words = new Set(typescript.match(/\w+/g));
   return {
     fileName,
     name: compiled.name,
@@ -80,32 +77,42 @@ const getExample = (
     modules: compiled.modules,
     typescript: highlight(typescript, "typescript"),
     tla: highlight(compiled.tla, "tlaplus"),
-    highlightNames: [...module.variables, ...module.definitions]
-      .map((declared) => declared.name)
-      .filter((name) => words.has(name) && !GENERATED_NAMES.has(name)),
+    sourceMarks: compiled.sourceMarks,
   };
 };
 
-// The shape of the TLA+ a file compiles to: its tokens, split by tabs, with their letters, digits,
-// and symbols masked. The playground draws it while its compiler loads, so the real text lands
-// where the outline was.
-const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) =>
-  highlight(
-    compileOnEscore(readFileSync(path, "utf8").trim(), path.slice(path.lastIndexOf("/") + 1)).tla,
-    "tlaplus",
-  )
-    .lines.map((tokens) =>
-      tokens
-        .map((token) =>
-          token.content
-            .replace(/[A-Za-z_]/g, "a")
-            .replace(/\d/g, "0")
-            .replace(/[^\sa0]/g, "."),
-        )
-        .join("\t"),
-    )
+const maskText = (text: string) =>
+  text
+    .replace(/[A-Za-z_]/g, "a")
+    .replace(/\d/g, "0")
+    .replace(/[^\sa0]/g, ".");
+
+// The shape of the rows that the playground shows of a file's TLA+, with their text masked: a
+// line as its number and tokens, split by tabs, a comment after an empty cell, and a fold's count
+// of lines after a plus. The playground draws it while its compiler loads.
+const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) => {
+  const compiled = compileOnEscore(
+    readFileSync(path, "utf8").trim(),
+    path.slice(path.lastIndexOf("/") + 1),
+  );
+  return getOutputRows({
+    lines: highlight(compiled.tla, "tlaplus").lines,
+    lineMarks: getLineMarks(compiled.tla.split("\n"), compiled.outputMarks),
+    source: compiled.source,
+    sourceMarks: compiled.sourceMarks,
+    openFolds: new Set(),
+    pinnedLines: new Set(),
+  })
     .slice(0, BUILT_OUTPUT_LINES)
+    .map((row) =>
+      row.kind === "line"
+        ? [row.number, ...row.tokens.map((token) => maskText(token.content))].join("\t")
+        : row.kind === "comment"
+          ? `\t${maskText(row.text)}`
+          : `+\t${row.lineCount}`,
+    )
     .join("\n");
+};
 
 const getBenchmarks = (): Benchmark[] => {
   const readme = readFileSync(README_URL, "utf8");

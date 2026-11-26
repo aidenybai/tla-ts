@@ -19,6 +19,7 @@ export const getEscoreCompilation = (
   const code = compiled.loadModule("ProgramCode") ?? "";
   return {
     name: compiled.name,
+    source,
     tla: code.trimEnd(),
     config: compiled.config,
     modules: { ProgramCode: code },

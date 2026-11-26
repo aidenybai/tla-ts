@@ -15,7 +15,7 @@ export interface CompiledExample {
   modules: Record<string, string>;
   typescript: Source;
   tla: Source;
-  highlightNames: string[];
+  sourceMarks: Mark[];
 }
 
 export interface Benchmark {

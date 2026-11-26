@@ -3,12 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { getHostIntl } from "../../src/typescript/spec/intl";
 
 // A program that formats with a NumberFormat of a locale it computes, which may be any of the tags
-// it writes.
-const getTable = (count: number) => {
+// it writes, each the prefix and four letters: a language V8 has none of, or a variant of English.
+const getTable = (count: number, prefix = "l") => {
   const tags = Array.from(
     { length: count },
     (_, index) =>
-      `"l${[0, 1, 2, 3].map((digit) => String.fromCharCode(97 + (Math.floor(index / 26 ** digit) % 26))).join("")}"`,
+      `"${prefix}${[0, 1, 2, 3].map((digit) => String.fromCharCode(97 + (Math.floor(index / 26 ** digit) % 26))).join("")}"`,
   );
   const source = `const tags = [${tags.join(", ")}];\nnew Intl.NumberFormat(tags[0]).format(1);\n`;
   const sourceFile = ts.createSourceFile("spec.ts", source, ts.ScriptTarget.Latest, true);
@@ -25,8 +25,14 @@ describe("records an Intl object's answers while HostIntl's table has room for t
   });
 
   it("records none past the bound, where the objects' options alone fill the table", () => {
-    const table = getTable(5000);
+    const table = getTable(5000, "en-l");
     expect(table).toContain('"resolvedOptions"');
     expect(table).not.toContain('"formatToParts"');
+  });
+
+  it("records the answers once for the locales V8 resolves to its default, as it resolves none", () => {
+    const table = getTable(5000);
+    expect(table).toContain("IntlDefaultLocales");
+    expect(table).toContain('"formatToParts"');
   });
 });

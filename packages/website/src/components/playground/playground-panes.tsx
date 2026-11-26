@@ -4,10 +4,11 @@ import { cn } from "cn";
 import { getLineHoveredName } from "@/lib/line-marks";
 import { usePlaygroundView } from "@/lib/playground-view";
 import { getStateNames } from "@/lib/search";
+import type { Mark } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
-import { CodeLine } from "@/components/code-line";
+import { CodeComment, CodeFold, CodeLine } from "@/components/code-line";
 import { Connector } from "@/components/connector";
 import { usePlayground } from "./playground-context";
 import { Resizable } from "@/components/ui/resizable";
@@ -15,6 +16,7 @@ import { Resizable } from "@/components/ui/resizable";
 // The height of a line of code that fits its pane, and of the pane before it is measured.
 const LINE_HEIGHT_PX = 22;
 const BUILT_PANE_HEIGHT_PX = 900;
+const NO_MARKS: Mark[] = [];
 
 interface PaneProps {
   name: string;
@@ -76,17 +78,21 @@ export const PlaygroundOutput = () => {
   );
   // ESCore's code of a program runs to a thousand lines, so the pane holds only the lines in view.
   const virtualizer = useVirtualizer({
-    count: playground.outputLines.length,
+    count: playground.outputRows.length,
     getScrollElement: () => paneRef.current,
     estimateSize: () => LINE_HEIGHT_PX,
     overscan: 20,
     initialRect: { width: 0, height: BUILT_PANE_HEIGHT_PX },
   });
   const rows = virtualizer.getVirtualItems();
+  const outputRows = playground.outputRows;
   useEffect(() => {
     const failingLine = search?.states.find((found) => found.isFailing)?.line;
-    if (failingLine !== undefined) virtualizer.scrollToIndex(failingLine - 1, { align: "center" });
-  }, [search, virtualizer]);
+    const failingRow = outputRows.findIndex(
+      (row) => row.kind === "line" && row.number === failingLine,
+    );
+    if (failingRow !== -1) virtualizer.scrollToIndex(failingRow, { align: "center" });
+  }, [search, outputRows, virtualizer]);
   return (
     <Pane name="output" ref={paneRef}>
       {playground.isSkeleton && (
@@ -126,32 +132,56 @@ export const PlaygroundOutput = () => {
           playground.isOutputStale && "opacity-50 delay-200",
         )}
       >
-        {rows
-          .map((row) => ({ row, number: row.index + 1, tokens: playground.outputLines[row.index] }))
-          .map((line) => (
+        {rows.map((row) => {
+          const output = outputRows[row.index];
+          const marks =
+            output.kind === "line"
+              ? (playground.outputLineMarks.at(output.number - 1) ?? NO_MARKS)
+              : NO_MARKS;
+          return (
             <span
-              key={line.row.key}
+              key={row.key}
               ref={virtualizer.measureElement}
-              data-index={line.row.index}
+              data-index={row.index}
               className="block"
             >
-              <CodeLine
-                number={line.number}
-                tokens={line.tokens}
-                marks={playground.outputLineMarks[line.number - 1]}
-                hoveredName={getLineHoveredName(
-                  playground.outputLineMarks[line.number - 1],
-                  hoveredName,
-                )}
-                isHighlighted={isArrowsShown}
-                colors={playground.colors}
-                note={playground.result?.notes.find((note) => note.line === line.number)}
-                isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
-                isDimmed={steps.length > 0 && steps.every((step) => step.line !== line.number)}
-                className="-mr-4 -ml-4 pr-4 pl-4"
-              />
+              {output.kind === "line" && (
+                <CodeLine
+                  number={output.number}
+                  tokens={output.tokens}
+                  marks={marks}
+                  hoveredName={getLineHoveredName(marks, hoveredName)}
+                  isHighlighted={isArrowsShown}
+                  colors={playground.colors}
+                  note={playground.result?.notes.find((note) => note.line === output.number)}
+                  isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === output.number}
+                  isDimmed={steps.length > 0 && steps.every((step) => step.line !== output.number)}
+                  className="-mr-4 -ml-4 pr-4 pl-4"
+                />
+              )}
+              {output.kind === "comment" && (
+                <CodeComment
+                  text={output.text}
+                  hasGutter
+                  className={cn(
+                    row.index > 0 && outputRows[row.index - 1].kind !== "comment" && "pt-[0.85em]",
+                    !playground.isSkeleton && "text-faint",
+                  )}
+                />
+              )}
+              {output.kind === "fold" && (
+                <CodeFold
+                  lineCount={output.lineCount}
+                  isOpen={output.isOpen}
+                  hasGutter
+                  isDisabled={playground.isSkeleton}
+                  onToggle={() => playground.toggleFold(output.name)}
+                  className={cn(!playground.isSkeleton && "text-faint")}
+                />
+              )}
             </span>
-          ))}
+          );
+        })}
       </code>
     </Pane>
   );
