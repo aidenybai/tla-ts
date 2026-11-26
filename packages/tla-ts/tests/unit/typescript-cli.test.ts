@@ -2153,16 +2153,21 @@ describe("the CLI with TypeScript files", () => {
       expect(result.status).toBe(1);
     });
 
-    it("stops at a program whose TLA+ code passes the bound", () => {
-      const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "values.mjs"), getScript(230_000, 230_000));
-      expect(runNode(directory, "values.mjs").status).toBe(0);
-      const result = runCli(directory, ["values.mjs"]);
-      expect([0, 1]).not.toContain(result.status);
-      expect(result.stderr).toContain(
-        "tla-ts can't check a program whose TLA+ spec has more than 55000000 characters",
-      );
-    });
+    it(
+      "stops at a program whose TLA+ code passes the bound",
+      () => {
+        const directory = copyFixtures("passing");
+        writeFileSync(join(directory, "values.mjs"), getScript(230_000, 230_000));
+        expect(runNode(directory, "values.mjs").status).toBe(0);
+        const result = runCli(directory, ["values.mjs"]);
+        expect([0, 1]).not.toContain(result.status);
+        expect(result.stderr).toContain(
+          "tla-ts can't check a program whose TLA+ spec has more than 55000000 characters",
+        );
+      },
+      // The check reaches the bound after about 25 s of CPU, which the default 30 s misses under load.
+      120_000,
+    );
   });
 
   // A module reads Node's performance, as React's server builds do, whose now gives the time,
