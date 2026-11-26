@@ -963,14 +963,22 @@ export const createModelValue = (name: string): ModelValue => {
 
 export const getModelValues = () => [...modelValues.values()];
 
-export const createSortedSet = (elements: Value[]): SetValue => ({
-  kind: "Set",
-  elements,
-  writtenElements: undefined,
-  hash: 0,
-  fingerprint: 0,
-  flags: 0,
-});
+// A class, not an object literal: V8 pretenures a literal's allocation site once startup's values
+// outlive scavenges, which would put each value a search makes and drops straight into old space.
+class SortedSet implements SetValue {
+  readonly kind = "Set";
+  elements: Value[];
+  writtenElements: Value[] | undefined = undefined;
+  hash = 0;
+  fingerprint = 0;
+  flags = 0;
+
+  constructor(elements: Value[]) {
+    this.elements = elements;
+  }
+}
+
+export const createSortedSet = (elements: Value[]): SetValue => new SortedSet(elements);
 
 export const createNormalizedSet = (elements: Value[]): SetValue => {
   const set = createSortedSet(elements);
@@ -978,16 +986,25 @@ export const createNormalizedSet = (elements: Value[]): SetValue => {
   return set;
 };
 
-export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue => ({
-  kind: "Function",
-  domain,
-  range,
-  hash: 0,
-  fingerprint: 0,
-  writtenKeys: undefined,
-  functionClass: undefined,
-  flags: 0,
-});
+// A class for the reason SortedSet is one.
+class SortedFunction implements FunctionValue {
+  readonly kind = "Function";
+  domain: Value[];
+  range: Value[];
+  hash = 0;
+  fingerprint = 0;
+  writtenKeys: Value[] | undefined = undefined;
+  functionClass: FunctionValue["functionClass"] = undefined;
+  flags = 0;
+
+  constructor(domain: Value[], range: Value[]) {
+    this.domain = domain;
+    this.range = range;
+  }
+}
+
+export const createSortedFunction = (domain: Value[], range: Value[]): FunctionValue =>
+  new SortedFunction(domain, range);
 
 export type FunctionClass = "lambda" | "tuple" | "record";
 
