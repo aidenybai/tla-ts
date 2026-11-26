@@ -59,6 +59,7 @@ import {
   isEnumerable,
   isSameValue,
   isScalarValue,
+  isSetValue,
   toFiniteFunction,
   toFiniteSet,
   type FunctionValue,
@@ -830,10 +831,12 @@ const isMask = (type: Type, plains: Plains) => {
 const getElements = (value: Value) =>
   isEnumerable(value) ? toFiniteSet(value).elements : unsupported();
 
-// Sizes a set of subsets, functions, records or tuples from its parts, before enumerating it.
+// Sizes an interval from its bounds, and a set of subsets, functions, records or tuples from its parts, before enumerating it.
 const getSize = (value: Value): number => {
   if (typeof value !== "object") return unsupported();
   switch (value.kind) {
+    case "Interval":
+      return Math.max(0, value.high - value.low + 1);
     case "Subset":
       return 2 ** getSize(value.base);
     case "FunctionSet":
@@ -846,6 +849,9 @@ const getSize = (value: Value): number => {
       return getElements(value).length;
   }
 };
+
+const getConstantElements = (value: Value) =>
+  getSize(value) > MAXIMUM_CONSTANT_SET ? unsupported() : getElements(value);
 
 const getEmptyRecordCode = (program: Program, record: RecType) =>
   record.shapes.length === 1 ? "H.EMPTY" : addConstant(program, [getShapeIndex(record, [])]);
@@ -1155,6 +1161,7 @@ const hasStreamedDuplicates = (value: Value) =>
   getStreamedElements(value).length !== getElements(value).length;
 
 const compileConstant = (program: Program, value: Value): Compiled => {
+  if (isSetValue(value) && getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
   const type = getValueType(value, program.plains);
   if (type.kind === "Str" && typeof value === "object") {
     type.isStandIn = true;
@@ -2220,7 +2227,7 @@ const compileMembership = (
   }
   if (setExpression.kind === "FunctionSet") {
     const range: Type = createVar();
-    const domain = getElements(evaluateConstant(program, setExpression.domain));
+    const domain = getConstantElements(evaluateConstant(program, setExpression.domain));
     if (domain.length === 0) return unsupported();
     unify(element.type, createFnType(domain, range, program.plains));
     const name = getName(program, "e");
@@ -2510,8 +2517,7 @@ const compileMembership = (
         },
       };
     }
-    if (getSize(value) > MAXIMUM_CONSTANT_SET) return unsupported();
-    const elements = getElements(value);
+    const elements = getConstantElements(value);
     if (elements.length === 0) return { type: createBool(), emit: () => "false" };
     elements.forEach((inner) => unify(element.type, getValueType(inner, program.plains)));
     const bounds = getIntervalBounds(elements);
@@ -3843,7 +3849,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
           ? compileSequenceConstruction(program, pattern.name, bound.set, expression.body, frame)
           : unsupported();
       }
-      const domain = getElements(evaluateConstant(program, bound.set));
+      const domain = getConstantElements(evaluateConstant(program, bound.set));
       if (domain.length === 0) return unsupported();
       const name = getName(program, "f");
       const range: Type = createVar();
