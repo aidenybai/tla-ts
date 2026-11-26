@@ -916,7 +916,7 @@ export const createEnvironment = (
         );
       },
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (source, name, isExported, create, reservedKey) => {
+      addDefinition: (source, name, isExported, getCopy, create, reservedKey) => {
         const key = reservedKey ?? createName(`${name}@${module.name}`);
         const created = create(key);
         const definition =
@@ -932,7 +932,12 @@ export const createEnvironment = (
           instanceNames.set(key, `${instance.name}!${instanceNames.get(source) ?? name}`);
         }
         parameterized.set(key, !isParameterFree);
-        copySources.set(key, { source, prefix: instance.params.length });
+        copySources.set(key, {
+          source,
+          prefix: instance.params.length,
+          getCopy,
+          letCopies: undefined,
+        });
         if (isExported) exportedCopies.add(key);
         return key;
       },
@@ -1294,7 +1299,7 @@ export const createEnvironment = (
         substitutionDefinitions.find((definition) => definition.name === key),
       isSubstitutedConstant: () => false,
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (source, name, isExported, create) => {
+      addDefinition: (source, name, isExported, getCopy, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
         const override = getOverride(source, instance.params.length);
@@ -1312,7 +1317,12 @@ export const createEnvironment = (
             : createLocalFunction(definition, key);
         const isTheorem = theorems.has(source);
         copies.push(isTheorem ? { ...copy, theoremRange: getInstanceRange(instance) } : copy);
-        copySources.set(key, { source, prefix: instance.params.length });
+        copySources.set(key, {
+          source,
+          prefix: instance.params.length,
+          getCopy,
+          letCopies: copies,
+        });
         if (isExported) exportedCopies.add(key);
         if (isTheorem) theorems.set(key, getInstanceRange(instance));
         const instanceCopy = createInstanceCopy(source, instance.module, substitutes);

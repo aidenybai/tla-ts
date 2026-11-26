@@ -462,6 +462,7 @@ interface Instantiation {
     source: string,
     name: string,
     isExported: boolean,
+    getCopy: (key: string) => string | undefined,
     create: (key: string) => Definition,
     reservedKey?: string,
   ) => string;
@@ -717,15 +718,17 @@ export const createLocalAlias = (
   params: OperatorParam[],
   forwarded: OperatorParam[],
   location: SourceLocation,
+  resolution?: typeof LOCAL_RESOLUTION,
 ): OperatorDefinition => {
   const body: Expression =
     forwarded.length === 0
-      ? { kind: "Identifier", name: key, location }
+      ? { kind: "Identifier", name: key, location, resolution }
       : {
           kind: "Apply",
           operator: key,
           args: createLocalArguments(forwarded, location),
           location,
+          resolution,
         };
   untracedExpressions.add(body);
   return { kind: "Operator", name, params, body, isLocal: true, isRecursive: false, location };
@@ -1048,7 +1051,8 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
   const instantiation = rewrite.instantiation;
   const definition = instantiation.getDefinition(key);
   if (!definition) return key;
-  return instantiation.addDefinition(key, definition.name, false, (copyKey) => {
+  const getRewriteCopy = (target: string) => getCopy(rewrite, target);
+  return instantiation.addDefinition(key, definition.name, false, getRewriteCopy, (copyKey) => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const unboundRewrite = getMode(rewrite, rewrite.mode);
@@ -1107,6 +1111,23 @@ const getDefinitionFreeNames = (definition: Definition) =>
       ]
     : getFreeNames(definition.body, new Set(definition.params.map((param) => param.name)));
 
+export const sortByDependencies = (definitions: Definition[]) => {
+  const named = new Map(definitions.map((definition) => [definition.name, definition]));
+  const sorted: Definition[] = [];
+  const visited = new Set<Definition>();
+  const visit = (definition: Definition) => {
+    if (visited.has(definition)) return;
+    visited.add(definition);
+    getDefinitionFreeNames(definition).forEach((name) => {
+      const dependency = named.get(name);
+      if (dependency) visit(dependency);
+    });
+    sorted.push(definition);
+  };
+  definitions.forEach(visit);
+  return sorted;
+};
+
 export const createInstantiation = (instantiation: Instantiation) => {
   const modes = new Map<RewriteMode, Rewrite>();
   const substitutedNames = new Set(
@@ -1152,6 +1173,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
+  const getNormalCopy = (target: string) => getCopy(rewrite, target);
   const getEntry = (key: string, copy: string, reservedKey: string | undefined) => {
     const frame = instantiation.frame;
     const definition = instantiation.getDefinition(copy);
@@ -1160,6 +1182,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       key,
       definition.name,
       true,
+      getNormalCopy,
       () => {
         const operator = getOperatorDefinition(definition);
         return {
@@ -1184,6 +1207,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
         key,
         definition.name,
         true,
+        getNormalCopy,
         () => withInstanceParams(definition, instantiation.params),
         reservedKey,
       );
