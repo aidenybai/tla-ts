@@ -367,7 +367,7 @@ describe("compile a program on a browser's worker, which has no files", () => {
     expect((await getBrowserOutcome(source, "counter.ts", true)).error).toEqual({
       name: "TlaTypeScriptError",
       isTlaError: true,
-      message: "counter.js:1:1 tla-ts can't load the module ./limit.ts",
+      message: "counter.ts:1:1 tla-ts can't load the module ./limit.ts",
     });
   });
 
@@ -406,7 +406,7 @@ describe("compile a program on a browser's worker, which has no files", () => {
     ).toEqual({
       name: "TlaTypeScriptError",
       isTlaError: true,
-      message: "view.js:1:1 tla-ts can't load the module react/jsx-runtime",
+      message: "view.tsx:1:1 tla-ts can't load the module react/jsx-runtime",
     });
   });
 });

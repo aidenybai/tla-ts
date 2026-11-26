@@ -1326,7 +1326,7 @@ describe("the CLI with TypeScript files", () => {
     writeFileSync(join(directory, "evaluated.ts"), 'const total = eval("1 + 1");\n');
     const result = runCli(directory, ["evaluated.ts", "overdraft.ts"]);
     expect(result.stdout).toContain("Checking evaluated.ts\n");
-    expect(result.stderr).toContain("TlaTypeScriptError: evaluated.js:1:15 tla-ts can't run eval");
+    expect(result.stderr).toContain("TlaTypeScriptError: evaluated.ts:1:15 tla-ts can't run eval");
     expect(result.stdout).toContain("Error: Invariant noOverdraft is violated.");
     expect(result.status).not.toBe(0);
   });
@@ -1385,6 +1385,40 @@ describe("the CLI with TypeScript files", () => {
       expect(getExit(runCli(directory, [`caught.${extension}`]))).toEqual([0, ""]);
     },
   );
+
+  // tla-ts parses a TypeScript file's code as JavaScript, and names the file by its own name where
+  // it stops in the code: the entry as it's given, as Node names it, and an import by its path.
+  it("names an entry of TypeScript by its own name where its code has a syntax error", () => {
+    const directory = copyFixtures("passing");
+    const getCode = (statement: string) => `const total: number = 1;\n${statement} = total;\n`;
+    writeFileSync(join(directory, "a.cts"), getCode("export const value"));
+    expect(runNode(directory, "a.cts").stderr).toContain(
+      `${join(realpathSync(directory), "a.cts")}:2\n`,
+    );
+    expect(getExit(runCli(directory, ["a.cts"]))).toEqual([
+      255,
+      "TlaTypeScriptError: a.cts:2:1 SyntaxError: Unexpected token 'export'\n",
+    ]);
+    writeFileSync(join(directory, "a.cts"), getCode("exports.value"));
+    expect(runNode(directory, "a.cts").status).toBe(0);
+    expect(getExit(runCli(directory, ["a.cts"]))).toEqual([0, ""]);
+  });
+
+  it("names an import of TypeScript by its own path where it stops in its code", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "a.ts"),
+      'import { total } from "./dep.mts";\nif (total !== 2) throw new Error("total");\n',
+    );
+    writeFileSync(
+      join(directory, "dep.mts"),
+      'const code: string = "1 + 1";\nexport const total = eval(code);\n',
+    );
+    expect(runNode(directory, "a.ts").status).toBe(0);
+    expect(runCli(directory, ["a.ts"]).stderr).toBe(
+      `TlaTypeScriptError: ${join(realpathSync(directory), "dep.mts")}:2:22 tla-ts can't run eval\n`,
+    );
+  });
 
   // Node's type stripping rejects syntax that it can't strip, which it runs in JavaScript.
   it.each([

@@ -441,9 +441,18 @@ const transpile = (source: string, fileName: string, isModule: boolean, wrapper 
   };
 };
 
-// A file of Node's wrapper, whose name wrapped records.
-const wrap = (sourceFile: ts.SourceFile, wrapped: Set<string>) => {
-  wrapped.add(sourceFile.fileName);
+// The files that tla-ts parses, by the names it parses them under, which name a TypeScript file's
+// code as JavaScript's: each one's path, and the names of those whose code Node's wrapper holds.
+interface ParsedNames {
+  paths: Map<string, string>;
+  wrapped: Set<string>;
+}
+
+// A parsed file of the file at path, whose name names records, as one that Node wraps where
+// isWrapped.
+const record = (sourceFile: ts.SourceFile, path: string, names: ParsedNames, isWrapped = false) => {
+  names.paths.set(sourceFile.fileName, path);
+  if (isWrapped) names.wrapped.add(sourceFile.fileName);
   return sourceFile;
 };
 
@@ -594,13 +603,12 @@ const isConditional = (node: ts.Node) =>
 const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
 
 // Runs compile, whose stops name where they are in the code that tla-ts parses, as the file's own
-// code places them: the entry by the name the compile gives it, and a file that Node wraps, as
-// CommonJS, at its own columns, which the wrapper, of the parsed names in wrapped, moves on its
-// first line.
-const atSourceLocations = <T>(fileName: string, compile: (wrapped: Set<string>) => T): T => {
-  const wrapped = new Set<string>();
+// code places them: in the file by its own name, the entry by the name the compile gives it, and a
+// file that Node wraps, as CommonJS, at its own columns, which the wrapper moves on its first line.
+const atSourceLocations = <T>(fileName: string, compile: (names: ParsedNames) => T): T => {
+  const names: ParsedNames = { paths: new Map(), wrapped: new Set() };
   try {
-    return compile(wrapped);
+    return compile(names);
   } catch (error) {
     // Node's stripping of a file's types reads the file's own code, which its error points into.
     const found =
@@ -608,13 +616,13 @@ const atSourceLocations = <T>(fileName: string, compile: (wrapped: Set<string>) 
         ? /^(.+?):(\d+):(\d+) ([^]*)$/.exec(error.message)
         : null;
     if (found === null) throw error;
-    const entry = fileName.replace(/\.[cm]?tsx?$/, ".js");
-    const isEntry = ts.sys?.fileExists(fileName) === true && found[1] === resolve(entry);
+    const path = names.paths.get(found[1]) ?? found[1];
+    const isEntry = ts.sys?.fileExists(fileName) === true && path === resolve(fileName);
     const column =
-      Number(found[2]) === 1 && wrapped.has(found[1])
+      Number(found[2]) === 1 && names.wrapped.has(found[1])
         ? Number(found[3]) - WRAPPER[0].length
         : Number(found[3]);
-    throw new TlaTypeScriptError(`${isEntry ? entry : found[1]}:${found[2]}:${column} ${found[4]}`);
+    throw new TlaTypeScriptError(`${isEntry ? fileName : path}:${found[2]}:${column} ${found[4]}`);
   }
 };
 
@@ -676,8 +684,7 @@ const loadFiles = (
   fileName: string,
   isModule: boolean,
   host: Pick<EscoreSteps, "isTest262Host" | "candidates">,
-  // The names of the parsed files that Node's wrapper holds the code of.
-  wrapped: Set<string>,
+  names: ParsedNames,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
@@ -685,10 +692,10 @@ const loadFiles = (
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
-    const sourceFile = parse(
-      transpile(getJsxText(fileName, source), fileName, false).code,
+    const sourceFile = record(
+      parse(transpile(getJsxText(fileName, source), fileName, false).code, fileName, false),
       fileName,
-      false,
+      names,
     );
     // Node runs nothing of a script that it fails to parse.
     rejectEarlyErrors(sourceFile);
@@ -805,10 +812,12 @@ const loadFiles = (
         : transpiled.sourceFile,
       kind,
     );
-    const sourceFile =
-      kind === "commonjs"
-        ? wrap(parse(transpiled.code, path, false), wrapped)
-        : parse(transpiled.code, path, isModule);
+    const sourceFile = record(
+      parse(transpiled.code, path, isModule),
+      path,
+      names,
+      kind === "commonjs",
+    );
     return { path, text, kind, written, sourceFile };
   };
   // A prepared file's requests, which number the files it loads, and the file itself.
@@ -1061,8 +1070,8 @@ export const compileToEscore = (
 ): EscoreSpec => {
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
-  const { files, program } = atSourceLocations(fileName, (wrapped) => {
-    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, wrapped);
+  const { files, program } = atSourceLocations(fileName, (names) => {
+    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, names);
     return {
       files: loaded,
       program: specialize(loaded, new Set([...runtime.internalKeys, ...model.entries])),
