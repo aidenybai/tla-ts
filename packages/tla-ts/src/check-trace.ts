@@ -165,6 +165,15 @@ export const createTraceBuilder = (context: TraceContext) => {
       if (isEvalException(error) && hasLazyPart(value)) throw error;
       return isEqualOnRebuild(value, successor[position]);
     });
+  const runWhileExpanding = <Result>(index: number, run: () => Result) => {
+    const expanding = { ...current };
+    Object.assign(current, { index, isExpanding: true, candidate: undefined });
+    try {
+      return run();
+    } finally {
+      Object.assign(current, expanding);
+    }
+  };
   // Deviation from TLC: Tool#getState bounds a step's successors by -maxSetSize, so TLC can't print a trace past a state with more.
   const findStepAction = (
     index: number,
@@ -173,22 +182,18 @@ export const createTraceBuilder = (context: TraceContext) => {
     isHeld: boolean,
     isDrawnOn = false,
   ) => {
-    const expanding = { ...current };
-    Object.assign(current, { index, isExpanding: true, candidate: undefined });
     const isMatch = (successor: Successor) =>
       isHeld
         ? isEqualState(key, successor.state)
         : isSameState(getFingerprintState(successor.state), key);
-    try {
+    return runWhileExpanding(index, () => {
       current.rebuilt = { state: previous, level: depths[index] };
       const drawn = isDrawnOn ? context.findSuccessorAction(previous, isMatch) : undefined;
       if (drawn) return drawn;
       // Deviation from TLC: when TLCTrace#printTrace and Worker#doPostCondition draw on and miss the step, printTrace leaks a NullPointerException and doPostCondition skips the postcondition.
       rebuildFrom(previous, depths[index]);
       return context.findSuccessorAction(previous, isMatch);
-    } finally {
-      Object.assign(current, expanding);
-    }
+    });
   };
   const toTrace = (
     steps: Successor[],
@@ -387,16 +392,11 @@ export const createTraceBuilder = (context: TraceContext) => {
       }
       return undefined;
     }).result;
-  const findSuccessorWithFingerprint = (state: Value[], source: number, target: number) => {
-    const expanding = { ...current };
-    Object.assign(current, { index: source, isExpanding: true, candidate: undefined });
-    try {
+  const findSuccessorWithFingerprint = (state: Value[], source: number, target: number) =>
+    runWhileExpanding(source, () => {
       rebuildFrom(state, depths[source]);
       return findTraceSuccessor(state, (candidate) => hasFingerprint(candidate.state, target));
-    } finally {
-      Object.assign(current, expanding);
-    }
-  };
+    });
   const getPathStates = (path: number[], nextFailure: string) => {
     const registers = new Map(runtime.registers);
     const namedRegisters = new Map(runtime.namedRegisters);
