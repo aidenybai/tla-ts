@@ -341,18 +341,13 @@ export const reportStartup = (
     onProgress?.({ kind: "java-override", ...override }),
   );
   evaluateStartupDefinitions(specification.startupModules, environment);
-  config.invariants.forEach((name) => {
-    if (!getConfigPredicate("invariant", name, environment)) {
-      onProgress?.({ kind: "constant-level-invariant", name });
-    }
-  });
-};
-
-const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createSanyAnalyzer(environment);
-  return names.flatMap((name) => {
+  config.invariants.forEach((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
-    if (!definition) return [];
+    if (!definition) {
+      onProgress?.({ kind: "constant-level-invariant", name });
+      return;
+    }
     const levels = analyzer.analyzeDefinition(definition, new Map());
     if (levels.level >= ACTION_LEVEL) {
       const note =
@@ -366,7 +361,6 @@ const getInvariants = (names: string[], environment: Environment) => {
         EXIT_STATUS.safetyEvaluationFailure,
       );
     }
-    return [createNamedIdentifier(name, environment)];
   });
 };
 
@@ -1305,7 +1299,7 @@ export const createSearch = (
         if (operator.key === undefined) throw createMissingOperatorError(operator);
         return { name: operator.operator, key: operator.key };
       });
-  const configInvariants = getInvariants(config.invariants, environment);
+  const configInvariants = getNamedExpressions("invariant", config.invariants, environment);
   const spec = getSpecification(config, environment, getVariableOrder, onProgress);
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
@@ -1445,16 +1439,16 @@ export const createSearch = (
       ? undefined
       : getOperatorDefinition(getConfigOperator("periodic", config.periodic, environment)).body;
   const possible = getPossiblePredicates(config.possible, environment);
-  const symmetryGroup =
-    config.symmetry === undefined
-      ? undefined
-      : getSymmetryGroup(config.symmetry, environment, config.substitutions);
   const viewDefinition =
     config.view === undefined
       ? undefined
       : getConfigDefinition("view function", config.view, environment);
   const viewName = config.view ?? getModuleOperators("view")[0]?.name;
   const view = viewName === undefined ? undefined : createNamedIdentifier(viewName, environment);
+  const symmetryGroup =
+    config.symmetry === undefined
+      ? undefined
+      : getSymmetryGroup(config.symmetry, environment, config.substitutions);
   const isActionPossible = (item: NamedExpression) =>
     getSanyLevel(item.expression, undefined, environment) >= ACTION_LEVEL;
   const statePossible = possible.filter((item) => !isActionPossible(item));
