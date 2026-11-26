@@ -41,8 +41,11 @@ const isFunction = (value: Value | undefined): value is FunctionValue =>
 // A record's field, or undefined where the value isn't a record that has it.
 const getField = (value: Value | undefined, field: string) => {
   if (!isFunction(value)) return undefined;
-  const index = value.domain.indexOf(field);
-  return index === -1 ? undefined : value.range[index];
+  const domain = value.domain;
+  for (let index = 0; index < domain.length; index++) {
+    if (domain[index] === field) return value.range[index];
+  }
+  return undefined;
 };
 
 const getType = (value: Value | undefined) => {

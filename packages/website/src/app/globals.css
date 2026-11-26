@@ -12,6 +12,27 @@
     local("DejaVu Sans Mono");
   size-adjust: 99.69%;
 }
+/* Arial with the width of Allo's letters and the height of its lines, so that text keeps its rows
+   and its baseline when Allo loads. Arial's bold stands in from the medium weight up, with
+   its own width. */
+@font-face {
+  font-family: "Allo Fallback";
+  src: local("Arial");
+  font-weight: 100 499;
+  size-adjust: 104.3%;
+  ascent-override: 93%;
+  descent-override: 23.01%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Allo Fallback";
+  src: local("Arial");
+  font-weight: 500 900;
+  size-adjust: 102.3%;
+  ascent-override: 94.82%;
+  descent-override: 23.46%;
+  line-gap-override: 0%;
+}
 @font-face {
   font-family: "Geist Mono Fallback Consolas";
   src: local("Consolas");
@@ -84,7 +105,8 @@
 }
 
 @theme inline {
-  --font-sans: "Allo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans:
+    "Allo", "Allo Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-hand: "Caveat", cursive;
   --font-mono:
     "Geist Mono Variable", "Geist Mono Fallback", "Geist Mono Fallback Consolas", ui-monospace,
@@ -366,7 +388,7 @@
   [data-skeleton] [data-token] {
     background: linear-gradient(var(--border), var(--border)) center / 100% 0.85em no-repeat;
   }
-  [data-shared] :is([data-pane] > *, [data-file-name]) {
+  [data-shared] [data-pane] > * {
     visibility: hidden;
   }
   code {
