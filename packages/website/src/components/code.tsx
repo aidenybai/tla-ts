@@ -180,7 +180,9 @@ const CodeContent = (props: ContentProps) => {
       <code
         ref={contentRef}
         data-hovering-name={hoveredName === undefined ? undefined : ""}
-        onPointerOver={(event) => {
+        // Code that grows under a pointer at rest is not hovered until the pointer moves.
+        onPointerMove={(event) => {
+          if (event.movementX === 0 && event.movementY === 0) return;
           if (!(event.target instanceof HTMLElement)) return setHoveredName(undefined);
           const line = Number(event.target.closest<HTMLElement>("[data-line]")?.dataset.line);
           setHoveredName(event.target.dataset.region ?? code.lineMarks?.at(line - 1)?.at(0)?.name);

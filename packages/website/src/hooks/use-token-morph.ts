@@ -5,7 +5,9 @@ const RESIZE_DURATION_MS = 300;
 const RESIZE_EASING = "cubic-bezier(0.25, 1, 0.5, 1)";
 const HIGHLIGHT_DURATION_MS = 1400;
 const FADE_DURATION_MS = 300;
-const ENTER_DELAY_MS = 150;
+// The old code leaves before the new code enters, so the two are never on screen together.
+const LEAVE_DURATION_MS = 150;
+const ENTER_DELAY_MS = 300;
 const EASING = "cubic-bezier(0.645, 0.045, 0.355, 1)";
 
 interface TokenSnapshot {
@@ -87,7 +89,7 @@ const getMatches = (before: string[], after: string[]) => {
   return matches;
 };
 
-const highlight = (element: HTMLElement, color: string) => {
+const highlight = (element: HTMLElement, color: string, delay: number) => {
   const tint = `color-mix(in srgb, ${color} 24%, transparent)`;
   const shown = { backgroundColor: tint, boxShadow: `2px 0 0 ${tint}, -2px 0 0 ${tint}` };
   const hidden = {
@@ -96,6 +98,7 @@ const highlight = (element: HTMLElement, color: string) => {
   };
   element.animate([hidden, { ...shown, offset: 0.15 }, { ...shown, offset: 0.75 }, hidden], {
     duration: HIGHLIGHT_DURATION_MS,
+    delay,
     easing: "ease-out",
   });
 };
@@ -162,7 +165,7 @@ export const useTokenMorph = (
     tokens.forEach((token, index) => {
       const matched = before.tokens[matches.get(index) ?? -1];
       const color = colors[token.element.dataset.region ?? ""];
-      if (color !== undefined) highlight(token.element, color);
+      if (color !== undefined) highlight(token.element, color, isReduced ? 0 : MORPH_DURATION_MS);
       if (matched === undefined || isReduced)
         token.element.animate([{ opacity: 0 }, { opacity: 1 }], {
           duration: FADE_DURATION_MS,
@@ -183,10 +186,15 @@ export const useTokenMorph = (
     });
     if (isReduced) return;
 
-    container.animate([{ height: `${before.height}px` }, { height: `${height}px` }], {
-      duration: MORPH_DURATION_MS,
-      easing: EASING,
-    });
+    // The new code is in place at its full height from the start, so the height that grows to it
+    // clips what it has not reached, which would lie over what is below the code.
+    container.animate(
+      [
+        { height: `${before.height}px`, overflowY: "clip" },
+        { height: `${height}px`, overflowY: "clip" },
+      ],
+      { duration: MORPH_DURATION_MS, easing: EASING },
+    );
     const leaving = new Set(before.tokens.keys()).difference(new Set(matches.values()));
     const ghosts = document.createElement("span");
     ghosts.ariaHidden = "true";
@@ -201,7 +209,7 @@ export const useTokenMorph = (
     }
     container.append(ghosts);
     ghosts.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: FADE_DURATION_MS,
+      duration: LEAVE_DURATION_MS,
       easing: "ease-out",
       fill: "forwards",
     }).onfinish = () => ghosts.remove();

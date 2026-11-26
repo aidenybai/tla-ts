@@ -179,7 +179,7 @@ interface CodeCommentProps {
 export const CodeComment = (props: CodeCommentProps) => (
   <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
     {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
-    <span data-comment className="min-w-0 flex-1 truncate">
+    <span data-comment className="min-w-0 flex-1 break-words whitespace-pre-wrap">
       <CodeWords tokens={[{ content: props.text, style: NO_STYLE }]} />
     </span>
   </span>
@@ -207,7 +207,10 @@ export const CodeFold = (props: CodeFoldProps) => (
       props.className,
     )}
   >
-    <span className={cn("flex shrink-0 justify-end", props.hasGutter && "min-w-[3ch]")}>
+    <span
+      data-token={props.isDisabled ? undefined : ""}
+      className={cn("flex shrink-0 justify-end", props.hasGutter && "min-w-[3ch]")}
+    >
       <CaretRight
         weight="bold"
         className={cn(
