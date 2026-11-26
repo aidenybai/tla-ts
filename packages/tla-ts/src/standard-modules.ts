@@ -2,6 +2,7 @@ import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
 import {
   createEscoreNativeOperators,
   createEscoreProgramOperators,
+  createEsBigNatOperators,
   createEsNumberOperators,
   createEsRuntimeOperators,
 } from "./escore-native";
@@ -656,6 +657,7 @@ export const getJavaOverrides = (
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
   if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
+  if (name === "ESBigNat") return createEsBigNatOperators(evaluateReplaced);
   if (name === "ESNumber") return createEsNumberOperators(evaluateReplaced);
   if (name === "ESRuntime") return createEsRuntimeOperators(evaluateReplaced);
   if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);

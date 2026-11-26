@@ -574,7 +574,8 @@ const PLUS = 43;
 const MINUS = 45;
 
 // ESBigNat's limbs, of 15 bits each, lowest first.
-const LIMB = 32768n;
+const BN_BASE = 32768;
+const LIMB = BigInt(BN_BASE);
 const MAX_MANTISSA = 2n ** 53n;
 
 // The mantissa that a canonical Number's limbs spell, or undefined where they aren't a BigNat's.
@@ -585,7 +586,7 @@ const getMantissa = (limbs: Value[]) => {
   }
   return limbs.reduceRight(
     (total: bigint | undefined, limb) =>
-      total === undefined || typeof limb !== "number" || limb >= 32768
+      total === undefined || typeof limb !== "number" || limb >= BN_BASE
         ? undefined
         : total * LIMB + BigInt(limb),
     0n,
@@ -738,6 +739,173 @@ export const createEsNumberOperators = (callReplaced: CallReplaced): Builtin[] =
       return value === undefined || value.exponent >= 0
         ? undefined
         : createNumberRecord(Math.floor(getDouble(value)));
+    }),
+  ];
+};
+
+const isLimbs = (values: Value[]): values is number[] => {
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value >= BN_BASE) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const getLimbs = (value: Value | undefined) => {
+  const limbs = getTuple(value);
+  return limbs !== undefined && isLimbs(limbs) ? limbs : undefined;
+};
+
+const isSmallFactor = (value: Value | undefined, least: number): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= least && value <= BN_BASE;
+
+const createNormalized = (limbs: number[]) => {
+  let top = limbs.length;
+  while (top > 0 && limbs[top - 1] === 0) top--;
+  return createTuple(top === limbs.length ? limbs : limbs.slice(0, top));
+};
+
+const multiplySmall = (limbs: number[], factor: number) => {
+  if (factor === 0 || limbs.length === 0) return createTuple([]);
+  const product: number[] = [];
+  let carry = 0;
+  for (let index = 0; index < limbs.length; index++) {
+    const column = limbs[index] * factor + carry;
+    product.push(column % BN_BASE);
+    carry = Math.floor(column / BN_BASE);
+  }
+  if (carry !== 0) product.push(carry);
+  return createTuple(product);
+};
+
+// BNCarryFrom adds two of BNColumn's sums and a carry, which stay below 2^31, as TLC's integers
+// must, for at most 2^14 products a column.
+const MOST_COLUMN_PRODUCTS = 16_384;
+
+export const createEsBigNatOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
+  return [
+    define("BNAdd", 2, (args) => {
+      const left = getValue(args[0]);
+      const right = getValue(args[1]);
+      const augend = getLimbs(left);
+      const addend = getLimbs(right);
+      if (augend === undefined || addend === undefined) return undefined;
+      if (augend.length === 0) return right;
+      if (addend.length === 0) return left;
+      const length = Math.max(augend.length, addend.length);
+      const sum: number[] = [];
+      let carry = 0;
+      for (let index = 0; index < length; index++) {
+        const column = (augend[index] ?? 0) + (addend[index] ?? 0) + carry;
+        sum.push(column % BN_BASE);
+        carry = Math.floor(column / BN_BASE);
+      }
+      if (carry !== 0) sum.push(carry);
+      return createTuple(sum);
+    }),
+    define("BNSub", 2, (args) => {
+      const left = getValue(args[0]);
+      const minuend = getLimbs(left);
+      const subtrahend = getLimbs(getValue(args[1]));
+      if (minuend === undefined || subtrahend === undefined) return undefined;
+      if (subtrahend.length === 0) return left;
+      const difference: number[] = [];
+      let borrow = 0;
+      for (let index = 0; index < minuend.length; index++) {
+        const column = minuend[index] - (subtrahend[index] ?? 0) - borrow;
+        borrow = column < 0 ? 1 : 0;
+        difference.push(column < 0 ? column + BN_BASE : column);
+      }
+      return createNormalized(difference);
+    }),
+    define("BNMulSmall", 2, (args) => {
+      const limbs = getLimbs(getValue(args[0]));
+      const factor = getValue(args[1]);
+      return limbs === undefined || !isSmallFactor(factor, 0)
+        ? undefined
+        : multiplySmall(limbs, factor);
+    }),
+    define("BNMul", 2, (args) => {
+      const left = getLimbs(getValue(args[0]));
+      const right = getLimbs(getValue(args[1]));
+      if (left === undefined || right === undefined) return undefined;
+      if (Math.min(left.length, right.length) > MOST_COLUMN_PRODUCTS) return undefined;
+      if (left.length === 0 || right.length === 0) return createTuple([]);
+      if (right.length === 1) return multiplySmall(left, right[0]);
+      if (left.length === 1) return multiplySmall(right, left[0]);
+      // eslint-disable-next-line unicorn/no-new-array
+      const columns = new Array<number>(left.length + right.length).fill(0);
+      for (let column = 0; column < left.length + right.length - 1; column++) {
+        const last = Math.min(column, left.length - 1);
+        let low = 0;
+        let high = 0;
+        for (
+          let index = column >= right.length ? column - right.length + 1 : 0;
+          index <= last;
+          index++
+        ) {
+          const product = left[index] * right[column - index];
+          low += product % BN_BASE;
+          high += Math.floor(product / BN_BASE);
+        }
+        columns[column] += low;
+        columns[column + 1] += high;
+      }
+      const product: number[] = [];
+      let carry = 0;
+      for (let index = 0; index < columns.length; index++) {
+        const value = columns[index] + carry;
+        product.push(value % BN_BASE);
+        carry = Math.floor(value / BN_BASE);
+      }
+      for (; carry !== 0; carry = Math.floor(carry / BN_BASE)) product.push(carry % BN_BASE);
+      return createNormalized(product);
+    }),
+    define("BNShiftRight", 2, (args) => {
+      const limbs = getLimbs(getValue(args[0]));
+      const shift = getValue(args[1]);
+      if (
+        limbs === undefined ||
+        typeof shift !== "number" ||
+        !Number.isInteger(shift) ||
+        shift < 0
+      ) {
+        return undefined;
+      }
+      const whole = Math.floor(shift / 15);
+      const kept = limbs.length - whole;
+      if (kept <= 0) return createTuple([]);
+      const low = 2 ** (shift % 15);
+      const high = 2 ** (15 - (shift % 15));
+      // eslint-disable-next-line unicorn/no-new-array
+      const shifted = new Array<number>(kept);
+      for (let index = 0; index < kept; index++) {
+        shifted[index] =
+          Math.floor(limbs[index + whole] / low) + ((limbs[index + whole + 1] ?? 0) % low) * high;
+      }
+      return createNormalized(shifted);
+    }),
+    define("BNDivModSmall", 2, (args) => {
+      const limbs = getLimbs(getValue(args[0]));
+      const divisor = getValue(args[1]);
+      if (limbs === undefined || !isSmallFactor(divisor, 1)) return undefined;
+      // eslint-disable-next-line unicorn/no-new-array
+      const quotient = new Array<number>(limbs.length);
+      let remainder = 0;
+      for (let index = limbs.length - 1; index >= 0; index--) {
+        const current = remainder * BN_BASE + limbs[index];
+        quotient[index] = Math.floor(current / divisor);
+        remainder = current % divisor;
+      }
+      return createTuple([createNormalized(quotient), remainder]);
+    }),
+    define("BNBitLength", 1, (args) => {
+      const limbs = getLimbs(getValue(args[0]));
+      if (limbs === undefined) return undefined;
+      return limbs.length === 0 ? 0 : (limbs.length - 1) * 15 + 32 - Math.clz32(limbs.at(-1) ?? 0);
     }),
   ];
 };
