@@ -1,0 +1,32 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Evaluating invariant Inv failed.
+The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+y = [a |-> 1]
+
+State 2: <Next line 8, col 9 to line 8, col 58 of module ContinueInvariantFailure>
+y = [a |-> 0]
+
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+y = [a |-> 1]
+
+State 2: <Next line 8, col 9 to line 8, col 58 of module ContinueInvariantFailure>
+y = [a |-> 3]
+
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+y = [a |-> 1]
+
+State 2: <Next line 8, col 9 to line 8, col 58 of module ContinueInvariantFailure>
+y = [a |-> 4]
+
+2 states generated, 5 distinct states found, 3 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).
+Finished in _ at (_)

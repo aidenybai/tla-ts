@@ -884,6 +884,16 @@ describe("the CLI reports results like TLC", () => {
     },
   );
 
+  it("reports the violations the replay of a failed invariant finds with -continue, where TLC also reports the failure twice", () => {
+    const result = runCli("tlc-continue", "ContinueInvariantFailure", ["-continue"]);
+    expect(result.status).toBe(76);
+    expect(getSteadyLines(result.stdout)).toEqual(
+      readFileSync(join(FIXTURES, "tlc-continue", "ContinueInvariantFailure.out"), "utf8").split(
+        "\n",
+      ),
+    );
+  });
+
   it("rejects a spec whose file name differs from its module name like TLC", () => {
     const result = runCli("cli-module-name", "Renamed");
     const reason =

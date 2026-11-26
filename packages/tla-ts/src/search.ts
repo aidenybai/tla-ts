@@ -927,6 +927,7 @@ export interface Search {
     next: Value[],
     tracing: Environment,
     addFingerprint: () => boolean,
+    isGoingOnAfter: (violation: Pick<InitialStateViolation, "status" | "name">) => boolean,
   ) => boolean;
   satisfiesConstraints: (state: State, parent?: Value[]) => boolean;
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
@@ -1826,7 +1827,7 @@ export const createSearch = (
       );
       if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
-    checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
+    checkReplayedSuccessor: (state, next, tracing, addFingerprint, isGoingOnAfter) => {
       const isInModel =
         constraintPredicates.every((constraint) =>
           holdsReplayed(
@@ -1844,23 +1845,28 @@ export const createSearch = (
         );
       // TLC checks the invariants of a successor it has not seen, even outside the model.
       const isUnseen = isInModel ? addFingerprint() : true;
-      return (
-        (!isUnseen ||
-          invariantPredicates.every((invariant) =>
-            holdsReplayed(
-              coveredInvariantChecks.get(invariant.predicate),
-              invariant.predicate,
-              getContext(tracing, next, undefined, invariant.scope),
-            ),
-          )) &&
-        properties.actionProperties.every((property, index) =>
-          holdsReplayed(
+      const invariant = isUnseen
+        ? invariantPredicates.find(
+            (predicate) =>
+              !holdsReplayed(
+                coveredInvariantChecks.get(predicate.predicate),
+                predicate.predicate,
+                getContext(tracing, next, undefined, predicate.scope),
+              ),
+          )
+        : undefined;
+      if (invariant && !isGoingOnAfter({ status: "invariant-violation", name: invariant.name })) {
+        return false;
+      }
+      const property = properties.actionProperties.find(
+        (candidate, index) =>
+          !holdsReplayed(
             coveredActionProperties[index],
-            property.checked,
-            getContext(tracing, state, next, property.scope),
+            candidate.checked,
+            getContext(tracing, state, next, candidate.scope),
           ),
-        )
       );
+      return !property || isGoingOnAfter({ status: "liveness-violation", name: property.name });
     },
     satisfiesConstraints: (state, parent) =>
       satisfiesCovered(coveredConstraints, state) ??
