@@ -418,13 +418,11 @@ export const expandTemporal = (
     childExpanding = expansion.expanding,
     definition?: Definition,
     substitutions = expansion.substitutions,
+    pathName?: string,
   ): ExpandedExpression[] =>
     expandTemporal(child, childScope, environment, isProperty, {
       name: childName,
-      path:
-        definition?.kind === "Operator" && definition.params.length === 0
-          ? [...expansion.path, definition.name]
-          : expansion.path,
+      path: pathName === undefined ? expansion.path : [...expansion.path, pathName],
       expanding: childExpanding,
       isSubstituted:
         expansion.isSubstituted ||
@@ -552,13 +550,15 @@ export const expandTemporal = (
       ) {
         return getLeaf(undefined, undefined, definition.body);
       }
+      const writtenName = isConfigSubstitute ? getKeyName(expression.name) : definition.name;
       return expand(
         getOpDefBody(definition),
         undefined,
-        getReferenceName(expression, expression.name, environment) ??
-          (isConfigSubstitute ? getKeyName(expression.name) : definition.name),
+        getReferenceName(expression, expression.name, environment) ?? writtenName,
         new Set([...expansion.expanding, definition]),
         definition,
+        undefined,
+        definition.kind === "Operator" ? writtenName : undefined,
       );
     }
   }
