@@ -1090,7 +1090,16 @@ export const markFingerprinted = (value: Value): void => {
     // A page's domain is integers, and a record that it hasn't made holds what its source holds,
     // apart from the nodes.
     for (let slot = 0; slot < value.records.length; slot++) {
-      markFingerprinted(value.records[slot] ?? value.sources[slot]);
+      const inner = value.records[slot] ?? value.sources[slot];
+      // V8's loads in markFingerprinted see every kind of value, and here they see records.
+      if (
+        typeof inner === "object" &&
+        inner.kind === "Function" &&
+        (inner.flags & VALUE_FINGERPRINTED) !== 0
+      ) {
+        continue;
+      }
+      markFingerprinted(inner);
     }
     return;
   }
