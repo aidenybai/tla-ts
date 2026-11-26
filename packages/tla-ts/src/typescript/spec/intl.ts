@@ -1284,16 +1284,24 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       }
     }
     const configs = new Map<string, object>();
-    const Constructor = Reflect.get(Intl, service.name) as new (
-      locales: unknown,
-      options: unknown,
-    ) => { resolvedOptions: () => Record<string, unknown> };
+    const Constructor = Reflect.get(Intl, service.name) as {
+      new (locales: unknown, options: unknown): { resolvedOptions: () => Record<string, unknown> };
+      supportedLocalesOf: (locales: unknown, options: unknown) => string[];
+    };
     const bags = getBags(service, literals);
     const isResolving = RESOLVING.has(service.name);
     const reads = bags.map((bag) => (isResolving ? undefined : getRead(service, bag)));
+    const defaults: (InstanceType<typeof Constructor> | undefined)[] = [];
     for (const locales of getLocaleCandidates(service, literals)) {
       const requested = getCanonical(locales);
       if (requested === undefined) continue;
+      // V8 resolves a locale that neither matcher supports to its default, as it resolves none.
+      const isDefaultLocale =
+        locales === undefined ||
+        ["best fit", "lookup"].every(
+          (localeMatcher) =>
+            Constructor.supportedLocalesOf(locales, { localeMatcher }).length === 0,
+        );
       const units = requested.map(getUnitsOf).join(", ");
       for (const [position, bag] of bags.entries()) {
         if (
@@ -1302,20 +1310,23 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         ) {
           continue;
         }
-        const object = (() => {
-          try {
-            return new Constructor(locales, bag);
-          } catch (error) {
-            // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
-            if (service.name === "DurationFormat") {
-              entries.set(
-                `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
-                `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
-              );
+        const object =
+          (isDefaultLocale ? defaults[position] : undefined) ??
+          (() => {
+            try {
+              return new Constructor(locales, bag);
+            } catch (error) {
+              // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
+              if (service.name === "DurationFormat") {
+                entries.set(
+                  `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
+                  `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
+                );
+              }
+              return undefined;
             }
-            return undefined;
-          }
-        })();
+          })();
+        if (locales === undefined) defaults[position] = object;
         if (object === undefined) continue;
         const resolved = { ...object.resolvedOptions() };
         const pairs = Object.entries(resolved).map(([key, value]) => [key, getEscoreValue(value)]);
