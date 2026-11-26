@@ -183,7 +183,14 @@ describe("_POSSIBLE matches TLC", () => {
         "Temporal",
         "The possible of Temporal is equal to a temporal formula; only state- and action-level predicates are supported",
       ],
-      ["AtOne AtOne", "_POSSIBLE lists AtOne more than once"],
+      [
+        "AtOne AtOne",
+        "Parsing or semantic analysis failed._POSSIBLE: semantic analysis of generated module failed",
+      ],
+      [
+        "AtOne AtOne Undefined",
+        "The possible Undefined specified in the configuration file\nis not defined in the specification.",
+      ],
     ];
     for (const [possible, message] of cases) {
       await expect(checkModule(body, `_POSSIBLE ${possible}`)).rejects.toThrow(
