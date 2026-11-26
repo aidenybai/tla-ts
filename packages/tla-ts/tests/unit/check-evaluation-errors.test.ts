@@ -6071,6 +6071,145 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "(1..0) = (0..2147483647)",
+      [
+        "Line 5, column 9 to line 5, column 42 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 42 in M",
+      ],
+      undefined,
+    ],
+    [
+      "(0..2147483647) # (1..2)",
+      [
+        "Line 5, column 9 to line 5, column 42 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 42 in M",
+      ],
+      undefined,
+    ],
+    [
+      "LET S == 0..2147483647 IN S = S",
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 45 to line 5, column 49 in M",
+      ],
+      undefined,
+    ],
+    [
+      "{0..2147483647, 1..2} # {}",
+      [
+        "Line 5, column 9 to line 5, column 44 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 44 in M",
+        "Line 5, column 19 to line 5, column 39 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "<<1..0>> = <<0..2147483647>>",
+      [
+        "Line 5, column 9 to line 5, column 46 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 46 in M",
+        "Line 5, column 19 to line 5, column 26 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "[1..2 -> {1}] = [0..2147483647 -> {1}]",
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 19 to line 5, column 31 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "<<>> \\in [0..2147483647 -> {1}]",
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 28 to line 5, column 49 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "\\E p \\in (0..2147483647) \\X {1} : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 49 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "\\E f \\in [0..2147483647 -> {1}] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 56 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 56 in M",
+        "Line 5, column 28 to line 5, column 49 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+    [
+      "\\E r \\in [a : 0..2147483647] : TRUE",
+      [
+        "Line 5, column 9 to line 5, column 53 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 53 in M",
+        "Line 5, column 28 to line 5, column 46 in M",
+      ],
+      INTERVAL_SIZE_REASON,
+    ],
+  ])(
+    "sizes an interval past 32 bits where TLC's IntervalValue#equals, compareTo or isEmpty does: x' = x /\\ %s",
+    async (comparison, callStack, fingerprintReason) => {
+      const result = await checkComparison(comparison);
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result),
+        result.failure?.fingerprint?.reason,
+        result.failure?.exitCode,
+      ]).toEqual([getRuntimeException(INTERVAL_SIZE_REASON), callStack, fingerprintReason, 75]);
+    },
+  );
+
+  it.each(["(1..2) # (0..2147483647)", "(0..2147483647) \\in SUBSET Int"])(
+    "leaves an interval past 32 bits unsized where TLC does: x' = x /\\ %s",
+    async (comparison) => {
+      const result = await checkComparison(comparison);
+      expect([result.failure, result.generatedStates, result.distinctStates]).toEqual([
+        undefined,
+        2,
+        1,
+      ]);
+    },
+  );
+
+  it("applies a function to an interval past 32 bits without sizing it, as TLC's FcnRcdValue#select does", async () => {
+    const result = await checkComparison("((1..2) :> 1)[0..2147483647] = 1");
+    expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+      getRuntimeException(
+        "Attempted to apply function:\n(1..2 :> 1)\nto argument 0..2147483647, which is not in the domain of the function.",
+      ),
+      [
+        "Line 5, column 9 to line 5, column 50 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 50 in M",
+        "Line 5, column 19 to line 5, column 46 in M",
+      ],
+    ]);
+  });
+
   const NAT_MEMBER_REASON = "Attempted to check if the value:\n<<1, 0>>\nis an element of Nat.";
 
   it.each([
