@@ -668,7 +668,10 @@ const compareWithItself = (value: Value, isEquality: boolean): boolean => {
   if (typeof value !== "object") return true;
   switch (value.kind) {
     case "ModelValue":
+      return true;
+    // TLC's IntervalValue#equals and compareTo size the interval, which fails past 32 bits.
     case "Interval":
+      getIntervalSize(value.low, value.high);
       return true;
     case "SequenceSet":
       return compareWithItself(value.base, false);
@@ -756,8 +759,8 @@ export const compareValues = (left: Value, right: Value): number => {
     if (leftKind === "Function" && rightKind === "Function") return compareFunctions(left, right);
     if (leftKind === "Set" && rightKind === "Set") return compareSets(left, right);
     if (leftKind === "Interval" && rightKind === "Interval") {
-      const size = Math.max(0, left.high - left.low + 1);
-      const otherSize = Math.max(0, right.high - right.low + 1);
+      const size = getIntervalSize(left.low, left.high);
+      const otherSize = getIntervalSize(right.low, right.high);
       return size !== otherSize || size === 0 ? size - otherSize : left.low - right.low;
     }
     if (leftKind === "ModelValue" && rightKind === "ModelValue") {
@@ -949,6 +952,12 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
   if (left.kind === "Function" && right.kind === "Function")
     return compareFunctions(left, right) === 0;
   if (left.kind === "Set" && right.kind === "Set") return areSetsEqual(left, right);
+  // TLC's IntervalValue#equals sizes the argument only when the receiver is empty.
+  if (left.kind === "Interval" && right.kind === "Interval") {
+    return getIntervalSize(left.low, left.high) === 0
+      ? getIntervalSize(right.low, right.high) === 0
+      : left.low === right.low && left.high === right.high;
+  }
   if (left.kind === "Interval" && right.kind === "Set") {
     if (getCardinality(left) !== right.elements.length) return false;
   }
@@ -3951,7 +3960,7 @@ export const isEmptySet = (value: Value): boolean => {
     case "MixedSet":
       return value.elements.length === 0;
     case "Interval":
-      return value.low > value.high;
+      return getIntervalSize(value.low, value.high) === 0;
     case "InfiniteSet":
       if (value.name === "Any") {
         throw new TlaEvaluationError("Shouldn't call isEmpty() on value ANY");
@@ -4325,7 +4334,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
 
 export const computeOnFailure = <Left, Right, Result>(
   compute: (left: Left, right: Right) => Result,
-  onFailure: (left: Left, right: Right, error: TlaEvaluationError) => Result,
+  onFailure: (left: Left, right: Right) => Result,
   left: Left,
   right: Right,
 ): Result => {
@@ -4340,7 +4349,7 @@ export const computeOnFailure = <Left, Right, Result>(
     attempt = outerAttempt;
     if (!(error instanceof TlaEvaluationError)) throw error;
     resetTrace(mark);
-    return onFailure(left, right, error);
+    return onFailure(left, right);
   }
 };
 
@@ -4429,6 +4438,49 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
 
 const describeUnenumerableSubsetMember = (element: Value, set: SubsetValue) =>
   `Attempted to check if the non-enumerable value\n${prettyPrint(formatValue(element))}\nis element of\n${prettyPrint(formatValue(set))}`;
+
+const isIntervalInSortedSet = (interval: IntervalValue, set: SetValue) => {
+  const elements = set.elements;
+  let low = 0;
+  let high = elements.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const probe = elements[middle];
+    if (typeof probe !== "number") return undefined;
+    if (probe < interval.low) low = middle + 1;
+    else high = middle;
+  }
+  for (let element = interval.low; element <= interval.high; element++, low++) {
+    if (low === elements.length) return false;
+    const probe = elements[low];
+    if (probe !== element) return typeof probe === "number" ? false : undefined;
+  }
+  return true;
+};
+
+// IntervalValue#elements streams without sizing, and no element within Int, Nat or a wider interval can fail.
+export const isIntervalSubset = (
+  interval: IntervalValue,
+  set: Value,
+  isMember: typeof isElementOf,
+) => {
+  const isWithin =
+    typeof set === "object" &&
+    (set.kind === "Interval"
+      ? set.low <= interval.low && set.high >= interval.high
+      : set.kind === "InfiniteSet" &&
+        (set.name === "Int" || (set.name === "Nat" && interval.low >= 0)));
+  if (isWithin) return true;
+  const isContained =
+    typeof set === "object" && set.kind === "Set"
+      ? isIntervalInSortedSet(interval, set)
+      : undefined;
+  if (isContained !== undefined) return isContained;
+  for (let element = interval.low; element <= interval.high; element++) {
+    if (!isMember(element, set)) return false;
+  }
+  return true;
+};
 
 // SubsetValue#member streams the element and stops at its first element outside the base.
 const isStreamedSubsetMember = (element: Value, set: SubsetValue, isMember: typeof isElementOf) => {
@@ -4565,6 +4617,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return set.name !== "Nat" || (typeof element === "number" && element >= 0);
     }
     case "Subset":
+      if (typeof element === "object" && element.kind === "Interval") {
+        return isIntervalSubset(element, set.base, isElementOf);
+      }
       return isReducibleSet(element)
         ? toFiniteSet(element).elements.every((item) => isElementOf(item, set.base))
         : isStreamedSubsetMember(element, set, isElementOf);
@@ -4626,6 +4681,9 @@ const isElementOfComponents = (
   if (typeof set !== "object") return isElementOfAnySet(element, set);
   switch (set.kind) {
     case "Subset":
+      if (typeof element === "object" && element.kind === "Interval") {
+        return isIntervalSubset(element, set.base, isMember);
+      }
       return isReducibleSet(element)
         ? toFiniteSet(element).elements.every((item) => isMember(item, set.base))
         : isStreamedSubsetMember(element, set, isMember);
@@ -4814,20 +4872,16 @@ const LINEAR_SEARCH_LIMIT = 32;
 const findDomainIndex = (functionValue: FunctionValue, argument: Value) =>
   findSortedIndex(functionValue.domain, argument);
 
-const failKeyLikeTlc = (
-  functionValue: FunctionValue,
-  argument: Value,
-  error: TlaEvaluationError,
-): never => {
+const findKeyLikeTlc = (functionValue: FunctionValue, argument: Value) => {
   const keys = getWrittenKeys(functionValue);
-  if (isVersion174 || keys !== functionValue.domain || keys.length < LINEAR_SEARCH_LIMIT) {
-    keys.forEach((key) => callTracedMethod(key, () => equalsLikeTlc(key, argument)));
-  } else {
-    findSortedIndex(keys, argument, (key, target) =>
+  const domain = functionValue.domain;
+  if (!isVersion174 && keys === domain && keys.length >= LINEAR_SEARCH_LIMIT) {
+    return findSortedIndex(keys, argument, (key, target) =>
       callTracedMethod(key, () => compareLikeTlc(key, target)),
     );
   }
-  throw formatUnlessAttempt(error);
+  const index = keys.findIndex((key) => callTracedMethod(key, () => equalsLikeTlc(key, argument)));
+  return index === -1 || keys === domain ? index : domain.indexOf(keys[index]);
 };
 
 const findKeyIndexLikeTlc = (
@@ -4854,7 +4908,7 @@ const findKeyIndexLikeTlc = (
   }
   const identical = findIdenticalKey(domain, argument);
   if (identical !== -1) return identical;
-  return computeOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
+  return computeOnFailure(findDomainIndex, findKeyLikeTlc, functionValue, argument);
 };
 
 const describeBoundArgument = (
