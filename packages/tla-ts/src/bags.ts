@@ -1,12 +1,14 @@
 import {
   createModuleArgumentError,
   createOverflowError,
+  createWrongValueError,
   defineConstant,
   defineHigherOrderOperator,
   defineOperator,
   getOperator,
   getValue,
   isOutOfRange,
+  toEnumeratedSet,
 } from "./builtins";
 import { TlaModuleError } from "./errors";
 import type { Builtin } from "./evaluate";
@@ -18,20 +20,12 @@ import {
   formatValue,
   getDomain,
   getWrittenPairs,
-  isEnumerable,
   isEqualLikeTlc,
   isFunctionValue,
-  isSetValue,
   toFiniteFunction,
-  toFiniteSet,
   type FunctionValue,
   type Value,
 } from "./values";
-
-const createWrongValueError = (name: string, expected: string, value: Value) =>
-  new TlaModuleError(
-    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${prettyPrint(formatValue(value))}`,
-  );
 
 const toFunction = (value: Value) => (isFunctionValue(value) ? toFiniteFunction(value) : undefined);
 
@@ -67,11 +61,6 @@ const getAddedBag = (args: Value[], functions: (FunctionValue | undefined)[], in
     );
   }
   return functionValue;
-};
-
-const getFiniteElements = (set: Value, describeError: () => TlaModuleError) => {
-  if (!isSetValue(set) || !isEnumerable(set)) throw describeError();
-  return toFiniteSet(set).elements;
 };
 
 const isBag = (functionValue: FunctionValue) =>
@@ -183,9 +172,7 @@ export const BAGS_OPERATORS: Builtin[] = [
   }),
   defineOperator("BagUnion", 1, (args) => {
     const set = getValue(args, 0, "BagUnion");
-    const elements = getFiniteElements(set, () =>
-      createWrongValueError("BagUnion", "a finite enumerable set", set),
-    );
+    const elements = toEnumeratedSet(set, "BagUnion", "a finite enumerable set").elements;
     if (elements.length < 2) return elements[0] ?? EMPTY_BAG;
     const createUnionError = () =>
       new TlaModuleError(
@@ -240,9 +227,8 @@ export const BAGS_OPERATORS: Builtin[] = [
   defineOperator("BagToSet", 1, (args) => getDomain(getFunction(args, 0, "BagToSet"))),
   defineOperator("SetToBag", 1, (args) => {
     const set = getValue(args, 0, "SetToBag");
-    const elements = getFiniteElements(set, () =>
-      createWrongValueError("BagToSet", FINITE_FUNCTION, set),
-    );
+    // TLC's Bags#SetToBag reports a wrong argument under the name BagToSet.
+    const elements = toEnumeratedSet(set, "BagToSet", FINITE_FUNCTION).elements;
     return createSortedFunction(
       [...elements],
       elements.map(() => 1),

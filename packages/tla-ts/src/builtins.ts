@@ -61,11 +61,14 @@ export const createModuleArgumentError = (
     `The ${position} argument of ${name} should be a ${expected}, but instead it is:\n${prettyPrint(formatValue(value))}`,
   );
 
-export const toEnumeratedSet = (value: Value, name: string, reported = value) => {
+export const createWrongValueError = (name: string, expected: string, value: Value) =>
+  new TlaModuleError(
+    `Applying ${name} to the following value,\nwhich is not ${expected}:\n${prettyPrint(formatValue(value))}`,
+  );
+
+export const toEnumeratedSet = (value: Value, name: string, expected: string, reported = value) => {
   if (!isSetValue(value) || isOverriddenSet(value)) {
-    throw new TlaModuleError(
-      `Applying ${name} to the following value,\nwhich is not a finite set:\n${prettyPrint(formatValue(reported))}`,
-    );
+    throw createWrongValueError(name, expected, reported);
   }
   return toFiniteSet(value);
 };

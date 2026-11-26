@@ -205,7 +205,7 @@ export const getRandomSubset = (
 export const getRandomElement = (set: Value, random: JavaRandom): Value => {
   if (typeof set === "object" && set.kind === "FunctionSet") {
     // TLC builds the chosen function without the interval its domain came from.
-    const domain = [...toEnumeratedSet(set.domain, "RandomElement", set).elements];
+    const domain = [...toEnumeratedSet(set.domain, "RandomElement", "a finite set", set).elements];
     return createSortedFunction(
       domain,
       domain.map(() => getRandomElement(set.range, random)),
@@ -232,7 +232,7 @@ export const getRandomElement = (set: Value, random: JavaRandom): Value => {
     }
     return set.low + offset;
   }
-  const elements = toEnumeratedSet(set, "RandomElement").elements;
+  const elements = toEnumeratedSet(set, "RandomElement", "a finite set").elements;
   const index = Math.floor(random.nextDouble() * elements.length);
   if (index >= elements.length) {
     throw new TlaEvaluationError(`Index ${index} out of bounds for length ${elements.length}`);
