@@ -486,6 +486,28 @@ it('reads TLCGet("level") as 1 in the VIEW of an initial state it rebuilds for a
   expect(result.violation?.trace.map((step) => step.state.x)).toEqual([1, 2, 3]);
 });
 
+it('reads TLCGet("generated") from 0 again as it replays the initial predicate for an error, as TLC\'s ModelChecker does', async () => {
+  const result = await check({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = TLCGet("generated")\nNext == x\' = x + 1\nInv == x = 0 => TLCGet(5) = 0\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  });
+  expect([result.failure?.exitCode, result.generatedStates, result.distinctStates]).toEqual([
+    75, 1, 1,
+  ]);
+});
+
+it('reads TLCGet("level") as 1 in the invariant of an initial state it replays for an error, as TLC does', async () => {
+  const result = await check({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nInv == TLCGet("level") = 1 /\\ TLCGet(3) = 0\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  });
+  expect([result.failure?.exitCode, result.generatedStates, result.distinctStates]).toEqual([
+    75, 1, 1,
+  ]);
+});
+
 it.each([
   [
     "the postcondition",
