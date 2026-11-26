@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue } from "../../src";
 import type { OutputLine } from "../../src/check";
-import { checkFixture } from "./check-harness";
+import { checkFixture, checkInitAndNext } from "./check-harness";
 
 const checkWithSeed = (name: string, seed: bigint) =>
   checkFixture("randomization", name, name, { seed });
@@ -399,4 +399,31 @@ describe("random choices match TLC 1.7.4", () => {
       /RandomSubset\(tlc2\.value\.impl\.Value,tlc2\.value\.impl\.Value\),\nbut it produced the following error:\nAttempted to construct a set with too many elements \(>1000000\)\.$/,
     );
   });
+});
+
+describe("Randomization checks its set argument as TLC does", () => {
+  const FINITE_REASON =
+    "Attempted to check if expression of form {x \\in S : p(x)} is a finite set, but cannot check if S:\nNat\nis finite.";
+
+  it.each([
+    ["RandomSetOfSubsets(1, 1, {n \\in Nat : n < 3})", FINITE_REASON],
+    ["TestRandomSetOfSubsets(1, 1, {n \\in Nat : n < 3})", FINITE_REASON],
+    [
+      "RandomSetOfSubsets(1, 1, [Nat -> {1}])",
+      "Attempted to enumerate a set of the form [D -> R],but the domain D:\nNat\ncannot be enumerated.",
+    ],
+  ])(
+    "reports the error of checking the set in %s from inside the Java override, in Init and in Next",
+    async (expression, reason) => {
+      const message = `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Randomization.RandomSetOfSubsets(tlc2.value.impl.Value,tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\n${reason}`;
+      expect(await checkInitAndNext("Integers, TLC, Randomization", expression)).toEqual([
+        message,
+        75,
+        0,
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${message}`,
+        75,
+        1,
+      ]);
+    },
+  );
 });

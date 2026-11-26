@@ -46,6 +46,25 @@ export const formatFingerprintLines = (result: Awaited<ReturnType<typeof check>>
       : "";
   });
 
+export const checkInitAndNext = async (modules: string, expression: string) => {
+  const [init, next] = await Promise.all(
+    ["Init", "Next"].map((where) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS ${modules}\nVARIABLE x\nInit == x = 0${where === "Init" ? ` /\\ PrintT(${expression})` : ""}\nNext == x < 2 /\\ x' = x + 1${where === "Next" ? ` /\\ PrintT(${expression})` : ""}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      }),
+    ),
+  );
+  return [
+    init.failure?.message,
+    init.failure?.exitCode,
+    init.generatedStates,
+    next.failure?.message,
+    next.failure?.exitCode,
+    next.generatedStates,
+  ];
+};
+
 export const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>
   check({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,

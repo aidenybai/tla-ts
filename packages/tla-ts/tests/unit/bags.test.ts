@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
-import { checkFixture } from "./check-harness";
+import { checkFixture, checkInitAndNext } from "./check-harness";
 
 const checkBagsFixture = (name: string, onPrint?: (text: string) => void) =>
   checkFixture("bags", name, name, { onPrint });
@@ -102,26 +102,6 @@ describe("the Bags module matches TLC", () => {
     expect(result.violation?.message).toBe(message);
   });
 
-  const checkStep = (where: string, expression: string) =>
-    check({
-      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, Bags\nVARIABLE x\nInit == x = 0${where === "Init" ? ` /\\ PrintT(${expression})` : ""}\nNext == x < 2 /\\ x' = x + 1${where === "Next" ? ` /\\ PrintT(${expression})` : ""}\n====`,
-      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
-    });
-
-  const checkInitAndNext = async (expression: string) => {
-    const [init, next] = await Promise.all(
-      ["Init", "Next"].map((where) => checkStep(where, expression)),
-    );
-    return [
-      init.failure?.message,
-      init.failure?.exitCode,
-      init.generatedStates,
-      next.failure?.message,
-      next.failure?.exitCode,
-      next.generatedStates,
-    ];
-  };
-
   const FILTER_REASON =
     "Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable";
 
@@ -142,7 +122,7 @@ describe("the Bags module matches TLC", () => {
     "reports the error of enumerating the set in %s from inside the Java override, in Init and in Next",
     async (expression, operator, reason) => {
       const message = `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Bags.${operator}(tlc2.value.impl.Value),\nbut it produced the following error:\n${reason}`;
-      expect(await checkInitAndNext(expression)).toEqual([
+      expect(await checkInitAndNext("Integers, Sequences, TLC, Bags", expression)).toEqual([
         message,
         75,
         0,
@@ -165,7 +145,14 @@ describe("the Bags module matches TLC", () => {
   ])(
     "rejects the set in %s that TLC's toSetEnum leaves unenumerated, in Init and in Next",
     async (expression, message) => {
-      expect(await checkInitAndNext(expression)).toEqual([message, 75, 0, message, 255, 1]);
+      expect(await checkInitAndNext("Integers, Sequences, TLC, Bags", expression)).toEqual([
+        message,
+        75,
+        0,
+        message,
+        255,
+        1,
+      ]);
     },
   );
 
