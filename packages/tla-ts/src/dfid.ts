@@ -711,6 +711,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       );
     }
     printSummary();
+    // Deviation from TLC: DFIDModelChecker#modelCheck keeps NO_ERROR when its replay of the initial states doesn't fail again, so it exits with 0 after an error.
     return closeDump(isReplayFailed ? EXIT_STATUS.specEvaluationFailure : getErrorExitCode(inner));
   }
   if (initialFailure.code !== NO_ERROR) {

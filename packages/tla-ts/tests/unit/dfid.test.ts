@@ -269,6 +269,28 @@ it("dumps the whole graph when an initial state violates an invariant, unlike TL
   );
 });
 
+// Deviation from TLC: DFIDModelChecker#modelCheck exits with 0, since its replay of the initial states skips the invariants of states it has seen.
+it("exits with 75 after an initial state's invariant fails to evaluate, unlike TLC", () => {
+  const outputs: DepthFirstOutput[] = [];
+  const exitCode = checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in {0, 1, 2}\nNext == x' = x + 1\nInv == x = 1 => 1 \\div 0 = 0\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    maxDepth: 3,
+    onOutput: (output) => outputs.push(output),
+  });
+  expect([
+    exitCode,
+    outputs.flatMap((output) => (output.kind === "message" ? [output.message] : [])),
+  ]).toEqual([
+    75,
+    [
+      "The second argument of \\div is 0.\nWhile working on the initial state:\nx = 1\n",
+      "3 states generated, 3 distinct states found.",
+    ],
+  ]);
+});
+
 it("leaves the header of the liveness graph that TLC opens before it refuses to check liveness", () => {
   const written = new Map<string, string>();
   checkDepthFirst({
