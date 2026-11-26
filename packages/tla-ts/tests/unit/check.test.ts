@@ -14584,6 +14584,23 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("labels the coverage of a configured check with the definition a <- substitutes for it, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nInit2 == x \\in {0, 1}\nNext == x < 2 /\\ x' = x + 1\nInv == x < 10\nInv2 == x < 9\nConstr == x < 10\nConstr2 == x < 9\nAConstr == x' < 10\nAConstr2 == x' < 9\n====",
+      config:
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT Constr\nACTION_CONSTRAINT AConstr\nCONSTANT Init <- Init2\nCONSTANT Inv <- Inv2\nCONSTANT Constr <- Constr2\nCONSTANT AConstr <- AConstr2",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init2 line 5, col 1 to line 5, col 5 of module M",
+      "Next line 6, col 1 to line 6, col 4 of module M",
+      "Inv2 line 8, col 1 to line 8, col 4 of module M",
+      "AConstr2 line 12, col 1 to line 12, col 8 of module M",
+      "Constr2 line 10, col 1 to line 10, col 7 of module M",
+    ]);
+  });
+
   it("names the action a selection with parameters gives LAMBDA, as SANY selects it as a LAMBDA it applies", async () => {
     const result = await check({
       source:
