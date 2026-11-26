@@ -1187,10 +1187,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const getLocated = (node: number, page: CanonicalPage | undefined) =>
     walkedLocations.has(node) ? walkedLocations.get(node) : page?.locations[getSlot(node)];
-  const hashSteps: number[] = [];
-  const levelKeys: number[] = [];
-  const levelBases: number[] = [];
-  const levelHashes: number[] = [];
+  let hashSteps = new Int32Array(0);
+  let levelKeys = new Int32Array(0);
+  let levelBases = new Int32Array(0);
+  let levelHashes = new Int32Array(0);
   const closeHashLevel = (level: number) => {
     if (levelHashes[level] === levelBases[level]) return;
     levelHashes[level - 1] =
@@ -1208,6 +1208,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     located: number[],
     plan: Int32Array,
   ) => {
+    if (located.length > levelHashes.length) {
+      hashSteps = new Int32Array(located.length);
+      levelKeys = new Int32Array(located.length);
+      levelBases = new Int32Array(located.length);
+      levelHashes = new Int32Array(located.length);
+    }
     levelHashes[0] = hash;
     const array = getEdgeArray(node, page);
     const first = getEdgeFirst(node, array);
