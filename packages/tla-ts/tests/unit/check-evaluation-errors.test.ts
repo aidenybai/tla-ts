@@ -262,6 +262,99 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "(<<1>> :> 2)[1]",
+      "UNCHANGED x",
+      "Attempted to check equality of the function <<1>> with the value:\n1",
+      ["line 4, col 14 to line 4, col 18 of module M"],
+      [
+        "Line 4, column 9 to line 4, column 27 in M",
+        "Line 4, column 13 to line 4, column 27 in M",
+        "Line 4, column 14 to line 4, column 18 in M",
+      ],
+    ],
+    [
+      "[(<<1>> :> 2) EXCEPT ![1] = 3]",
+      "UNCHANGED x",
+      "Attempted to check equality of the function <<1>> with the value:\n1",
+      ["line 4, col 15 to line 4, col 19 of module M"],
+      [
+        "Line 4, column 9 to line 4, column 42 in M",
+        "Line 4, column 13 to line 4, column 42 in M",
+        "Line 4, column 15 to line 4, column 19 in M",
+      ],
+    ],
+    [
+      "({1} :> 2)[1]",
+      "UNCHANGED x",
+      "Attempted to check equality of the set {1} with the value:\n1",
+      ["line 4, col 14 to line 4, col 16 of module M"],
+      [
+        "Line 4, column 9 to line 4, column 25 in M",
+        "Line 4, column 13 to line 4, column 25 in M",
+        "Line 4, column 14 to line 4, column 16 in M",
+      ],
+    ],
+    [
+      "([a |-> 1] :> 2)[1]",
+      "UNCHANGED x",
+      "Attempted to check equality of record:\n[a |-> 1]\nwith non-record\n1",
+      ["line 4, col 14 to line 4, col 22 of module M"],
+      [
+        "Line 4, column 9 to line 4, column 31 in M",
+        "Line 4, column 13 to line 4, column 31 in M",
+        "Line 4, column 14 to line 4, column 22 in M",
+      ],
+    ],
+    [
+      "(1 :> 2)[<<1>>]",
+      "UNCHANGED x",
+      "Attempted to check equality of integer 1 with non-integer:\n<<1>>",
+      undefined,
+      ["Line 4, column 9 to line 4, column 27 in M", "Line 4, column 13 to line 4, column 27 in M"],
+    ],
+    [
+      "((1 :> 3) @@ (<<1>> :> 2))[2]",
+      "UNCHANGED x",
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.CombineFcn(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to check equality of the function <<1>> with the value:\n1",
+      undefined,
+      [
+        "Line 4, column 9 to line 4, column 41 in M",
+        "Line 4, column 13 to line 4, column 41 in M",
+        "Line 4, column 14 to line 4, column 37 in M",
+      ],
+    ],
+    [
+      "(<<1>> :> 2)",
+      "x' = x[1]",
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of the function <<1>> with the value:\n1`,
+      undefined,
+      ["Line 5, column 9 to line 5, column 17 in M", "Line 5, column 14 to line 5, column 17 in M"],
+    ],
+    [
+      "(<<1>> :> 2)",
+      "x' = [x EXCEPT ![1] = 3]",
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of the function <<1>> with the value:\n1`,
+      undefined,
+      ["Line 5, column 9 to line 5, column 32 in M", "Line 5, column 14 to line 5, column 32 in M"],
+    ],
+  ])(
+    "blames the domain element of x = %s with Next == %s only where FcnRcdValue#select compares a sourced element, like TLC",
+    async (init, next, message, sources, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.failure?.message,
+        formatFingerprintLines(result),
+        formatCallStackLines(result),
+        result.failure?.exitCode,
+      ]).toEqual([message, sources, callStack, 75]);
+    },
+  );
+
   it.each(["\\E t \\in U : x' = t", "x' = CHOOSE t \\in U : TRUE"])(
     "reports a union of tuples and strings that %s fails to sort like TLC",
     async (next) => {

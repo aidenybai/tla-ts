@@ -4818,9 +4818,11 @@ const failKeyLikeTlc = (
 ): never => {
   const keys = getWrittenKeys(functionValue);
   if (isVersion174 || keys !== functionValue.domain || keys.length < LINEAR_SEARCH_LIMIT) {
-    keys.forEach((key) => equalsLikeTlc(key, argument));
+    keys.forEach((key) => callTracedMethod(key, () => equalsLikeTlc(key, argument)));
   } else {
-    findSortedIndex(keys, argument, compareLikeTlc);
+    findSortedIndex(keys, argument, (key, target) =>
+      callTracedMethod(key, () => compareLikeTlc(key, target)),
+    );
   }
   throw formatUnlessAttempt(error);
 };
