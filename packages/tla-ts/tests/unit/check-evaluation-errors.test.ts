@@ -294,6 +294,45 @@ describe("evaluation errors match TLC", () => {
   );
 
   it.each([
+    [
+      "[a |-> 0]",
+      "y \\subseteq Nat",
+      ["Line 4, column 9 to line 4, column 21 in M", "Line 6, column 8 to line 6, column 22 in M"],
+      false,
+    ],
+    [
+      "<<1>>",
+      "y \\subseteq Nat",
+      ["Line 4, column 9 to line 4, column 17 in M", "Line 6, column 8 to line 6, column 22 in M"],
+      false,
+    ],
+    [
+      "{[a |-> 0]}",
+      "y \\subseteq {1}",
+      [
+        "Line 4, column 9 to line 4, column 23 in M",
+        "Line 6, column 8 to line 6, column 22 in M",
+        "Line 4, column 13 to line 4, column 23 in M",
+        "Line 6, column 20 to line 6, column 22 in M",
+      ],
+      true,
+    ],
+  ])(
+    "blames y = %s for failing %s only where TLC's Tool finds it Enumerable and calls isSubsetEq",
+    async (value, invariant, callStack, isFingerprinted) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = ${value}\nNext == UNCHANGED y\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect([
+        formatCallStackLines(result),
+        result.failure?.fingerprint !== undefined,
+        result.failure?.exitCode,
+      ]).toEqual([callStack, isFingerprinted, 75]);
+    },
+  );
+
+  it.each([
     ["{k : k \\in {3}} \\ (3 \\cup {1})", ["SetMap", "Apply"]],
     ["{k : k \\in {3}} \\cap (3 \\cup {1})", ["SetMap", "Apply"]],
     ["(3 \\cup {1}) \\cap {k : k \\in {3}}", ["SetMap", "Apply"]],
