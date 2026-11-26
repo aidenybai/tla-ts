@@ -685,12 +685,16 @@ const searchStates = (
     let frozenDepth = 0;
     return getReplayFailure(environment, (tracing) => {
       const addReplayed = createReplayedStates(tracing);
+      // TLC's ModelChecker sets numberOfInitialStates to 0 before it replays the initial predicate.
+      runtime.generatedStates = 0;
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
         reportInitialStatesProgress(replayedCount, (progress) =>
           output.getCapturedLines()?.push(progress),
         );
         replayedCount++;
         runtime.generatedStates = replayedCount;
+        current.candidate = state;
+        current.candidateLevel = 1;
         if (deferred.length > 0) return;
         try {
           const addFingerprint = () => {
