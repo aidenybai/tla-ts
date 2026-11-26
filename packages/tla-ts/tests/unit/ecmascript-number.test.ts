@@ -244,17 +244,19 @@ const createBinaryChecks = (
     expected: getExpected(left, right),
   }));
 
-// What a module that extends the Numbers under a name prints: ESNumber, whose arithmetic tla-ts
-// runs natively where it can, or ESNumberPlain, the same TLA+ under a name tla-ts doesn't know.
+// What a module that extends another prints: ESNumber or ESBigNat, whose operators tla-ts runs
+// natively where it can, or its copy named with Plain, the same TLA+ under a name tla-ts doesn't know.
 const getPrintedResults = async (module: string, results: string[]) => {
   const printed: string[] = [];
   const result = await check({
     source: `---- MODULE NumberResults ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<${results.join(",\n")}>>)\n====`,
     config: "",
-    loadModule: (name) =>
-      name === "ESNumberPlain"
-        ? loadModule("ESNumber")?.replace("MODULE ESNumber", "MODULE ESNumberPlain")
-        : loadModule(name),
+    loadModule: (name) => {
+      const base = name.replace(/Plain$/, "");
+      return base === name
+        ? loadModule(name)
+        : loadModule(base)?.replace(`MODULE ${base}`, `MODULE ${name}`);
+    },
     onPrint: (text) => printed.push(text),
   });
   return [result.status, result.violation?.message, ...printed];
@@ -554,6 +556,36 @@ describe("ESNumber matches JavaScript's Number semantics", { timeout: 60_000 }, 
     const expected = await getPrintedResults("ESNumberPlain", results);
     expect(expected[0]).toBe("success");
     expect(await getPrintedResults("ESNumber", results)).toEqual(expected);
+  });
+
+  // BigNats across limb boundaries, and one with a zero limb at the top, which ESBigNat's operators
+  // keep or drop as their TLA+ does.
+  it("runs ESBigNat's operators natively as its TLA+ does", async () => {
+    const bigNats = [
+      "<<>>",
+      "<<32767>>",
+      "<<5, 0>>",
+      "<<0, 0, 1>>",
+      ...[3n ** 20n, 2n ** 64n - 1n, 10n ** 30n + 7n].map(encodeBigNat),
+    ];
+    const results = [
+      ...bigNats.flatMap((left) =>
+        bigNats.flatMap((right) => [
+          `BNAdd(${left}, ${right})`,
+          `BNSub(${left}, ${right})`,
+          `BNMul(${left}, ${right})`,
+        ]),
+      ),
+      ...bigNats.flatMap((value) => [
+        `BNBitLength(${value})`,
+        ...[0, 7, 32768].map((factor) => `BNMulSmall(${value}, ${factor})`),
+        ...[1, 239, 32768].map((divisor) => `BNDivModSmall(${value}, ${divisor})`),
+        ...[0, 14, 15, 31, 200].map((shift) => `BNShiftRight(${value}, ${shift})`),
+      ]),
+    ];
+    const expected = await getPrintedResults("ESBigNatPlain", results);
+    expect(expected[0]).toBe("success");
+    expect(await getPrintedResults("ESBigNat", results)).toEqual(expected);
   });
 
   // A zero result is the TLA+'s constant PosZero or NegZero, which keeps its sign.
