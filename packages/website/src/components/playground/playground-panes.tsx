@@ -3,8 +3,8 @@ import { useEffect, useMemo, useRef, type ReactNode, type Ref } from "react";
 import { cn } from "cn";
 import { getLineHoveredName } from "@/lib/line-marks";
 import { usePlaygroundView } from "@/lib/playground-view";
-import { getStateNames, type SearchState } from "@/lib/search";
-import type { Mark, Token } from "@/lib/site-data";
+import { getStateNames } from "@/lib/search";
+import type { Mark } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
@@ -65,59 +65,12 @@ export const PlaygroundSource = () => {
   );
 };
 
-interface OutputLineProps {
-  number: number;
-  tokens: Token[];
-  hoveredName: string | undefined;
-  activeLine: number | undefined;
-  steps: SearchState[];
-}
-
-const OutputLine = (props: OutputLineProps) => {
-  const playground = usePlayground();
-  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
-  const marks = playground.outputLineMarks.at(props.number - 1) ?? NO_MARKS;
-  return (
-    <CodeLine
-      number={props.number}
-      tokens={props.tokens}
-      marks={marks}
-      hoveredName={getLineHoveredName(marks, props.hoveredName)}
-      isHighlighted={isArrowsShown}
-      colors={playground.colors}
-      note={playground.result?.notes.find((note) => note.line === props.number)}
-      isActive={props.activeLine === props.number}
-      isDimmed={props.steps.length > 0 && props.steps.every((step) => step.line !== props.number)}
-      className="-mr-4 -ml-4 pr-4 pl-4"
-    />
-  );
-};
-
-interface OutputFoldProps {
-  name: string;
-  lineCount: number;
-  isOpen: boolean;
-}
-
-const OutputFold = (props: OutputFoldProps) => {
-  const playground = usePlayground();
-  return (
-    <CodeFold
-      lineCount={props.lineCount}
-      isOpen={props.isOpen}
-      hasGutter
-      isDisabled={playground.isSkeleton}
-      onToggle={() => playground.toggleFold(props.name)}
-      className={cn(!playground.isSkeleton && "text-faint")}
-    />
-  );
-};
-
 export const PlaygroundOutput = () => {
   const playground = usePlayground();
   const paneRef = useRef<HTMLElement>(null);
   const hoveredName = usePlaygroundView((view) => view.hoveredName);
   const hoverName = usePlaygroundView((view) => view.hoverName);
+  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
   const search = playground.result?.search;
   const steps = useSearchPath(
     search,
@@ -179,48 +132,56 @@ export const PlaygroundOutput = () => {
           playground.isOutputStale && "opacity-50 delay-200",
         )}
       >
-        {rows
-          .flatMap((row) => {
-            const output = outputRows.at(row.index);
-            return output ? { row, output } : [];
-          })
-          .map((line) => (
+        {rows.map((row) => {
+          const output = outputRows[row.index];
+          const marks =
+            output.kind === "line"
+              ? (playground.outputLineMarks.at(output.number - 1) ?? NO_MARKS)
+              : NO_MARKS;
+          return (
             <span
-              key={line.row.key}
+              key={row.key}
               ref={virtualizer.measureElement}
-              data-index={line.row.index}
+              data-index={row.index}
               className="block"
             >
-              {line.output.kind === "line" && (
-                <OutputLine
-                  number={line.output.number}
-                  tokens={line.output.tokens}
-                  hoveredName={hoveredName}
-                  activeLine={steps.at(0)?.line ?? playground.result?.activeLine}
-                  steps={steps}
+              {output.kind === "line" && (
+                <CodeLine
+                  number={output.number}
+                  tokens={output.tokens}
+                  marks={marks}
+                  hoveredName={getLineHoveredName(marks, hoveredName)}
+                  isHighlighted={isArrowsShown}
+                  colors={playground.colors}
+                  note={playground.result?.notes.find((note) => note.line === output.number)}
+                  isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === output.number}
+                  isDimmed={steps.length > 0 && steps.every((step) => step.line !== output.number)}
+                  className="-mr-4 -ml-4 pr-4 pl-4"
                 />
               )}
-              {line.output.kind === "comment" && (
+              {output.kind === "comment" && (
                 <CodeComment
-                  text={line.output.text}
+                  text={output.text}
                   hasGutter
                   className={cn(
-                    line.row.index > 0 &&
-                      outputRows[line.row.index - 1].kind !== "comment" &&
-                      "pt-[0.85em]",
+                    row.index > 0 && outputRows[row.index - 1].kind !== "comment" && "pt-[0.85em]",
                     !playground.isSkeleton && "text-faint",
                   )}
                 />
               )}
-              {line.output.kind === "fold" && (
-                <OutputFold
-                  name={line.output.name}
-                  lineCount={line.output.lineCount}
-                  isOpen={line.output.isOpen}
+              {output.kind === "fold" && (
+                <CodeFold
+                  lineCount={output.lineCount}
+                  isOpen={output.isOpen}
+                  hasGutter
+                  isDisabled={playground.isSkeleton}
+                  onToggle={() => playground.toggleFold(output.name)}
+                  className={cn(!playground.isSkeleton && "text-faint")}
                 />
               )}
             </span>
-          ))}
+          );
+        })}
       </code>
     </Pane>
   );

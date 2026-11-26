@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "@/lib/run-worker";
@@ -18,18 +18,21 @@ import { Tooltip } from "@/components/ui/tooltip";
 const NO_MARKS: Mark[] = [];
 const NO_COLORS = {};
 const NO_PATH: SearchState[] = [];
-// The lines past the limit are added a few to a frame. Adding hundreds at once holds the page still
-// for half a second.
-const MORE_LINES_PER_FRAME = 40;
+// Hundreds of rows added at once hold the page still for half a second.
+const MORE_ROWS_PER_FRAME = 40;
 
 interface Expanded {
   code: string;
-  lineCount: number;
+  rowCount: number;
 }
 
 interface CodeState {
   source: Source;
   rows: OutputRow[];
+  limit: number;
+  rowCount: number;
+  isExpanded: boolean;
+  toggleExpanded: () => void;
   onToggleFold: (name: string) => void;
   lineMarks: Mark[][] | undefined;
   colors: Record<string, string>;
@@ -47,9 +50,10 @@ interface RootProps {
   source: Source;
   // The rows shown of the source, where they are not its lines one by one.
   rows?: OutputRow[];
+  // The most rows shown until the reader asks for the rest with Code.More.
+  limit?: number;
   onToggleFold?: (name: string) => void;
-  // Each line's marks. Hovering a mark tints every word of its name in the name's color, and code
-  // that comes into view flashes in its names' colors.
+  // Each line's marks, which tint on hover and flash as code comes into view.
   lineMarks?: Mark[][];
   colors?: Record<string, string>;
   activeLine?: number;
@@ -61,14 +65,39 @@ interface RootProps {
 }
 
 const CodeRoot = (props: RootProps) => {
-  const isMultiline = props.source.lines.length > 1;
+  const code = props.source.code;
+  const lines = props.source.lines;
+  const rows = useMemo(
+    () =>
+      props.rows ??
+      lines.map((tokens, index): OutputRow => ({ kind: "line", number: index + 1, tokens })),
+    [props.rows, lines],
+  );
+  const limit = props.limit ?? rows.length;
+  // Other code starts within the limit again.
+  const [expanded, setExpanded] = useState<Expanded>();
+  if (expanded && expanded.code !== code) setExpanded(undefined);
+  const isExpanded = expanded?.code === code;
+  const rowCount = isExpanded ? expanded.rowCount : limit;
+  const isAllShown = rowCount >= rows.length;
+  useEffect(() => {
+    if (isAllShown) return;
+    const frame = requestAnimationFrame(() =>
+      setExpanded((current) => current && { ...current, rowCount: rowCount + MORE_ROWS_PER_FRAME }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [isAllShown, rowCount]);
+  const isMultiline = lines.length > 1;
   return (
     <codeContext.PartsContext
       value={{
         source: props.source,
-        rows:
-          props.rows ??
-          props.source.lines.map((tokens, index) => ({ kind: "line", number: index + 1, tokens })),
+        rows,
+        limit,
+        rowCount,
+        isExpanded,
+        toggleExpanded: () =>
+          setExpanded(isExpanded ? undefined : { code, rowCount: limit + MORE_ROWS_PER_FRAME }),
         onToggleFold: props.onToggleFold ?? (() => {}),
         lineMarks: props.lineMarks,
         colors: props.colors ?? NO_COLORS,
@@ -92,31 +121,8 @@ const CodeRoot = (props: RootProps) => {
   );
 };
 
-interface ContentProps {
-  // The most lines shown until the reader asks for the rest.
-  limit?: number;
-}
-
-const CodeContent = (props: ContentProps) => {
+const CodeContent = () => {
   const code = codeContext.useParts();
-  // The code that the reader opened in full, so other code starts within the limit again.
-  const [expanded, setExpanded] = useState<Expanded>();
-  if (expanded && expanded.code !== code.source.code) setExpanded(undefined);
-  const isExpanded = expanded?.code === code.source.code;
-  const limit = props.limit ?? code.rows.length;
-  const lineCount = isExpanded ? expanded.lineCount : limit;
-  const hiddenCount = Math.max(0, code.rows.length - limit);
-  const isAllShown = lineCount >= code.rows.length;
-  useEffect(() => {
-    if (isAllShown) return;
-    const frame = requestAnimationFrame(() =>
-      setExpanded(
-        (current) => current && { ...current, lineCount: lineCount + MORE_LINES_PER_FRAME },
-      ),
-    );
-    return () => cancelAnimationFrame(frame);
-  }, [isAllShown, lineCount]);
-  const activeLine = code.path.at(0)?.line ?? code.activeLine;
   const contentRef = useRef<HTMLElement>(null);
   const [hoveredName, setHoveredName] = useState<string>();
   useTokenMorph(contentRef, code.source.code, code.colors);
@@ -126,7 +132,8 @@ const CodeContent = (props: ContentProps) => {
         <CodeLine tokens={code.source.lines[0]} />
       </code>
     );
-  const lines = code.rows.slice(0, lineCount).map((row, index) => {
+  const activeLine = code.path.at(0)?.line ?? code.activeLine;
+  const rows = code.rows.slice(0, code.rowCount).map((row, index) => {
     if (row.kind === "comment")
       return (
         <CodeComment
@@ -148,17 +155,15 @@ const CodeContent = (props: ContentProps) => {
           className="text-faint"
         />
       );
+    const marks = code.lineMarks?.at(row.number - 1) ?? NO_MARKS;
     return (
       <CodeLine
         key={row.number}
         tokens={row.tokens}
         number={row.number}
         isNumberHidden
-        marks={code.lineMarks?.at(row.number - 1)}
-        hoveredName={getLineHoveredName(
-          code.lineMarks?.at(row.number - 1) ?? NO_MARKS,
-          hoveredName,
-        )}
+        marks={marks}
+        hoveredName={getLineHoveredName(marks, hoveredName)}
         colors={code.colors}
         note={code.notes.find((note) => note.line === row.number)}
         isActive={activeLine === row.number}
@@ -179,47 +184,46 @@ const CodeContent = (props: ContentProps) => {
     );
   });
   return (
-    <>
-      <code
-        ref={contentRef}
-        data-hovering-name={hoveredName === undefined ? undefined : ""}
-        // Code that grows under a pointer at rest is not hovered until the pointer moves.
-        onPointerMove={(event) => {
-          if (event.movementX === 0 && event.movementY === 0) return;
-          if (!(event.target instanceof HTMLElement)) return setHoveredName(undefined);
-          const line = Number(event.target.closest<HTMLElement>("[data-line]")?.dataset.line);
-          setHoveredName(event.target.dataset.region ?? code.lineMarks?.at(line - 1)?.at(0)?.name);
-        }}
-        onPointerLeave={() => setHoveredName(undefined)}
-        className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
-      >
-        {lines.slice(0, limit)}
-        {lineCount > limit && (
-          <div data-more className="transition-opacity duration-200 ease-out starting:opacity-0">
-            {lines.slice(limit)}
-          </div>
-        )}
-      </code>
-      {hiddenCount > 0 && (
-        <Button
-          variant="link"
-          size="inline"
-          aria-expanded={isExpanded}
-          onClick={() =>
-            setExpanded(
-              isExpanded
-                ? undefined
-                : { code: code.source.code, lineCount: limit + MORE_LINES_PER_FRAME },
-            )
-          }
-          className="text-sm text-muted-foreground"
-        >
-          {isExpanded
-            ? "Show less"
-            : `Show ${hiddenCount.toLocaleString("en-US")} more ${hiddenCount === 1 ? "line" : "lines"}`}
-        </Button>
+    <code
+      ref={contentRef}
+      data-hovering-name={hoveredName === undefined ? undefined : ""}
+      // Code that grows under a pointer at rest is not hovered until the pointer moves.
+      onPointerMove={(event) => {
+        if (event.movementX === 0 && event.movementY === 0) return;
+        if (!(event.target instanceof HTMLElement)) return setHoveredName(undefined);
+        const line = Number(event.target.closest<HTMLElement>("[data-line]")?.dataset.line);
+        setHoveredName(event.target.dataset.region ?? code.lineMarks?.at(line - 1)?.at(0)?.name);
+      }}
+      onPointerLeave={() => setHoveredName(undefined)}
+      className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
+    >
+      {rows.slice(0, code.limit)}
+      {code.rowCount > code.limit && (
+        <div data-more className="transition-opacity duration-200 ease-out starting:opacity-0">
+          {rows.slice(code.limit)}
+        </div>
       )}
-    </>
+    </code>
+  );
+};
+
+const CodeMore = () => {
+  const code = codeContext.useParts();
+  const hiddenCount = code.rows.length - code.limit;
+  return (
+    hiddenCount > 0 && (
+      <Button
+        variant="link"
+        size="inline"
+        aria-expanded={code.isExpanded}
+        onClick={code.toggleExpanded}
+        className="text-sm text-muted-foreground"
+      >
+        {code.isExpanded
+          ? "Show less"
+          : `Show ${hiddenCount.toLocaleString("en-US")} more ${hiddenCount === 1 ? "line" : "lines"}`}
+      </Button>
+    )
   );
 };
 
@@ -287,6 +291,7 @@ const CodeCopy = () => <CopyButton text={codeContext.useParts().source.code} />;
 export const Code = {
   Root: CodeRoot,
   Content: CodeContent,
+  More: CodeMore,
   Footer: CodeFooter,
   Actions: CodeActions,
   Run: CodeRun,

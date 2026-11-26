@@ -42,9 +42,8 @@ export const usePlaygroundState = () => {
   const isMapped = !compiler.isCompiling && compiler.error === undefined;
   const sourceMarks = (isMapped && compilation?.sourceMarks) || NO_MARKS;
   const outputMarks = (isMapped && compilation?.outputMarks) || NO_MARKS;
-  // Until the first compilation lands, the output is the outline of what it will hold: each row
-  // the build made of the file's output, as a line's number and tokens, a comment after an empty
-  // cell, or a fold's count of lines after a plus.
+  // Until the first compilation lands, the output is the outline of what it will hold, in the
+  // rows that the build wrote: see getOutline in vite.config.ts.
   const isSkeleton = compiler.tla === undefined && compiler.error === undefined;
   const outlineText = outlines[file.fileName];
   const outline = useMemo(
@@ -73,8 +72,7 @@ export const usePlaygroundState = () => {
     () => getLineMarks(tlaLines, outputMarks),
     [tlaLines, outputMarks],
   );
-  // An edit that is still compiling shows the last output without its marks, and that output keeps
-  // its folds, which its own marks place.
+  // An edit that is still compiling shows the last output without its marks, but keeps its folds.
   const foldLineMarks = useMemo(
     () => getLineMarks(tlaLines, compilation?.outputMarks ?? NO_MARKS),
     [tlaLines, compilation],

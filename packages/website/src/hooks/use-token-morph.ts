@@ -47,9 +47,8 @@ const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
 const getMoreLineCount = (container: HTMLElement) =>
   container.querySelector(":scope > [data-more]")?.childElementCount ?? 0;
 
-// The text that a token is matched by. Code that compiles through ESCore shares no words with its
-// TypeScript but by chance, and each comment in it quotes the TypeScript it came from. So where
-// code has comments, only their tokens match, and the TypeScript moves to where it is quoted.
+// ESCore's code shares words with its TypeScript only by chance, and its comments quote the
+// TypeScript. So where code has comments, only their tokens match.
 const getMatchTexts = (tokens: TokenSnapshot[]) => {
   const hasComments = tokens.some((token) => token.isComment);
   return tokens.map((token, index) =>
@@ -106,7 +105,6 @@ const highlight = (element: HTMLElement, color: string, delay: number) => {
 export const useTokenMorph = (
   containerRef: RefObject<HTMLElement | null>,
   code: string,
-  // The color that each name's code flashes in as it comes into view.
   colors: Record<string, string>,
 ) => {
   const snapshotRef = useRef<CodeSnapshot | undefined>(undefined);
@@ -186,8 +184,7 @@ export const useTokenMorph = (
     });
     if (isReduced) return;
 
-    // The new code is in place at its full height from the start, so the height that grows to it
-    // clips what it has not reached, which would lie over what is below the code.
+    // The new code has its full height from the start, so it would lie over what is below it.
     container.animate(
       [
         { height: `${before.height}px`, overflowY: "clip" },

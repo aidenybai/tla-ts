@@ -1,5 +1,5 @@
 import { CaretRight, X } from "@phosphor-icons/react";
-import { memo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { cn } from "cn";
 import type { Mark, Token } from "@/lib/site-data";
 import type { LineNote } from "@/lib/run-worker";
@@ -109,7 +109,7 @@ const CodeWords = memo((props: CodeWordsProps) => {
 interface CodeLineProps {
   tokens: Token[];
   number?: number;
-  // Whether the line shows its number, which it has for the code around it to find it by.
+  // A line that hides its number still carries it, for the code around it to find the line by.
   isNumberHidden?: boolean;
   note?: LineNote;
   aside?: ReactNode;
@@ -175,15 +175,17 @@ interface CodeCommentProps {
   className?: string;
 }
 
-// A row between lines of code that says where the lines after it came from.
-export const CodeComment = (props: CodeCommentProps) => (
-  <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
-    {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
-    <span data-comment className="min-w-0 flex-1 break-words whitespace-pre-wrap">
-      <CodeWords tokens={[{ content: props.text, style: NO_STYLE }]} />
+export const CodeComment = (props: CodeCommentProps) => {
+  const tokens = useMemo(() => [{ content: props.text, style: NO_STYLE }], [props.text]);
+  return (
+    <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
+      {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
+      <span data-comment className="min-w-0 flex-1 break-words whitespace-pre-wrap">
+        <CodeWords tokens={tokens} />
+      </span>
     </span>
-  </span>
-);
+  );
+};
 
 interface CodeFoldProps {
   lineCount: number;
@@ -194,7 +196,6 @@ interface CodeFoldProps {
   className?: string;
 }
 
-// A row that stands for the lines of ESCore's own code between two of a program's definitions.
 export const CodeFold = (props: CodeFoldProps) => (
   <button
     type="button"

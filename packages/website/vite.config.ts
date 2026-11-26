@@ -87,10 +87,9 @@ const maskText = (text: string) =>
     .replace(/\d/g, "0")
     .replace(/[^\sa0]/g, ".");
 
-// The shape of the rows that the playground shows of the TLA+ a file compiles to, with their
-// letters, digits, and symbols masked: a line as its number and tokens, split by tabs, a comment
-// after an empty cell, and a fold's count of lines after a plus. The playground draws it while its
-// compiler loads, so the real text lands where the outline was.
+// The shape of the rows that the playground shows of a file's TLA+, with their text masked: a
+// line as its number and tokens, split by tabs, a comment after an empty cell, and a fold's count
+// of lines after a plus. The playground draws it while its compiler loads.
 const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) => {
   const compiled = compileOnEscore(
     readFileSync(path, "utf8").trim(),

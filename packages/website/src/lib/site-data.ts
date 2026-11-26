@@ -15,7 +15,6 @@ export interface CompiledExample {
   modules: Record<string, string>;
   typescript: Source;
   tla: Source;
-  // Where each declaration of the TypeScript is.
   sourceMarks: Mark[];
 }
 

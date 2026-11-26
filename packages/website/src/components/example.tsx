@@ -146,17 +146,14 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
-// A program's module runs to dozens of rows even with ESCore's own code folded, so the page shows
-// its start.
 const PREVIEW_LINES = 28;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
-  // The page marks each declaration on the model's line for it: an exported function on its action
-  // or its check, and any other on Init, which the program's own statements make. The definitions
-  // that a declaration compiles to fold away with the rest of ESCore's code.
+  // Each declaration is marked on the model's line for it: a function on its action or check, and
+  // any other on Init. The definitions it compiles to fold away with the rest of ESCore's code.
   const lineMarks = useMemo(() => {
     const code = example.tla.code;
     return getLineMarks(
@@ -196,6 +193,7 @@ const ExampleSource = () => {
     <Code.Root
       source={state.isCompiled ? example.tla : example.typescript}
       rows={state.isCompiled ? rows : undefined}
+      limit={PREVIEW_LINES}
       onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
       lineMarks={state.isCompiled ? lineMarks : sourceLineMarks}
       colors={colors}
@@ -206,7 +204,8 @@ const ExampleSource = () => {
       onHoverState={state.hoverState}
     >
       {/* A new example is other code, not this code in another language, so it does not morph. */}
-      <Code.Content key={example.fileName} limit={PREVIEW_LINES} />
+      <Code.Content key={example.fileName} />
+      <Code.More />
       <Code.Actions>
         <Tooltip.Root>
           <Tooltip.Trigger
