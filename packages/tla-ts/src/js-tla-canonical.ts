@@ -17,6 +17,7 @@ import {
   formatValue,
   getEntryContribution,
   getKeyPosition,
+  getNumberHash,
   getPageHash,
   getPageRecord,
   getSequenceElements,
@@ -1258,7 +1259,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         levelEntries[open] = plan[at + 2];
         levelHashes[open] = plan[at + 1];
       }
-      const numberHash = getValueHash(target > 0 ? target : -target);
+      const numberHash = getNumberHash(target > 0 ? target : -target);
       const next =
         target > 0 ? (plan[at + 3] + getEntryContribution(ID_HASH, numberHash)) | 0 : numberHash;
       if (next === plan[at + 1]) continue;

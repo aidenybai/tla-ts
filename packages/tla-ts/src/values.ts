@@ -335,7 +335,7 @@ export const getPageHash = (page: CanonicalPage) => {
     const slotHash = getSlotHash(page, slot);
     if (slotHash === UNREADY_HASH) return UNREADY_HASH;
     if (slotHash === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
-    hash = (hash + getEntryContribution(getValueHash(slot + 1), slotHash)) | 0;
+    hash = (hash + getEntryContribution(getNumberHash(slot + 1), slotHash)) | 0;
   }
   return hash;
 };
@@ -361,7 +361,7 @@ const writePageRecord = (page: CanonicalPage, slot: number, record: Value, hash:
     writtenSlots,
   );
   written.flags = VALUE_PAGE;
-  const key = getValueHash(slot + 1);
+  const key = getNumberHash(slot + 1);
   written.hash =
     hash === UNREADY_HASH
       ? UNREADY_HASH
@@ -404,7 +404,7 @@ export const truncatePage = (page: CanonicalPage, count: number) => {
   }
   let hash = page.hash;
   for (let slot = count; slot < page.records.length; slot++) {
-    hash = (hash - getEntryContribution(getValueHash(slot + 1), getSlotHash(page, slot))) | 0;
+    hash = (hash - getEntryContribution(getNumberHash(slot + 1), getSlotHash(page, slot))) | 0;
   }
   truncated.hash = hash;
   return truncated;
@@ -5333,8 +5333,10 @@ export const getHeldValues = (value: ObjectValue): Value[] => {
   }
 };
 
+export const getNumberHash = (value: number) => finalizeHash(value ^ 0x5bd1e995);
+
 export const getValueHash = (value: Value): number => {
-  if (typeof value === "number") return finalizeHash(value ^ 0x5bd1e995);
+  if (typeof value === "number") return getNumberHash(value);
   if (typeof value === "boolean") return value ? 0x2b7e1516 : 0x28aed2a6;
   if (typeof value === "string") return hashString(value);
   if (value.kind === "Set" || value.kind === "Function") {
