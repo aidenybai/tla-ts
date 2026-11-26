@@ -866,17 +866,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const edges: number[] = [];
   const objectEdgeStarts = new Int32Array(getNumber(objs, "size") + 1).fill(-1);
   const environmentEdgeStarts = new Int32Array(getNumber(envs, "size") + 1).fill(-1);
-  const getEdgeStart = (node: number) =>
-    node === 0 ? -1 : node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
-  const getEdgeArray = (node: number, page: CanonicalPage | undefined) =>
-    page !== undefined && getEdgeStart(node) === PAGE_EDGES ? page.edges : edges;
-  const getEdgeFirst = (node: number, array: ArrayLike<number>) =>
-    array === edges ? getEdgeStart(node) + 1 : array[EDGE_STARTS + getSlot(node)];
-  const getEdgeEnd = (node: number, array: ArrayLike<number>) => {
-    if (array !== edges) return array[EDGE_STARTS + getSlot(node) + 1];
-    const start = getEdgeStart(node);
-    return start + 1 + edges[start];
-  };
+  const getEdgeArray = (start: number, page: CanonicalPage | undefined) =>
+    page !== undefined && start === PAGE_EDGES ? page.edges : edges;
+  const getEdgeFirst = (node: number, start: number, array: ArrayLike<number>) =>
+    array === edges ? start + 1 : array[EDGE_STARTS + getSlot(node)];
+  const getEdgeEnd = (node: number, start: number, array: ArrayLike<number>) =>
+    array === edges ? start + 1 + edges[start] : array[EDGE_STARTS + getSlot(node) + 1];
   const startEdges = (node: number) => {
     const start = edges.length;
     if (node > 0) objectEdgeStarts[node] = start;
@@ -899,7 +894,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (page !== undefined) {
       if (node > 0) objectEdgeStarts[node] = PAGE_EDGES;
       else environmentEdgeStarts[-node] = PAGE_EDGES;
-      reachEdges(node, page);
+      reachEdges(node, PAGE_EDGES, page);
       const slot = getSlot(node);
       return hasSlotBit(page.edges, WEAK_MAP_BITS, slot);
     }
@@ -907,13 +902,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (node < 0) {
       environmentRefs(getEnvironment(-node), realm, edges, path);
       endWalked(node, start);
-      reachEdges(node, undefined);
+      reachEdges(node, start, undefined);
       return false;
     }
     const object = getObject(node);
     objectRefs(object, realm, edges, path);
     endWalked(node, start);
-    reachEdges(node, undefined);
+    reachEdges(node, start, undefined);
     return getString(object, "class") === "weakMap";
   };
   // The breadth-first walk numbers each node where it first reaches it, from the roots and then
@@ -937,10 +932,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     order.push(node);
   };
-  const reachEdges = (node: number, page: CanonicalPage | undefined) => {
-    const array = getEdgeArray(node, page);
-    const end = getEdgeEnd(node, array);
-    for (let index = getEdgeFirst(node, array); index < end; index++) reach(array[index]);
+  const reachEdges = (node: number, start: number, page: CanonicalPage | undefined) => {
+    const array = getEdgeArray(start, page);
+    const end = getEdgeEnd(node, start, array);
+    for (let index = getEdgeFirst(node, start, array); index < end; index++) reach(array[index]);
   };
   for (let environment = 1; environment <= realm.environments; environment++) {
     walkRecord(-environment);
@@ -949,7 +944,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     const start = startEdges(id);
     objectRefs(getObject(id), realm, edges, path);
     endWalked(id, start);
-    reachEdges(id, undefined);
+    reachEdges(id, start, undefined);
   }
   const roots: number[] = [];
   const rootPath: Path = { steps: [], located: [], count: 0 };
@@ -1197,10 +1192,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   let pageAt = EDGE_NODES;
   // Adds a node's edges by their new numbers to the page, and gives whether the walk numbers each as
   // it was.
-  const pushEdges = (node: number, page: CanonicalPage | undefined) => {
-    const array = getEdgeArray(node, page);
-    const first = getEdgeFirst(node, array);
-    const end = getEdgeEnd(node, array);
+  const pushEdges = (node: number, start: number, page: CanonicalPage | undefined) => {
+    const array = getEdgeArray(start, page);
+    const first = getEdgeFirst(node, start, array);
+    const end = getEdgeEnd(node, start, array);
     if (pageAt + end - first > pageScratch.length) {
       const grown = new Int32Array(2 * (pageAt + end - first));
       grown.set(pageScratch);
@@ -1218,8 +1213,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     pageAt = at;
     return isEveryUnmoved;
   };
-  const getLocated = (node: number, page: CanonicalPage | undefined) =>
-    page !== undefined && getEdgeStart(node) === PAGE_EDGES
+  const getLocated = (node: number, start: number, page: CanonicalPage | undefined) =>
+    page !== undefined && start === PAGE_EDGES
       ? page.locations[getSlot(node)]
       : walkedLocations.has(node)
         ? walkedLocations.get(node)
@@ -1323,13 +1318,14 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const rename = (
     node: number,
     number: number,
+    start: number,
     page: CanonicalPage | undefined,
     renameRecord: (inner: Value) => FunctionValue,
     slots: Slots,
   ) => {
     const isInPlace = (node > 0 ? node : -node) === number;
     const slot = getSlot(node);
-    const isEveryEdgeUnmoved = pushEdges(node, page);
+    const isEveryEdgeUnmoved = pushEdges(node, start, page);
     if (page !== undefined && page.records[slot] === undefined) {
       if (isEveryEdgeUnmoved) return keepSlot(node, page, slots, isInPlace);
       return makeLater(page.sources[slot], page.locations[slot], page.plans[slot], slots);
@@ -1348,7 +1344,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       page === undefined
         ? ENTRY_CLASSES.has(objectClass)
         : hasSlotBit(page.edges, ENTRY_CLASS_BITS, slot);
-    const located = isKept && !isEntry ? getLocated(node, page) : undefined;
+    const located = isKept && !isEntry ? getLocated(node, start, page) : undefined;
     if (located !== undefined) {
       return page === undefined
         ? makeLater(record, located, undefined, slots)
@@ -1392,10 +1388,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         const number = first + slot + 1;
         const node = nodes[number] === 0 ? number : nodes[number];
         const nodePage = getPage(node);
+        const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
         pageScratch[EDGE_STARTS + slot] = pageAt;
         if (nodes[number] === 0) keepSlot(node, nodePage, slots, true);
-        else rename(node, number, nodePage, renameRecord, slots);
-        locations[slot] = getLocated(node, nodePage);
+        else rename(node, number, start, nodePage, renameRecord, slots);
+        locations[slot] = getLocated(node, start, nodePage);
         if (nodes !== objectNodes) continue;
         if (nodePage === undefined) {
           const objectClass = getString(slots.sources[first + slot], "class");
