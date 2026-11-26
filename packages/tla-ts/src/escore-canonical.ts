@@ -27,6 +27,7 @@ import {
   markCanonical,
   PAGE_BITS,
   PAGE_SIZE,
+  PROMISE_BITS,
   setFunctionClass,
   toFiniteFunction,
   toFiniteSet,
@@ -1378,6 +1379,13 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         const heapNode = node === 0 ? first + slot + 1 : node;
         const nodePage = getPage(heapNode);
         locations[slot] = getLocated(heapNode, nodePage);
+        const nodeSlot = getSlot(heapNode);
+        const isPromise =
+          nodes === objectNodes &&
+          (nodePage === undefined
+            ? getString(slots.sources[first + slot], "class") === "promise"
+            : ((nodePage.edges[PROMISE_BITS + (nodeSlot >> 5)] >>> (nodeSlot & 31)) & 1) === 1);
+        if (isPromise) pageScratch[PROMISE_BITS + (slot >> 5)] |= 1 << (slot & 31);
         if (getEdgeStart(node) === -1) continue;
         const array = getEdgeArray(node, nodePage);
         const edgeFirst = getEdgeFirst(node, array);
@@ -1471,12 +1479,27 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
 };
 
 // Whether each CanonicalStateOf also renames every record anew and stops where the two differ in
-// value, hash, or fingerprint, which a test sets to check the incremental form against the full one.
+// value, hash, fingerprint, or a page's edges, which a test sets to check the incremental form
+// against the full one.
 let isDifferential = false;
 
 export const setCanonicalDifferential = (isEnabled: boolean) => {
   isDifferential = isEnabled;
 };
+
+const areSamePageEdges = (left: Value, right: Value) =>
+  ["objs", "envs"].every((heap) => {
+    const rightPages = getList(get(get(right, heap), "pages"));
+    return getList(get(get(left, heap), "pages")).every((page, index) => {
+      const rightPage = rightPages[index];
+      return (
+        !isCanonicalPage(page) ||
+        !isCanonicalPage(rightPage) ||
+        (page.edges.length === rightPage.edges.length &&
+          page.edges.every((target, at) => target === rightPage.edges[at]))
+      );
+    });
+  });
 
 const getFingerprint = (value: Value) => {
   const fingerprint = new Int32Array(2);
@@ -1494,7 +1517,8 @@ export const ESCORE_CANONICAL_OPERATORS = [
     if (
       !valuesEqual(canonical, full) ||
       getValueHash(canonical) !== getValueHash(full) ||
-      getFingerprint(canonical) !== getFingerprint(full)
+      getFingerprint(canonical) !== getFingerprint(full) ||
+      !areSamePageEdges(canonical, full)
     ) {
       throw new TlaEvaluationError(
         "CanonicalStateOf's incremental form differs from its full form",
