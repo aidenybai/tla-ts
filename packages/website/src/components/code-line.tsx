@@ -4,6 +4,7 @@ import { cn } from "cn";
 import type { Mark, Token } from "@/lib/site-data";
 import type { LineNote } from "@/lib/run-worker";
 
+const NO_STYLE = {};
 const WORDS = /\s+|[A-Za-z_]\w*|\d+|[^\sA-Za-z_\d]+/g;
 // Each word is its own box, and a line may break between two boxes. Words with no space between
 // them stay together up to this length, so that a wrapped line breaks at its spaces.
@@ -178,8 +179,8 @@ interface CodeCommentProps {
 export const CodeComment = (props: CodeCommentProps) => (
   <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
     {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
-    <span className="min-w-0 flex-1 truncate">
-      <span data-token>{props.text}</span>
+    <span data-comment className="min-w-0 flex-1 truncate">
+      <CodeWords tokens={[{ content: props.text, style: NO_STYLE }]} />
     </span>
   </span>
 );
