@@ -1,8 +1,11 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "@/lib/examples";
+import { getHighlightColors } from "@/lib/highlight-colors";
+import { getLineMarks } from "@/lib/line-marks";
+import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
@@ -26,7 +29,6 @@ interface ExampleState {
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
   run: () => void;
-  finishMorph: () => void;
 }
 
 const exampleContext = createPartsContext<ExampleState>("Example.Root");
@@ -39,9 +41,8 @@ const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
   const [example, setExample] = useState(EXAMPLES[0]);
   const [isCompiled, setIsCompiled] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "rewinding" | "compiling">("idle");
   const [hasRun, setHasRun] = useState(false);
-  const isRunning = phase !== "idle" || runner.isRunning;
+  const isRunning = runner.isRunning;
   const result = isRunning || !isCompiled ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
   const path = useSearchPath(result?.search, hoveredStateId);
@@ -54,10 +55,8 @@ const ExampleRoot = (props: RootProps) => {
   };
   const run = () => {
     setHasRun(true);
-    if (isCompiled && runner.result === undefined) return runner.run(request);
-    runner.reset();
-    setPhase(isCompiled ? "rewinding" : "compiling");
-    setIsCompiled(!isCompiled);
+    setIsCompiled(true);
+    runner.run(request);
   };
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -85,16 +84,6 @@ const ExampleRoot = (props: RootProps) => {
         path,
         hoverState: setHoveredStateId,
         run,
-        finishMorph: () => {
-          if (phase === "rewinding") {
-            setPhase("compiling");
-            setIsCompiled(true);
-          }
-          if (phase === "compiling") {
-            setPhase("idle");
-            runner.run(request);
-          }
-        },
       }}
     >
       <div className="relative flex flex-col gap-3">{props.children}</div>
@@ -157,24 +146,66 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
-// ESCore's code of a program runs to hundreds of lines, so the page shows its start.
-const PREVIEW_LINES = 16;
+const PREVIEW_LINES = 28;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
+  const example = state.example;
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
+  // Each declaration is marked on the model's line for it: a function on its action or check, and
+  // any other on Init. The definitions it compiles to fold away with the rest of ESCore's code.
+  const lineMarks = useMemo(() => {
+    const code = example.tla.code;
+    return getLineMarks(
+      code.split("\n"),
+      example.sourceMarks.flatMap((mark) => {
+        const start = [mark.name, "Init"]
+          .map((name) => code.search(new RegExp(`^${name}(?:\\(.*\\))? ==`, "m")))
+          .find((found) => found !== -1);
+        if (start === undefined) return [];
+        const end = code.indexOf("\n", start);
+        return { name: mark.name, start, end: end === -1 ? code.length : end };
+      }),
+    );
+  }, [example]);
+  const sourceLineMarks = useMemo(
+    () => getLineMarks(example.typescript.code.split("\n"), example.sourceMarks),
+    [example],
+  );
+  const colors = useMemo(
+    () => getHighlightColors(example.sourceMarks.map((mark) => mark.name)),
+    [example],
+  );
+  const result = state.result;
+  const rows = useMemo(
+    () =>
+      getOutputRows({
+        lines: example.tla.lines,
+        lineMarks,
+        source: example.typescript.code,
+        sourceMarks: example.sourceMarks,
+        openFolds,
+        pinnedLines: getRunLines(result),
+      }),
+    [example, lineMarks, openFolds, result],
+  );
   return (
     <Code.Root
-      source={state.isCompiled ? state.example.tla : state.example.typescript}
-      activeLine={state.result?.activeLine}
-      notes={state.result?.notes}
-      search={state.result?.search}
+      source={state.isCompiled ? example.tla : example.typescript}
+      rows={state.isCompiled ? rows : undefined}
+      limit={PREVIEW_LINES}
+      onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
+      lineMarks={state.isCompiled ? lineMarks : sourceLineMarks}
+      colors={colors}
+      activeLine={result?.activeLine}
+      notes={result?.notes}
+      search={result?.search}
       path={state.path}
       onHoverState={state.hoverState}
-      highlights={state.example.highlights}
-      onMorphEnd={state.finishMorph}
     >
       {/* A new example is other code, not this code in another language, so it does not morph. */}
-      <Code.Content key={state.example.fileName} limit={PREVIEW_LINES} />
+      <Code.Content key={example.fileName} />
+      <Code.More />
       <Code.Actions>
         <Tooltip.Root>
           <Tooltip.Trigger
@@ -193,7 +224,9 @@ const ExampleSource = () => {
       </Code.Actions>
       <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
+          {/* A new example starts on its TypeScript, which the toggle shows without sliding there. */}
           <ToggleGroup.Root
+            key={state.example.fileName}
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
             isDisabled={state.isRunning}

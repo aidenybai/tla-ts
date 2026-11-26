@@ -1,9 +1,10 @@
-import { X } from "@phosphor-icons/react";
-import { memo, type ReactNode } from "react";
+import { CaretRight, X } from "@phosphor-icons/react";
+import { memo, useMemo, type ReactNode } from "react";
 import { cn } from "cn";
 import type { Mark, Token } from "@/lib/site-data";
 import type { LineNote } from "@/lib/run-worker";
 
+const NO_STYLE = {};
 const WORDS = /\s+|[A-Za-z_]\w*|\d+|[^\sA-Za-z_\d]+/g;
 // Each word is its own box, and a line may break between two boxes. Words with no space between
 // them stay together up to this length, so that a wrapped line breaks at its spaces.
@@ -108,6 +109,8 @@ const CodeWords = memo((props: CodeWordsProps) => {
 interface CodeLineProps {
   tokens: Token[];
   number?: number;
+  // A line that hides its number still carries it, for the code around it to find the line by.
+  isNumberHidden?: boolean;
   note?: LineNote;
   aside?: ReactNode;
   isActive?: boolean;
@@ -132,7 +135,7 @@ export const CodeLine = memo((props: CodeLineProps) => (
       props.className,
     )}
   >
-    {props.number !== undefined && <LineNumber number={props.number} />}
+    {props.number !== undefined && !props.isNumberHidden && <LineNumber number={props.number} />}
     <span
       className={cn(
         "min-w-0 flex-1",
@@ -165,3 +168,62 @@ export const CodeLine = memo((props: CodeLineProps) => (
     )}
   </span>
 ));
+
+interface CodeCommentProps {
+  text: string;
+  hasGutter?: boolean;
+  className?: string;
+}
+
+export const CodeComment = (props: CodeCommentProps) => {
+  const tokens = useMemo(() => [{ content: props.text, style: NO_STYLE }], [props.text]);
+  return (
+    <span className={cn("flex min-h-[1.7em] gap-x-4", props.className)}>
+      {props.hasGutter && <span className="min-w-[3ch] shrink-0" />}
+      <span data-comment className="min-w-0 flex-1 break-words whitespace-pre-wrap">
+        <CodeWords tokens={tokens} />
+      </span>
+    </span>
+  );
+};
+
+interface CodeFoldProps {
+  lineCount: number;
+  isOpen: boolean;
+  hasGutter?: boolean;
+  isDisabled?: boolean;
+  onToggle: () => void;
+  className?: string;
+}
+
+export const CodeFold = (props: CodeFoldProps) => (
+  <button
+    type="button"
+    aria-expanded={props.isOpen}
+    disabled={props.isDisabled}
+    onClick={props.onToggle}
+    className={cn(
+      "flex min-h-[1.7em] w-full cursor-pointer items-center text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground disabled:cursor-default",
+      props.hasGutter ? "gap-x-4" : "gap-x-2",
+      props.className,
+    )}
+  >
+    <span
+      data-token={props.isDisabled ? undefined : ""}
+      className={cn("flex shrink-0 justify-end", props.hasGutter && "min-w-[3ch]")}
+    >
+      <CaretRight
+        weight="bold"
+        className={cn(
+          "size-3 transition-transform duration-150 ease-out",
+          props.isOpen && "rotate-90",
+          props.isDisabled && "invisible",
+        )}
+      />
+    </span>
+    <span data-token>
+      {props.isOpen ? "Hide" : "Show"} {props.lineCount.toLocaleString("en-US")}{" "}
+      {props.lineCount === 1 ? "line" : "lines"} of ESCore
+    </span>
+  </button>
+);

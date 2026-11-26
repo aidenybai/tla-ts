@@ -7,6 +7,7 @@ export const BUILT_OUTPUT_LINES = 60;
 
 export interface Compilation {
   name: string;
+  source: string;
   tla: string;
   config: string;
   modules: Record<string, string>;

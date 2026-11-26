@@ -1,5 +1,4 @@
 import { examples } from "virtual:site-data";
-import { getHighlightColors } from "./highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {
   "likes.ts": { article: "a", label: "like button" },
@@ -10,5 +9,4 @@ const LABELS: Record<string, { article: string; label: string }> = {
 export const EXAMPLES = examples.map((example) => ({
   ...example,
   ...LABELS[example.fileName],
-  highlights: getHighlightColors(example.highlightNames),
 }));

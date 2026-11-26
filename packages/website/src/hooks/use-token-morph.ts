@@ -1,16 +1,19 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 const MORPH_DURATION_MS = 600;
 const RESIZE_DURATION_MS = 300;
 const RESIZE_EASING = "cubic-bezier(0.25, 1, 0.5, 1)";
 const HIGHLIGHT_DURATION_MS = 1400;
 const FADE_DURATION_MS = 300;
-const ENTER_DELAY_MS = 150;
+// The old code leaves before the new code enters, so the two are never on screen together.
+const LEAVE_DURATION_MS = 150;
+const ENTER_DELAY_MS = 300;
 const EASING = "cubic-bezier(0.645, 0.045, 0.355, 1)";
 
 interface TokenSnapshot {
   element: HTMLElement;
   text: string;
+  isComment: boolean;
   left: number;
   top: number;
 }
@@ -34,6 +37,7 @@ const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
     return {
       element,
       text: element.textContent,
+      isComment: element.closest("[data-comment]") !== null,
       left: box.left - origin.left,
       top: box.top - origin.top,
     };
@@ -42,6 +46,15 @@ const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
 
 const getMoreLineCount = (container: HTMLElement) =>
   container.querySelector(":scope > [data-more]")?.childElementCount ?? 0;
+
+// ESCore's code shares words with its TypeScript only by chance, and its comments quote the
+// TypeScript. So where code has comments, only their tokens match.
+const getMatchTexts = (tokens: TokenSnapshot[]) => {
+  const hasComments = tokens.some((token) => token.isComment);
+  return tokens.map((token, index) =>
+    hasComments && !token.isComment ? `\n${index}` : token.text,
+  );
+};
 
 const getMatches = (before: string[], after: string[]) => {
   const width = after.length + 1;
@@ -75,7 +88,7 @@ const getMatches = (before: string[], after: string[]) => {
   return matches;
 };
 
-const highlight = (element: HTMLElement, color: string) => {
+const highlight = (element: HTMLElement, color: string, delay: number) => {
   const tint = `color-mix(in srgb, ${color} 24%, transparent)`;
   const shown = { backgroundColor: tint, boxShadow: `2px 0 0 ${tint}, -2px 0 0 ${tint}` };
   const hidden = {
@@ -84,6 +97,7 @@ const highlight = (element: HTMLElement, color: string) => {
   };
   element.animate([hidden, { ...shown, offset: 0.15 }, { ...shown, offset: 0.75 }, hidden], {
     duration: HIGHLIGHT_DURATION_MS,
+    delay,
     easing: "ease-out",
   });
 };
@@ -91,11 +105,9 @@ const highlight = (element: HTMLElement, color: string) => {
 export const useTokenMorph = (
   containerRef: RefObject<HTMLElement | null>,
   code: string,
-  highlights: Record<string, string>,
-  onFinish: (() => void) | undefined,
+  colors: Record<string, string>,
 ) => {
   const snapshotRef = useRef<CodeSnapshot | undefined>(undefined);
-  const finish = useEffectEvent(() => onFinish?.());
 
   useEffect(() => {
     const container = containerRef.current;
@@ -147,38 +159,39 @@ export const useTokenMorph = (
     if (before === undefined || before.code === code) return;
 
     const isReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const matches = getMatches(
-      before.tokens.map((token) => token.text),
-      tokens.map((token) => token.text),
-    );
-    const animations = tokens.map((token, index) => {
+    const matches = getMatches(getMatchTexts(before.tokens), getMatchTexts(tokens));
+    tokens.forEach((token, index) => {
       const matched = before.tokens[matches.get(index) ?? -1];
-      const color = highlights[token.text];
-      if (color !== undefined) highlight(token.element, color);
+      const color = colors[token.element.dataset.region ?? ""];
+      if (color !== undefined) highlight(token.element, color, isReduced ? 0 : MORPH_DURATION_MS);
       if (matched === undefined || isReduced)
-        return token.element.animate([{ opacity: 0 }, { opacity: 1 }], {
+        token.element.animate([{ opacity: 0 }, { opacity: 1 }], {
           duration: FADE_DURATION_MS,
           delay: isReduced ? 0 : ENTER_DELAY_MS,
           fill: "backwards",
           easing: "ease-out",
         });
-      return token.element.animate(
-        [
-          {
-            transform: `translate(${matched.left - token.left}px, ${matched.top - token.top}px)`,
-          },
-          { transform: "none" },
-        ],
-        { duration: MORPH_DURATION_MS, easing: EASING },
-      );
+      else
+        token.element.animate(
+          [
+            {
+              transform: `translate(${matched.left - token.left}px, ${matched.top - token.top}px)`,
+            },
+            { transform: "none" },
+          ],
+          { duration: MORPH_DURATION_MS, easing: EASING },
+        );
     });
-    void Promise.allSettled(animations.map((animation) => animation.finished)).then(finish);
     if (isReduced) return;
 
-    container.animate([{ height: `${before.height}px` }, { height: `${height}px` }], {
-      duration: MORPH_DURATION_MS,
-      easing: EASING,
-    });
+    // The new code has its full height from the start, so it would lie over what is below it.
+    container.animate(
+      [
+        { height: `${before.height}px`, overflowY: "clip" },
+        { height: `${height}px`, overflowY: "clip" },
+      ],
+      { duration: MORPH_DURATION_MS, easing: EASING },
+    );
     const leaving = new Set(before.tokens.keys()).difference(new Set(matches.values()));
     const ghosts = document.createElement("span");
     ghosts.ariaHidden = "true";
@@ -193,9 +206,9 @@ export const useTokenMorph = (
     }
     container.append(ghosts);
     ghosts.animate([{ opacity: 1 }, { opacity: 0 }], {
-      duration: FADE_DURATION_MS,
+      duration: LEAVE_DURATION_MS,
       easing: "ease-out",
       fill: "forwards",
     }).onfinish = () => ghosts.remove();
-  }, [containerRef, code, highlights]);
+  }, [containerRef, code, colors]);
 };
