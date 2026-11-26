@@ -1315,7 +1315,10 @@ const searchStates = (
         if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
-        const behavior = traces.getTrace(index, successor, { isPrintedOnly: true });
+        const behavior = traces.getTrace(index, successor, {
+          isPrintedOnly: true,
+          isRebuildFailureKept: true,
+        });
         const replay = is174
           ? captureOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);
@@ -1819,7 +1822,7 @@ const searchStates = (
             : undefined;
         const behavior = traceError
           ? traces.getStateTrace(index, { isPrintedOnly: true })
-          : traces.getTrace(index, successor, { isPrintedOnly: true });
+          : traces.getTrace(index, successor, { isPrintedOnly: true, isRebuildFailureKept: true });
         const rebuilt =
           traceError &&
           captureOutput(() => {

@@ -3359,6 +3359,35 @@ describe("evaluation errors match TLC", () => {
     ]).toEqual([["<<0, 0>>"], `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`]);
   });
 
+  it.each([
+    ["INVARIANT Check", "Check == 1 \\div y.a > 0", "Evaluating invariant Check failed.\n"],
+    ["CONSTRAINT Check", "Check == 1 \\div y.a > 0", ""],
+    [
+      "PROPERTY Check",
+      "Check == [][1 \\div y'.a > 0]_y",
+      "Evaluating action property Check failed.\n",
+    ],
+  ])(
+    "reports the failure of %s and then the failure to rebuild its step, as TLC's ModelChecker#printTraceAndStop does",
+    async (section, definition, headline) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = [a |-> 1]\nNext == y' \\in {r \\in [a : 0..2] : 10 \\div (r.a - 2) # 99}\n${definition}\n====`,
+        config: `INIT Init\nNEXT Next\n${section}`,
+      });
+      expect([
+        result.failure?.message,
+        result.failure?.trace.map((step) => formatValue(step.state.y)),
+        result.failure?.traceFailure?.message,
+        result.failure?.exitCode,
+      ]).toEqual([
+        `${headline}The second argument of \\div is 0.`,
+        ["[a |-> 1]"],
+        `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`,
+        255,
+      ]);
+    },
+  );
+
   // Deviation from TLC: TLC prints "Too many possible next states for the last state in the trace." after x = 1.
   it("rebuilds a step from a state with more successors than -maxSetSize, where TLC's Tool#getState fails", async () => {
     const result = await check({
