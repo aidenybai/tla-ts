@@ -9,6 +9,8 @@ import {
   formatValue,
   getFunctionDomain,
   isEmptySet,
+  isOverriddenSet,
+  isTlcEnumerable,
   MAXIMUM_INTEGER,
   toFiniteSet,
   type Value,
@@ -148,8 +150,10 @@ interface Product {
 const getProduct = (set: Value): Product | undefined => {
   if (typeof set !== "object") return undefined;
   if (set.kind === "FunctionSet") {
+    // Deviation from TLC: SetOfFcnsValue#FcnProduct normalizes the null that toSetEnum gives for a domain such as Nat and throws a NullPointerException, where tla-ts enumerates [D -> R] and reports the domain as that enumeration does.
+    if (isOverriddenSet(set.domain)) return undefined;
     const domain = getFunctionDomain(set.domain);
-    const range = toFiniteSet(set.range).elements;
+    const range = isTlcEnumerable(set.range) ? toFiniteSet(set.range).elements : [];
     return {
       lists: domain.map(() => range),
       create: (elements) => createSortedFunction(domain, elements),
