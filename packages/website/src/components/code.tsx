@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "@/lib/run-worker";
@@ -15,6 +15,14 @@ import { Tooltip } from "@/components/ui/tooltip";
 
 const NO_HIGHLIGHTS = {};
 const NO_PATH: SearchState[] = [];
+// The lines past the limit are added a few to a frame. Adding hundreds at once holds the page still
+// for half a second.
+const MORE_LINES_PER_FRAME = 40;
+
+interface Expanded {
+  code: string;
+  lineCount: number;
+}
 
 interface CodeState {
   source: Source;
@@ -79,9 +87,22 @@ const CodeContent = (props: ContentProps) => {
   const code = codeContext.useParts();
   const contentRef = useRef<HTMLElement>(null);
   // The code that the reader opened in full, so other code starts within the limit again.
-  const [expandedCode, setExpandedCode] = useState<string>();
-  const isExpanded = expandedCode === code.source.code;
-  const hiddenCount = Math.max(0, code.source.lines.length - (props.limit ?? Infinity));
+  const [expanded, setExpanded] = useState<Expanded>();
+  if (expanded && expanded.code !== code.source.code) setExpanded(undefined);
+  const isExpanded = expanded?.code === code.source.code;
+  const limit = props.limit ?? code.source.lines.length;
+  const lineCount = isExpanded ? expanded.lineCount : limit;
+  const hiddenCount = Math.max(0, code.source.lines.length - limit);
+  const isAllShown = lineCount >= code.source.lines.length;
+  useEffect(() => {
+    if (isAllShown) return;
+    const frame = requestAnimationFrame(() =>
+      setExpanded(
+        (current) => current && { ...current, lineCount: lineCount + MORE_LINES_PER_FRAME },
+      ),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [isAllShown, lineCount]);
   const activeLine = code.path.at(0)?.line ?? code.activeLine;
   useTokenMorph(contentRef, code.source.code, code.highlights, code.onMorphEnd);
   if (!code.isMultiline)
@@ -90,45 +111,55 @@ const CodeContent = (props: ContentProps) => {
         <CodeLine tokens={code.source.lines[0]} />
       </code>
     );
+  const lines = code.source.lines
+    .slice(0, lineCount)
+    .map((tokens, index) => ({ tokens, number: index + 1 }))
+    .map((line) => (
+      <CodeLine
+        key={line.number}
+        tokens={line.tokens}
+        note={code.notes.find((note) => note.line === line.number)}
+        isActive={activeLine === line.number}
+        isDimmed={code.path.length > 0 && code.path.every((state) => state.line !== line.number)}
+        aside={
+          code.search && (
+            <SearchCell
+              search={code.search}
+              line={line.number}
+              path={code.path}
+              onHover={code.onHoverState}
+              className="xl:hidden"
+            />
+          )
+        }
+        className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
+      />
+    ));
   return (
     <>
       <code
         ref={contentRef}
         className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
       >
-        {code.source.lines
-          .slice(0, isExpanded ? undefined : props.limit)
-          .map((tokens, index) => ({ tokens, number: index + 1 }))
-          .map((line) => (
-            <CodeLine
-              key={line.number}
-              tokens={line.tokens}
-              note={code.notes.find((note) => note.line === line.number)}
-              isActive={activeLine === line.number}
-              isDimmed={
-                code.path.length > 0 && code.path.every((state) => state.line !== line.number)
-              }
-              aside={
-                code.search && (
-                  <SearchCell
-                    search={code.search}
-                    line={line.number}
-                    path={code.path}
-                    onHover={code.onHoverState}
-                    className="xl:hidden"
-                  />
-                )
-              }
-              className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
-            />
-          ))}
+        {lines.slice(0, limit)}
+        {lineCount > limit && (
+          <div data-more className="transition-opacity duration-200 ease-out starting:opacity-0">
+            {lines.slice(limit)}
+          </div>
+        )}
       </code>
       {hiddenCount > 0 && (
         <Button
           variant="link"
           size="inline"
           aria-expanded={isExpanded}
-          onClick={() => setExpandedCode(isExpanded ? undefined : code.source.code)}
+          onClick={() =>
+            setExpanded(
+              isExpanded
+                ? undefined
+                : { code: code.source.code, lineCount: limit + MORE_LINES_PER_FRAME },
+            )
+          }
           className="text-sm text-muted-foreground"
         >
           {isExpanded ? "Show less" : `Show ${hiddenCount.toLocaleString("en-US")} more lines`}

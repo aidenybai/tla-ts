@@ -20,11 +20,16 @@ interface CodeSnapshot {
   tokens: TokenSnapshot[];
   height: number;
   width: number;
+  moreLineCount: number;
 }
 
 const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
   const origin = container.getBoundingClientRect();
-  return [...container.querySelectorAll<HTMLElement>("[data-token]")].map((element) => {
+  // The lines that the reader opened past the code's start take no part in a morph, and measuring
+  // hundreds of them on each change would be slow.
+  return [
+    ...container.querySelectorAll<HTMLElement>(":scope > :not([data-more]) [data-token]"),
+  ].map((element) => {
     const box = element.getBoundingClientRect();
     return {
       element,
@@ -34,6 +39,9 @@ const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
     };
   });
 };
+
+const getMoreLineCount = (container: HTMLElement) =>
+  container.querySelector(":scope > [data-more]")?.childElementCount ?? 0;
 
 const getMatches = (before: string[], after: string[]) => {
   const width = after.length + 1;
@@ -97,16 +105,21 @@ export const useTokenMorph = (
       if (snapshot === undefined || container.getAnimations().length > 0) return;
       const height = container.offsetHeight;
       const width = container.offsetWidth;
+      const moreLineCount = getMoreLineCount(container);
       snapshotRef.current = {
         code: snapshot.code,
         tokens: getTokenSnapshots(container),
         height,
         width,
+        moreLineCount,
       };
-      // States come and go without a change of code, so the morph below never sees them.
+      // States come and go without a change of code, so the morph below never sees them. Lines
+      // that the reader opens come in hundreds, and a height that eased would lay them out anew
+      // on every frame.
       if (
         height !== snapshot.height &&
         width === snapshot.width &&
+        moreLineCount === snapshot.moreLineCount &&
         !matchMedia("(prefers-reduced-motion: reduce)").matches
       )
         container.animate([{ height: `${snapshot.height}px` }, { height: `${height}px` }], {
@@ -124,7 +137,13 @@ export const useTokenMorph = (
     const before = snapshotRef.current;
     const tokens = getTokenSnapshots(container);
     const height = container.offsetHeight;
-    snapshotRef.current = { code, tokens, height, width: container.offsetWidth };
+    snapshotRef.current = {
+      code,
+      tokens,
+      height,
+      width: container.offsetWidth,
+      moreLineCount: getMoreLineCount(container),
+    };
     if (before === undefined || before.code === code) return;
 
     const isReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
