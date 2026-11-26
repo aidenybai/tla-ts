@@ -11,8 +11,8 @@ interface ModuleResult {
   message: string | undefined;
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with a
-// 256 MB stack, which prepares ESCore's runtime once for them all.
+// JS.tla's evaluation nests deeper than a test's stack, so checks run on one worker with a
+// 256 MB stack, which prepares JS.tla's runtime once for them all.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { readFileSync } = require("node:fs");
@@ -26,7 +26,7 @@ const worker = new Worker(
     import(workerData.source + "/typescript/spec/prepare.ts"),
   ]).then(([parallel, compile, prepare]) => ({
     check: parallel.check,
-    compileToEscore: compile.compileToEscore,
+    compileToJsTla: compile.compileToJsTla,
     runtime: prepare.prepareRuntime(workerData.directory),
     steps: prepare.SCRIPT_STEPS,
   }));
@@ -35,7 +35,7 @@ const worker = new Worker(
     const loaded = await loading;
     try {
       const model = spec.candidates === undefined ? undefined : { steps: loaded.steps, entries: [], candidates: spec.candidates };
-      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule, model);
+      const compiled = loaded.compileToJsTla(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule, model);
       const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
       parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
     } catch (error) {
@@ -72,7 +72,7 @@ beforeAll(() => ready, 60_000);
 // JavaScript file an ES module unless the files give a package.json of their own, as Node runs
 // them.
 const checkModules = (files: Record<string, string>, isModule = true) => {
-  const directory = mkdtempSync(join(tmpdir(), "escore-modules-"));
+  const directory = mkdtempSync(join(tmpdir(), "js-tla-modules-"));
   directories.push(directory);
   Object.entries({ "package.json": '{ "type": "module" }', ...files }).forEach((entry) => {
     mkdirSync(dirname(join(directory, entry[0])), { recursive: true });
@@ -87,7 +87,7 @@ const checkModules = (files: Record<string, string>, isModule = true) => {
 // Writes a program's files into a directory of their own, and checks the program from entry, as
 // Node runs it, with the status that Node exits with.
 const checkEntry = (files: Record<string, string>, entry: string) => {
-  const directory = mkdtempSync(join(tmpdir(), "escore-kinds-"));
+  const directory = mkdtempSync(join(tmpdir(), "js-tla-kinds-"));
   directories.push(directory);
   Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
   const node = spawnSync(process.execPath, [join(directory, entry)], { encoding: "utf8" }).status;
@@ -105,7 +105,7 @@ const checkEntry = (files: Record<string, string>, entry: string) => {
 // the files of candidates, which an import() of a computed string may load, as test262 gives a
 // test its fixtures, with the status that Node exits with.
 const checkCandidates = (files: Record<string, string>, candidates: readonly string[]) => {
-  const directory = mkdtempSync(join(tmpdir(), "escore-candidates-"));
+  const directory = mkdtempSync(join(tmpdir(), "js-tla-candidates-"));
   directories.push(directory);
   Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
   const node = spawnSync(process.execPath, [join(directory, "main.js")], {
@@ -130,7 +130,7 @@ const result = log.join();
 if (result !== "${expected}") throw new Error(result);
 `;
 
-describe("compiles modules by specializing ESCore", () => {
+describe("compiles modules by specializing JS.tla", () => {
   describe("links imports to the live bindings of the modules that export them", () => {
     const getFiles = (expected: string) => ({
       "main.js": getMain(
@@ -166,7 +166,7 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
-  describe("evaluates a cycle and an awaiting module in ESCore's order", () => {
+  describe("evaluates a cycle and an awaiting module in JS.tla's order", () => {
     const getFiles = (expected: string) => ({
       "main.js": getMain(
         `import { log } from "./log.js";
@@ -455,7 +455,7 @@ describe("compiles modules by specializing ESCore", () => {
     });
 
     it("takes a CommonJS file's top-level return and rejects an ES module's, as node --check does", () => {
-      const directory = mkdtempSync(join(tmpdir(), "escore-goals-"));
+      const directory = mkdtempSync(join(tmpdir(), "js-tla-goals-"));
       directories.push(directory);
       Object.entries(files).forEach((file) => writeFileSync(join(directory, file[0]), file[1]));
       const getCheck = (file: string) =>
@@ -646,7 +646,7 @@ describe("compiles modules by specializing ESCore", () => {
   });
 });
 
-describe("gives a module the host's globals and properties that ESCore lacks, which stop where its code uses them", () => {
+describe("gives a module the host's globals and properties that JS.tla lacks, which stop where its code uses them", () => {
   const getFiles = (expected: string) => ({
     "main.js": getMain(
       `const log = [];

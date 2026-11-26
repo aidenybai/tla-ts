@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-// What a compile and a check of a file on ESCore give: the program's code and config, the check's
+// What a compile and a check of a file on JS.tla give: the program's code and config, the check's
 // status and trace, and a failure's message, or the error that either throws.
 interface Outcome {
   code?: string;
@@ -21,7 +21,7 @@ const REGISTER = `const { register } = require("node:module");
   register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
     next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));`;
 
-// A worker that compiles and checks a request's file on ESCore with the runtime that prepare gives
+// A worker that compiles and checks a request's file on JS.tla with the runtime that prepare gives
 // from its modules, and posts the outcome.
 const getChecker = (prepare: string) => `${REGISTER}
   const { parentPort, workerData } = require("node:worker_threads");
@@ -38,8 +38,8 @@ const getChecker = (prepare: string) => `${REGISTER}
     const loaded = await loading;
     try {
       const spec = request.isModel
-        ? loaded.model.compileModelToEscore(request.source, request.fileName, loaded.runtime)
-        : loaded.compile.compileToEscore(request.source, request.fileName, loaded.runtime);
+        ? loaded.model.compileModelToJsTla(request.source, request.fileName, loaded.runtime)
+        : loaded.compile.compileToJsTla(request.source, request.fileName, loaded.runtime);
       const result = await loaded.parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({ id: request.id, outcome: {
         code: spec.loadModule("ProgramCode"),
@@ -57,15 +57,15 @@ const getChecker = (prepare: string) => `${REGISTER}
 const source = pathToFileURL(join(import.meta.dirname, "../../src")).href;
 const directory = join(import.meta.dirname, "../../ecmascript");
 
-// Node records the host that a browser prepares ESCore's runtime from, with the runtime's graph, on
-// a worker with the stack that test262-engine262 gives ESCore, which starting ESCore's realm needs.
+// Node records the host that a browser prepares JS.tla's runtime from, with the runtime's graph, on
+// a worker with the stack that test262-engine262 gives JS.tla, which starting JS.tla's realm needs.
 const recordHost = () =>
   new Promise<string>((resolve, reject) => {
     const recorder = new Worker(
       `${REGISTER}
       const { parentPort, workerData } = require("node:worker_threads");
       import(workerData.source + "/typescript/spec/prepare.ts").then((prepare) =>
-        parentPort.postMessage(JSON.stringify(prepare.recordEscoreHost(workerData.directory))));`,
+        parentPort.postMessage(JSON.stringify(prepare.recordJsTlaHost(workerData.directory))));`,
       { eval: true, workerData: { source, directory }, resourceLimits: { stackSizeMb: 256 } },
     );
     recorder.once("message", (host: string) => {
@@ -96,7 +96,7 @@ const createChecker = (prepare: string, stackSizeMb: number, host?: string) => {
   };
 };
 
-// The live realm, Node's own, which a worker with ESCore's deep stack prepares.
+// The live realm, Node's own, which a worker with JS.tla's deep stack prepares.
 const live = createChecker("(prepare) => prepare.prepareRuntime(workerData.directory)", 256);
 // The recorded host, read from JSON on a worker with the stack of a browser's worker, half a
 // megabyte, which only the graph's started realm fits in.
@@ -139,14 +139,14 @@ const getRecorded = (text: string, fileName: string, isModel = false) =>
 
 // What Node writes to stderr and the code it exits with as it runs a file.
 const runNode = (text: string, fileName: string) => {
-  const path = join(mkdtempSync(join(tmpdir(), "escore-realm-")), fileName);
+  const path = join(mkdtempSync(join(tmpdir(), "js-tla-realm-")), fileName);
   writeFileSync(path, text);
   const result = spawnSync(process.execPath, [path], { encoding: "utf8" });
   rmSync(join(path, ".."), { recursive: true });
   return { status: result.status, stderr: result.stderr };
 };
 
-describe("prepare ESCore's runtime from a recorded host as from Node's realm", () => {
+describe("prepare JS.tla's runtime from a recorded host as from Node's realm", () => {
   describe("give a script the spec and the result that Node's realm gives", () => {
     const getSource = (expected: string) =>
       `const entries = Object.entries({ b: 2, a: 1 }).map(([key, value]) => key + value);\nconst text = JSON.stringify([...new Set(entries)]);\nif (text !== '${expected}') throw new Error(text);\n`;
@@ -329,7 +329,7 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
           "-e",
           `${REGISTER}
           Promise.all([import(${JSON.stringify(`${source}/typescript/spec/library.ts`)}), import(${JSON.stringify(`${source}/typescript/spec/realm.ts`)})])
-            .then(([library, realm]) => realm.recordHostRealm(library.createLibrary(library.readEscoreFiles(${JSON.stringify(directory)}))))
+            .then(([library, realm]) => realm.recordHostRealm(library.createLibrary(library.readJsTlaFiles(${JSON.stringify(directory)}))))
             .then(() => console.log("recorded"));`,
         ],
         { encoding: "utf8" },
@@ -424,7 +424,7 @@ describe("numbers the LET definitions of the recorded graph by where they come i
       const { parentPort, workerData } = require("node:worker_threads");
       Promise.all(["/typescript/spec/prepare.ts", "/typescript/spec/compile.ts", "/search.ts", "/config.ts", "/dependencies.ts", "/ast.ts"].map((path) => import(workerData.source + path))).then(([prepare, compile, search, config, dependencies, ast]) => {
         const runtime = prepare.prepareHostRuntime(JSON.parse(workerData.host));
-        const spec = compile.compileToEscore("let count = 1;\\ncount += 1;\\n", "spec.ts", runtime);
+        const spec = compile.compileToJsTla("let count = 1;\\ncount += 1;\\n", "spec.ts", runtime);
         const environment = search.createCheckEnvironment(config.parseConfig(spec.config), { ...spec, onPrint: () => {} }, () => {}).specification.environment;
         const walked = dependencies.createDefinitionFacts(environment, [], new Map());
         let count = 0;

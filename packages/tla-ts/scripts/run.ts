@@ -22,7 +22,7 @@ const build = spawnSync(
     "build",
     `scripts/${name}.ts`,
     ...WORKER_ENTRIES,
-    "scripts/escore-graph.ts",
+    "scripts/js-tla-graph.ts",
     "--target=node",
     "--packages=external",
     "--outdir",
@@ -33,10 +33,10 @@ const build = spawnSync(
   { cwd: PACKAGE_DIRECTORY, stdio: ["ignore", "ignore", "inherit"] },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
-// ESCore's runtime is prepared on the host that runs the bundles, as its realm is the host's.
+// JS.tla's runtime is prepared on the host that runs the bundles, as its realm is the host's.
 const runtimeGraph = spawnSync(
   "node",
-  ["--stack-size=4000", join(OUT_DIRECTORY, "escore-graph.js"), OUT_DIRECTORY],
+  ["--stack-size=4000", join(OUT_DIRECTORY, "js-tla-graph.js"), OUT_DIRECTORY],
   { stdio: ["ignore", "ignore", "inherit"] },
 );
 if (runtimeGraph.status !== 0) process.exit(runtimeGraph.status ?? 1);

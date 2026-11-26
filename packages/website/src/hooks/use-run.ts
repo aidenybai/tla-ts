@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clearCrashNote, runOnEscore, startEscoreWorker, stopEscoreRun } from "@/lib/escore-worker";
+import { clearCrashNote, runOnJsTla, startJsTlaWorker, stopJsTlaRun } from "@/lib/js-tla-worker";
 import type { RunRequest, RunResult } from "@/lib/run-worker";
 
 export const useRun = (isWarm = false) => {
@@ -7,7 +7,7 @@ export const useRun = (isWarm = false) => {
   const [isRunning, setIsRunning] = useState(false);
 
   const stop = () => {
-    stopEscoreRun();
+    stopJsTlaRun();
     setIsRunning(false);
   };
 
@@ -18,13 +18,13 @@ export const useRun = (isWarm = false) => {
 
   // A warm runner loads the checker ahead of the first run, which then starts at once.
   useEffect(() => {
-    if (isWarm) startEscoreWorker();
+    if (isWarm) startJsTlaWorker();
   }, [isWarm]);
 
   const run = (request: RunRequest) => {
-    stopEscoreRun();
+    stopJsTlaRun();
     setIsRunning(true);
-    runOnEscore(request, (nextResult) => {
+    runOnJsTla(request, (nextResult) => {
       setResult(nextResult);
       setIsRunning(false);
     });

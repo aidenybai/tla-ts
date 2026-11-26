@@ -1063,7 +1063,7 @@ const EFFECT_FLAGS = {
   replayed: EFFECT_MASK,
   varying: EFFECT_MASK,
   // An action's LET definition that reaches any effect, an Assert among them, evaluates again at
-  // each reference, as TLC's does. A kept value of one that runs a program on ESCore misses its
+  // each reference, as TLC's does. A kept value of one that runs a program on JS.tla misses its
   // cache in the operators it's passed to, which then ran the program again, under KeepLazy.
   reevaluated: IMPURE | RANDOM,
 };

@@ -9,14 +9,14 @@ import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, isIndexKey } from "./native";
 import { NATIVE_MODULE } from "./native-module";
-import { compileToEscore, type EscoreSpec } from "./compile";
+import { compileToJsTla, type JsTlaSpec } from "./compile";
 import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
-import type { EscoreRuntime } from "./prepare";
+import type { JsTlaRuntime } from "./prepare";
 import { getModuleFormat } from "./resolve";
 import { getHostSystem } from "../system";
 
-export interface EscoreModel extends EscoreSpec {
+export interface JsTlaModel extends JsTlaSpec {
   isScript: false;
   variables: StateVariable[];
   notes: string[];
@@ -28,7 +28,7 @@ export interface EscoreModel extends EscoreSpec {
 const ENDLESS_STEPS = 20;
 
 // A module whose exported functions the model calls none of, which runs as a script does.
-export interface EscoreScript {
+export interface JsTlaScript {
   isScript: true;
   notes: string[];
   isAugmented: boolean;
@@ -292,7 +292,7 @@ const getConstructed = (domain: Expression) => {
     : undefined;
 };
 
-// Whether a domain's values hold a callback or a constructed value anywhere, which only ESCore
+// Whether a domain's values hold a callback or a constructed value anywhere, which only JS.tla
 // makes.
 const holdsFunction = (node: unknown): boolean =>
   typeof node === "object" &&
@@ -370,27 +370,27 @@ export interface ModelPlan {
   // program of its own compiles into its code.
   extensions: readonly string[];
   assumptions: readonly string[];
-  finish: (compiled: EscoreSpec, shared?: number) => EscoreModel;
+  finish: (compiled: JsTlaSpec, shared?: number) => JsTlaModel;
 }
 
-// The model of a TypeScript module, checked on ESCore: one variable holds ESCore's state after the
-// module's top level, as model, the module's bindings lowered out of ESCore's heap (see
+// The model of a TypeScript module, checked on JS.tla: one variable holds JS.tla's state after the
+// module's top level, as model, the module's bindings lowered out of JS.tla's heap (see
 // lowered.ts), where the module lets it, or else as heap, the canonical state. Each exported
-// function that today's compiler makes an action calls the function through ESCore with the
+// function that today's compiler makes an action calls the function through JS.tla with the
 // arguments that today's compiler chooses, natively where it can (see native.ts). Invariants,
 // properties, and the other checks call the functions they name. A trace shows each state
 // variable as today's compiler does.
 export const planModel = (
   source: string,
   fileName: string,
-  runtime: EscoreRuntime,
+  runtime: JsTlaRuntime,
   library?: Library,
-  // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
+  // Whether the state may lower out of JS.tla's heap, which a test turns off to check the heap.
   isLowerable = true,
   // The most values that TLC puts in a set, as its -maxSetSize sets it.
   setBound?: number,
   system = getHostSystem(),
-): ModelPlan | EscoreScript => {
+): ModelPlan | JsTlaScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source, system);
   const file = parseFile(fileName, text);
@@ -663,7 +663,7 @@ export const planModel = (
     const primitive = type === undefined ? undefined : PRIMITIVE_TYPES.get(type.kind);
     if (primitive === undefined) {
       throw new TlaTypeScriptError(
-        `tla-ts can't pass a value of ${printExpression(domain)} to an ESCore model yet`,
+        `tla-ts can't pass a value of ${printExpression(domain)} to a JS.tla model yet`,
       );
     }
     return lowerAs(
@@ -1083,7 +1083,7 @@ export const planModel = (
     }
     if (isStateful(expression)) {
       throw new TlaTypeScriptError(
-        `tla-ts can't read today's state in ${printExpression(expression)} on ESCore yet`,
+        `tla-ts can't read today's state in ${printExpression(expression)} on JS.tla yet`,
       );
     }
     return filterConstructed(copyDefinitions(renameModelValues(expression)));
@@ -1129,7 +1129,7 @@ export const planModel = (
     });
     if (read.some((entry) => entry.converter === undefined && entry.choice === undefined)) {
       throw new TlaTypeScriptError(
-        `tla-ts can't pass the parameters that ${action}'s guard reads to ESCore yet`,
+        `tla-ts can't pass the parameters that ${action}'s guard reads to JS.tla yet`,
       );
     }
     const getRead = (entry: (typeof read)[number], index: number) => {
@@ -1138,12 +1138,12 @@ export const planModel = (
         ? `e${index + 1} == ${entry.converter}(${previous}, a[${index + 2}])`
         : `c${index + 1} == GuardElements(${previous}, ${getUnits(entry.choice.name)}, <<>>)\n      e${index + 1} == [s |-> c${index + 1}.state, v |-> CHOOSE e \\in c${index + 1}.elements : Shown(c${index + 1}.state, e, 0) = a[${index + 2}]]`;
     };
-    const escore = define(
+    const jsTla = define(
       "GuardDomain",
       (name) =>
         `${name}(a) ==\n  LET ${read.map(getRead).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
     );
-    // A Set of primitives that the guard gives natively shows its elements as ESCore's do, which
+    // A Set of primitives that the guard gives natively shows its elements as JS.tla's do, which
     // no state's objects decide.
     const nativeGuard = getNativeGuardCall(action, guard, "a[1]", (index) => {
       const at = guard.parameters.indexOf(exported.get(action)?.parameters[index] ?? "");
@@ -1151,11 +1151,11 @@ export const planModel = (
     });
     const operator =
       nativeGuard === undefined
-        ? escore
+        ? jsTla
         : define(
             "NativeGuardDomain",
             (name) =>
-              `${name}(a) ==\n  LET n == ${nativeGuard} IN\n  IF n.type # "bail" /\\ n.v.type = "lset" /\\ LPrimitives(n.v) THEN {Shown(ModelBase, e, 0) : e \\in Range(n.v.elems)} ELSE ${escore}(a)`,
+              `${name}(a) ==\n  LET n == ${nativeGuard} IN\n  IF n.type # "bail" /\\ n.v.type = "lset" /\\ LPrimitives(n.v) THEN {Shown(ModelBase, e, 0) : e \\in Range(n.v.elems)} ELSE ${jsTla}(a)`,
           );
     guardChoices.set(`${action} ${position}`, guard);
     return {
@@ -1185,12 +1185,12 @@ export const planModel = (
   const guardChoices = new Map<string, Guard>();
   const rewriteBound = (bound: Bound, application: Application | undefined): Bound => {
     if (bound.pattern.kind !== "Name" || application === undefined) {
-      throw new TlaTypeScriptError("tla-ts can't bind these parameters on ESCore yet");
+      throw new TlaTypeScriptError("tla-ts can't bind these parameters on JS.tla yet");
     }
     const name = bound.pattern.name;
     const position = application.args.indexOf(name);
     // A set that today's state or a function of the module gives is the set that the action's
-    // guard gives, as ESCore evaluates the module's code, rather than today's TLA+ of it.
+    // guard gives, as JS.tla evaluates the module's code, rather than today's TLA+ of it.
     if (isStateful(bound.set) || isComputed(bound.set)) {
       return { ...bound, set: getGuardDomain(application, name) };
     }
@@ -1240,9 +1240,9 @@ export const planModel = (
   // leaves, which no step compares with another, so it keeps it as it is.
   const isStateless = module.variables.length === 0 && actions.length === 0;
   const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(text);
-  // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
-  // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
-  // state. A step's or a check's ESCore state is what the variable's value gives.
+  // The bindings that the state lowers out of JS.tla's heap, where the module lets it (see
+  // lowered.ts), whose variable model holds them, and otherwise the variable heap holds JS.tla's
+  // state. A step's or a check's JS.tla state is what the variable's value gives.
   // A state variable that TLA+ names otherwise than its binding keeps its state on the heap, whose
   // steps read it by the binding's name.
   const isRenamed = today.variables.some((stateVariable) => bindings.has(stateVariable.name));
@@ -1258,17 +1258,17 @@ export const planModel = (
   const symmetric = today.symmetric;
   if (symmetric.length > 0 && lowered === undefined) {
     throw new TlaTypeScriptError(
-      "tla-ts can't check a symmetric model whose state ESCore keeps on its heap yet",
+      "tla-ts can't check a symmetric model whose state JS.tla keeps on its heap yet",
     );
   }
   if (symmetric.length > 0 && config.properties.length > 0) {
     throw new TlaTypeScriptError("tla-ts can't check a symmetric model's temporal properties");
   }
-  // A lowered model's functions run natively where they can, and on ESCore where that bails.
+  // A lowered model's functions run natively where they can, and on JS.tla where that bails.
   const native =
     lowered === undefined || symmetric.length > 0 ? undefined : getNativeFunctions(file, lowered);
   // The native call of a function in the lowered state model, with the arguments of the values
-  // given, converted and lowered, or undefined where the function runs on ESCore only.
+  // given, converted and lowered, or undefined where the function runs on JS.tla only.
   // A call of one function with another's arguments, as a property's target takes its own.
   const getNativeCall = (
     name: string,
@@ -1513,7 +1513,7 @@ export const planModel = (
     else if (tags.has("leadsTo")) {
       const target = tags.get("leadsTo")?.split(/\s/)[0] ?? "";
       entries.add(target);
-      const escore = define(
+      const jsTla = define(
         "Target",
         (operatorName) =>
           `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN HoldsOf(converted.s, ${getUnits(target)}, converted.args)`,
@@ -1521,17 +1521,17 @@ export const planModel = (
       const targetCall = getNativeCall(target, "a[1]", (index) => `a[${index + 2}]`, name);
       const operator =
         targetCall === undefined
-          ? escore
+          ? jsTla
           : define(
               "NativeTarget",
               (operatorName) =>
-                `${operatorName}(a) ==\n  LET n == ${targetCall} IN\n  IF n.type = "bail" THEN ${escore}(a) ELSE n.v = True`,
+                `${operatorName}(a) ==\n  LET n == ${targetCall} IN\n  IF n.type = "bail" THEN ${jsTla}(a) ELSE n.v = True`,
             );
       steps.push(
         `${name} == ${quantify(bounds, `(${predicate}) ~> ApplyTo(${operator}, <<${variable}${names.map((bound) => `, ${bound}`).join("")}>>)`)}`,
       );
     } else {
-      throw new TlaTypeScriptError(`tla-ts can't check the property ${name} on ESCore yet`);
+      throw new TlaTypeScriptError(`tla-ts can't check the property ${name} on JS.tla yet`);
     }
   }
   config.actionConstraints.forEach((name) => steps.push(`${name} == ${defineStepCheck(name)}`));
@@ -1548,7 +1548,7 @@ export const planModel = (
     lowered: getConverter(choice.domain).lowered,
     set: printExpression(rewriteGuards(choice.domain)),
   }));
-  // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
+  // As compileToJsTla runs a script's jobs and timers, a step runs the ones a call leaves.
   const settle =
     "ModelSettle(r) == LET t == SettleJobs(r.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]";
   // The module's top level reads each state variable that starts at every value of its type, at
@@ -1745,7 +1745,7 @@ export const planModel = (
   const assumed = `${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`;
   // The model's spec of the compiled program: its steps in the program's own module, or, in a
   // program shared with other files, in a module of their own that extends it.
-  const finish = (compiled: EscoreSpec, shared?: number): EscoreModel => {
+  const finish = (compiled: JsTlaSpec, shared?: number): JsTlaModel => {
     const configLines = [
       ...getModelConstants(compiled.config),
       config.specification === undefined
@@ -1844,20 +1844,20 @@ export const getModelConstants = (config: string) => [
   "CONSTANTS TsNull = Null TsUndefined = Undefined",
 ];
 
-export const compileModelToEscore = (
+export const compileModelToJsTla = (
   source: string,
   fileName: string,
-  runtime: EscoreRuntime,
+  runtime: JsTlaRuntime,
   library?: Library,
   isLowerable = true,
   setBound?: number,
   system = getHostSystem(),
-): EscoreModel | EscoreScript => {
+): JsTlaModel | JsTlaScript => {
   const plan = planModel(source, fileName, runtime, library, isLowerable, setBound, system);
   const augmented = plan.isAugmented ? [getAugmentedNote(fileName)] : [];
   if (plan.isScript) return { ...plan, notes: [...augmented, ...plan.notes] };
   const model = plan.finish(
-    compileToEscore(
+    compileToJsTla(
       plan.code,
       fileName,
       runtime,

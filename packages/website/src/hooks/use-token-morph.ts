@@ -47,7 +47,7 @@ const getTokenSnapshots = (container: HTMLElement): TokenSnapshot[] => {
 const getMoreLineCount = (container: HTMLElement) =>
   container.querySelector(":scope > [data-more]")?.childElementCount ?? 0;
 
-// ESCore's code shares words with its TypeScript only by chance, and its comments quote the
+// JS.tla's code shares words with its TypeScript only by chance, and its comments quote the
 // TypeScript. So where code has comments, only their tokens match.
 const getMatchTexts = (tokens: TokenSnapshot[]) => {
   const hasComments = tokens.some((token) => token.isComment);

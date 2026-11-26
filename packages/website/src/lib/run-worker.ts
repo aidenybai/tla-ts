@@ -5,8 +5,8 @@ import {
   TlaStackLimitError,
   TlaStackOverflowError,
 } from "../../../tla-ts/src/errors";
-import type { EscoreHost } from "../../../tla-ts/src/typescript/spec/prepare";
-import type { CompileResponse, EscoreRequest, EscoreResponse } from "./escore-worker";
+import type { JsTlaHost } from "../../../tla-ts/src/typescript/spec/prepare";
+import type { CompileResponse, JsTlaRequest, JsTlaResponse } from "./js-tla-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -83,16 +83,16 @@ const getStateText = (state: Record<string, Value>) =>
     .map(([name, value]) => `${name} = ${formatValue(value)}`)
     .join(", ");
 
-// The worker compiles as well as checks: it prepares ESCore's runtime from the host that
+// The worker compiles as well as checks: it prepares JS.tla's runtime from the host that
 // the build recorded, the realm of the Node that built the site, which it fetches as it starts,
 // while it loads the compiler, and parses TypeScript's declaration files, for every compile and
 // run. A run compiles its TypeScript file again, which costs less than keeping the specs it
 // compiled.
-const host: Promise<EscoreHost> = fetch(
-  new URL(`${import.meta.env.BASE_URL}escore-host.json`, import.meta.url),
+const host: Promise<JsTlaHost> = fetch(
+  new URL(`${import.meta.env.BASE_URL}js-tla-host.json`, import.meta.url),
 ).then((response) => response.json());
-const escore = Promise.all([
-  import("./escore"),
+const jsTla = Promise.all([
+  import("./js-tla"),
   import("virtual:typescript-libraries"),
   import("virtual:package-files"),
   import("../../../tla-ts/src/typescript/program"),
@@ -102,14 +102,14 @@ const escore = Promise.all([
   library: program.createLibrary(libraries.default),
   files: packageFiles.default,
   runtime: prepare.prepareHostRuntime(await host),
-  compile: api.compileEscore,
-  getCompilation: loaded.getEscoreCompilation,
+  compile: api.compileJsTla,
+  getCompilation: loaded.getJsTlaCompilation,
 }));
 
 // The spec that a run checks, and the text of the module that the page shows of it, whose lines a
-// result marks: on ESCore, the module of the program's code.
+// result marks: on JS.tla, the module of the program's code.
 const getRun = async (request: RunRequest) => {
-  const loaded = await escore;
+  const loaded = await jsTla;
   if (request.typescript === undefined) {
     return {
       spec: {
@@ -228,7 +228,7 @@ const getErrorMessage = (error: unknown, isTypeScript: boolean) =>
 
 const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
   try {
-    const loaded = await escore;
+    const loaded = await jsTla;
     const compilation = loaded.getCompilation(
       source,
       fileName,
@@ -243,7 +243,7 @@ const getCompiled = async (source: string, fileName: string): Promise<CompileRes
   }
 };
 
-self.onmessage = async (event: MessageEvent<EscoreRequest>) => {
+self.onmessage = async (event: MessageEvent<JsTlaRequest>) => {
   const request = event.data;
   if ("compile" in request) {
     self.postMessage({
@@ -260,5 +260,5 @@ self.onmessage = async (event: MessageEvent<EscoreRequest>) => {
 
 // A promise that rejects with no handler answers nothing, so it fails what the page waits for.
 self.addEventListener("unhandledrejection", (event) => {
-  self.postMessage({ failed: getErrorMessage(event.reason, true) } satisfies EscoreResponse);
+  self.postMessage({ failed: getErrorMessage(event.reason, true) } satisfies JsTlaResponse);
 });

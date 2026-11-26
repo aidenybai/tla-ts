@@ -1,6 +1,6 @@
 # Check TypeScript and JavaScript
 
-tla-ts runs a TypeScript or JavaScript file as Node 26 runs it and model checks every state the file reaches. It compiles the file to a TLA+ spec by specializing ESCore, a TLA+ port of the ECMAScript semantics of [engine262](https://github.com/engine262/engine262), and checks the spec in memory. ESCore is the only compiler for TypeScript and JavaScript input.
+tla-ts runs a TypeScript or JavaScript file as Node 26 runs it and model checks every state the file reaches. It compiles the file to a TLA+ spec by specializing JS.tla, a TLA+ port of the ECMAScript semantics of [engine262](https://github.com/engine262/engine262), and checks the spec in memory. JS.tla is the only compiler for TypeScript and JavaScript input.
 
 ```shell
 npx tla-ts bank.ts
@@ -167,7 +167,7 @@ The bounds on `number`, `string`, and arrays keep the search finite, so a check 
 
 A generic function's checks cover only part of each type it takes. Every type parameter without a constraint, or whose constraint is `unknown`, takes `0`, `1`, and `2`. A type parameter with a constraint takes the constraint's values, so `N extends number` takes the integers from -3 to 3. A callback is a function that looks up its first argument in a table and returns the value it finds there, or `undefined` for an argument the table lacks. It ignores its other arguments. A callback without parameters looks up `undefined`, and the line says `callbacks as tables of no argument`. A method of an object is a callback too, so an object takes every object of its methods' tables and its other properties' values, and the line says `methods as tables of their first argument` or `methods as tables of no argument`. The parameter takes every table from the first parameter's values to the result's values. A callback's first parameter must take primitives and can't be a rest parameter, and its type must have one call signature and no properties. Where a call takes any of these, tla-ts prints what it took, such as `tla-ts calls some with A := {0, 1, 2}; iterables as arrays up to length 3; callbacks as tables of their first argument`.
 
-Each such argument list is a call on ESCore, so a call that takes any of these makes at most 10,000 argument lists. Where its parameters make more, it takes smaller values instead: `0` and `1` for a type parameter and arrays up to 2 long, then `0` alone and arrays up to 1 long. Every array of the call takes the smaller bound, and the line lists it, such as `arrays up to length 2`. Where even the smallest values make more than 10,000 argument lists, tla-ts calls no such function and prints the count.
+Each such argument list is a call on JS.tla, so a call that takes any of these makes at most 10,000 argument lists. Where its parameters make more, it takes smaller values instead: `0` and `1` for a type parameter and arrays up to 2 long, then `0` alone and arrays up to 1 long. Every array of the call takes the smaller bound, and the line lists it, such as `arrays up to length 2`. Where even the smallest values make more than 10,000 argument lists, tla-ts calls no such function and prints the count.
 
 A type that the module declares, and that has no finite set of values of its own, takes the values that the module's constructors of it make. A constructor is an exported function of the module that returns the type and whose parameters take only primitives or a type parameter's values. The parameter takes each value that each constructor returns for each list of its arguments. An argument list whose call throws makes no value. This applies only to plain data that can't change. A plain data type's values hold at least one property that TLA+ can name, besides methods, and every such property holds plain data. Each required property must be read-only, and no type parameter of the type may be both `in` and `out`. A type argument must be a type parameter without a constraint. An effect, which holds no such property, and a mutable cell aren't plain data. The note of the call names the constructors, such as `Option<A> := none(), some(value), fromNullishOr(a), fromUndefinedOr(a), fromNullOr(a)` in the line for `Option.getOrElse`.
 
@@ -179,7 +179,7 @@ Other types have no finite set of values:
 - A tuple with optional elements, or with a rest element whose type differs from another element's, or with more than 3 elements before its rest element.
 - A type that holds itself.
 
-tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are `any` or `unknown`, a function that isn't a callback, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It calls no exported function whose parameters make more argument lists, every combination of their values, than TLC puts in a set, 1,000,000 unless `-maxSetSize` sets it, and the line gives the count, as in `its parameters make 18,892,923 argument lists, more than the 1,000,000 it lists`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to ESCore this way`.
+tla-ts calls no exported function with a parameter of such a type, or of a union of values that TLC can't compare, such as a string and a number, and prints a line that names it and the kind of its type, such as `tla-ts calls no apply: its parameter transform is a function, whose values tla-ts can't list`. The kinds it names are `any` or `unknown`, a function that isn't a callback, an instance of a class, and an object with methods, alone or in a union. For a union of values that TLC can't compare, it names their kinds, as in `its parameter value is a union of string and number, whose values TLC can't compare`. For any other type, the line gives the reason, as in `its parameter p takes values it can't list: …`. It calls no exported function whose parameters make more argument lists, every combination of their values, than TLC puts in a set, 1,000,000 unless `-maxSetSize` sets it, and the line gives the count, as in `its parameters make 18,892,923 argument lists, more than the 1,000,000 it lists`. It also calls no exported function without parameters whose every call throws. Where it calls no exported function at all, the compile stops with `tla-ts compiles a script, not a model, to JS.tla this way`.
 
 A state variable of such a type with no initializer starts at `undefined`, as Node starts it, and tla-ts prints a line that names it, such as `tla-ts starts count at undefined, as Node does: …`.
 
@@ -294,7 +294,7 @@ tla-ts stops the compile where it can't rule out that the program tells the valu
 - Reads a property of a value that may be a string, or indexes an array, a function, or a string by one.
 - Calls a function other than one that the module declares, or a method other than `add`, `clear`, `delete`, `difference`, `get`, `has`, `includes`, `intersection`, `isDisjointFrom`, `isSubsetOf`, `isSupersetOf`, `pop`, `push`, `set`, `symmetricDifference`, or `union` of a `Set`, a `Map`, or an array, or constructs anything but a `Set` or a `Map`.
 - Checks a temporal property, since a symmetry can hide its violation, as TLC warns: `tla-ts can't check a symmetric model's temporal properties`.
-- Keeps its state on ESCore's heap rather than as TLA+ values: `tla-ts can't check a symmetric model whose state ESCore keeps on its heap yet`. A model does so in these cases: its top level does more than declare `let` and `const` bindings and functions, a binding's initializer reads one of its functions or a class, its code names `async`, `Promise`, `then`, or `setTimeout`, or it names an error or catches one.
+- Keeps its state on JS.tla's heap rather than as TLA+ values: `tla-ts can't check a symmetric model whose state JS.tla keeps on its heap yet`. A model does so in these cases: its top level does more than declare `let` and `const` bindings and functions, a binding's initializer reads one of its functions or a class, its code names `async`, `Promise`, `then`, or `setTimeout`, or it names an error or catches one.
 
 The check stops too where a state holds an object, a `Set`, or a `Map` that mixes the type's values with other keys or elements. [`simple-allocator.ts`](../packages/tla-ts/tests/fixtures/typescript/simple-allocator/simple-allocator.ts) ports the safety part of `SimpleAllocator.tla`. It finds the same 50 distinct states and 226 generated states that TLC finds under the spec's `Symmetry`.
 
@@ -321,7 +321,7 @@ if (kept.length !== 2) throw "lost";
 
 ## Errors that the engine throws
 
-Where ESCore throws an error itself, its `message` is V8's exact message where tla-ts knows it. These messages match Node 26:
+Where JS.tla throws an error itself, its `message` is V8's exact message where tla-ts knows it. These messages match Node 26:
 
 - `missing is not defined`
 - `Cannot access 'count' before initialization`
@@ -336,11 +336,11 @@ For another error, such as the `RangeError` of `new Array(-1)`, a read of its `m
 
 In an ES module, an error's `stack` reads as Node 26 writes it, with Node's own frames below the module's. In a script, a read of `stack` stops with `tla-ts can't tell the location Node gives this file`.
 
-Where a program reaches a part of ECMAScript that ESCore leaves out, the check stops with `tla-ts can't model` and ESCore's reason, as in `tla-ts can't model a locale the host's table leaves out`. Where ESCore gives no reason, the message is `tla-ts can't run a part of ECMAScript that ESCore leaves out`.
+Where a program reaches a part of ECMAScript that JS.tla leaves out, the check stops with `tla-ts can't model` and JS.tla's reason, as in `tla-ts can't model a locale the host's table leaves out`. Where JS.tla gives no reason, the message is `tla-ts can't run a part of ECMAScript that JS.tla leaves out`.
 
 ## Intl and Temporal
 
-ESCore has no Intl, as engine262 has none. tla-ts records Node's answers as it compiles, for the inputs that the program writes:
+JS.tla has no Intl, as engine262 has none. tla-ts records Node's answers as it compiles, for the inputs that the program writes:
 
 - **Locale tags**: each string that may be a tag, with Node's canonical form of it and the services that support it.
 - **Intl objects and methods**: the objects that the program's literals make, and the results of their methods for each argument that the literals, or arithmetic of literals, may give. `new Intl.NumberFormat("de-DE").format(1234 + 0.5)` runs. A value that the program computes otherwise stops with `tla-ts can't model a value the host's Intl table leaves out`.
@@ -387,11 +387,11 @@ These stop the compile:
 | Message                                                            | Where                                                                               |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | `tla-ts can't run eval`                                            | A call of `eval`                                                                    |
-| `tla-ts can't run the host's setInterval, which ESCore leaves out` | A script that names a global that only Node has, such as `console` or `setInterval` |
+| `tla-ts can't run the host's setInterval, which JS.tla leaves out` | A script that names a global that only Node has, such as `console` or `setInterval` |
 | `tla-ts can't read the value of setTimeout`                        | A script that uses `setTimeout` other than as a call statement                      |
 | `tla-ts can't load the module node:fs`                             | An import of a built-in module, or of a file that tla-ts can't find                 |
 | `tla-ts can't compile a module as a script`                        | A model that imports another file                                                   |
-| `tla-ts can't compile … to ESCore yet`                             | Syntax that tla-ts doesn't compile yet                                              |
+| `tla-ts can't compile … to JS.tla yet`                             | Syntax that tla-ts doesn't compile yet                                              |
 
 A check stops where it reaches what tla-ts can't run exactly. It fails TLC's `Assert` with a message that starts with `tla-ts can't`, and exits with TLC's code for an evaluation error. These stop the check:
 
@@ -400,8 +400,8 @@ A check stops where it reaches what tla-ts can't run exactly. It fails TLC's `As
 | `tla-ts can't print what Node prints for this uncaught exception`                        | A script leaves an `Error` object uncaught                          |
 | `tla-ts can't read the message that Node writes for an error it throws`                  | A read of the message of an error whose message tla-ts doesn't know |
 | `tla-ts can't write an object to the host's console, which formats it`                   | A module writes an object with `console.log`                        |
-| `tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of ESCore` | A call of `Function`                                                |
-| `tla-ts can't model …`, `tla-ts can't run a part of ECMAScript that ESCore leaves out`   | A part of ECMAScript that ESCore leaves out                         |
+| `tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of JS.tla` | A call of `Function`                                                |
+| `tla-ts can't model …`, `tla-ts can't run a part of ECMAScript that JS.tla leaves out`   | A part of ECMAScript that JS.tla leaves out                         |
 | `tla-ts can't keep …`, `tla-ts can't show …`                                             | A model's state holds a value that tla-ts can't hold                |
 | The messages in [Values that vary between runs](#values-that-vary-between-runs)          | A value that differs from run to run                                |
 
@@ -419,6 +419,6 @@ TlaStackLimitError: tla-ts can't check this program within the stack: its check 
 
 The thread's heap is the one Node gives the process, which `--max-old-space-size` sets. A program whose check runs out of it stops with a `TlaHeapLimitError`, with the same exit code, such as `TlaHeapLimitError: tla-ts can't check this program within Node's default heap of 4192 MB`.
 
-ESCore's realm starts once a process. The package's build holds the realm prepared for the host that built it. On a host whose realm differs, such as one with another time zone or locale, tla-ts starts the realm itself.
+JS.tla's realm starts once a process. The package's build holds the realm prepared for the host that built it. On a host whose realm differs, such as one with another time zone or locale, tla-ts starts the realm itself.
 
-Starting the realm takes a deeper stack than Node's main thread has, and the CLI's thread has it. Where you call `compile` on Node's main thread, run Node with a deeper stack, as with `node --stack-size=4000`. Otherwise tla-ts throws a `TlaError`: `tla-ts can't start ESCore's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000`.
+Starting the realm takes a deeper stack than Node's main thread has, and the CLI's thread has it. Where you call `compile` on Node's main thread, run Node with a deeper stack, as with `node --stack-size=4000`. Otherwise tla-ts throws a `TlaError`: `tla-ts can't start JS.tla's realm, whose evaluation ran out of stack: run Node with a deeper stack, as with --stack-size=4000`.

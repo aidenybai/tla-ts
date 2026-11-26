@@ -6,7 +6,7 @@ import { createModuleResolver, getModuleFormat } from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
-import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
+import { CONFIG, type JsTlaRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import type { HostRealm } from "./realm";
 import {
   getHostCalendars,
@@ -47,7 +47,7 @@ const pathToFileURL = (path: string) =>
   globalThis.process?.getBuiltinModule?.("node:url").pathToFileURL(path) ??
   new URL(path, "file:///");
 
-export interface EscoreSpec {
+export interface JsTlaSpec {
   name: string;
   source: string;
   config: string;
@@ -56,7 +56,7 @@ export interface EscoreSpec {
   preparedModules: PreparedModule[];
 }
 
-export interface EscoreSteps {
+export interface JsTlaSteps {
   // The steps, or what makes them of the program's files, numbered from 1 as its code numbers them.
   steps: string | ((files: readonly ProgramFile[]) => string);
   entries: readonly string[];
@@ -686,7 +686,7 @@ const loadFiles = (
   source: string,
   fileName: string,
   isModule: boolean,
-  host: Pick<EscoreSteps, "isTest262Host" | "candidates">,
+  host: Pick<JsTlaSteps, "isTest262Host" | "candidates">,
   names: ParsedNames,
   system: ProgramSystem,
 ): ProgramFile[] => {
@@ -1060,24 +1060,24 @@ const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostR
   return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${printCodeExpression(getNumber(parseDate(string)))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
 };
 
-// The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
-// promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
+// The groups of JS.tla's parts that a module runs on: its loading, linking, and evaluation, the
+// promise of its evaluation, and the proxies that stand for what of the host JS.tla lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
 
-// Compiles a TypeScript script or module to a spec whose Init runs it as ESCore runs a script or a
+// Compiles a TypeScript script or module to a spec whose Init runs it as JS.tla runs a script or a
 // host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
 // fails Init's assertion. The spec's module ProgramCode holds the program's code and the spec's
 // steps, the variables and the definitions of Init and Next, and the runtime's prepared modules
 // the rest. A model gives its own steps, and the names of the functions they call, which the
 // program may name nowhere else.
-export const compileToEscore = (
+export const compileToJsTla = (
   source: string,
   fileName: string,
-  runtime: EscoreRuntime,
+  runtime: JsTlaRuntime,
   isModule = false,
-  model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
+  model: JsTlaSteps = { steps: SCRIPT_STEPS, entries: [] },
   system = getHostSystem(),
-): EscoreSpec => {
+): JsTlaSpec => {
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
   const { files, program } = atSourceLocations(fileName, system, (names) => {
@@ -1110,7 +1110,7 @@ export const compileToEscore = (
   if (timerValue !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't read the value of setTimeout", timerValue);
   }
-  // A module program's host globals and built-ins' properties that ESCore's realm lacks stop where
+  // A module program's host globals and built-ins' properties that JS.tla's realm lacks stop where
   // its code reaches them, and a script's, where its code names them.
   const hostOnly = isModule
     ? undefined
@@ -1118,7 +1118,7 @@ export const compileToEscore = (
       runtime.realm.builtInProperties.find((property) => program.words.has(property.key))?.key);
   if (hostOnly !== undefined) {
     throw new TlaTypeScriptError(
-      `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
+      `tla-ts can't run the host's ${hostOnly}, which JS.tla leaves out`,
     );
   }
   const isQueuing =
@@ -1127,7 +1127,7 @@ export const compileToEscore = (
     program.words.has("Promise") ||
     program.words.has("then") ||
     program.identifiers.has("setTimeout");
-  const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
+  const isIncluded = (gate: JsTlaRuntime["gates"][number]) =>
     ((isModule || files.length > 1) && MODULE_GROUPS.has(gate.group)) ||
     // A program that queues jobs runs them, as RunJobs of the promises' group does.
     (isQueuing && gate.group === "86-promise.tla") ||
@@ -1382,7 +1382,7 @@ export const compileToEscore = (
     ...ordered.sorted.map((definition) => definition.tree ?? definition.text ?? ""),
     ...stubs.map(
       (stub) =>
-        `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
+        `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of JS.tla")`,
     ),
     steps,
     ...(model.assumptions ?? []),

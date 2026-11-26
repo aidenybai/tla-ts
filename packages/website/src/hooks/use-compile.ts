@@ -4,9 +4,9 @@ import {
   type CompileRequest,
   type CompileResponse,
   clearCrashNote,
-  compileOnEscore,
+  compileOnJsTla,
   listenToCompiles,
-} from "@/lib/escore-worker";
+} from "@/lib/js-tla-worker";
 import { getSourceLanguage } from "@/lib/compilation";
 import type { createHighlighter } from "@/lib/highlighter";
 
@@ -37,7 +37,7 @@ export const useCompile = (source: string, fileName: string) => {
         compiled: response.compilation ? response : previous.compiled,
       }));
     // The worker that checks compiles too.
-    workerRef.current = { postMessage: compileOnEscore };
+    workerRef.current = { postMessage: compileOnJsTla };
     void import("@/lib/highlighter")
       .then((loaded) => loaded.createHighlighter())
       .then((nextHighlight) => setHighlight(() => nextHighlight));

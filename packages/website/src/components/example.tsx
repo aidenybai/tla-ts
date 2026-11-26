@@ -153,7 +153,7 @@ const ExampleSource = () => {
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   // Each declaration is marked on the model's line for it: a function on its action or check, and
-  // any other on Init. The definitions it compiles to fold away with the rest of ESCore's code.
+  // any other on Init. The definitions it compiles to fold away with the rest of JS.tla's code.
   const lineMarks = useMemo(() => {
     const code = example.tla.code;
     return getLineMarks(

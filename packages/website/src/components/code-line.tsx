@@ -223,7 +223,7 @@ export const CodeFold = (props: CodeFoldProps) => (
     </span>
     <span data-token>
       {props.isOpen ? "Hide" : "Show"} {props.lineCount.toLocaleString("en-US")}{" "}
-      {props.lineCount === 1 ? "line" : "lines"} of ESCore
+      {props.lineCount === 1 ? "line" : "lines"} of JS.tla
     </span>
   </button>
 );

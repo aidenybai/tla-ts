@@ -33,9 +33,9 @@ import {
 } from "./code-tree";
 import { getPatches, getSourceString } from "./units";
 
-// Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
+// Specializes JS.tla's evaluation rules to a program: each syntax node gives the TLA+ that JS.tla's
 // Evaluate rule for its kind leaves once the node is known, with the evaluation of each child in
-// place of Evaluate(s, ctx, child). The runtime values still go through ESCore's operators, so
+// place of Evaluate(s, ctx, child). The runtime values still go through JS.tla's operators, so
 // only what the syntax says folds away.
 
 // The TLA+ of an evaluation in the state and context that the two operands give, whose result is
@@ -112,7 +112,7 @@ export interface ProgramFile {
   // Whether the file has an early error, for which Node throws a SyntaxError where it loads it.
   isRejected?: boolean;
   // The names of the files of its directory, where an import() of a computed string may name one
-  // of its candidates (EscoreSteps), and else none.
+  // of its candidates (JsTlaSteps), and else none.
   names?: readonly string[];
 }
 
@@ -351,7 +351,7 @@ const isUsing = (list: ts.VariableDeclarationList) => {
 const isConst = (list: ts.VariableDeclarationList) =>
   (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const || isUsing(list);
 
-// The kind of the resources that a declaration's bindings add (DeclarationKind in ESCore).
+// The kind of the resources that a declaration's bindings add (DeclarationKind in JS.tla).
 const getResourceKind = (list: ts.VariableDeclarationList) =>
   (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing
     ? "async-dispose"
@@ -360,7 +360,7 @@ const getResourceKind = (list: ts.VariableDeclarationList) =>
       : "normal";
 
 // Whether a statement list declares resources in the environment that it runs in (HasUsing in
-// ESCore).
+// JS.tla).
 const hasUsing = (statements: readonly ts.Statement[]) =>
   statements.some(
     (statement) => ts.isVariableStatement(statement) && isUsing(statement.declarationList),
@@ -459,7 +459,7 @@ const getLexicalDeclarations = (statements: readonly ts.Statement[], isBlock: bo
   });
 
 // The function declarations in blocks that Annex B hoists to the var scope of a function body or
-// script outside strict mode (HoistableFunctions in ESCore, §B.3.2.1), each one whose name nothing
+// script outside strict mode (HoistableFunctions in JS.tla, §B.3.2.1), each one whose name nothing
 // around it declares lexically, as replacing it with a var wouldn't be an early error.
 const getHoistableFunctions = (statements: readonly ts.Statement[]) => {
   const inList = (
@@ -673,7 +673,7 @@ const getDispatch = (
 
 // The name that a function is reached by, other than as a value where it's written: a declaration's
 // or method's, or that of the property or variable a function expression initializes. An accessor
-// runs wherever its property is read or written, by keys that ESCore may compute, as an array's
+// runs wherever its property is read or written, by keys that JS.tla may compute, as an array's
 // operators compute indices, so it has none, nor has a function under an index.
 const getFunctionKey = (node: ts.Node) => {
   // A module's namespace object reaches what the module exports by any key.
@@ -923,7 +923,7 @@ const getContextName = (node: ts.Node): LiteralName => {
   return named(ts.isExportAssignment(outer) ? "default" : undefined);
 };
 
-// Whether a function is a generator, async, or both, as ESCore's function kinds name it.
+// Whether a function is a generator, async, or both, as JS.tla's function kinds name it.
 type Flavor = "normal" | "generator" | "async" | "asyncGenerator";
 
 const getFlavor = (
@@ -943,7 +943,7 @@ const FUNCTION_PROTOTYPES = {
   asyncGenerator: "AsyncGeneratorFunctionPrototype",
 };
 
-// The productions of a function declaration or expression of each flavor, as ESCore names them.
+// The productions of a function declaration or expression of each flavor, as JS.tla names them.
 const FUNCTION_PRODUCTIONS = {
   normal: "Function",
   generator: "Generator",
@@ -959,8 +959,8 @@ const METHOD_PRODUCTIONS = {
   asyncGenerator: "AsyncGeneratorMethod",
 };
 
-// Specializes ESCore to a script. A function reached only by a name that the script never writes
-// elsewhere, and that ESCore's own operators don't use as a key, has a body that stops the check,
+// Specializes JS.tla to a script. A function reached only by a name that the script never writes
+// elsewhere, and that JS.tla's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
 export const specialize = (
   files: readonly ProgramFile[],
@@ -1073,7 +1073,7 @@ export const specialize = (
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
   // The call or new of a callee that V8 names by its source text where the callee isn't callable,
-  // as a name or a chain of property names, and otherwise the call that ESCore's message leaves
+  // as a name or a chain of property names, and otherwise the call that JS.tla's message leaves
   // to the host.
   // The text that V8 prints of an expression in a message, a name or a chain of property names,
   // or undefined for another.
@@ -1995,7 +1995,7 @@ export const specialize = (
         }
         if (!ts.isPropertyAssignment(property)) {
           throw new TlaTypeScriptError(
-            "tla-ts can't compile this destructuring target to ESCore yet",
+            "tla-ts can't compile this destructuring target to JS.tla yet",
             property,
           );
         }
@@ -2292,7 +2292,7 @@ export const specialize = (
         apply("RegExpCreate", [state, getStr(text.slice(1, end)), getStr(text.slice(end + 1))]);
     }
     throw new TlaTypeScriptError(
-      `tla-ts can't compile ${ts.SyntaxKind[node.kind]} to ESCore yet`,
+      `tla-ts can't compile ${ts.SyntaxKind[node.kind]} to JS.tla yet`,
       node,
     );
   };
@@ -2362,7 +2362,7 @@ export const specialize = (
             : undefined;
     if (then === undefined) {
       throw new TlaTypeScriptError(
-        `tla-ts can't compile the operator ${node.operatorToken.getText()} to ESCore yet`,
+        `tla-ts can't compile the operator ${node.operatorToken.getText()} to JS.tla yet`,
         node,
       );
     }
@@ -2713,7 +2713,7 @@ export const specialize = (
         }
         if (!ts.isComputedPropertyName(property.name)) {
           throw new TlaTypeScriptError(
-            "tla-ts can't compile a private name to ESCore yet",
+            "tla-ts can't compile a private name to JS.tla yet",
             property,
           );
         }
@@ -2765,11 +2765,11 @@ export const specialize = (
     if (ts.isPrivateIdentifier(name)) {
       return (state, context) => apply("Ok", [state, getPrivateName(name, state, context)]);
     }
-    throw new TlaTypeScriptError("tla-ts can't compile this property name to ESCore yet", name);
+    throw new TlaTypeScriptError("tla-ts can't compile this property name to JS.tla yet", name);
   };
 
   // The Private Name of a private identifier in the running private environment
-  // (ResolvePrivateIdentifier, §9.2.1.1), whose names ESCore holds without the #.
+  // (ResolvePrivateIdentifier, §9.2.1.1), whose names JS.tla holds without the #.
   const getPrivateName = (name: ts.PrivateIdentifier, state: Operand, context: Operand) =>
     apply("ResolvePrivateIdentifier", [state, context, getUnits(name.text.slice(1))]);
 
@@ -2850,7 +2850,7 @@ export const specialize = (
   // method of home whose body gives the initializer's value.
   const classField = (node: ts.PropertyDeclaration, scope: Scope) => {
     if (node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AccessorKeyword)) {
-      throw new TlaTypeScriptError("tla-ts can't compile an auto-accessor to ESCore yet", node);
+      throw new TlaTypeScriptError("tla-ts can't compile an auto-accessor to JS.tla yet", node);
     }
     const key = propertyKey(node.name, scope);
     const initializer = node.initializer;
@@ -3337,7 +3337,7 @@ export const specialize = (
       // Step 32.a (§B.3.2.1): outside strict mode, var bindings for the block functions that no
       // parameter names, and the sites whose evaluation then sets them.
       const hoistable = isStrict ? [] : getHoistableFunctions(statements);
-      // ESCore keeps the earlier editions' reading, where a block function named arguments
+      // JS.tla keeps the earlier editions' reading, where a block function named arguments
       // leaves the arguments object, and Node, as the current edition, makes it the function.
       if (
         argumentsNeeded &&
@@ -3634,10 +3634,10 @@ export const specialize = (
     );
     for (const element of elements) {
       if (ts.canHaveDecorators(element) && ts.getDecorators(element)?.length)
-        throw new TlaTypeScriptError("tla-ts can't compile a decorator to ESCore yet", element);
+        throw new TlaTypeScriptError("tla-ts can't compile a decorator to JS.tla yet", element);
     }
     if (ts.getDecorators(node)?.length)
-      throw new TlaTypeScriptError("tla-ts can't compile a decorator to ESCore yet", node);
+      throw new TlaTypeScriptError("tla-ts can't compile a decorator to JS.tla yet", node);
     const getClassName = () => (binding === undefined ? ref("name") : getStr(binding));
     // PrivateBoundIdentifiers (§15.7.3): the class's private names, each once.
     const privateNames = dedupe(
@@ -3906,7 +3906,7 @@ export const specialize = (
         };
       }
       throw new TlaTypeScriptError(
-        "tla-ts can't compile this class element to ESCore yet",
+        "tla-ts can't compile this class element to JS.tla yet",
         element,
       );
     });
@@ -4206,7 +4206,7 @@ export const specialize = (
       );
     }
     throw new TlaTypeScriptError(
-      `tla-ts can't compile ${ts.SyntaxKind[node.kind]} to ESCore yet`,
+      `tla-ts can't compile ${ts.SyntaxKind[node.kind]} to JS.tla yet`,
       node,
     );
   };
@@ -4270,7 +4270,7 @@ export const specialize = (
   const statementList = (statements: readonly ts.Statement[], scope: Scope): Code => {
     const list = statementSequence(statements, scope);
     // A block's, function body's, or module's resources are disposed of once its statements
-    // complete (EvaluateDisposing in ESCore).
+    // complete (EvaluateDisposing in JS.tla).
     return hasUsing(statements)
       ? (state, context) => apply("DisposeThen", [dot(context, "lex"), list(state, context)])
       : list;
@@ -4422,7 +4422,7 @@ export const specialize = (
     return (current, context) => apply(operator, [current, context]);
   };
 
-  // The while, do-while, and for statements (§14.7), whose iterations ESCore's LoopFrom runs: a
+  // The while, do-while, and for statements (§14.7), whose iterations JS.tla's LoopFrom runs: a
   // loop is [id, labels, lets], and LoopIteration runs the iteration of the loop id.
   const loop = (
     node: ts.WhileStatement | ts.DoStatement | ts.ForStatement,
@@ -4602,7 +4602,7 @@ export const specialize = (
     );
   };
 
-  // The for-in and for-of statements (§14.7.5): ForIn/OfHeadEvaluation, then ESCore's LoopFrom
+  // The for-in and for-of statements (§14.7.5): ForIn/OfHeadEvaluation, then JS.tla's LoopFrom
   // over the iteration LoopIteration gives for the loop's id.
   const forInOf = (
     node: ts.ForInStatement | ts.ForOfStatement,
@@ -4645,7 +4645,7 @@ export const specialize = (
           !ts.isIdentifier(declaration.name))
       ) {
         throw new TlaTypeScriptError(
-          "tla-ts can't compile an initializer in a for-in head to ESCore yet",
+          "tla-ts can't compile an initializer in a for-in head to JS.tla yet",
           node,
         );
       }
@@ -4660,7 +4660,7 @@ export const specialize = (
         ]);
       } else if (isLexical(initializer)) {
         tdz = names;
-        // A using declaration's binding adds its value's resource first (ForInOfBind in ESCore).
+        // A using declaration's binding adds its value's resource first (ForInOfBind in JS.tla).
         const kind = getResourceKind(initializer);
         if (kind !== "normal") words.add(kind === "sync-dispose" ? "dispose" : "asyncDispose");
         bind = letIn(
@@ -5085,7 +5085,7 @@ export const specialize = (
   const getNames = (file: ProgramFile) => setOf((file.names ?? []).map(getUnits));
 
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
-  // as ESCore's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
+  // as JS.tla's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
   // file of each request, and the module's body, which RunBody runs; and the declarations that
   // InitializeEnvironment (§16.2.1.7.3.1) instantiates once the module binds its imports.
   const moduleCode = (file: ProgramFile, number: number) => {
@@ -5131,7 +5131,7 @@ export const specialize = (
         (ts.isExportAssignment(statement) && statement.isExportEquals === true)
       ) {
         throw new TlaTypeScriptError(
-          "tla-ts can't compile TypeScript's CommonJS syntax to ESCore",
+          "tla-ts can't compile TypeScript's CommonJS syntax to JS.tla",
           statement,
         );
       }
@@ -5239,7 +5239,7 @@ export const specialize = (
         );
       } else {
         throw new TlaTypeScriptError(
-          `tla-ts can't export ${ts.SyntaxKind[statement.kind]} from a module to ESCore`,
+          `tla-ts can't export ${ts.SyntaxKind[statement.kind]} from a module to JS.tla`,
           statement,
         );
       }

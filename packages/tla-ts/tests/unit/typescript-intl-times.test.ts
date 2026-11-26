@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
-import { compileToEscore } from "../../src/typescript/spec/compile";
+import { compileToJsTla } from "../../src/typescript/spec/compile";
 import { prepareRuntime } from "../../src/typescript/spec/prepare";
 
 const getProgram = (
@@ -28,7 +28,7 @@ const waitForClock = () => {
 describe("compiles a Date of no arguments without reading the host's clock", () => {
   let runtime: ReturnType<typeof prepareRuntime>;
   const compile = (source: string) =>
-    compileToEscore(source, "spec.ts", runtime).loadModule("ProgramCode") ?? "";
+    compileToJsTla(source, "spec.ts", runtime).loadModule("ProgramCode") ?? "";
 
   beforeAll(() => {
     runtime = prepareRuntime(join(import.meta.dirname, "../../ecmascript"));

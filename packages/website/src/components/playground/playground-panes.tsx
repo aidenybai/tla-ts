@@ -76,7 +76,7 @@ export const PlaygroundOutput = () => {
     search,
     usePlaygroundView((view) => view.hoveredStateId),
   );
-  // ESCore's code of a program runs to a thousand lines, so the pane holds only the lines in view.
+  // JS.tla's code of a program runs to a thousand lines, so the pane holds only the lines in view.
   const virtualizer = useVirtualizer({
     count: playground.outputRows.length,
     getScrollElement: () => paneRef.current,

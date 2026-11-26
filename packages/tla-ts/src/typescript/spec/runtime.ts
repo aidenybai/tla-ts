@@ -6,7 +6,7 @@ import { CALENDAR_TABLES } from "../calendars";
 import { DATE_FORMATS } from "../date-formats";
 import { REJECTED_TIME_ZONES, TIME_ZONE_DATA, TIME_ZONES } from "../time-zones";
 
-// The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
+// JS.tla's operators that a compiled spec defines its own way, each a port of JS.tla's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
 // length, sourceText] that its function object holds as its body, and CallCode, which the
 // compile generates, runs the body of the code with an id.
@@ -67,7 +67,7 @@ const DEFINITIONS = [
   LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
-  // An error that ESCore throws with V8's message, which, as V8's, is the error's own property.
+  // An error that JS.tla throws with V8's message, which, as V8's, is the error's own property.
   `ThrowMessage(s, kind, units) ==
   LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
       m == CreateMethodProperty(InstallStack(a.s, a.v), a.v, SV("message"), Str(units))
@@ -189,7 +189,7 @@ const DEFINITIONS = [
   IF lo > hi THEN s
   ELSE IF lo = hi THEN AddRealmProperty(s, ps[lo])
   ELSE LET mid == (lo + hi) \\div 2 IN AddRealmPropertiesIn(AddRealmPropertiesIn(s, ps, lo, mid), ps, mid + 1, hi)`,
-  // The globals of a new V8 context that ESCore lacks, console and WebAssembly, each a value that
+  // The globals of a new V8 context that JS.tla lacks, console and WebAssembly, each a value that
   // stops at each use, writable and configurable as V8's, in the order of the host's keys.
   `HostContextGlobal(s) == LET d == DefineContextStops(s, <<N("console"), N("WebAssembly")>>) IN IF IsAbrupt(d) THEN d ELSE Ok(OrderRealmKeys(d.s, 1), Empty)`,
   `DefineContextStops(s, names) ==
@@ -479,7 +479,7 @@ const DEFINITIONS = [
   IF allowed = <<>> THEN s ELSE
   LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, IF "data" \\in DOMAIN Head(allowed) THEN Head(allowed).data ELSE Empty) IN
   AllowTraps(CreateDataProperty(f.s, handler, Head(allowed).trap, Val(f)).s, handler, Tail(allowed))`,
-  // The host's globals and built-ins' properties that a module program names and ESCore's realm
+  // The host's globals and built-ins' properties that a module program names and JS.tla's realm
   // lacks, on the global object and the intrinsics as the host's own context has them, where a
   // module runs. One whose value is a primitive has the host's value. One whose value is a function
   // or an object is a proxy whose handler stops at every operation, whose target is a function
@@ -568,8 +568,8 @@ const DEFINITIONS = [
   `ReadOptions(s, options, keys) ==
   IF keys = <<>> THEN Ok(s, Empty) ELSE
   LET r == Get(s, options, Head(keys)) IN IF IsAbrupt(r) THEN r ELSE ReadOptions(r.s, options, Tail(keys))`,
-  // A stop at what of the host that ESCore leaves out a program uses, by its name's code units.
-  `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which ESCore leaves out")`,
+  // A stop at what of the host that JS.tla leaves out a program uses, by its name's code units.
+  `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which JS.tla leaves out")`,
   // The TLA+ string of code units that a TLA+ string can hold.
   `UnitsText(units) ==
   IF units = <<>> THEN "" ELSE (CHOOSE c \\in DOMAIN CharacterUnits : CharacterUnits[c] = Head(units)) \\o UnitsText(Tail(units))`,
@@ -607,7 +607,7 @@ const DEFINITIONS = [
   // their scope and emit their destroy, as Node's do (lib/async_hooks.js) where no hook
   // of async_hooks observes them, which a program would make by reading more of async_hooks, and
   // AsyncLocalStorage, which makes an object of no arguments, at whose every use the program stops,
-  // as its store follows the async context that ESCore's jobs don't carry. A program reads
+  // as its store follows the async context that JS.tla's jobs don't carry. A program reads
   // process.env as the compile gives it.
   `ProcessObject(s) ==
   LET bigint == HostFunction(s, N("process.hrtime.bigint"))
@@ -640,7 +640,7 @@ const DEFINITIONS = [
       withStorage == CreateDataProperty(storageProxy.s, Val(hooks), SV("AsyncLocalStorage"), Val(storageProxy))
       hooksProxy == StoppingProxy(withStorage.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
   IN HoldModule(hooksProxy.s, 0, Val(hooksProxy))`,
-  // A built-in module of Node that ESCore has none of, the one object that each require of it
+  // A built-in module of Node that JS.tla has none of, the one object that each require of it
   // gives, which the state's required holds under the number k: a proxy that stops at every
   // operation but its allowed traps, such as util's read of TextEncoder, whose target is a function
   // where Node's module is one, such as stream's Stream, so that typeof gives what Node's does.
@@ -696,10 +696,10 @@ const DEFINITIONS = [
   ELSE IF id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't load the module " \\o UnitsText(id.value))
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
-  // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
+  // A part of ECMAScript that JS.tla leaves out, by the reason that JS.tla gives after
   // "Unsupported: ", or none.
   `Unsupported(s, what) ==
-  Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+  Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that JS.tla leaves out"
                 ELSE "tla-ts can't model " \\o UnitsText(SubSeq(what, 14, Len(what))))`,
 ];
 
@@ -752,7 +752,7 @@ const STACK_DEFINITIONS = [
     [] OTHER -> ConstructObject(s, f, args, newTarget)`,
   // The frame of a call of f, a built-in or ECMAScript function, with its this value, or new.target
   // where new made it, and the position in the frame below of the call, or <<>> where the call is
-  // ESCore's own, as V8 records each frame of a stack.
+  // JS.tla's own, as V8 records each frame of a stack.
   `PushFrame(s, f, this, args, isNew, site) ==
   [s EXCEPT !.callers = [f |-> f, args |-> args, this |-> this, isNew |-> isNew, site |-> site, next |-> s.callers]]`,
   // The value of a data property of an object or the objects it inherits from, Undefined for an
@@ -1086,7 +1086,7 @@ export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   };
 });
 
-// ESCore's interpreter, which a compiled spec never runs: its evaluation of parse nodes, and eval
+// JS.tla's interpreter, which a compiled spec never runs: its evaluation of parse nodes, and eval
 // and the Function constructor, which make code at run time.
 export const INTERPRETER = new Set([
   "Evaluate",
@@ -1115,7 +1115,7 @@ export const INTERPRETER = new Set([
   "EvaluateFieldInitializer",
 ]);
 
-// Where ESCore, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
+// Where JS.tla, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
 // differently, a compiled spec stops: at a named time zone that the host's recorded table leaves
 // out, and at a date string in none of the formats that ECMA-262 defines, which a host may still
 // read. The method names CallBuiltin stops at are the locale-sensitive built-ins'.
@@ -1132,7 +1132,7 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 // The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
 // date's offset in the host's default locale. In another time zone a compiled spec stops at local
-// time, which ESCore keeps as UTC's. The runtime reads these facts of the host's realm through
+// time, which JS.tla keeps as UTC's. The runtime reads these facts of the host's realm through
 // HostRealmFact, which each program's code defines, so that the runtime, and the graph that a build
 // prepares of it, is the same in every time zone and locale.
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
@@ -1170,7 +1170,7 @@ const HOST_TIME_READERS = [
   ["BigIntBuiltin", "args"],
 ];
 
-// The patches that the runtime makes of ESCore for a host's realm.
+// The patches that the runtime makes of JS.tla for a host's realm.
 const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   {
@@ -1251,7 +1251,7 @@ const HOST_PATCHES = [
     to: `ELSE Assert(FALSE, "tla-ts can't tell when the host collects a registered target, which runs the registry's callback")`,
   },
   // Node resolves the promise of an Atomics.waitAsync that a notify wakes in a task of its own,
-  // after the jobs, at no fixed place among its timers, where ESCore's notify resolves it at once.
+  // after the jobs, at no fixed place among its timers, where JS.tla's notify resolves it at once.
   // It times a wait out on V8's clock, apart from its timers, and exits without timing it out where
   // nothing else keeps it running, so a compiled spec stops where a timeout would run the
   // promise's reactions, or where the host's timers wait too.
@@ -1283,11 +1283,11 @@ const HOST_PATCHES = [
   },
   // V8 keeps RegExp's legacy static properties as strings, empty ones before any match, for any
   // receiver and after a subclass's match too, where the legacy RegExp features proposal, as
-  // ESCore has it, throws.
+  // JS.tla has it, throws.
   {
     name: "RegExpBuiltin",
     from: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN ThrowTypeError(s) ELSE Ok(s, Str(value))`,
-    to: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN Assert(FALSE, "tla-ts can't read a legacy static property of RegExp where V8 keeps a value that ESCore leaves out") ELSE Ok(s, Str(value))`,
+    to: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN Assert(FALSE, "tla-ts can't read a legacy static property of RegExp where V8 keeps a value that JS.tla leaves out") ELSE Ok(s, Str(value))`,
   },
   {
     name: "RegExpBuiltin",
@@ -1296,7 +1296,7 @@ const HOST_PATCHES = [
     to: `[] m = "legacySetInput" ->
          IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN Assert(FALSE, "tla-ts can't set RegExp.input on another receiver, as V8 does") ELSE`,
   },
-  // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
+  // JS.tla runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in the locales given
   // as HostIntl answers.
   {
@@ -1328,7 +1328,7 @@ const HOST_PATCHES = [
     [] m = "gc" ->`,
   },
   // An error's stack: V8's accessor, whose getter and setter are nameless functions shared by every
-  // error. The text it reads is the host's, which ESCore can't write, so reading it stops, but for a
+  // error. The text it reads is the host's, which JS.tla can't write, so reading it stops, but for a
   // value a program set.
   {
     name: "AddRealmProperty",
@@ -1430,7 +1430,7 @@ const HOST_PATCHES = [
         task == [kind |-> "reaction", promise |-> IF reaction.capability = Empty THEN Empty ELSE reaction.capability.promise]
         result == CASE reaction.handler # Empty -> Call([s EXCEPT !.task = task], reaction.handler, Undefined, <<job.argument>>)`,
   },
-  // An error that ESCore throws itself, whose message Node writes as host text. It holds the mark
+  // An error that JS.tla throws itself, whose message Node writes as host text. It holds the mark
   // hostMessage, at which reading its message or listing its own keys stops.
   {
     name: "ThrowError",
@@ -1711,7 +1711,7 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
     ...HOST_TIME_READERS.map((reader) => {
       const definition = library.definitions.get(reader[0]);
       if (definition === undefined || !definition.text.startsWith(`${reader[0]}(`)) {
-        throw new TlaError(`ESCore's ${reader[0]} no longer reads as the compiled spec patches it`);
+        throw new TlaError(`JS.tla's ${reader[0]} no longer reads as the compiled spec patches it`);
       }
       return `${definition.text.replace(" ==", ` ==\n  IF HostTimeIn(${reader[1]}) THEN ${CLOCK_STOP} ELSE`)}`;
     }),
@@ -1731,7 +1731,7 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
         const text = entry[1].reduce((current, patch) => {
           if (!current.includes(patch.from)) {
             throw new TlaError(
-              `ESCore's ${entry[0]} no longer reads as the compiled spec patches it`,
+              `JS.tla's ${entry[0]} no longer reads as the compiled spec patches it`,
             );
           }
           return current.replace(patch.from, patch.to);
@@ -1753,9 +1753,9 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
       },
     ]);
 
-// V8's message for an error that ESCore throws itself, where V8's template and what it inserts
+// V8's message for an error that JS.tla throws itself, where V8's template and what it inserts
 // are exact: each patch puts ThrowMessage, which throws the error with that message as its own
-// property, in place of ESCore's throw, which leaves the message to the host. ESCore's other
+// property, in place of JS.tla's throw, which leaves the message to the host. JS.tla's other
 // throws keep the host's message, at whose reading a compiled spec stops.
 const MESSAGE_PATCHES: { name: string; from: string; to: string; isEvery?: boolean }[] = [
   {
@@ -1960,8 +1960,8 @@ const MESSAGE_PATCHES: { name: string; from: string; to: string; isEvery?: boole
   },
 ];
 
-// ESCore's definitions with V8's messages in place, each from the text that the runtime's other
-// overrides give it, or else ESCore's.
+// JS.tla's definitions with V8's messages in place, each from the text that the runtime's other
+// overrides give it, or else JS.tla's.
 export const getMessageDefinitions = (
   library: Library,
   overrides: readonly GeneratedDefinition[],
@@ -1973,7 +1973,7 @@ export const getMessageDefinitions = (
     const definition =
       changed.get(patch.name) ?? patched.get(patch.name) ?? library.definitions.get(patch.name);
     if (definition === undefined || !definition.text.includes(patch.from)) {
-      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+      throw new TlaError(`JS.tla's ${patch.name} no longer reads as the compiled spec patches it`);
     }
     changed.set(patch.name, {
       ...definition,
@@ -2006,7 +2006,7 @@ export const getMessageDefinitions = (
   ];
 };
 
-// ESCore's operators that a compiled function's frame changes (see locals.ts): those on Reference
+// JS.tla's operators that a compiled function's frame changes (see locals.ts): those on Reference
 // Records, which take a reference whose base is a local, the slot of the frame that holds a binding
 // that only its function's own code reaches, and the call of a code that needs no environment. A
 // local behaves as the declarative binding it stands for: it has no value before its declaration
@@ -2061,7 +2061,7 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   ...LOCAL_PATCHES.map((patch) => {
     const definition = library.definitions.get(patch.name);
     if (definition === undefined || !definition.text.includes(patch.from)) {
-      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+      throw new TlaError(`JS.tla's ${patch.name} no longer reads as the compiled spec patches it`);
     }
     return {
       name: patch.name,

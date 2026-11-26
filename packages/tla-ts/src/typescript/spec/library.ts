@@ -1,5 +1,5 @@
-// ESCore, split into its definitions, of which a compiled spec's runtime is made. The directory
-// holds ESCore.tla, the modules it extends, and parts, whose tables list the realm's properties.
+// JS.tla, split into its definitions, of which a compiled spec's runtime is made. The directory
+// holds JS.tla, the modules it extends, and parts, whose tables list the realm's properties.
 
 interface Definition {
   name: string;
@@ -33,7 +33,7 @@ export interface Library {
   // The words that reach each group of parts whose objects only its built-ins make: the names of
   // its globals and of its constructors' own properties.
   triggers: Map<string, Set<string>>;
-  // The names that ESCore's own operators use as property keys, such as toString and then.
+  // The names that JS.tla's own operators use as property keys, such as toString and then.
   internalKeys: Set<string>;
   // The realm's properties with a string key, by the intrinsic that holds each, as the property
   // tables list them.
@@ -101,7 +101,7 @@ const GATED_GROUPS = [
 // formats a time value through Temporal's patterns and Date's fields.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
-  // A new context's realm, whose globals that ESCore lacks are proxies of the host's that stop at
+  // A new context's realm, whose globals that JS.tla lacks are proxies of the host's that stop at
   // each use.
   ["79-proxy.tla", ["createRealm"]],
   ["88-modules.tla", ["createRealm"]],
@@ -126,7 +126,7 @@ const EXTRA_TRIGGERS = new Map([
 // methods a program calls without naming any global.
 const ITERATOR_PROTOTYPES = new Set(["IteratorPrototype", "AsyncIteratorPrototype"]);
 
-// What ESCore's parts give a library: the group of each definition that a part defines, the
+// What JS.tla's parts give a library: the group of each definition that a part defines, the
 // words that reach each gated group, and the realm's properties with a string key, by the intrinsic
 // that holds each, as the property tables list them.
 export interface PartTables {
@@ -135,9 +135,9 @@ export interface PartTables {
   properties: { owner: string; key: string }[];
 }
 
-// ESCore's texts that a library reads: ESCore.tla, the tables of its parts, and the modules it
-// extends by name, which a host without ESCore's directory, such as a browser, is given.
-export interface EscoreFiles {
+// JS.tla's texts that a library reads: JS.tla, the tables of its parts, and the modules it
+// extends by name, which a host without JS.tla's directory, such as a browser, is given.
+export interface JsTlaFiles {
   core: string;
   tables: PartTables;
   modules: [name: string, text: string][];
@@ -215,12 +215,12 @@ const getPartTables = (files: [name: string, text: string][]): PartTables => {
   };
 };
 
-export const readEscoreFiles = (directory: string): EscoreFiles => {
+export const readJsTlaFiles = (directory: string): JsTlaFiles => {
   const files = process.getBuiltinModule("node:fs");
   const path = process.getBuiltinModule("node:path");
   const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
   return {
-    core: read("ESCore.tla"),
+    core: read("JS.tla"),
     tables: getPartTables(
       files
         .readdirSync(path.join(directory, "parts"))
@@ -231,7 +231,7 @@ export const readEscoreFiles = (directory: string): EscoreFiles => {
   };
 };
 
-export const createLibrary = (files: EscoreFiles): Library => {
+export const createLibrary = (files: JsTlaFiles): Library => {
   const core = files.core;
   const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
   const groupOf = new Map(files.tables.groups);
@@ -275,14 +275,14 @@ const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
 // N and SV of a literal name as the code units that ESNames's table gives it, which spares a spec
-// building the table of every name ESCore uses.
+// building the table of every name JS.tla uses.
 export const foldNames = (text: string) =>
   text.replace(/\b(N|SV)\("((?:[^"\\]|\\.)*)"\)/g, (_, operator: string, literal: string) => {
     const units = getUnits(JSON.parse(`"${literal}"`));
     return operator === "N" ? units : `Str(${units})`;
   });
 
-// ESCore's definitions that a compiled spec has no use for: SV, whose literal uses the module
+// JS.tla's definitions that a compiled spec has no use for: SV, whose literal uses the module
 // folds, and the test262 harness's entry points, which run the interpreter on parse nodes.
 const UNUSED = new Set(["SV", "HarnessResult", "RunFrom", "RunModuleFrom"]);
 
@@ -290,7 +290,7 @@ const getParameters = (arity: number) =>
   Array.from({ length: arity }, (_, index) => `p${index + 1}`).join(", ");
 
 const getStub = (definition: Definition) =>
-  `${definition.name}(${getParameters(definition.arity)}) ==\n  Assert(FALSE, "tla-ts can't run ${definition.name}, which a compiled spec leaves out of ESCore")`;
+  `${definition.name}(${getParameters(definition.arity)}) ==\n  Assert(FALSE, "tla-ts can't run ${definition.name}, which a compiled spec leaves out of JS.tla")`;
 
 // The operators of the runtime that a program's code takes the place of, which the runtime
 // defines as stops and a config overrides with the program's, by their parameters.
@@ -318,7 +318,7 @@ export const HOOKS = new Map([
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
 
-// The module ESRuntime: every ESCore definition, with the overrides in place of ESCore's and a
+// The module ESRuntime: every JS.tla definition, with the overrides in place of JS.tla's and a
 // stub that stops the check in place of each operator in cut. A compiled program's code takes the
 // place of the hooks, so that one runtime serves every program. They are definitions rather than
 // operator constants, whose arguments' levels SANY's checks would trace through every operator
@@ -375,7 +375,7 @@ export const assembleRuntime = (
   );
 };
 
-// The locale-sensitive methods that ESCore runs as ECMA-402 does, through HostIntl: those that
+// The locale-sensitive methods that JS.tla runs as ECMA-402 does, through HostIntl: those that
 // format a Number, a BigInt, or a Date or compare strings, and those that call their elements' or
 // their own.
 const LOCALE_FORMATTING = [
@@ -410,5 +410,5 @@ export const getCallBuiltin = (
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,
     ),
-    `    [] OTHER -> Assert(FALSE, "tla-ts can't run a built-in that this program's spec leaves out of ESCore")`,
+    `    [] OTHER -> Assert(FALSE, "tla-ts can't run a built-in that this program's spec leaves out of JS.tla")`,
   ].join("\n");

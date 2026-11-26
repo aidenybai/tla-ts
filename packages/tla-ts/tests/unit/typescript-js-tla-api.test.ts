@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import ts from "@typescript/typescript6";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { createLibrary, readEscoreFiles } from "../../src/typescript/spec/library";
+import { createLibrary, readJsTlaFiles } from "../../src/typescript/spec/library";
 import { recordHostRealm } from "../../src/typescript/spec/realm";
 
 // What a compile and a check of a file give: the check's status, the violated name, the trace's
@@ -33,9 +33,9 @@ const getLibraries = (fileName: string, libraries: Map<string, string>) => {
   return libraries;
 };
 
-// ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
+// JS.tla's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
 // stack, or with 8 MB, as the CLI's thread has. A request compiles with the public compile, or on
-// ESCore from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
+// JS.tla from a realm that Node recorded and that went through JSON, as a browser reads it, and, as
 // in a browser, without Node's built-in modules, which a browser's process, where it has one, lacks.
 // On a browser's worker, TypeScript also has no system to read files through, and the compile has
 // none of Node's own globals: its process, Buffer, global, and setImmediate.
@@ -64,7 +64,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
   const getRecorded = (modules) => {
     const [, , , , , library, prepare, realm] = modules;
     if (recorded === undefined) {
-      const files = library.readEscoreFiles(workerData.directory);
+      const files = library.readJsTlaFiles(workerData.directory);
       const host = { files, realm: realm.recordHostRealm(library.createLibrary(files)) };
       recorded = prepare.prepareHostRuntime(JSON.parse(JSON.stringify(host)));
     }
@@ -89,7 +89,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
       }
       if (workerData.isBrowser) setNodeGlobals(Object.fromEntries(Object.keys(nodeGlobals).map((name) => [name, undefined])));
       const spec = request.isRecorded
-        ? api.compileEscore(options, runtime, request.isLibraryPassed ? browserLibrary : undefined)
+        ? api.compileJsTla(options, runtime, request.isLibraryPassed ? browserLibrary : undefined)
         : await compile.compile(options);
       setNodeGlobals(nodeGlobals);
       process.getBuiltinModule = getBuiltinModule;
@@ -160,7 +160,7 @@ const getCliStackOutcome = createApi(8);
 
 const getBrowserOutcome = createApi(256, true);
 
-// The worker prepares ESCore's runtime before the first check, which takes longer than a check.
+// The worker prepares JS.tla's runtime before the first check, which takes longer than a check.
 beforeAll(
   () =>
     Promise.all([
@@ -178,7 +178,7 @@ const getFailure = (outcome: Outcome) => outcome.message ?? outcome.error?.messa
 // What Node writes to stderr and the code it exits with as it runs a file, with others beside it,
 // in an environment of the variables given.
 const runNode = (files: Record<string, string>, entry: string, env = process.env) => {
-  const directory = mkdtempSync(join(tmpdir(), "escore-api-"));
+  const directory = mkdtempSync(join(tmpdir(), "js-tla-api-"));
   Object.entries(files).forEach(([name, text]) => {
     mkdirSync(dirname(join(directory, name)), { recursive: true });
     writeFileSync(join(directory, name), text);
@@ -647,7 +647,7 @@ describe("load a file on a browser's worker as Node does without a package.json"
   });
 });
 
-// A browser prepares ESCore's runtime from a realm that Node recorded, which holds no functions of
+// A browser prepares JS.tla's runtime from a realm that Node recorded, which holds no functions of
 // the host, so the spec is Node's but where the program asks the host about a locale tag.
 describe("map a file's declarations to the program's code", () => {
   it("gives each top-level declaration its text and the definitions it compiles to", async () => {
@@ -670,7 +670,7 @@ describe("map a file's declarations to the program's code", () => {
   });
 });
 
-describe("compile on ESCore from a recorded realm as from Node's", () => {
+describe("compile on JS.tla from a recorded realm as from Node's", () => {
   describe("give the spec and the result that Node's realm gives", () => {
     const getSource = (expected: string) =>
       `const entries = Object.entries({ b: 2, a: 1 }).map(([key, value]) => key + value);\nconst text = JSON.stringify(entries);\nif (text !== '${expected}') throw new Error(text);\n`;
@@ -729,7 +729,7 @@ describe("compile on ESCore from a recorded realm as from Node's", () => {
   // import that names its file loads it, as Node does, and any other stops, where Node may load
   // another file or none, as for an extensionless name or a .js name of a TypeScript file.
   describe("resolve an import under Bun, without Node's resolution, as Node would or stop", () => {
-    const directory = mkdtempSync(join(tmpdir(), "escore-api-bun-"));
+    const directory = mkdtempSync(join(tmpdir(), "js-tla-api-bun-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const files = {
       "two.mjs": "export const two = 2;\n",
@@ -748,22 +748,22 @@ describe("compile on ESCore from a recorded realm as from Node's", () => {
     const outcomes: Record<string, { status: string; message?: string }> = {};
     beforeAll(() => {
       Object.entries(files).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
-      const escoreFiles = readEscoreFiles(join(import.meta.dirname, "../../ecmascript"));
+      const jsTlaFiles = readJsTlaFiles(join(import.meta.dirname, "../../ecmascript"));
       writeFileSync(
         join(directory, "host.json"),
-        JSON.stringify({ files: escoreFiles, realm: recordHostRealm(createLibrary(escoreFiles)) }),
+        JSON.stringify({ files: jsTlaFiles, realm: recordHostRealm(createLibrary(jsTlaFiles)) }),
       );
       writeFileSync(
         join(directory, "run.ts"),
         `import { readFileSync } from "node:fs";
-import { compileEscore } from "${source}/typescript/spec/api.ts";
+import { compileJsTla } from "${source}/typescript/spec/api.ts";
 import { prepareHostRuntime } from "${source}/typescript/spec/prepare.ts";
 import { check } from "${source}/parallel.ts";
 const runtime = prepareHostRuntime(JSON.parse(readFileSync(process.argv[2], "utf8")));
 const outcomes = {};
 for (const fileName of process.argv.slice(3)) {
   try {
-    const spec = compileEscore({ source: readFileSync(fileName, "utf8"), fileName }, runtime);
+    const spec = compileJsTla({ source: readFileSync(fileName, "utf8"), fileName }, runtime);
     const result = await check({ ...spec, workers: 1, onPrint: () => {} });
     outcomes[fileName] = { status: result.status, message: result.failure?.message };
   } catch (error) {

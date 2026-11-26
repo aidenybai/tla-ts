@@ -13,7 +13,7 @@ describe("compile", () => {
     expect(checked.traceLength).toBe(7);
   }, 120_000);
 
-  // ESCore names every spec's root module Program, whose strings its prepared modules rank.
+  // JS.tla names every spec's root module Program, whose strings its prepared modules rank.
   it.skip("names the spec after its file", async () => {
     expect((await compileAndCheck(readFileSync(DIE_HARD, "utf8"), DIE_HARD)).name).toBe("DieHard");
   });

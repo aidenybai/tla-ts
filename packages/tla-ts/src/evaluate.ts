@@ -265,7 +265,7 @@ export interface Environment {
   sanyLevels: LevelAnalyzer;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
-  // The modules of ESCore's runtime, whose recursions are tla-ts's own rather than a spec's.
+  // The modules of JS.tla's runtime, whose recursions are tla-ts's own rather than a spec's.
   runtimeModules: ReadonlySet<string>;
   callStack?: CallStack;
   coverage?: Coverage;
@@ -1604,7 +1604,7 @@ const createCaseExhaustedError = (expression: Expression) =>
     `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
   );
 
-// A call of one of ESCore's runtime operators binds each argument that isn't a name or a literal to
+// A call of one of JS.tla's runtime operators binds each argument that isn't a name or a literal to
 // its value, so that a loop's accumulator doesn't nest a thunk in the last turn's at each turn.
 const bindArgumentValues = (
   callee: Closure,
@@ -1663,7 +1663,7 @@ export type TailStep =
       kind: "Call";
       expression: Expression & { kind: "Apply" };
       binders: ArgumentBinder[];
-      // The evaluator of each argument that a call of one of ESCore's runtime operators binds to its
+      // The evaluator of each argument that a call of one of JS.tla's runtime operators binds to its
       // value, compiled at the first such call.
       values: (Evaluator | undefined)[];
       evaluator: Evaluator;
@@ -1833,14 +1833,14 @@ const compileTailCalls = (name: string, body: Expression, environment: Environme
   return compileTailStep(body, name, new Map(), environment, entries, isRuntime);
 };
 
-// Whether a body is one of ESCore's runtime operators, whose recursions are tla-ts's own.
+// Whether a body is one of JS.tla's runtime operators, whose recursions are tla-ts's own.
 const isRuntimeBody = (body: Expression, environment: Environment) =>
   environment.runtimeModules.has(body.location.range?.module ?? "");
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
   let context = bodyContext;
   let step = body;
-  // ESCore's runtime loops as long as its JavaScript program does; a spec's recursion overflows.
+  // JS.tla's runtime loops as long as its JavaScript program does; a spec's recursion overflows.
   const isRuntime = isRuntimeBody(closure.body, bodyContext.environment);
   const limit = isRuntime ? Infinity : TAIL_CALL_LIMIT;
   for (let turn = 0; turn < limit;) {

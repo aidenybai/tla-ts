@@ -1,11 +1,11 @@
-import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
+import { JS_TLA_CANONICAL_OPERATORS } from "./js-tla-canonical";
 import {
-  createEscoreNativeOperators,
-  createEscoreProgramOperators,
+  createJsTlaNativeOperators,
+  createJsTlaProgramOperators,
   createEsBigNatOperators,
   createEsNumberOperators,
   createEsRuntimeOperators,
-} from "./escore-native";
+} from "./js-tla-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   checkJavaArity,
@@ -655,12 +655,12 @@ export const getJavaOverrides = (
   getVariableNames: () => string[],
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
-  if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
-  if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
+  if (name === "ESCanonical") return JS_TLA_CANONICAL_OPERATORS;
+  if (name === "ESNative") return createJsTlaNativeOperators(evaluateReplaced);
   if (name === "ESBigNat") return createEsBigNatOperators(evaluateReplaced);
   if (name === "ESNumber") return createEsNumberOperators(evaluateReplaced);
   if (name === "ESRuntime") return createEsRuntimeOperators(evaluateReplaced);
-  if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
+  if (name === "ProgramCode") return createJsTlaProgramOperators(evaluateReplaced);
   if (name === "AnySet") {
     return [
       overrideWithJava(

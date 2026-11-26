@@ -654,7 +654,7 @@ IntlTimeClip(x) == LET t == TimeClip(x) IN IF NumIsZero(t) THEN NumFromInt(0) EL
 
 \* The text of a DateTimeFormat's format of a time value or a Temporal object, through the host's
 \* recorded English pattern (HostDateFormat) for the options it read, where they are ones the table
-\* records: English, no calendar or numbering system, and UTC, which is ESCore's local time zone, of
+\* records: English, no calendar or numbering system, and UTC, which is JS.tla's local time zone, of
 \* a year from 1583 to 9999, or the error that the table records it throws. Else found is "none".
 DateTimeFormatReadIndex ==
   [calendar |-> 2, numberingSystem |-> 3, hour12 |-> 4, hourCycle |-> 5, timeZone |-> 6, weekday |-> 7, era |-> 8,
@@ -878,7 +878,7 @@ IntlLocaleCompare(s, x, y, locales, options) ==
   LET answer == IntlAnswer(c.s, "Collator", IntlConstructedConfig(c.s, Val(c), "Collator"), "compare", <<x, y>>) IN
   IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "compare", Val(answer))
 
-\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as ESCore's case
+\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as JS.tla's case
 \* mapping in the host's default locale, where it isn't one that tailors case, and else what
 \* HostIntl answers.
 IntlTransformCase(s, m, units, locales, isTailored) ==

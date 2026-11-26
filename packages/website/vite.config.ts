@@ -6,11 +6,11 @@ import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
-import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
+import { type JsTlaRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
 import { BUILT_OUTPUT_LINES, getSourceLanguage, type Precompiled } from "./src/lib/compilation";
 import { getLineMarks } from "./src/lib/line-marks";
 import { getOutputRows } from "./src/lib/output-rows";
-import { getEscoreCompilation } from "./src/lib/escore";
+import { getJsTlaCompilation } from "./src/lib/js-tla";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";
@@ -36,16 +36,16 @@ const PLAYGROUND_PATHS = [
 const BENCHMARK_ROW =
   /^\| (?:\[(?<linked>[^\]]+)\]\([^)]*\)|(?<plain>[^|[]+?)) +\|[^|]*\| +(?<tlc>[\d.]+) s \| +(?<tlaTs>[\d.]+) s \| +(?<speedup>[\d.]+×) \|$/;
 
-// ESCore's runtime, which the build prepares once, from the host it records, for the files it
+// JS.tla's runtime, which the build prepares once, from the host it records, for the files it
 // compiles ahead of time.
-let escoreRuntime: EscoreRuntime | undefined;
-const getEscoreRuntime = () => (escoreRuntime ??= prepareHostRuntime(JSON.parse(getEscoreHost())));
+let jsTlaRuntime: JsTlaRuntime | undefined;
+const getJsTlaRuntime = () => (jsTlaRuntime ??= prepareHostRuntime(JSON.parse(getJsTlaHost())));
 
-const compileOnEscore = (source: string, fileName: string) =>
-  getEscoreCompilation(source, fileName, getEscoreRuntime(), getPackageFiles());
+const compileOnJsTla = (source: string, fileName: string) =>
+  getJsTlaCompilation(source, fileName, getJsTlaRuntime(), getPackageFiles());
 
 // The code that builds a source: each distinct style once, and each run of tokens of one style as
-// its text with the style's number. ESCore's code of a program runs to a thousand lines, whose
+// its text with the style's number. JS.tla's code of a program runs to a thousand lines, whose
 // tokens each with its own style would be most of what a page loads.
 const packSource = (source: Source, code = JSON.stringify(source.code)) => {
   const styles: string[] = [];
@@ -69,7 +69,7 @@ const getExample = (
 ): CompiledExample => {
   const typescript = readFileSync(path, "utf8").trim();
   const fileName = path.slice(path.lastIndexOf("/") + 1);
-  const compiled = compileOnEscore(typescript, fileName);
+  const compiled = compileOnJsTla(typescript, fileName);
   return {
     fileName,
     name: compiled.name,
@@ -91,7 +91,7 @@ const maskText = (text: string) =>
 // line as its number and tokens, split by tabs, a comment after an empty cell, and a fold's count
 // of lines after a plus. The playground draws it while its compiler loads.
 const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) => {
-  const compiled = compileOnEscore(
+  const compiled = compileOnJsTla(
     readFileSync(path, "utf8").trim(),
     path.slice(path.lastIndexOf("/") + 1),
   );
@@ -214,64 +214,64 @@ const outlines = (): Plugin => ({
   },
 });
 
-const ESCORE_DIRECTORY = fileURLToPath(new URL("../tla-ts/ecmascript", import.meta.url));
+const JS_TLA_DIRECTORY = fileURLToPath(new URL("../tla-ts/ecmascript", import.meta.url));
 
-const ESCORE_HOST = "escore-host.json";
+const JS_TLA_HOST = "js-tla-host.json";
 
-// The host that the page prepares ESCore's runtime from, as JSON, which Node records, with a stack
-// deep enough to start ESCore's realm, from a bundle of tla-ts's script, as tla-ts's scripts run.
-const recordEscoreHost = () => {
-  const directory = fileURLToPath(new URL("./node_modules/.escore-host/", import.meta.url));
+// The host that the page prepares JS.tla's runtime from, as JSON, which Node records, with a stack
+// deep enough to start JS.tla's realm, from a bundle of tla-ts's script, as tla-ts's scripts run.
+const recordJsTlaHost = () => {
+  const directory = fileURLToPath(new URL("./node_modules/.js-tla-host/", import.meta.url));
   const steps = [
     [
       "bun",
       "build",
-      fileURLToPath(new URL("../tla-ts/scripts/escore-host.ts", import.meta.url)),
+      fileURLToPath(new URL("../tla-ts/scripts/js-tla-host.ts", import.meta.url)),
       "--target=node",
       "--packages=external",
       "--outfile",
-      join(directory, "escore-host.js"),
+      join(directory, "js-tla-host.js"),
     ],
     [
       "node",
       "--stack-size=4000",
-      join(directory, "escore-host.js"),
-      ESCORE_DIRECTORY,
-      join(directory, ESCORE_HOST),
+      join(directory, "js-tla-host.js"),
+      JS_TLA_DIRECTORY,
+      join(directory, JS_TLA_HOST),
     ],
   ];
   for (const step of steps) {
     const result = spawnSync(step[0], step.slice(1), { stdio: "inherit" });
     if (result.status !== 0) throw new Error(`${step.join(" ")} exited with ${result.status}`);
   }
-  process.env[RECORDED_HOST] = join(directory, ESCORE_HOST);
-  return readFileSync(join(directory, ESCORE_HOST), "utf8");
+  process.env[RECORDED_HOST] = join(directory, JS_TLA_HOST);
+  return readFileSync(join(directory, JS_TLA_HOST), "utf8");
 };
 
 // The file of the host that this process recorded, which the build's prerender servers, which
 // load this config again, read rather than record it again.
-const RECORDED_HOST = "TLA_TS_ESCORE_HOST";
+const RECORDED_HOST = "TLA_TS_JS_TLA_HOST";
 
 // The host, recorded once a process.
-let escoreHost: string | undefined;
-const getEscoreHost = () => {
+let jsTlaHost: string | undefined;
+const getJsTlaHost = () => {
   const recorded = process.env[RECORDED_HOST];
-  escoreHost ??= recorded === undefined ? recordEscoreHost() : readFileSync(recorded, "utf8");
-  return escoreHost;
+  jsTlaHost ??= recorded === undefined ? recordJsTlaHost() : readFileSync(recorded, "utf8");
+  return jsTlaHost;
 };
 
 // The page fetches the host beside its scripts: a build writes it, and a dev server records it
 // when the page first asks.
 const hostFile = (): Plugin => ({
-  name: "escore-host",
+  name: "js-tla-host",
   configureServer(server) {
-    server.middlewares.use(`/${ESCORE_HOST}`, (_request, response) => {
+    server.middlewares.use(`/${JS_TLA_HOST}`, (_request, response) => {
       response.setHeader("Content-Type", "application/json");
-      response.end(getEscoreHost());
+      response.end(getJsTlaHost());
     });
   },
   generateBundle() {
-    this.emitFile({ type: "asset", fileName: ESCORE_HOST, source: getEscoreHost() });
+    this.emitFile({ type: "asset", fileName: JS_TLA_HOST, source: getJsTlaHost() });
   },
 });
 
@@ -309,7 +309,7 @@ const compilations = (): Plugin => ({
     this.addWatchFile(path);
     const highlight = await createHighlighter();
     const source = readFileSync(path, "utf8").trim();
-    const compilation = compileOnEscore(source, getFileName(path));
+    const compilation = compileOnJsTla(source, getFileName(path));
     const built: Omit<Precompiled, "tla"> = {
       fileName: getFileName(path),
       source,

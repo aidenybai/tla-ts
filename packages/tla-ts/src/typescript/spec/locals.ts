@@ -4,7 +4,7 @@ import ts from "@typescript/typescript6";
 // slots of the function's frame rather than in environment records. A binding is such a local
 // when the function declares it, no function or class inside the function names it, and nothing
 // else can reach the environment that would hold it: no with statement, no arguments object, which
-// aliases the parameters, no delete of a name, and no pattern, whose binding ESCore's operators do
+// aliases the parameters, no delete of a name, and no pattern, whose binding JS.tla's operators do
 // through the environment. An environment record is unobservable but through those, so holding
 // the binding elsewhere changes nothing a program sees.
 

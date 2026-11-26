@@ -13,8 +13,8 @@ interface ScriptResult {
   prints: string[];
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
-// stack that test262-engine262 gives ESCore, which prepares ESCore's runtime once for them all.
+// JS.tla's evaluation nests deeper than a test's stack, so checks run on one worker with the
+// stack that test262-engine262 gives JS.tla, which prepares JS.tla's runtime once for them all.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
@@ -27,7 +27,7 @@ const worker = new Worker(
     import(workerData.source + "/typescript/spec/prepare.ts"),
   ]).then(([parallel, compile, prepare]) => ({
     check: parallel.check,
-    compileToEscore: compile.compileToEscore,
+    compileToJsTla: compile.compileToJsTla,
     runtime: prepare.prepareRuntime(workerData.directory),
     steps: prepare.SCRIPT_STEPS,
   }));
@@ -36,7 +36,7 @@ const worker = new Worker(
     const loaded = await loading;
     try {
       const model = spec.isTest262Host ? { steps: loaded.steps, entries: [], isTest262Host: true } : undefined;
-      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule, model);
+      const compiled = loaded.compileToJsTla(spec.source, spec.fileName, loaded.runtime, spec.isModule, model);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
       const prints = [];
       // The code's text where the definitions appended change it, in place of its tree.
@@ -111,7 +111,7 @@ const checkModule = (source: string, fileName = "/tla-ts/stack.ts") =>
 
 const THREW = "the script threw an exception";
 
-describe("compiles scripts by specializing ESCore", () => {
+describe("compiles scripts by specializing JS.tla", () => {
   // Each operation on two finite nonzero doubles runs natively in ESNumber, and each with a zero, an
   // infinity, or a zero result runs its TLA+.
   describe("computes doubles, their powers and floors, and signed zeros", () => {
@@ -506,7 +506,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("runs classes, accessors, loops, and exceptions as ESCore does", () => {
+  describe("runs classes, accessors, loops, and exceptions as JS.tla does", () => {
     const getSource = (expected: string) => `
       class Shape {
         sides = 0;
@@ -688,7 +688,7 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toContain(THREW);
     }, 600_000);
 
-    // The script's run reaches ESCore's Asserts, so the check's LET of it evaluates at each
+    // The script's run reaches JS.tla's Asserts, so the check's LET of it evaluates at each
     // reference, as TLC's does, rather than run the script again at each reference to what it kept.
     it("rejects another result over a shorter string in a check's time", async () => {
       expect(
@@ -3162,7 +3162,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("keeps an error that ESCore throws exact but for the message Node writes", () => {
+  describe("keeps an error that JS.tla throws exact but for the message Node writes", () => {
     const getSource = (expected: string) => `
       let caught: unknown;
       try {
@@ -3628,7 +3628,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("throws V8's message for an error that ESCore throws itself", () => {
+  describe("throws V8's message for an error that JS.tla throws itself", () => {
     const getSource = (expected: string) => `
 declare const undeclared: number;
 const read = (run: () => unknown) => {
@@ -3748,7 +3748,7 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
     });
   });
 
-  describe("names the part of ECMAScript that ESCore leaves out where it stops", () => {
+  describe("names the part of ECMAScript that JS.tla leaves out where it stops", () => {
     it("stops at Atomics.wait with no agent to notify it", async () => {
       const result = await checkScript(
         "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
@@ -4285,7 +4285,7 @@ if (view !== "${expected}") throw new Error(view);
           import(workerData.source + "/typescript/spec/prepare.ts"),
         ]).then(([compile, prepare]) => {
           try {
-            compile.compileToEscore(workerData.program, "spec.ts", prepare.prepareRuntime(workerData.directory), false);
+            compile.compileToJsTla(workerData.program, "spec.ts", prepare.prepareRuntime(workerData.directory), false);
             parentPort.postMessage("compiled");
           } catch (error) {
             parentPort.postMessage(error.message);
@@ -4576,7 +4576,7 @@ if (view !== "${expected}") throw new Error(view);
   });
 
   // The realm's recursions over its intrinsics run as loops, so it starts within a small stack.
-  it("starts ESCore's realm within a 1 MB stack", async () => {
+  it("starts JS.tla's realm within a 1 MB stack", async () => {
     const shallow = new Worker(
       `const { register } = require("node:module");
       const { parentPort, workerData } = require("node:worker_threads");
@@ -4608,7 +4608,7 @@ if (view !== "${expected}") throw new Error(view);
   }, 300_000);
 });
 
-// test262's includes that tla-ts compiles from a TypeScript port, run on ESCore and in Node, where
+// test262's includes that tla-ts compiles from a TypeScript port, run on JS.tla and in Node, where
 // the port must behave as the include does. A port that reads its error's stack runs in a module,
 // whose location in a stack Node gives as test262's runner does, and one that passes its global
 // this runs in a script.
@@ -4621,7 +4621,7 @@ describe("gives test262's host a $262 whose createRealm makes a new context's re
     const d = Reflect.getOwnPropertyDescriptor(global, key);
     return String(key) + ":" + ("value" in d ? typeof d.value : "accessor") + ":" + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : "");
   }).join(" ")`;
-  // The globals of a new V8 context that ESCore lacks, which tla-ts's realm has as values that stop
+  // The globals of a new V8 context that JS.tla lacks, which tla-ts's realm has as values that stop
   // at each use: the diff of the two realms' own keys, which are otherwise the same.
   const STOPPING = ["console", "WebAssembly"];
   const nodeKeys: string = runInContext(
@@ -4647,7 +4647,7 @@ describe("gives test262's host a $262 whose createRealm makes a new context's re
     );
   });
 
-  it("stops where a program uses a global that ESCore lacks", async () => {
+  it("stops where a program uses a global that JS.tla lacks", async () => {
     for (const name of STOPPING) {
       const source = `Reflect.get(globalThis, "$262").createRealm().${name}.x;`;
       expect((await checkScript(source, true, "", "spec.ts", true)).message).toContain(

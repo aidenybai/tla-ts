@@ -167,7 +167,7 @@ const RUNGS: readonly Rung[] = [
 ];
 
 // The most argument lists that the model calls an export with on a rung, which the export takes
-// the first rung that fits. Each is a call on ESCore: a check of Effect's Array.ts, whose 95
+// the first rung that fits. Each is a call on JS.tla: a check of Effect's Array.ts, whose 95
 // generic exports this bound gives 48,846 argument lists, took 961 s, about 50 calls a second, so
 // a file's checks of its generic exports end well within the hour that a check is given.
 const INSTANTIATED_LISTS = 10_000;
@@ -362,11 +362,11 @@ const isSetType = (type: ts.Type) =>
 const isMapType = (type: ts.Type) =>
   ["Map", "ReadonlyMap"].includes(getTypeName(getCollectionType(type)));
 
-// The frame of a model that tla-ts checks on ESCore, which TypeScript's types give: the state
+// The frame of a model that tla-ts checks on JS.tla, which TypeScript's types give: the state
 // variables, the set of values that each state variable without an initializer starts at and
 // each parameter of an exported function takes, which function is an action, an invariant, or a
 // property its tag names, and the config that checks them. It's a spec whose definitions name
-// the module's functions, which compileModelToEscore calls on ESCore. A program with type errors
+// the module's functions, which compileModelToJsTla calls on JS.tla. A program with type errors
 // still has a frame, as Node still runs it. Its names avoid reserved, the names of the runtime that
 // the spec extends.
 export const frameModel = (
@@ -500,7 +500,7 @@ export const frameModel = (
   };
   // The bindings of the module by the names that TLA+ gives them, where those differ.
   const bindings = new Map<string, string>();
-  // ESCore reads a state variable and calls an exported function by its binding's name, which
+  // JS.tla reads a state variable and calls an exported function by its binding's name, which
   // TLA+ must take too, but for a state variable whose name TLA+ can't spell, as $ or _ are, which
   // takes a name that no binding of the module has.
   const getName = (declared: Declared, kind: string) => {

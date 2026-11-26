@@ -15,11 +15,11 @@ export interface CompileResponse {
 }
 
 // What the page asks the worker, which compiles as well as checks.
-export type EscoreRequest = RunRequest | { compile: CompileRequest };
+export type JsTlaRequest = RunRequest | { compile: CompileRequest };
 
 // What the worker answers: a compile's response, a run's result, or an error that ended whatever
 // it was doing.
-export type EscoreResponse = RunResult | { compiled: CompileResponse } | { failed: string };
+export type JsTlaResponse = RunResult | { compiled: CompileResponse } | { failed: string };
 
 // The note that the page leaves in the tab's session while the worker compiles or checks a file,
 // until the page shows the answer. Chromium runs a worker in its page's renderer, so running out of
@@ -57,7 +57,7 @@ export const takeCrashNote = () => {
 };
 
 // One worker compiles and checks, so the page loads TypeScript's compiler, fetches the
-// host, and prepares ESCore's runtime once, and keeps the runtime between runs. A run that the page
+// host, and prepares JS.tla's runtime once, and keeps the runtime between runs. A run that the page
 // stops ends the worker, and the next request starts another.
 let worker: Worker | undefined;
 const compileListeners = new Set<(response: CompileResponse) => void>();
@@ -82,7 +82,7 @@ const fail = (message: string) => {
 const getWorker = () => {
   if (worker !== undefined) return worker;
   const started = new Worker(new URL("./run-worker.ts", import.meta.url), { type: "module" });
-  started.onmessage = (event: MessageEvent<EscoreResponse>) => {
+  started.onmessage = (event: MessageEvent<JsTlaResponse>) => {
     if ("failed" in event.data) {
       fail(event.data.failed);
       return;
@@ -101,7 +101,7 @@ const getWorker = () => {
   return started;
 };
 
-export const startEscoreWorker = () => {
+export const startJsTlaWorker = () => {
   getWorker();
 };
 
@@ -112,23 +112,23 @@ export const listenToCompiles = (listener: (response: CompileResponse) => void) 
   };
 };
 
-export const compileOnEscore = (request: CompileRequest) => {
+export const compileOnJsTla = (request: CompileRequest) => {
   lastCompile = request;
   leaveCrashNote("compile", { fileName: request.fileName, characters: request.source.length });
-  getWorker().postMessage({ compile: request } satisfies EscoreRequest);
+  getWorker().postMessage({ compile: request } satisfies JsTlaRequest);
 };
 
-export const runOnEscore = (request: RunRequest, onResult: (result: RunResult) => void) => {
+export const runOnJsTla = (request: RunRequest, onResult: (result: RunResult) => void) => {
   runListener = onResult;
   leaveCrashNote("run", {
     fileName: request.typescript?.fileName ?? "the spec",
     characters: (request.typescript?.source ?? request.source).length,
   });
-  getWorker().postMessage(request satisfies EscoreRequest);
+  getWorker().postMessage(request satisfies JsTlaRequest);
 };
 
 // Stops a run that the worker is checking, which only ending the worker does.
-export const stopEscoreRun = () => {
+export const stopJsTlaRun = () => {
   if (runListener === undefined) return;
   runListener = undefined;
   clearCrashNote("run");

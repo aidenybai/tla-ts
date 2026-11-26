@@ -5,10 +5,10 @@ import { isScript } from "../context";
 import { isEsModule } from "../exceptions";
 import { createLibrary } from "../program";
 import { createMemorySystem, getHostSystem } from "../system";
-import { compileToEscore } from "./compile";
+import { compileToJsTla } from "./compile";
 import { foldNames } from "./library";
-import { compileModelToEscore } from "./model";
-import type { EscoreRuntime } from "./prepare";
+import { compileModelToJsTla } from "./model";
+import type { JsTlaRuntime } from "./prepare";
 
 // The steps of a script's spec as the API checks it: the spec declares no variable, as today's
 // compiler's does, so that a script that throws fails the check as it starts, with the message of
@@ -44,21 +44,21 @@ export interface SourceRegion {
   definitions: string[];
 }
 
-export interface EscoreCompiled extends CompiledSpec {
+export interface JsTlaCompiled extends CompiledSpec {
   regions: SourceRegion[];
 }
 
-// What compile gives on ESCore: a script's spec, which runs it as Node does, or a model's, whose
+// What compile gives on JS.tla: a script's spec, which runs it as Node does, or a model's, whose
 // steps call its exported functions, whose frame TypeScript's types give with its declaration
 // files, parsed once in library by a host that compiles many models. A program runs on the host's
 // files, or on those that the options pass, with the file's own source at its path, as on a host
 // without a file system, such as a browser, which loads the file by its extension, its package's
 // type and its syntax, as Node loads a file.
-export const compileEscore = (
+export const compileJsTla = (
   options: CompileOptions,
-  runtime: EscoreRuntime,
+  runtime: JsTlaRuntime,
   library = options.libraries === undefined ? undefined : createLibrary(options.libraries),
-): EscoreCompiled => {
+): JsTlaCompiled => {
   const fileName = options.fileName ?? "spec.ts";
   const sourceFile = ts.createSourceFile(fileName, options.source, ts.ScriptTarget.ESNext, true);
   const system =
@@ -68,12 +68,12 @@ export const compileEscore = (
   // A module whose exported functions the model calls none of runs as a script.
   const model = isScript(sourceFile)
     ? undefined
-    : compileModelToEscore(options.source, fileName, runtime, library, true, undefined, system);
+    : compileModelToJsTla(options.source, fileName, runtime, library, true, undefined, system);
   const isScriptFile = model === undefined || model.isScript;
   const spec =
     model !== undefined && !model.isScript
       ? model
-      : compileToEscore(
+      : compileToJsTla(
           options.source,
           fileName,
           runtime,

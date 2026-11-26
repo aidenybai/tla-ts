@@ -12,7 +12,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { usePlaygroundFile } from "@/hooks/use-playground-file";
 import { usePlaygroundView } from "@/lib/playground-view";
 import { useRun } from "@/hooks/use-run";
-import { clearCrashNotes, takeCrashNote } from "@/lib/escore-worker";
+import { clearCrashNotes, takeCrashNote } from "@/lib/js-tla-worker";
 import { getErrorResult } from "@/lib/run-error";
 
 const NO_MARKS: Mark[] = [];

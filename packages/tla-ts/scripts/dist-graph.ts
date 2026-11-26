@@ -1,6 +1,6 @@
-// Writes the graph of ESCore's prepared runtime into the package's bundles, so that a process reads
+// Writes the graph of JS.tla's prepared runtime into the package's bundles, so that a process reads
 // the runtime rather than prepares it, which takes a deeper stack than Node's default. The realm is
-// the host's, so Node, with a deeper stack, prepares it, from a bundle of escore-graph.ts.
+// the host's, so Node, with a deeper stack, prepares it, from a bundle of js-tla-graph.ts.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -11,7 +11,7 @@ const steps = [
   [
     process.execPath,
     "build",
-    "scripts/escore-graph.ts",
+    "scripts/js-tla-graph.ts",
     "--target=node",
     "--packages=external",
     "--outdir",
@@ -20,7 +20,7 @@ const steps = [
   [
     "node",
     "--stack-size=4000",
-    join(OUT_DIRECTORY, "escore-graph.js"),
+    join(OUT_DIRECTORY, "js-tla-graph.js"),
     join(PACKAGE_DIRECTORY, "dist"),
   ],
 ];

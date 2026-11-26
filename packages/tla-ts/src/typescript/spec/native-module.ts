@@ -1,12 +1,12 @@
 import { foldNames } from "./library";
 
 // A lowered model's functions run on the lowered state itself where they can (see lowered.ts):
-// each syntax node gives ESCore's evaluation rule for it, specialized to the lowered values its
+// each syntax node gives JS.tla's evaluation rule for it, specialized to the lowered values its
 // operands hold. A rule holds only where its operands are what it expects, such as an ordinary
 // object's own data property or an index within an array, and gives LBail otherwise, which every
-// later rule passes on, so that the call gives LBail and runs on ESCore instead, from the state it
+// later rule passes on, so that the call gives LBail and runs on JS.tla instead, from the state it
 // started in. A call gives [type |-> "ok", m, w, v]: the lowered state, whether it wrote what
-// existed before it, as SetO and SetE tell ESCore's step, and the value it returns. A composite
+// existed before it, as SetO and SetE tell JS.tla's step, and the value it returns. A composite
 // value that a call stores or passes is one that an object or array literal just made, and LBail
 // otherwise, so that no two places hold one object.
 export const NATIVE_MODULE = foldNames(String.raw`---- MODULE ESNative ----

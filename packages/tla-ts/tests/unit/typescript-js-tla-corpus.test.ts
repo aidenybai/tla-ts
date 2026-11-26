@@ -6,8 +6,8 @@ import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, it } from "vite-plus/test";
 
 // The programs of today's compiler's unit tests, each with what Node does with it, checked on
-// ESCore. A script either runs as Node runs it or throws what Node throws; a model's check finds
-// what today's compiler's found. A case that ESCore stops on is skipped with its stop.
+// JS.tla. A script either runs as Node runs it or throws what Node throws; a model's check finds
+// what today's compiler's found. A case that JS.tla stops on is skipped with its stop.
 
 interface Outcome {
   status: string;
@@ -23,10 +23,10 @@ interface Run {
   source?: string;
   replace?: [string, string];
   stop?: string;
-  // Whether ESCore takes longer to check the run than a unit test may take.
+  // Whether JS.tla takes longer to check the run than a unit test may take.
   isSlow?: boolean;
-  // Where ESCore gives another result than Node, what of ESCore is wrong, so that the run's test
-  // fails until ESCore is fixed.
+  // Where JS.tla gives another result than Node, what of JS.tla is wrong, so that the run's test
+  // fails until JS.tla is fixed.
   wrong?: string;
 }
 
@@ -104,11 +104,11 @@ const getShown = (value: unknown, seen: unknown[] = []): string => {
 
 const PACKAGE = join(import.meta.dirname, "../..");
 const corpus: Corpus = JSON.parse(
-  readFileSync(join(PACKAGE, "tests/fixtures/typescript/escore-corpus.json"), "utf8"),
+  readFileSync(join(PACKAGE, "tests/fixtures/typescript/js-tla-corpus.json"), "utf8"),
 );
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on workers with a 256 MB
-// stack, each of which prepares ESCore's runtime once. A script's
+// JS.tla's evaluation nests deeper than a test's stack, so checks run on workers with a 256 MB
+// stack, each of which prepares JS.tla's runtime once. A script's
 // steps fail with what it threw: an error's message, or the value as a string.
 const WORKER = String.raw`const { register } = require("node:module");
 const { parentPort, workerData } = require("node:worker_threads");
@@ -149,8 +149,8 @@ parentPort.on("message", async (spec) => {
   const loaded = await loading;
   try {
     const compiled = spec.isModel
-      ? loaded.model.compileModelToEscore(spec.source, spec.fileName, loaded.runtime)
-      : loaded.compile.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule, loaded.steps);
+      ? loaded.model.compileModelToJsTla(spec.source, spec.fileName, loaded.runtime)
+      : loaded.compile.compileToJsTla(spec.source, spec.fileName, loaded.runtime, spec.isModule, loaded.steps);
     const result = await loaded.parallel.check({ ...compiled, workers: 1, onPrint: () => {} });
     parentPort.postMessage({
       id: spec.id,
@@ -235,9 +235,9 @@ const ESCAPES: Record<string, string> = {
 const getFailure = (text: string) =>
   `the second argument was:\n"${text.replace(/["\\\t\n\f\r]/g, (character) => ESCAPES[character])}"`;
 
-const SLOW = "ESCore takes longer to check it than a unit test may take";
+const SLOW = "JS.tla takes longer to check it than a unit test may take";
 
-// Whether ESCore stops on a case where the corpus records that it stops.
+// Whether JS.tla stops on a case where the corpus records that it stops.
 const isStopped = (outcomes: Outcome[], stop: string | undefined) =>
   stop !== undefined && outcomes.some((outcome) => outcome.message?.includes(stop) === true);
 

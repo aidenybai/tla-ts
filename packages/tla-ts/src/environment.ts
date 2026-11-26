@@ -2251,7 +2251,7 @@ export const createEnvironment = (
   );
   const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
   // A prepared module's levels hold here where its text names none of the operators that this
-  // analysis takes as variables. The parsed texts of ESCore's runtime are the strings it ranked,
+  // analysis takes as variables. The parsed texts of JS.tla's runtime are the strings it ranked,
   // which name TLC's operators wherever they come.
   const runtimeVariableName = new RegExp(`\\b(?:${runtimeVariables.join("|")})\\b`);
   const isPreparedLevelsLinked =

@@ -4,7 +4,7 @@
 // getOrCreateModuleJob (esm/loader.js), ModuleJob's syncLink, #instantiate, and run
 // (esm/module_job.js), and SafePromiseAllReturnVoid (per_context/primordials.js). The host's
 // functions that it takes load a module and its requests, link and evaluate one, and give one's
-// namespace, as ESCore's module semantics do, which a module index names.
+// namespace, as JS.tla's module semantics do, which a module index names.
 export const NODE_IMPORT = `(function (hostLoad, hostDependencies, hostIsInstantiated, hostInstantiate, hostEvaluate, hostNamespace) {
   "use strict";
   // Node's primordials: the built-ins as the realm first has them, which the program's code can't

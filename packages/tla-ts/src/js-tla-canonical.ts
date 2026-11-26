@@ -39,7 +39,7 @@ import {
 
 // ESCanonical's CanonicalStateOf, which tla-ts runs natively while TLC runs the module's TLA+
 // definition: the same walk, numbering, and renaming, step for step, so that both give the same
-// value. ESCore's state is a record whose objs and envs are heaps [size, pages] of pages of 256
+// value. JS.tla's state is a record whose objs and envs are heaps [size, pages] of pages of 256
 // records, an object's props maps a bucket to a function from key to descriptor, and a JavaScript
 // object value is [type |-> "object", id |-> n].
 const NAMED_BUCKET = -1;
@@ -1503,7 +1503,7 @@ const getFingerprint = (value: Value) => {
   return fingerprint.join();
 };
 
-export const ESCORE_CANONICAL_OPERATORS = [
+export const JS_TLA_CANONICAL_OPERATORS = [
   defineOperator("CanonicalStateOf", 2, (args) => {
     const state = getValue(args, 0, "CanonicalStateOf");
     const initial = getValue(args, 1, "CanonicalStateOf");

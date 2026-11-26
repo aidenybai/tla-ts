@@ -15,8 +15,8 @@ interface ModelResult {
   trace: Record<string, string>[] | undefined;
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with a
-// 256 MB stack, which prepares ESCore's runtime once for them all.
+// JS.tla's evaluation nests deeper than a test's stack, so checks run on one worker with a
+// 256 MB stack, which prepares JS.tla's runtime once for them all.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
@@ -28,12 +28,12 @@ const worker = new Worker(
     import(workerData.source + "/values.ts"),
     import(workerData.source + "/typescript/spec/model.ts"),
     import(workerData.source + "/typescript/spec/prepare.ts"),
-    import(workerData.source + "/escore-canonical.ts"),
+    import(workerData.source + "/js-tla-canonical.ts"),
   ]).then(([parallel, values, model, prepare, canonical]) => ({
     check: parallel.check,
     setCanonicalDifferential: canonical.setCanonicalDifferential,
     formatValue: values.formatValue,
-    compileModelToEscore: model.compileModelToEscore,
+    compileModelToJsTla: model.compileModelToJsTla,
     runtime: prepare.prepareRuntime(workerData.directory),
   }));
   loading.then(() => parentPort.postMessage({ id: -1 }));
@@ -41,7 +41,7 @@ const worker = new Worker(
     const loaded = await loading;
     try {
       const isHeap = spec.mode === "raw" || spec.mode === "compared";
-      const compiled = loaded.compileModelToEscore(spec.source, spec.fileName, loaded.runtime, undefined, !isHeap);
+      const compiled = loaded.compileModelToJsTla(spec.source, spec.fileName, loaded.runtime, undefined, !isHeap);
       // spec.mutation replaces text in ESCanonicalPlain where the model compares canonical forms,
       // and in the model's code otherwise.
       const isCompared = spec.mode === "compared";
@@ -85,25 +85,25 @@ const worker = new Worker(
           : spec.mode === "compared"
             ? "StepEnd(s) == LET native == CanonicalState(" + state + ") written == PlainCanonicalStateOf(" + state + ", InitialState) IN IF native = written THEN native ELSE Assert(FALSE, \\"the native canonical form differs\\")"
             : line,
-      // A lowered model's steps run on ESCore and check that each state they lower materializes
+      // A lowered model's steps run on JS.tla and check that each state they lower materializes
       // to the canonical state it lowers, and a native one's that each native call that doesn't
-      // bail gives what ESCore's gives.
+      // bail gives what JS.tla's gives.
       ).replace(/^StepEnd\\(s\\) == LowerModel\\(s\\)$/m, (line) =>
         spec.mode === "lowered"
           ? "StepEnd(s) == LET m == LowerModel(s) IN IF CanonicalState(ModelState(m)) = CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]]) THEN m ELSE Assert(FALSE, \\"the lowered state materializes to another state\\")"
           : line,
-      ).replace(/IF n\\.type = "bail" THEN (\\w+)\\(a\\) ELSE (IF n\\.w THEN \\{n\\.m\\} ELSE \\{\\}|n\\.v = True|TRUE)$/gm, (line, escore, native) =>
+      ).replace(/IF n\\.type = "bail" THEN (\\w+)\\(a\\) ELSE (IF n\\.w THEN \\{n\\.m\\} ELSE \\{\\}|n\\.v = True|TRUE)$/gm, (line, jsTla, native) =>
         spec.mode === "native"
-          ? "LET e == " + escore + "(a) IN IF n.type = \\"bail\\" THEN e ELSE IF e = (" + native + ") THEN e ELSE Assert(FALSE, \\"the native call differs from ESCore's\\")"
+          ? "LET e == " + jsTla + "(a) IN IF n.type = \\"bail\\" THEN e ELSE IF e = (" + native + ") THEN e ELSE Assert(FALSE, \\"the native call differs from JS.tla's\\")"
           : spec.mode === "lowered"
-            ? escore + "(a)"
+            ? jsTla + "(a)"
             : line,
-      // A native guard's domain is ESCore's, and in the lowered mode the domain is ESCore's alone.
-      ).replace(/^  IF n\\.type # "bail" (.*) THEN (\\{.*\\}) ELSE (\\w+)\\(a\\)$/gm, (line, test, native, escore) =>
+      // A native guard's domain is JS.tla's, and in the lowered mode the domain is JS.tla's alone.
+      ).replace(/^  IF n\\.type # "bail" (.*) THEN (\\{.*\\}) ELSE (\\w+)\\(a\\)$/gm, (line, test, native, jsTla) =>
         spec.mode === "native"
-          ? "  LET domain == " + escore + "(a) IN IF n.type # \\"bail\\" " + test + " THEN IF domain = " + native + " THEN domain ELSE Assert(FALSE, \\"the native call differs from ESCore's\\") ELSE domain"
+          ? "  LET domain == " + jsTla + "(a) IN IF n.type # \\"bail\\" " + test + " THEN IF domain = " + native + " THEN domain ELSE Assert(FALSE, \\"the native call differs from JS.tla's\\") ELSE domain"
           : spec.mode === "lowered"
-            ? "  " + escore + "(a)"
+            ? "  " + jsTla + "(a)"
             : line,
       // A lowered model's lowered converters check that each gives what lowering the objects of
       // its converter gives.
@@ -173,11 +173,11 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
+// Checks a module's model on JS.tla, with its steps' states lowered where the module lets them,
 // raw, canonical where the native canonical form, its incremental form, and ESCanonical's TLA+
 // compare equal, lowered where each lowered state materializes to the canonical state it lowers
 // and each lowered converter gives what lowering its converter's objects gives, lowered where each
-// native call gives what ESCore's gives, or with the assumptions operators, which read ESNative's
+// native call gives what JS.tla's gives, or with the assumptions operators, which read ESNative's
 // operators and their TLA+ as PlainX.
 const checkModel = (
   source: string,
@@ -202,7 +202,7 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
-describe("checks a module's exported functions as a model on ESCore", () => {
+describe("checks a module's exported functions as a model on JS.tla", () => {
   // A model without state variables or actions has no state, whose boolean exports TLC checks
   // once, as ASSUMEs, as it recommends for constant-level invariants.
   describe("checks the calls of a model without state", () => {
@@ -237,7 +237,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // A model without state calls each function, on each value of its parameters, from the state
   // that its module's top level leaves, as a fresh import of the module in Node does.
   describe("calls each function from the state the module's top level leaves", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-started-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-started-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const getSource = (most: number) =>
       `const sizes = [1, 2].map((size) => size * 2);\nexport const fits = (n: 0 | 1 | 2) => {\n  if (sizes[0] + n > ${most}) throw new Error("too big");\n  return sizes.length;\n};\n`;
@@ -291,7 +291,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // undefined too unless the program's options make optional fields exact, as TypeScript reads
   // them, so that a call with { size: undefined } is one Node may make.
   describe("calls a function with each set of an object's optional fields", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-optional-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-optional-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     // A call that throws is one Node's call would throw too, which the check finds.
     const getSource = (most: number) =>
@@ -462,7 +462,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  // A function that ESCore's runtime names an operator after, as Effect's SchemaGetter exports
+  // A function that JS.tla's runtime names an operator after, as Effect's SchemaGetter exports
   // BigInt, gets a name of its own in the spec, which still calls it.
   describe("checks a function named as one of the runtime's operators", () => {
     const getSource = (thrown: number) =>
@@ -592,7 +592,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // A CommonJS module's functions that its exports name, as exports.tick = tick does, as Solid's
   // CommonJS build exports them, are the model's, which the steps call in Node's wrapper.
   describe("checks the functions that a CommonJS module exports by name", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-commonjs-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-commonjs-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const check = (operator: string, mode?: "compared") => {
       const source = `let count = 0;\nfunction tick() {\n  if (count < 2) count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
@@ -648,7 +648,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // A CommonJS module's require, which a function of it closes over, is in the state, as in Solid's
   // CommonJS build, which refers to nothing but the module's file.
   describe("keeps a CommonJS module's require in the state", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-require-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-require-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const check = (operator: string, mode?: "compared") => {
       const source = `let count = 0;\nfunction tick() {\n  if (count < 2 && typeof require === "function") count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
@@ -673,7 +673,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // Node's util, which a CommonJS module's function closes over, as React's server builds do, is in
   // the state, under a number of no file.
   describe("keeps Node's util in the state", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-util-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-util-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const check = (operator: string, mode?: "compared") => {
       const source = `const util = require("util");\nlet count = 0;\nfunction tick() {\n  if (count < 2 && util.TextEncoder === TextEncoder) count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
@@ -698,7 +698,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // An AsyncLocalStorage that a CommonJS module makes as it loads, as React's server builds do, is
   // in the state.
   describe("keeps an AsyncLocalStorage in the state", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-storage-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-storage-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const check = (operator: string, mode?: "compared") => {
       const source = `const storage = new (require("async_hooks").AsyncLocalStorage)();\nlet count = 0;\nfunction tick() {\n  if (count < 2 && typeof storage === "object") count += 1;\n}\nfunction isSmall() {\n  return count ${operator} 2;\n}\nexports.tick = tick;\nexports.isSmall = isSmall;\n`;
@@ -766,7 +766,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // A step that asks whether an object is an AsyncResource, which Node answers, stops rather than
   // catching a throw that Node doesn't make.
   describe("stops where a step uses AsyncResource other than to make its objects", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-resource-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-resource-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     const check = (check: string, mode?: "compared") => {
       const source = `const { AsyncResource } = require("async_hooks");\nlet count = 0;\nfunction tick() {\n  if (count < 2) count += 1;\n}\nfunction isPlain() {\n  try {\n    return ${check};\n  } catch {\n    return false;\n  }\n}\nexports.tick = tick;\nexports.isPlain = isPlain;\n`;
@@ -826,7 +826,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // fails as an assumption where one throws.
   describe("checks the exported functions of a model that imports a file", () => {
     const STOPPED_ASSUMPTION = ["assumption-violation", 0, 0];
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-plan-"));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));
     writeFileSync(
       join(directory, "flip.ts"),
@@ -902,7 +902,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
-    // A function whose name a definition of the spec may take, as ESCore's do, gets one of its own.
+    // A function whose name a definition of the spec may take, as JS.tla's do, gets one of its own.
     describe("calls a function whose name TLA+ takes another for", () => {
       const getBody = (operator: string) =>
         `export const Undone = (value: 0 | 1) => {\n  if (flip(${operator}) !== value) throw new Error("undone");\n  return value;\n};\nexport const heap = () => flip(1);\n`;
@@ -916,7 +916,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
-    // A global of the host that ESCore lacks is a built-in that stops where a program calls it,
+    // A global of the host that JS.tla lacks is a built-in that stops where a program calls it,
     // which the state keeps, as it refers to nothing.
     describe("keeps the host's globals that stop where a program calls them", () => {
       const getBody = (operator: string) =>
@@ -1012,7 +1012,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("checks the port of DieHard.tla as TLC checks the ESCore model", () => {
+  describe("checks the port of DieHard.tla as TLC checks its JS.tla model", () => {
     const path = join(EXAMPLES, "die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");
 
@@ -1282,7 +1282,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("lowers the state out of ESCore's heap, one to one with the canonical heap", () => {
+  describe("lowers the state out of JS.tla's heap, one to one with the canonical heap", () => {
     const source = `
       type Key = "a" | "b";
       let owners = new Map<Key, number[]>();
@@ -1398,7 +1398,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("runs a lowered model's functions natively, as ESCore runs them", () => {
+  describe("runs a lowered model's functions natively, as JS.tla runs them", () => {
     const source = `
       type Key = "a" | "b";
       interface Slot {
@@ -1430,7 +1430,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isBounded = () => slot.count <= 3;
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call, as TLC counts", async () => {
       const counts = ["deadlock", 225, 317];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
@@ -1441,11 +1441,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "[c |-> [c EXCEPT !.elems = Tail(@)], v |-> Head(c.elems)]",
         "[c |-> [c EXCEPT !.elems = SubSeq(@, 1, Len(@) - 1)], v |-> Head(c.elems)]",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
-  describe("drops a native call's writes where it bails, and runs the call on ESCore", () => {
+  describe("drops a native call's writes where it bails, and runs the call on JS.tla", () => {
     // The step bails where it adds a number to a string, after it writes count.
     const source = `
       let count = 0;
@@ -1526,7 +1526,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     const SHARED =
       "tla-ts can't keep an object that two places hold in a model's lowered state yet";
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1539,7 +1539,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         'm = "addOwned" -> [c |-> [c EXCEPT !.elems = Append(@, a)], v |-> c]',
         'm = "addOwned" -> [c |-> IF KeyIndex(c.elems, a) # 0 THEN c ELSE [c EXCEPT !.elems = Append(@, a)], v |-> c]',
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
 
     it("stops where the state would hold a returned parameter twice", async () => {
@@ -1556,9 +1556,9 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // Array.prototype.sort of an array the step just made, which tla-ts runs natively as LSort by
-  // a - b, b - a, or no comparator: the one result of a stable sort, as ESCore and Node give it,
-  // with -0 before or after 0 as they came, and NaN, where a - b isn't consistent, on ESCore.
-  describe("sorts a fresh array natively, stably, as ESCore and Node sort it", () => {
+  // a - b, b - a, or no comparator: the one result of a stable sort, as JS.tla and Node give it,
+  // with -0 before or after 0 as they came, and NaN, where a - b isn't consistent, on JS.tla.
+  describe("sorts a fresh array natively, stably, as JS.tla and Node sort it", () => {
     const source = `
       let values: number[] = [];
       let words: string[] = [];
@@ -1577,7 +1577,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isShort = () => values.length <= 2 && words.length <= 1;
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1590,10 +1590,10 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "(j < i /\\ ~LSortLess(order, e[i], e[j]))",
         "(j > i /\\ ~LSortLess(order, e[i], e[j]))",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
 
-    it("runs a sort of NaN on ESCore, as Node sorts it", async () => {
+    it("runs a sort of NaN on JS.tla, as Node sorts it", async () => {
       const withNaN = `
         let values: number[] = [];
         export const add = (value: 0 | 1 | 2) => {
@@ -1610,8 +1610,8 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
   // An object literal of the state's arrays, which a function that only reads its parameter
   // borrows rather than owns, so the call runs natively, and one that a function returns a part
-  // of, which it owns, so the call runs on ESCore. Comparing the borrowed array with the state's
-  // own, as Node finds them the same object, still bails and runs on ESCore.
+  // of, which it owns, so the call runs on JS.tla. Comparing the borrowed array with the state's
+  // own, as Node finds them the same object, still bails and runs on JS.tla.
   describe("borrows the state's arrays into a literal that a function only reads", () => {
     const source = `
       let cells = [false, false, false];
@@ -1630,7 +1630,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isKept = () => keep({ cells }).length === 3;
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1648,9 +1648,9 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // Array.prototype.with, which tla-ts runs natively as LWith on an index within the array, and on
-  // ESCore where with throws a RangeError, at an index past the end, where the check stops as Node
+  // JS.tla where with throws a RangeError, at an index past the end, where the check stops as Node
   // throws.
-  describe("runs an array's with natively, and on ESCore where it throws, as Node runs it", () => {
+  describe("runs an array's with natively, and on JS.tla where it throws, as Node runs it", () => {
     const source = `
       let cells = [false, false, false];
       export const toggle = (index: -1 | 0 | 2) => {
@@ -1662,7 +1662,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       .replace("-1 | 0 | 2", "-1 | 0 | 3")
       .replace("!cells[index < 0 ? index + 3 : index]", "true");
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1690,7 +1690,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "k == IF i.value.i < 0 THEN n + i.value.i ELSE i.value.i",
         "k == IF i.value.i < 0 THEN n + i.value.i - 1 ELSE i.value.i",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
 
     it("tells a native with that writes past the end instead of throwing", async () => {
@@ -1702,7 +1702,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("runs an array's methods with an arrow function natively, as ESCore runs them", () => {
+  describe("runs an array's methods with an arrow function natively, as JS.tla runs them", () => {
     const source = `
       let cells = [false, false, false];
       let steps = 0;
@@ -1717,7 +1717,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         ) && cells.filter((cell) => cell).length <= steps;
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call, as TLC counts", async () => {
       const counts = ["deadlock", 12, 25];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
@@ -1728,7 +1728,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "LAMBDA i : LTruthy(rs[i])",
         "LAMBDA i : ~LTruthy(rs[i])",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
@@ -1737,7 +1737,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   // edge of a guard: a negative dividend or divisor, a product or a quotient that is -0, a sum and
   // a power at 2^30, a difference at -2^30, the largest operands of a product, and a quotient just
   // below an integer, whose double must still round below it.
-  describe("runs a function of int Numbers on plain integers, as ESCore does", () => {
+  describe("runs a function of int Numbers on plain integers, as JS.tla does", () => {
     const source = `
       const pairs = [
         [0, -1], [-1, 0], [-7, 2], [7, -2], [1, 2], [1073741823, 1], [-1073741823, 1],
@@ -1768,7 +1768,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       };
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call, as TLC counts", async () => {
       // The state before the run and after it, which the run leaves as it is.
       const counts = ["deadlock", 2, 2];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
@@ -1790,7 +1790,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       ],
     ] as const)("tells a plain form that lets through %s", async (_rule, mutation) => {
       const result = await checkModel(source, "spec.ts", "native", [...mutation]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
@@ -1821,7 +1821,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         !isDone({ cells: cells.map((cell) => !cell), turn: 0, "mark": mark, limit: 1 });
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1850,11 +1850,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       };
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
       expect(counts[0]).toBe("error");
-      // The native mode runs ESCore's step before each native one, so only the model run as it
+      // The native mode runs JS.tla's step before each native one, so only the model run as it
       // runs by default stops on the twin's call alone.
       const run = await checkModel(source, "spec.ts");
       const compared = await checkModel(source, "spec.ts", "compared");
@@ -1866,8 +1866,8 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // An object literal with a getter, a method, or a computed key, or a parameter passed on or
-  // returned, makes no twin's call, and each call runs as ESCore runs it.
-  describe("runs a call of a literal or a parameter that a twin can't take as ESCore does", () => {
+  // returned, makes no twin's call, and each call runs as JS.tla runs it.
+  describe("runs a call of a literal or a parameter that a twin can't take as JS.tla does", () => {
     const source = `
       let turn = 0;
       const key = "turn";
@@ -1889,7 +1889,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isPassed = () => passOn({ turn }) === turn >= 2 && self({ turn }).turn === turn;
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1900,8 +1900,8 @@ describe("checks a module's exported functions as a model on ESCore", () => {
   });
 
   // A function that changes, or gives back, the object that a field of its parameter holds, which
-  // the state holds too, runs as ESCore runs it, whose object the state shares.
-  describe("runs a call that changes or gives back a field's object as ESCore does", () => {
+  // the state holds too, runs as JS.tla runs it, whose object the state shares.
+  describe("runs a call that changes or gives back a field's object as JS.tla does", () => {
     const source = `
       let cells = [false, false];
       let sizes = [0];
@@ -1935,7 +1935,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       };
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
       const counts = [explored.status, explored.distinctStates, explored.generatedStates];
@@ -1945,7 +1945,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("runs a Map's keys and values, and a function passed by name, natively, as ESCore does", () => {
+  describe("runs a Map's keys and values, and a function passed by name, natively, as JS.tla does", () => {
     const source = `
       type Slot = 1 | 2 | 3;
       const slots = new Set<Slot>([1, 2, 3]);
@@ -1980,7 +1980,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         held.values().some(isFull) === [1, 2, 3].some((slot) => held.get(slot as Slot) === 1);
     `;
 
-    it("gives what ESCore gives in every call, with Node's states", async () => {
+    it("gives what JS.tla gives in every call, with Node's states", async () => {
       // Slot 1's count, and slots 2 and 3 each absent or at a count, in the order they were added.
       const explored = await exploreInNode(source, "spec.ts");
       expect(explored.error).toBeUndefined();
@@ -1995,7 +1995,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
         '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
 
     it("tells a native keys() of a Map that gives its values", async () => {
@@ -2003,7 +2003,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.keys]',
         '[] v.type = "lmap" -> [type |-> "larray", elems |-> v.vals]',
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
 
     it("tells a callback that a native call passes the wrong index", async () => {
@@ -2011,7 +2011,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "F(elems[i], IntV(i - 1))",
         "F(elems[i], IntV(i))",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
@@ -2090,7 +2090,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
-  describe("spreads an array or a Set into an array literal natively, as ESCore does", () => {
+  describe("spreads an array or a Set into an array literal natively, as JS.tla does", () => {
     const source = `
       type Key = "a" | "b" | "c";
       let seen = new Set<Key>();
@@ -2107,7 +2107,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         [...order, ...order].slice(order.length).every((key) => seen.has(key));
     `;
 
-    it("gives what ESCore gives in every call, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call, as TLC counts", async () => {
       const counts = ["deadlock", 10, 10];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
@@ -2118,11 +2118,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "THEN v.elems\n",
         "THEN SubSeq(v.elems, 1, Len(v.elems) - 1)\n",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
-  describe("runs a Set's methods of another Set, new Set and iterators natively, as ESCore does", () => {
+  describe("runs a Set's methods of another Set, new Set and iterators natively, as JS.tla does", () => {
     const source = `
       type Key = "a" | "b";
       const keys = new Set<Key>(["a", "b"]);
@@ -2163,7 +2163,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isShort = () => queue.length <= 2;
     `;
 
-    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call and every guard, as TLC counts", async () => {
       const counts = ["deadlock", 18, 22];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
@@ -2174,7 +2174,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         'm = "union" -> LSet(a \\o SelectSeq(b, LAMBDA e : ~LHas(a, e)))',
         'm = "union" -> LSet(SelectSeq(b, LAMBDA e : ~LHas(a, e)) \\o a)',
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     }, 120_000);
 
     it("tells a subset test that leaves out a Set of the same size", async () => {
@@ -2182,11 +2182,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         '[] m = "isSubsetOf" -> Bool(Len(a) <= Len(b)',
         '[] m = "isSubsetOf" -> Bool(Len(a) < Len(b)',
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     }, 120_000);
   });
 
-  describe("takes a parameter's computed domain from its guard, natively, as ESCore does", () => {
+  describe("takes a parameter's computed domain from its guard, natively, as JS.tla does", () => {
     // Today's domain of step is its TLA+ of choices, which reads its TLA+ of bits; the guard's
     // Set is the module's own code.
     const source = `
@@ -2202,7 +2202,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       export const isSmall = () => total <= 6;
     `;
 
-    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
+    it("gives what JS.tla gives in every call and every guard, as TLC counts", async () => {
       const counts = ["deadlock", 7, 13];
       expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
       expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
@@ -2214,7 +2214,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "THEN PlainBail ELSE a \\div b",
         "THEN PlainBail ELSE 0",
       ]);
-      expect(result.message).toContain("the native call differs from ESCore's");
+      expect(result.message).toContain("the native call differs from JS.tla's");
     });
   });
 
@@ -2304,7 +2304,7 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       /** @assume */
       export const isSolvable = () => hasSolution([], w);
     `;
-    it("gives what ESCore gives in every call, as TLC does", async () => {
+    it("gives what JS.tla gives in every call, as TLC does", async () => {
       for (const mode of ["native", "lowered", "raw"] as const) {
         expect(getCounts(await checkModel(source, "spec.ts", mode))).toEqual(["success", 0, 0]);
       }

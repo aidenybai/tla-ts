@@ -6,12 +6,12 @@ config: |
   CONSTANTS None = None Empty = Empty Absent = Absent
 includes:
   - ESBigNat.tla
-  - ESCore.tla
+  - JS.tla
   - ESNames.tla
   - ESNumber.tla
 ---*)
 ---- MODULE uncaught_type_error ----
-EXTENDS ESCore
+EXTENDS JS
 \* throw new TypeError("boom");
 ASSUME PrintT(RunFrom(HarnessResult(<<>>, <<>>), <<[type |-> "Script", strict |-> FALSE, ScriptBody |-> [type |-> "ScriptBody", strict |-> FALSE, StatementList |-> <<[type |-> "ThrowStatement", strict |-> FALSE, Expression |-> [type |-> "NewExpression", strict |-> FALSE, MemberExpression |-> [type |-> "IdentifierReference", name |-> <<84, 121, 112, 101, 69, 114, 114, 111, 114>>, strict |-> FALSE], Arguments |-> <<[type |-> "StringLiteral", value |-> <<98, 111, 111, 109>>, strict |-> FALSE]>>]]>>]]>>, <<>>, TRUE, <<>>))
 ====

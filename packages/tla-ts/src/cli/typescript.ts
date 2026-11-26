@@ -14,7 +14,7 @@ import {
   UNSETTLED_AWAIT_EXIT_CODE,
   UNSETTLED_AWAIT_WARNING,
 } from "../exit-codes";
-import { getEscoreRuntime } from "../compile";
+import { getJsTlaRuntime } from "../compile";
 import { parseConfig } from "../config";
 import { TlaError, TlaSharedBaseError, TlaStrippingError } from "../errors";
 import { KEY_SEPARATOR } from "../resolve";
@@ -236,14 +236,14 @@ NodeErrorSource(s, v) ==
      ELSE FileUrls[f] \o <<58>> \o NumToString(NumFromInt(n)) \o <<10>> \o line \o <<10>>
           \o [i \in 1..(column - 1) |-> IF pad # Empty THEN pad[i] ELSE IF line[i] = 9 THEN 9 ELSE 32] \o <<94>>`;
 
-// The steps of a script's spec as the CLI checks it on ESCore: where the script leaves an exception
+// The steps of a script's spec as the CLI checks it on JS.tla: where the script leaves an exception
 // uncaught, Init fails with what Node prints, as getNodeExit reads it, for an error or a primitive
 // that a throw statement of siteLocations throws, that the entry module's evaluation rejects with,
 // or that another promise rejects with, which Node says it threw where the entry's code made an
 // error, and Node's warning where the entry module's top-level await never settles,
 // unsettledText, where it has one. It stops at a throw that Node says it threw in code that
 // siteLocations leaves out, at an await it can't tell, and at an object whose text it can't tell.
-const getEscoreScriptSteps = (files: readonly NodeFile[], unsettledText: string | undefined) => {
+const getJsTlaScriptSteps = (files: readonly NodeFile[], unsettledText: string | undefined) => {
   const getUnits = (text: string) =>
     `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
   // A line's units as its string's, where that's shorter than their tuple, as it is for most lines.
@@ -340,21 +340,21 @@ Init ==
 Next == UNCHANGED programDone`;
 };
 
-// A TypeScript or JavaScript file compiled by specializing ESCore: a script with the steps above,
-// and a model as compileModelToEscore compiles one. Node says where a script's throw statement
+// A TypeScript or JavaScript file compiled by specializing JS.tla: a script with the steps above,
+// and a model as compileModelToJsTla compiles one. Node says where a script's throw statement
 // threw by the file's URL, as it runs a TypeScript file, and an ES module's at its own code, but
 // for a throw in a function, which a timer might have called.
-const compileEscoreEntry = async (path: string, setBound?: number): Promise<CompiledInput> => {
+const compileJsTlaEntry = async (path: string, setBound?: number): Promise<CompiledInput> => {
   // The TypeScript compiler takes a while to load, so only a TypeScript or JavaScript input loads
   // it.
   const ts = (await import("@typescript/typescript6")).default;
-  const { compileToEscore } = await import("../typescript/spec/compile");
-  const { compileModelToEscore } = await import("../typescript/spec/model");
+  const { compileToJsTla } = await import("../typescript/spec/compile");
+  const { compileModelToJsTla } = await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
   const { getModuleFormat } = await import("../typescript/spec/resolve");
   const { getJsxText } = await import("../typescript/program");
   const { stripTypes } = await import("../typescript/spec/strip-types");
-  const runtime = await getEscoreRuntime();
+  const runtime = await getJsTlaRuntime();
   const source = readFileSync(path, "utf8");
   // The code that Node runs, whose lines it shows: a file of JSX's as TypeScript writes it, and
   // another TypeScript file's text with its types stripped, which keeps every position.
@@ -457,13 +457,13 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
   // A module whose exported functions the model calls none of runs as a script.
   const model = isScript(sourceFile)
     ? undefined
-    : compileModelToEscore(source, path, runtime, undefined, true, setBound);
+    : compileModelToJsTla(source, path, runtime, undefined, true, setBound);
   const isScriptFile = model === undefined || model.isScript;
   const spec =
     model !== undefined && !model.isScript
       ? model
-      : compileToEscore(source, path, runtime, true, {
-          steps: (files) => getEscoreScriptSteps(files.flatMap(getNodeFile), unsettledText),
+      : compileToJsTla(source, path, runtime, true, {
+          steps: (files) => getJsTlaScriptSteps(files.flatMap(getNodeFile), unsettledText),
           entries: [],
         });
   return {
@@ -486,7 +486,7 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
 // text tla-ts can't tell, and the error stops there, as does one at syntax across lines.
 const compileRejection = async (path: string, error: TlaStrippingError) => {
   const ts = (await import("@typescript/typescript6")).default;
-  const { compileToEscore } = await import("../typescript/spec/compile");
+  const { compileToJsTla } = await import("../typescript/spec/compile");
   const text = readFileSync(path, "utf8");
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
   const start = sourceFile.getLineAndCharacterOfPosition(error.start);
@@ -513,7 +513,7 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
   ) {
     throw error;
   }
-  const spec = compileToEscore("", path, await getEscoreRuntime(), false, {
+  const spec = compileToJsTla("", path, await getJsTlaRuntime(), false, {
     steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
     entries: [],
   });
@@ -530,10 +530,10 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
   };
 };
 
-// A TypeScript or JavaScript file compiled by specializing ESCore (see compileEscoreEntry), or,
+// A TypeScript or JavaScript file compiled by specializing JS.tla (see compileJsTlaEntry), or,
 // where Node's type stripping rejects it, a program that fails as Node does.
 export const compileTypeScriptFile = (path: string, setBound?: number): Promise<CompiledInput> =>
-  compileEscoreEntry(path, setBound).catch((error: unknown) =>
+  compileJsTlaEntry(path, setBound).catch((error: unknown) =>
     error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
   );
 
@@ -619,13 +619,13 @@ export const compileSharedProgram = async (
   setBound: number | undefined,
   budget: number,
 ): Promise<SharedProgram> => {
-  const { compileToEscore } = await import("../typescript/spec/compile");
+  const { compileToJsTla } = await import("../typescript/spec/compile");
   const { getAugmentedNote, getModelConstants, planModel, SHARED_MODEL_DEFINITIONS } =
     await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
   const { getJsxText, parseFile } = await import("../typescript/program");
   const { getModuleFormat } = await import("../typescript/spec/resolve");
-  const runtime = await getEscoreRuntime();
+  const runtime = await getJsTlaRuntime();
   const plans = paths.map((path) => {
     const source = readFileSync(path, "utf8");
     const text = getJsxText(path, source);
@@ -648,7 +648,7 @@ export const compileSharedProgram = async (
   // makes the view again.
   const views: { names: readonly string[]; leaves: readonly string[] }[] = [];
   try {
-    const spec = compileToEscore(
+    const spec = compileToJsTla(
       members.map((path) => `import ${JSON.stringify(realpathSync(path))};`).join("\n"),
       join(dirname(realpathSync(members[0])), "tla-ts-shared.mjs"),
       {
@@ -749,7 +749,7 @@ export const compileSharedFiles = async (
     program.shown.forEach((line) => console.log(line));
     return [];
   }
-  const runtime = await getEscoreRuntime();
+  const runtime = await getJsTlaRuntime();
   const getConstants = (config: string) =>
     config.split("\n").filter((line) => line.startsWith("CONSTANT"));
   // The group's base, from which each file's check starts, and the strings it ranked.

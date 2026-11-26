@@ -1,23 +1,23 @@
 import type { Library } from "../../../tla-ts/src/typescript/program";
-import { compileEscore } from "../../../tla-ts/src/typescript/spec/api";
-import type { EscoreRuntime } from "../../../tla-ts/src/typescript/spec/prepare";
+import { compileJsTla } from "../../../tla-ts/src/typescript/spec/api";
+import type { JsTlaRuntime } from "../../../tla-ts/src/typescript/spec/prepare";
 import type { Compilation } from "./compilation";
 
 // A definition's text ends before the next line that starts a definition, as its own later lines
 // are indented.
 const DEFINITION_END = /\n(?=\S)/g;
 
-// A file compiled by specializing ESCore, on the files of the packages that the site passes: the
+// A file compiled by specializing JS.tla, on the files of the packages that the site passes: the
 // module of the program's code, where each declaration at the top of the file marks the
 // definitions it compiles to.
-export const getEscoreCompilation = (
+export const getJsTlaCompilation = (
   source: string,
   fileName: string,
-  runtime: EscoreRuntime,
+  runtime: JsTlaRuntime,
   files: ReadonlyMap<string, string>,
   library?: Library,
 ): Compilation => {
-  const compiled = compileEscore({ source, fileName, files }, runtime, library);
+  const compiled = compileJsTla({ source, fileName, files }, runtime, library);
   const code = compiled.loadModule("ProgramCode") ?? "";
   return {
     name: compiled.name,

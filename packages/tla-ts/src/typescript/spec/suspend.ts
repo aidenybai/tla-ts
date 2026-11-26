@@ -79,7 +79,7 @@ const getNames = (expression: Expression, names = new Set<string>()): Set<string
 
 // A program's definitions where a body of a generator or an async function that a yield or an await
 // suspends passes on, with each step that waits on such a suspension, a frame of what the step needs
-// to go on: ESCore's scheme for its interpreter, whose steps that end in Then pass a suspension on,
+// to go on: JS.tla's scheme for its interpreter, whose steps that end in Then pass a suspension on,
 // and whose ResumeFrame runs a frame's step on the result that the body resumes with. A step of the
 // program's code is a definition ResumeN(captures, r) of what remains of a definition once r, the
 // result it waits on, is known, with the values it reads of the definition's parameters and LET

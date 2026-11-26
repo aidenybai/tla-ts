@@ -1,4 +1,4 @@
-// Runs test262 through the compiler that specializes ESCore, which runs each test with the harness as
+// Runs test262 through the compiler that specializes JS.tla, which runs each test with the harness as
 // Node runs it, without checking their types. Tests that Node fails or whose syntax TypeScript's
 // parser rejects are skipped, not blamed on the compiler.
 // Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
@@ -20,7 +20,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../src/errors";
 import { check } from "../src/parallel";
 import type { CheckResult } from "../src/check";
-import { compileToEscore } from "../src/typescript/spec/compile";
+import { compileToJsTla } from "../src/typescript/spec/compile";
 import { prepareRuntime, SCRIPT_STEPS } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
@@ -255,7 +255,7 @@ const getNodeError = (source: string, isSloppy: boolean) =>
 const isObject = (value: unknown): value is object =>
   (typeof value === "object" && value !== null) || typeof value === "function";
 
-// The name of the constructor of a thrown value, as ESCore's ThrownName reads it.
+// The name of the constructor of a thrown value, as JS.tla's ThrownName reads it.
 const getThrownType = (value: unknown) => {
   const constructor: unknown = isObject(value) ? Reflect.get(value, "constructor") : undefined;
   const name: unknown = isObject(constructor) ? Reflect.get(constructor, "name") : undefined;
@@ -453,11 +453,11 @@ const runSyntaxTest = (id: string, source: string, metadata: Metadata): TestRun 
   const program = `${strict}${source}`;
   try {
     getEmitted(program, metadata.isModule);
-    compileToEscore(program, "test262.js", RUNTIME, metadata.isModule);
+    compileToJsTla(program, "test262.js", RUNTIME, metadata.isModule);
   } catch (error) {
     return getSyntaxRun(id, error);
   }
-  // ESCore's compile accepts a program that Node rejects.
+  // JS.tla's compile accepts a program that Node rejects.
   return { id, outcome: "untranslatable", reason: "tla-ts can't tell this SyntaxError" };
 };
 
@@ -713,7 +713,7 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
   );
 };
 
-// ESCore's runtime, which the runner prepares once for every test it compiles. TLA_TS_STATS=1
+// JS.tla's runtime, which the runner prepares once for every test it compiles. TLA_TS_STATS=1
 // prints each check's compile and check time and its module's size.
 const RUNTIME = prepareRuntime(join(import.meta.dirname, "../ecmascript"));
 
@@ -747,7 +747,7 @@ const getEmitted = (program: string, isModule: boolean) => {
   return transpiled.outputText;
 };
 
-// Compiles a test's program by specializing ESCore. The harness merges namespaces into its
+// Compiles a test's program by specializing JS.tla. The harness merges namespaces into its
 // functions, which Node's type stripping rejects, so the program runs as the JavaScript that
 // TypeScript emits for it, as Node runs it here, which a linked test's own file holds too, for an
 // import of it.
@@ -760,7 +760,7 @@ const compileProgram = (
   const emitted = getEmitted(program, isModule);
   if (existsSync(path)) writeFileSync(path, emitted);
   // test262's host loads every file of code as an ES module.
-  return compileToEscore(emitted, path, RUNTIME, isModule, {
+  return compileToJsTla(emitted, path, RUNTIME, isModule, {
     steps: SCRIPT_STEPS,
     entries: [],
     isTest262Host: true,

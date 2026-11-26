@@ -11,16 +11,16 @@ const CONFIG = "CONSTANTS None = None\nEmpty = Empty\nAbsent = Absent\n";
 const UNHANDLED_REJECTION =
   RUNTIME_DEFINITIONS.find((definition) => definition.name === "UnhandledRejection")?.text ?? "";
 
-// ESCore's TLA+ with a compiled spec's UnhandledRejection, under the name of the runtime, whose
+// JS.tla's TLA+ with a compiled spec's UnhandledRejection, under the name of the runtime, whose
 // HeapGet, IsArrayIndex, PropBucket, and UnhandledRejection tla-ts runs natively, and under its own
 // name, whose operators run as written.
 const loadModule = (name: string) => {
-  const path = join(ECMASCRIPT_DIRECTORY, `${name === "ESRuntime" ? "ESCore" : name}.tla`);
+  const path = join(ECMASCRIPT_DIRECTORY, `${name === "ESRuntime" ? "JS" : name}.tla`);
   if (!existsSync(path)) return undefined;
   const text = readFileSync(path, "utf8");
-  if (name !== "ESRuntime" && name !== "ESCore") return text;
+  if (name !== "ESRuntime" && name !== "JS") return text;
   const runtime = text.replace(/\n====\s*$/, `\n${UNHANDLED_REJECTION}\n====\n`);
-  return name === "ESRuntime" ? runtime.replace("MODULE ESCore", "MODULE ESRuntime") : runtime;
+  return name === "ESRuntime" ? runtime.replace("MODULE JS", "MODULE ESRuntime") : runtime;
 };
 
 const getUnits = (text: string) =>
@@ -177,11 +177,11 @@ const getChecks = () => [
   }),
 ];
 
-// Whether each check holds, where the root module extends ESRuntime and instances ESCore as Plain.
+// Whether each check holds, where the root module extends ESRuntime and instances JS.tla as Plain.
 const getOutcomes = async (checks: string[]) => {
   const printed: string[] = [];
   const result = await check({
-    source: `---- MODULE RuntimeChecks ----\nEXTENDS ESRuntime\nPlain == INSTANCE ESCore\nASSUME PrintT(<<${checks.join(",\n")}>>)\n====`,
+    source: `---- MODULE RuntimeChecks ----\nEXTENDS ESRuntime\nPlain == INSTANCE JS\nASSUME PrintT(<<${checks.join(",\n")}>>)\n====`,
     config: CONFIG,
     loadModule,
     onPrint: (text) => printed.push(text),
@@ -198,10 +198,10 @@ const getError = async (module: string, expression: string) =>
       config: CONFIG,
       loadModule,
     })
-  ).violation?.message?.replaceAll("module ESRuntime", "module ESCore");
+  ).violation?.message?.replaceAll("module ESRuntime", "module JS");
 
 // What a module that extends the runtime prints, under the name ESRuntime, whose operators that
-// read a CONSTANT tla-ts runs natively, or under ESCore, whose operators run as written. An INSTANCE
+// read a CONSTANT tla-ts runs natively, or under JS.tla, whose operators run as written. An INSTANCE
 // such as Plain would run the TLA+ of both.
 const getPrinted = async (module: string, body: string, config = CONFIG) => {
   const printed: string[] = [];
@@ -213,7 +213,7 @@ const getPrinted = async (module: string, body: string, config = CONFIG) => {
   });
   return [
     result.status,
-    result.violation?.message?.replaceAll("module ESRuntime", "module ESCore"),
+    result.violation?.message?.replaceAll("module ESRuntime", "module JS"),
     ...printed,
   ];
 };
@@ -264,7 +264,7 @@ ASSUME PrintT(<<
   ToString(GetBindingValue(State, 10, Name(41), FALSE))
 >>)`;
 
-describe("runs ESCore's native operators as their TLA+ does", () => {
+describe("runs JS.tla's native operators as their TLA+ does", () => {
   it("gives the values the TLA+ gives", { timeout: 300_000 }, async () => {
     const checks = getChecks();
     expect(await getOutcomes(checks)).toEqual(checks.map(() => "TRUE"));
@@ -274,7 +274,7 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     ["the CONSTANTS the configuration gives", CONFIG],
     ["Empty bound to a value", "CONSTANTS None = None\nEmpty = 9\nAbsent = Absent\n"],
   ])("reads bindings as the TLA+ does under %s", { timeout: 180_000 }, async (_, config) => {
-    const expected = await getPrinted("ESCore", BINDINGS, config);
+    const expected = await getPrinted("JS", BINDINGS, config);
     expect(expected[0]).toBe("success");
     expect(await getPrinted("ESRuntime", BINDINGS, config)).toEqual(expected);
   });
@@ -289,7 +289,7 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     ["an environment past the heap", "HasBinding(State, 11, CHOOSE x \\in {} : TRUE)"],
   ])("fails as the TLA+ fails on %s", { timeout: 180_000 }, async (_, expression) => {
     const body = `${BINDING_STATE}\nASSUME PrintT(${expression})`;
-    const expected = await getPrinted("ESCore", body);
+    const expected = await getPrinted("JS", body);
     expect(expected[1]).toBeDefined();
     expect(await getPrinted("ESRuntime", body)).toEqual(expected);
   });
@@ -302,7 +302,7 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     async () => {
       const body = `${BINDING_STATE}\nASSUME PrintT(GetBindingValue(State, 1, Name(1), FALSE))`;
       const config = "CONSTANTS None = None\nEmpty = Empty\nAbsent = 9\n";
-      const expected = await getPrinted("ESCore", body, config);
+      const expected = await getPrinted("JS", body, config);
       expect(expected[1]).toBeDefined();
       expect(await getPrinted("ESRuntime", body, config)).toEqual(expected);
     },
@@ -315,7 +315,7 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
     "reads an object's own properties, and Absent, as the TLA+ does under %s",
     { timeout: 120_000 },
     async (_, config) => {
-      const expected = await getPrinted("ESCore", OWN_PROPERTIES, config);
+      const expected = await getPrinted("JS", OWN_PROPERTIES, config);
       expect(expected[0]).toBe("success");
       expect(await getPrinted("ESRuntime", OWN_PROPERTIES, config)).toEqual(expected);
     },
@@ -358,7 +358,7 @@ describe("runs ESCore's native operators as their TLA+ does", () => {
       'UnhandledRejection([objs |-> [size |-> 2, pages |-> <<<<MakeObject(Null, "ordinary", <<>>)>>>>]])',
     ],
   ])("fails as the TLA+ fails on %s", { timeout: 120_000 }, async (_, expression) => {
-    const error = await getError("ESCore", expression);
+    const error = await getError("JS", expression);
     expect(error).toBeDefined();
     expect(await getError("ESRuntime", expression)).toBe(error);
   });

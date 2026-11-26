@@ -16,20 +16,20 @@ export interface HostLocale {
 // it, as plain data, without the functions, so that a program that asks the host about a locale
 // tag or a time zone that it writes stops where Node would answer.
 export interface HostRealm {
-  // The globals of a script's context, a new context of the host's virtual machine, that ESCore's
+  // The globals of a script's context, a new context of the host's virtual machine, that JS.tla's
   // realm lacks, at whose names a compile stops.
   scriptGlobals: string[];
-  // The globals of the host's own context, where a module runs, that ESCore's realm lacks, each
+  // The globals of the host's own context, where a module runs, that JS.tla's realm lacks, each
   // with the record that DefineHost defines it by, where it defines one.
   moduleGlobals: { name: string; record: string | undefined }[];
-  // The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
+  // The properties of the host's built-ins whose keys JS.tla's realm has nowhere, such as V8's
   // Error.captureStackTrace, by the intrinsic that holds each, with the record that DefineHost
   // defines it by, where it defines one.
   builtInProperties: { owner: string; key: string; record: string | undefined }[];
   // The realm's properties that the host lacks, such as proposals engine262 has and Node doesn't.
   missingProperties: { owner: string; key: string }[];
   // The order of the own keys of each of the realm's built-ins that the host has, as the host gives
-  // them: its strings, and the well-known symbols by the number that ESCore gives each.
+  // them: its strings, and the well-known symbols by the number that JS.tla gives each.
   keyOrders: { owner: string; keys: (string | number)[] }[];
   // The host's default locale and time zone, and the name of the zone that V8 writes after a
   // date's offset in the locale.
@@ -158,13 +158,13 @@ const getHostProperty = (
     : `[owner |-> "${owner}", name |-> N("${name}"), kind |-> "${kind}", value |-> ${primitive ?? "Undefined"}, isConstructor |-> ${getBoolean(isConstructor(value))}, isQuiet |-> ${getBoolean(owner === "GlobalObject" && QUIET_CONSTRUCTORS.has(name))}, isAccessor |-> ${getBoolean(isAccessor)}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`;
 };
 
-// The realm of the host that runs this process, for ESCore's library: Node's, whose script runs in
+// The realm of the host that runs this process, for JS.tla's library: Node's, whose script runs in
 // a new context of its virtual machine, the reference a program runs on, whose global object has
 // ECMAScript's globals and the host's own, such as Intl and console, and not Node's module globals,
 // such as process and global, which a module's context has.
 export const recordHostRealm = (library: Library): HostRealm => {
   const scriptGlobal: object = process.getBuiltinModule("node:vm").runInNewContext("globalThis");
-  // The object an intrinsic of ESCore's names in the host, if it has one.
+  // The object an intrinsic of JS.tla's names in the host, if it has one.
   const getHostObject = (owner: string): object | undefined => {
     if (owner === "GlobalObject") return scriptGlobal;
     const isPrototype = owner.endsWith("Prototype");

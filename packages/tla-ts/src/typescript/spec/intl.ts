@@ -16,10 +16,10 @@ interface Literals {
   // The time values of the dates that Date's constructor and Date.UTC make of literals.
   times: Set<number>;
   // The Temporal objects that Temporal's constructors and methods make of literals, each with the
-  // key of ESCore's HostIntl entries for it.
+  // key of JS.tla's HostIntl entries for it.
   temporals: Map<string, object>;
   // The durations that object literals, strings, and Temporal's methods make of literals, by the
-  // key of ESCore's HostIntl entries for them.
+  // key of JS.tla's HostIntl entries for them.
   durations: Map<string, unknown>;
   // The lists of strings that array literals write.
   lists: string[][];
@@ -37,7 +37,7 @@ interface Service {
   name: string;
   options: Record<string, Validator>;
   // The key of an object in HostIntl's entries but for its requested locales, from the options
-  // its constructor read and what its resolvedOptions gives, or undefined where ESCore keeps none.
+  // its constructor read and what its resolvedOptions gives, or undefined where JS.tla keeps none.
   getConfig: (bag: Record<string, unknown>, resolved: Record<string, unknown>) => string;
   // The entries of an object's methods for the arguments the program's literals make, or
   // undefined where they're more than most, which HostIntl's table can't hold, so that the rest go
@@ -49,7 +49,7 @@ interface Service {
     most: number,
   ) => Map<string, string> | undefined;
   callers: string[];
-  // How ESCore holds an option it read where that isn't as a string's units or a Boolean.
+  // How JS.tla holds an option it read where that isn't as a string's units or a Boolean.
   encoders?: Record<string, (value: unknown) => string | undefined>;
 }
 
@@ -252,7 +252,7 @@ const getTemporal = (node: ts.Expression): { value: unknown } | undefined => {
   }
 };
 
-// The key of ESCore's HostIntl entries for a Temporal object (TemporalFormatKey): its kind, its
+// The key of JS.tla's HostIntl entries for a Temporal object (TemporalFormatKey): its kind, its
 // ISO fields or its epoch nanoseconds, its time zone's identifier, and its calendar.
 const getTemporalKey = (value: unknown) => {
   if (typeof value !== "object" || value === null) return undefined;
@@ -282,7 +282,7 @@ const getTemporalKey = (value: unknown) => {
   return undefined;
 };
 
-// The key of ESCore's HostIntl entries for the duration that Temporal reads of a value, the units
+// The key of JS.tla's HostIntl entries for the duration that Temporal reads of a value, the units
 // of its fields from years to nanoseconds, or undefined where Temporal reads none.
 const DURATION_FIELDS = [
   "years",
@@ -489,7 +489,7 @@ const getCanonical = (locales: string | string[] | undefined) => {
   }
 };
 
-// A value as ESCore's key holds it: units, a TLA+ Boolean, an integer, or Empty.
+// A value as JS.tla's key holds it: units, a TLA+ Boolean, an integer, or Empty.
 const getTlaValue = (value: unknown): string =>
   value === undefined
     ? "Empty"
@@ -501,9 +501,9 @@ const getTlaValue = (value: unknown): string =>
           : "FALSE"
         : String(value);
 
-// A value as ESCore holds it, or a record of the elements of an array of them, or undefined where
+// A value as JS.tla holds it, or a record of the elements of an array of them, or undefined where
 // it's neither.
-const getEscoreValue = (value: unknown): string | undefined =>
+const getJsTlaValue = (value: unknown): string | undefined =>
   value === undefined
     ? "Undefined"
     : typeof value === "string"
@@ -519,7 +519,7 @@ const getEscoreValue = (value: unknown): string | undefined =>
             : undefined;
 
 const getElements = (values: readonly unknown[]) => {
-  const elements = values.map(getEscoreValue);
+  const elements = values.map(getJsTlaValue);
   return elements.some((element) => element === undefined)
     ? undefined
     : `[elements |-> <<${elements.join(", ")}>>]`;
@@ -545,8 +545,8 @@ const getParts = (parts: readonly object[]) =>
     .join(", ")}>>]`;
 
 const getValue = (value: unknown) => {
-  const escore = getEscoreValue(value);
-  return escore === undefined ? undefined : `[found |-> "value", value |-> ${escore}]`;
+  const jsTla = getJsTlaValue(value);
+  return jsTla === undefined ? undefined : `[found |-> "value", value |-> ${jsTla}]`;
 };
 
 // What the host answers to a call: its answer, or the error it throws.
@@ -608,12 +608,12 @@ const PLURAL_RULES_SLOTS = [
   "trailingZeroDisplay",
 ];
 
-// A useGrouping of false is units in ESCore's key, which no string useGrouping is.
+// A useGrouping of false is units in JS.tla's key, which no string useGrouping is.
 const getSlots = (slots: string[], resolved: Record<string, unknown>) =>
   `<<${slots.map((key) => getTlaValue(resolved[key] === false ? "false" : resolved[key])).join(", ")}>>`;
 
-// The options of a service that IntlConstruct reads, each as ESCore holds what it read: a
-// string's units, a Boolean, or Empty, or as the service encodes it, or undefined where ESCore
+// The options of a service that IntlConstruct reads, each as JS.tla holds what it read: a
+// string's units, a Boolean, or Empty, or as the service encodes it, or undefined where JS.tla
 // can't hold it.
 const getRead = (service: Service, bag: Record<string, unknown>) => {
   const values = Object.entries(service.options).map(([key, isAllowed]) => {
@@ -889,7 +889,7 @@ const SERVICES: Service[] = [
       timeStyle: isOneOf("full", "long", "medium", "short"),
     },
     encoders: {
-      // A time zone's identifier as Temporal gives it, which ESCore's time zones hold.
+      // A time zone's identifier as Temporal gives it, which JS.tla's time zones hold.
       timeZone: (value) => {
         if (String(value).toUpperCase() === "UTC") return getUnitsOf("UTC");
         const temporal: unknown = Reflect.get(globalThis, "Temporal");
@@ -1033,7 +1033,7 @@ const TEMPORAL_FORMAT_OPTIONS = [
 ];
 
 // The entries of the toLocaleString of the Temporal objects that the program's literals make, for
-// each of its locales and option bags, keyed as ESCore's TemporalToLocaleString keys them.
+// each of its locales and option bags, keyed as JS.tla's TemporalToLocaleString keys them.
 const getTemporalEntries = (literals: Literals) => {
   const entries = new Map<string, string>();
   const service = SERVICES.find((candidate) => candidate.name === "DateTimeFormat");
@@ -1082,7 +1082,7 @@ const getTemporalEntries = (literals: Literals) => {
 
 // The entries of Date's toLocaleString, toLocaleDateString, and toLocaleTimeString of the time
 // values that the program's literals make, for each of its locales and option bags, keyed as
-// ESCore's DateToLocaleString keys them, where the host's time zone is ESCore's, UTC.
+// JS.tla's DateToLocaleString keys them, where the host's time zone is JS.tla's, UTC.
 const DATE_METHODS = ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"];
 const getDateEntries = (literals: Literals, words: ReadonlySet<string>) => {
   const entries = new Map<string, string>();
@@ -1169,7 +1169,7 @@ const LOCALE_INFO = [
 const LOCALE_STEPS = 3;
 
 // The entries of the Intl.Locale objects that the program's literals make, keyed by the tag and
-// the options that ESCore's LocaleConstruct reads, and of the locales that their maximize and
+// the options that JS.tla's LocaleConstruct reads, and of the locales that their maximize and
 // minimize make: each one's tag or the error that its constructor throws, and what each accessor
 // and method gives.
 const getLocaleEntries = (literals: Literals) => {
@@ -1216,7 +1216,7 @@ const getLocaleEntries = (literals: Literals) => {
         const value: unknown = Reflect.apply(Reflect.get(locale, method), locale, []);
         if (Array.isArray(value)) return getArray(value);
         if (typeof value === "object" && value !== null) {
-          const pairs = Object.entries(value).map(([key, inner]) => [key, getEscoreValue(inner)]);
+          const pairs = Object.entries(value).map(([key, inner]) => [key, getJsTlaValue(inner)]);
           return pairs.some((pair) => pair[1] === undefined)
             ? undefined
             : `[found |-> "options", pairs |-> <<${pairs.map(([key, inner]) => `<<${getUnitsOf(String(key))}, ${inner}>>`).join(", ")}>>]`;
@@ -1245,12 +1245,12 @@ const getLocaleEntries = (literals: Literals) => {
   return entries;
 };
 
-// The services whose constructor ESCore's NumberFormatConstruct or PluralRulesConstruct runs, which
+// The services whose constructor JS.tla's NumberFormatConstruct or PluralRulesConstruct runs, which
 // key an object by its resolved options; IntlConstruct's key it by the options it read.
 const RESOLVING = new Set(["NumberFormat", "PluralRules", "DurationFormat"]);
 
 // The program's HostIntl, and the strings of its answers: what the host's Intl gives for the currencies and the Intl objects that
-// the program's literals make, keyed as ESCore keys them, and for each argument its literals may be
+// the program's literals make, keyed as JS.tla keys them, and for each argument its literals may be
 // of the methods it names. Any other key stops, which the host may hold data of.
 export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: ReadonlySet<string>) => {
   const entries = new Map<string, string>();
@@ -1321,7 +1321,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
           try {
             return new Constructor(locales, bag);
           } catch (error) {
-            // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
+            // A DurationFormat whose options JS.tla accepts constructs as HostIntl answers.
             if (service.name === "DurationFormat") {
               entries.set(
                 `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
@@ -1333,7 +1333,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         })();
         if (object === undefined) continue;
         const resolved = { ...object.resolvedOptions() };
-        const pairs = Object.entries(resolved).map(([key, value]) => [key, getEscoreValue(value)]);
+        const pairs = Object.entries(resolved).map(([key, value]) => [key, getJsTlaValue(value)]);
         if (pairs.some((pair) => pair[1] === undefined)) continue;
         const read = isResolving ? service.getConfig(bag, resolved) : reads[position];
         if (read === undefined) continue;
@@ -1348,7 +1348,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     }
     // The answers of each object, in the order of its literals, while the table holds them, which
     // a full table holds none of. A DateTimeFormat answers none where the host's time zone isn't
-    // ESCore's local one, UTC, as a format without one reads it.
+    // JS.tla's local one, UTC, as a format without one reads it.
     const isAnswering =
       service.name !== "DateTimeFormat" ||
       new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";

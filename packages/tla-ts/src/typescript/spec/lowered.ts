@@ -1,8 +1,8 @@
 import ts from "@typescript/typescript6";
 import { foldNames } from "./library";
 
-// A model's state lowered out of ESCore's heap: the value of each module-level binding that
-// isn't a function, as a record of the bindings' names. A primitive is ESCore's own value, and an
+// A model's state lowered out of JS.tla's heap: the value of each module-level binding that
+// isn't a function, as a record of the bindings' names. A primitive is JS.tla's own value, and an
 // object that only holds data a TLA+ value of its own:
 //   [type |-> "lobject", keys |-> <<units>>, vals |-> [units -> value]]
 //     an ordinary object of %Object.prototype%, extensible, with keys in OrdinaryOwnPropertyKeys
@@ -13,7 +13,7 @@ import { foldNames } from "./library";
 //     a Set or a Map of its prototype with no properties, whose entries are in insertion order.
 // No object is reached twice. ModelBase is the canonical state after the module's top level, with
 // those bindings undefined: the realm and the functions, which no step changes. A step
-// materializes the record into ModelBase, runs ESCore, and lowers the bindings back, where each
+// materializes the record into ModelBase, runs JS.tla, and lowers the bindings back, where each
 // object must be the one that materializing its lowered value makes, and ModelBase unchanged, so
 // that a lowered state and the canonical heap it stands for are one to one.
 export const LOWERED_DEFINITIONS =

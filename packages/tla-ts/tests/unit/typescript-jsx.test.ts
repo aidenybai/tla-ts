@@ -45,7 +45,7 @@ describe("compiles JSX as the calls that TypeScript emits for it", () => {
     },
   );
 
-  // Skipped until ESCore names a spec after its file rather than Program.
+  // Skipped until JS.tla names a spec after its file rather than Program.
   it.skip("checks the actions and invariants of a file that renders JSX", async () => {
     const fixture = getFixture("likes.tsx");
     const checked = await compileAndCheck(fixture.source, fixture.path);

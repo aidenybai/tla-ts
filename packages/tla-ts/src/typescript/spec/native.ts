@@ -2,7 +2,7 @@ import ts from "@typescript/typescript6";
 import { printCodeExpression } from "./code-tree";
 import { getNumber } from "./specialize";
 
-// The methods LMethod runs, which change the receiver where they're in MUTATORS. ESCore's step
+// The methods LMethod runs, which change the receiver where they're in MUTATORS. JS.tla's step
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
 const METHODS = new Set(["push", "pop", "shift", "includes", "has", "add", "delete", "get", "set"]);
 const MUTATORS = new Set(["push", "pop", "shift", "add", "delete", "set"]);
@@ -248,7 +248,7 @@ export const getNativeFunctions = (
   // The functions that compileFunction is compiling, innermost last.
   const compiling: { name: string; operator: string; isRecursive: boolean }[] = [];
   let count = 0;
-  // A name of the generated code's own, which no definition of ESCore's takes.
+  // A name of the generated code's own, which no definition of JS.tla's takes.
   const fresh = (prefix: string) => {
     count += 1;
     return `${prefix === "Native" ? prefix : `nv${prefix}`}${count}`;
@@ -1646,7 +1646,7 @@ export const getNativeFunctions = (
   const compileFunction = (name: string): Compiled | undefined => {
     if (compiled.has(name)) return compiled.get(name);
     // A function that calls itself takes its operator as it compiles, as one that writes nothing,
-    // which it must turn out to be; one that another function it calls calls runs on ESCore.
+    // which it must turn out to be; one that another function it calls calls runs on JS.tla.
     const innermost = compiling.at(-1);
     if (innermost?.name === name) {
       innermost.isRecursive = true;

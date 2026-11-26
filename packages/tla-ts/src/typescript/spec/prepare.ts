@@ -16,17 +16,17 @@ import { getLetInstanceExpansion } from "../../instances";
 import {
   assembleRuntime,
   createLibrary,
-  type EscoreFiles,
+  type JsTlaFiles,
   type Family,
   getDependencies,
   HOOKS,
   type Library,
-  readEscoreFiles,
+  readJsTlaFiles,
 } from "./library";
 import { CANONICAL_MODULE } from "./canonical";
 import { NATIVE_MODULE } from "./native-module";
 import { type HostRealm, recordHostRealm } from "./realm";
-import type { EscoreSpec } from "./compile";
+import type { JsTlaSpec } from "./compile";
 import {
   getHostDefinitions,
   getLocalDefinitions,
@@ -41,7 +41,7 @@ interface Stub {
   arity: number;
 }
 
-// A group of ESCore's parts that a program's spec leaves out when its program names none of the
+// A group of JS.tla's parts that a program's spec leaves out when its program names none of the
 // group's triggers: the group's operators that the spec stops at in their place, and the operators
 // of other groups' stubs that the group's own operators name, which a spec with the group keeps.
 export interface Gate {
@@ -51,7 +51,7 @@ export interface Gate {
   reached: string[];
 }
 
-export interface EscoreRuntime {
+export interface JsTlaRuntime {
   // The modules that the runtime extends, which every program's spec links whole.
   modules: PreparedModule[];
   // The runtime with the definitions that the names read, and the leaves given without what they
@@ -75,10 +75,10 @@ export interface EscoreRuntime {
   getExtension: (name: string) => PreparedModule | undefined;
 }
 
-// What a host prepares ESCore's runtime from: ESCore's texts, the realm of the host that the
+// What a host prepares JS.tla's runtime from: JS.tla's texts, the realm of the host that the
 // runtime models, and the graph of the runtime that a build prepared from them, if one did.
-export interface EscoreHost {
-  files: EscoreFiles;
+export interface JsTlaHost {
+  files: JsTlaFiles;
   realm: HostRealm;
   graph?: EncodedGraph;
   // The graph of the modules that a model's spec extends besides the runtime.
@@ -163,7 +163,7 @@ const prepare = (name: string, text: string): PreparedModule => {
 
 const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefined };
 
-// The definitions that the runtime puts in place of ESCore's, as a compiled spec runs them.
+// The definitions that the runtime puts in place of JS.tla's, as a compiled spec runs them.
 const getOverrides = (library: Library, realm: HostRealm) => {
   const overrides = getBaseOverrides(library, realm);
   return [...overrides, ...getMessageDefinitions(library, overrides, realm)];
@@ -204,7 +204,7 @@ const getBaseOverrides = (library: Library, realm: HostRealm) => [
   },
 ];
 
-// The names and texts of the modules of the runtime: those that ESCore extends, then the runtime.
+// The names and texts of the modules of the runtime: those that JS.tla extends, then the runtime.
 const getModuleTexts = (library: Library, realm: HostRealm) => [
   ...library.modules,
   ["ESRuntime", assembleRuntime(library, getOverrides(library, realm), INTERPRETER)] as const,
@@ -234,7 +234,7 @@ const prepareModules = (
     files,
   });
   if (warning !== undefined)
-    throw new TlaError(`SANY's checks warn of ESCore's runtime: ${warning}`);
+    throw new TlaError(`SANY's checks warn of JS.tla's runtime: ${warning}`);
   const accepted = modules.map((prepared) => ({
     ...prepared,
     levels: levels.get(prepared.module),
@@ -289,7 +289,7 @@ const prepareModules = (
 // that extend it link it as the checks accepted it. It keeps no tokens, as a module that tla-ts
 // compiles declares what its units declare.
 export const prepareProgram = (
-  spec: Pick<EscoreSpec, "config" | "loadModule" | "preparedModules">,
+  spec: Pick<JsTlaSpec, "config" | "loadModule" | "preparedModules">,
 ): PreparedModule => {
   const prepared = prepare("ProgramCode", spec.loadModule("ProgramCode") ?? "");
   const levels = new Map<Module, (OperatorLevels | undefined)[]>();
@@ -338,7 +338,7 @@ const encodePreparedModules = (modules: readonly PreparedModule[]) => {
   return encodeGraph(graph, (holder, key) => key === "body" && definitions.has(holder));
 };
 
-// The graphs of the runtime of ESCore's texts for a realm and of the modules a model's spec extends
+// The graphs of the runtime of JS.tla's texts for a realm and of the modules a model's spec extends
 // besides it, prepared, which a build writes into a bundle so that a process reads the modules
 // rather than prepares them.
 const getGraphs = (library: Library, realm: HostRealm) => {
@@ -372,18 +372,18 @@ const recordReferenceRealm = (library: Library) => {
   return recordNodeRealm(library);
 };
 
-// The graphs of the runtime of ESCore's directory for the realm of the host that runs this process,
+// The graphs of the runtime of JS.tla's directory for the realm of the host that runs this process,
 // and of the modules a model's spec extends besides it.
 export const getRuntimeGraphs = (directory: string) => {
-  const library = createLibrary(readEscoreFiles(directory));
+  const library = createLibrary(readJsTlaFiles(directory));
   return getGraphs(library, recordReferenceRealm(library));
 };
 
-// The host that a browser prepares ESCore's runtime from, as this process records it: ESCore's
+// The host that a browser prepares JS.tla's runtime from, as this process records it: JS.tla's
 // texts, the realm of the host that runs this process as plain data, and the runtime's graph, for
 // a page to fetch as JSON.
-export const recordEscoreHost = (directory: string): EscoreHost => {
-  const files = readEscoreFiles(directory);
+export const recordJsTlaHost = (directory: string): JsTlaHost => {
+  const files = readJsTlaFiles(directory);
   const library = createLibrary(files);
   const realm = recordReferenceRealm(library);
   const graphs = getGraphs(library, realm);
@@ -392,10 +392,10 @@ export const recordEscoreHost = (directory: string): EscoreHost => {
 
 // The build writes the graph of the prepared runtime in place of these strings, its tables as JSON
 // and its stream as it is. Unbuilt, the tables are JSON for a string.
-const RUNTIME_TABLES = '"tla-ts:escore-tables"';
-const RUNTIME_STREAM = "tla-ts:escore-stream";
-const EXTENSIONS_TABLES = '"tla-ts:escore-extensions-tables"';
-const EXTENSIONS_STREAM = "tla-ts:escore-extensions-stream";
+const RUNTIME_TABLES = '"tla-ts:js-tla-tables"';
+const RUNTIME_STREAM = "tla-ts:js-tla-stream";
+const EXTENSIONS_TABLES = '"tla-ts:js-tla-extensions-tables"';
+const EXTENSIONS_STREAM = "tla-ts:js-tla-extensions-stream";
 
 // A graph that the build wrote into this bundle in place of its strings, if it wrote one.
 const readBundledGraph = (text: string, stream: string): EncodedGraph | undefined => {
@@ -460,7 +460,7 @@ const readPreparedModules = (
   }));
 };
 
-// ESCore's runtime of a library for a realm, read, checked by SANY's checks, and started once for
+// JS.tla's runtime of a library for a realm, read, checked by SANY's checks, and started once for
 // every program a process compiles, or read as a build prepared it in a graph: its modules, the
 // levels of their definitions, and what their definitions without parameters evaluate to, among
 // them the realm.
@@ -469,7 +469,7 @@ const prepareLibraryRuntime = (
   hostRealm: HostRealm,
   graph: EncodedGraph | undefined,
   extensionsGraph: EncodedGraph | undefined,
-): EscoreRuntime => {
+): JsTlaRuntime => {
   const texts = getModuleTexts(library, hostRealm);
   const modules =
     readPreparedModules(
@@ -560,14 +560,14 @@ const prepareLibraryRuntime = (
   };
 };
 
-// ESCore's runtime for a host that a build recorded, such as a browser.
-export const prepareHostRuntime = (host: EscoreHost) =>
+// JS.tla's runtime for a host that a build recorded, such as a browser.
+export const prepareHostRuntime = (host: JsTlaHost) =>
   prepareLibraryRuntime(createLibrary(host.files), host.realm, host.graph, host.extensions);
 
-// ESCore's runtime of its directory for the host that runs this process, read as the build
+// JS.tla's runtime of its directory for the host that runs this process, read as the build
 // prepared it where the build wrote its graph into this bundle.
 export const prepareRuntime = (directory: string) => {
-  const library = createLibrary(readEscoreFiles(directory));
+  const library = createLibrary(readJsTlaFiles(directory));
   return prepareLibraryRuntime(
     library,
     recordNodeRealm(library),

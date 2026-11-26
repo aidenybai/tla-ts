@@ -4133,35 +4133,35 @@
       "runs": [
         {
           "name": "in an iterator helper's map (1)",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in an iterator helper's map (2)",
           "replace": ["2", "1"],
           "thrown": "2",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in an operand of find's callback (1)",
           "replace": ["map(() => calls++).toArray(", "find((value) => (++calls, value === 1)"],
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in an operand of find's callback (2)",
           "source": "\nfunction* g(): Generator<number, void, undefined> {\n  yield 0;\n  yield 1;\n}\nlet calls = 0;\nconst check = () => {\n  if (calls !== 1) throw new Error(String(calls));\n};\ng().find((value) => (++calls, value === 1));\ncheck();\n",
           "thrown": "2",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in a generator's forEach (1)",
           "replace": ["map(() => calls++).toArray(", "forEach(() => ++calls"],
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in a generator's forEach (2)",
           "source": "\nfunction* g(): Generator<number, void, undefined> {\n  yield 0;\n  yield 1;\n}\nlet calls = 0;\nconst check = () => {\n  if (calls !== 1) throw new Error(String(calls));\n};\ng().forEach(() => ++calls);\ncheck();\n",
           "thrown": "2",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "in a promise's reactions (1)",
@@ -4977,13 +4977,13 @@
       "runs": [
         {
           "name": "runs the timer of a setTimeout that a declared var gives (1)",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't run a part of ECMAScript that JS.tla leaves out"
         },
         {
           "name": "runs the timer of a setTimeout that a declared var gives (2)",
           "replace": ["script,timer", "timer,script"],
           "thrown": "script,timer",
-          "stop": "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+          "stop": "tla-ts can't run a part of ECMAScript that JS.tla leaves out"
         }
       ]
     },
@@ -5847,7 +5847,7 @@
         {
           "name": "consumes a generator with Iterator.prototype's methods, and closes it (1)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        let calls = 0;\n        const iter = g();\n        const found = iter.some((value) => {\n          calls += 1;\n          return value === 2;\n        });\n        const after = iter.next();\n        if (!found || calls !== 2 || !after.done) throw new Error(\"some\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "consumes a generator with Iterator.prototype's methods, and closes it (2)",
@@ -5856,17 +5856,17 @@
         {
           "name": "consumes a generator with Iterator.prototype's methods, and closes it (3)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        let seen = \"\";\n        g().forEach((value, index) => {\n          seen += value + \":\" + index + \",\";\n        });\n        const product = g().reduce((total, value) => total * value);\n        if (seen !== \"1:0,2:1,3:2,\" || product !== 6) throw new Error(\"visited\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "consumes a generator with Iterator.prototype's methods, and closes it (4)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        const thrown = g();\n        let caught = \"\";\n        try {\n          thrown.every(() => {\n            throw new Error(\"stop\");\n          });\n        } catch (error) {\n          caught = (error as Error).message;\n        }\n        const closed = thrown.next();\n        if (caught !== \"stop\" || !closed.done) throw new Error(\"closed\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "consumes a generator with Iterator.prototype's methods, and closes it (5)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        const every = g().every((value) => value < 3);\n        const first = g().find((value) => value > 1);\n        if (every || first !== 2) throw new Error(\"searched\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "joins the paths through an iterator helper's callback before its next step (1)",
@@ -6541,18 +6541,18 @@
           "name": "reads the global object as the this of a script outside strict mode (1)",
           "source": "\n      const box = { count: 0 };\n      var global = this;\n      const read = () => this;\n      function isGlobal(this: void) {\n        return this === global && read() === globalThis;\n      }\n      if (isGlobal() !== true) throw new Error(\"not global\");\n    ",
           "thrown": "not global",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "reads the global object as the this of a script outside strict mode (2)",
           "source": "\n      const box = { count: 0 };\n      var global = this;\n      const read = () => this;\n      function isGlobal(this: void) {\n        return this === global && read() === globalThis;\n      }\n      if (isGlobal() !== false) throw new Error(\"not global\");\n    ",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "runs a call that makes an object before a declaration reads it through another call (1)",
           "source": "\n      const box = { seen: 0 };\n      const value = Object.getOwnPropertyDescriptor(\n        (function () {\n          return { a: 1 };\n        })(),\n        \"a\",\n      )!.value;\n      if (value !== 1) throw new Error(\"value\");\n      const thrower = Object.getOwnPropertyDescriptor(\n        (function () {\n          \"use strict\";\n          return arguments;\n        })(),\n        \"callee\",\n      )!.get;\n      const caller = Object.getOwnPropertyDescriptor(Function.prototype, \"caller\")!.get;\n      if (thrower !== caller) throw new Error(\"thrower\");\n      box.seen = 1;\n    ",
           "thrown": "thrower",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "runs a call that makes an object before a declaration reads it through another call (2)",
@@ -6562,7 +6562,7 @@
         {
           "name": "runs a call that makes an object before a declaration reads it through another call (3)",
           "source": "\n      const box = { seen: 0 };\n      const value = Object.getOwnPropertyDescriptor(\n        (function () {\n          return { a: 1 };\n        })(),\n        \"a\",\n      )!.value;\n      if (value !== 1) throw new Error(\"value\");\n      const thrower = Object.getOwnPropertyDescriptor(\n        (function () {\n          \"use strict\";\n          return arguments;\n        })(),\n        \"callee\",\n      )!.get;\n      const caller = Object.getOwnPropertyDescriptor(Function.prototype, \"caller\")!.get;\n      if (thrower === caller) throw new Error(\"thrower\");\n      box.seen = 1;\n    ",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "makes the functions that a for-of pattern's defaults make on each iteration",
@@ -6636,13 +6636,13 @@
         {
           "name": "awaits once as it disposes the DisposableStack that an await using declaration holds (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const run = async () => {\n        {\n          await using stack = new DisposableStack();\n          stack.defer(() => { order.push(\"defer\"); });\n        }\n        order.push(\"after\");\n      };\n      run();\n      order.push(\"called\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"));\n      setTimeout(() => {\n        if (order.join() !== \"defer,called,after,tick 1,tick 2\") throw new Error(order.join());\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "awaits once as it disposes the DisposableStack that an await using declaration holds (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const run = async () => {\n        {\n          await using stack = new DisposableStack();\n          stack.defer(() => { order.push(\"defer\"); });\n        }\n        order.push(\"after\");\n      };\n      run();\n      order.push(\"called\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"));\n      setTimeout(() => {\n        if (order.join() !== \"defer,called,tick 1,after,tick 2\") throw new Error(order.join());\n      });\n    ",
           "thrown": "defer,called,after,tick 1,tick 2",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "awaits once for null that an AsyncDisposableStack uses, as Node does (1)",
@@ -6656,24 +6656,24 @@
         {
           "name": "runs a dispose method that reads the locals of the async call that made it (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let result = \"\";\n      const asyncTest = (body: () => Promise<void>) => {\n        body();\n      };\n      asyncTest(async () => {\n        const disposed: unknown[] = [];\n        const first = { async [Symbol.asyncDispose]() { disposed.push(this); } };\n        const second = { [Symbol.dispose]() { disposed.push(this); } };\n        {\n          await using _1 = first;\n          await using _2 = second;\n        }\n        result = [disposed[0] === second, disposed[1] === first, disposed.length].join();\n      });\n      setTimeout(() => {\n        if (result !== \"true,true,2\") throw new Error(result);\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs a dispose method that reads the locals of the async call that made it (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let result = \"\";\n      const asyncTest = (body: () => Promise<void>) => {\n        body();\n      };\n      asyncTest(async () => {\n        const disposed: unknown[] = [];\n        const first = { async [Symbol.asyncDispose]() { disposed.push(this); } };\n        const second = { [Symbol.dispose]() { disposed.push(this); } };\n        {\n          await using _1 = first;\n          await using _2 = second;\n        }\n        result = [disposed[0] === second, disposed[1] === first, disposed.length].join();\n      });\n      setTimeout(() => {\n        if (result !== \"false,true,2\") throw new Error(result);\n      });\n    ",
           "thrown": "true,true,2",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs a function that adopt takes, which may change the locals of the async call that made it (1)",
           "source": "\n      const order: string[] = [];\n      const run = async (name: string) => {\n        let count = 0;\n        {\n          using stack = new DisposableStack();\n          stack.adopt(10, function (value) { count += value; });\n        }\n        order.push(`${name} ${count}`);\n      };\n      run(\"a\");\n      run(\"b\");\n      if (order.join() !== \"a 10,b 10\") throw new Error(order.join());\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs a function that adopt takes, which may change the locals of the async call that made it (2)",
           "source": "\n      const order: string[] = [];\n      const run = async (name: string) => {\n        let count = 0;\n        {\n          using stack = new DisposableStack();\n          stack.adopt(10, function (value) { count += value; });\n        }\n        order.push(`${name} ${count}`);\n      };\n      run(\"a\");\n      run(\"b\");\n      if (order.join() !== \"a 10,b 20\") throw new Error(order.join());\n    ",
           "thrown": "a 10,b 10",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs a thenable's then that changes the locals of the async call that made it (1)",
@@ -6718,13 +6718,13 @@
         {
           "name": "awaits an async dispose method, which a function's object literal may hold (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const asyncTest = (testFunc: () => Promise<void>) => {\n        testFunc().then(() => order.push(\"done\"));\n      };\n      asyncTest(async function () {\n        const resource = {\n          async [Symbol.asyncDispose]() {\n            order.push(\"dispose\");\n            await null;\n            order.push(\"disposed\");\n          },\n        };\n        {\n          await using held = resource;\n          order.push(\"body\");\n        }\n        order.push(\"left\");\n      });\n      order.push(\"after call\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"))\n        .then(() => order.push(\"tick 3\"))\n        .then(() => order.push(\"tick 4\"));\n      setTimeout(() => {\n        if (order.join() !== \"body,dispose,after call,disposed,tick 1,left,tick 2,done,tick 3,tick 4\") throw new Error(order.join());\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "awaits an async dispose method, which a function's object literal may hold (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const asyncTest = (testFunc: () => Promise<void>) => {\n        testFunc().then(() => order.push(\"done\"));\n      };\n      asyncTest(async function () {\n        const resource = {\n          async [Symbol.asyncDispose]() {\n            order.push(\"dispose\");\n            await null;\n            order.push(\"disposed\");\n          },\n        };\n        {\n          await using held = resource;\n          order.push(\"body\");\n        }\n        order.push(\"left\");\n      });\n      order.push(\"after call\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"))\n        .then(() => order.push(\"tick 3\"))\n        .then(() => order.push(\"tick 4\"));\n      setTimeout(() => {\n        if (order.join() !== \"body,dispose,after call,tick 1,disposed,left,tick 2,done,tick 3,tick 4\") throw new Error(order.join());\n      });\n    ",
           "thrown": "body,dispose,after call,disposed,tick 1,left,tick 2,done,tick 3,tick 4",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "stops where a script reads a built-in getter that a well-known symbol keys",
@@ -7644,33 +7644,33 @@
         {
           "name": "steps a generator through Iterator.prototype's map, filter, take, and drop (1)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        let calls = 0;\n        const mapped = g().map((value, index) => {\n          calls += 1;\n          return value * 10 + index;\n        });\n        const first = mapped.next();\n        const callsAfterFirst = calls;\n        const second = mapped.next();\n        mapped.next();\n        const end = mapped.next();\n        if (first.value !== 10 || callsAfterFirst !== 1 || second.value !== 21 || !end.done) {\n          throw new Error(\"mapped\");\n        }\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "steps a generator through Iterator.prototype's map, filter, take, and drop (2)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        const odds = g().filter((value) => value % 2 === 1);\n        const first = odds.next();\n        const second = odds.next();\n        const end = odds.next();\n        if (first.value !== 1 || second.value !== 3 || !end.done) throw new Error(\"filtered\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "steps a generator through Iterator.prototype's map, filter, take, and drop (3)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        const taken = g().take(2).toArray();\n        const dropped = g().drop(2).toArray();\n        if (taken.join() !== \"1,2\" || dropped.join() !== \"3\") throw new Error(\"counted\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "steps a generator through Iterator.prototype's map, filter, take, and drop (4)",
           "source": "\n      function* g(): Generator<number> {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n        \n        const source = g();\n        const limited = source.take(1);\n        limited.next();\n        const end = limited.next();\n        const after = source.next();\n        if (!end.done || !after.done) throw new Error(\"closed\");\n      \n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "runs a helper whose callback's paths multiply its steps (1)",
           "source": "\n      const holder = { count: 0 };\n      function* count() {\n        for (let index = 0; index < 8; ++index) yield index;\n      }\n      const flat = count().flatMap((value) => {\n        if (value === 0) return [0];\n        if (value === 1) return [1, 1];\n        return [];\n      });\n      for (const value of flat) holder.count += value;\n      if (holder.count !== 2) throw new Error(\"count \" + holder.count);\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "runs a helper whose callback's paths multiply its steps (2)",
           "source": "\n      const holder = { count: 0 };\n      function* count() {\n        for (let index = 0; index < 8; ++index) yield index;\n      }\n      const flat = count().flatMap((value) => {\n        if (value === 0) return [0];\n        if (value === 1) return [1, 1, 1];\n        return [];\n      });\n      for (const value of flat) holder.count += value;\n      if (holder.count !== 2) throw new Error(\"count \" + holder.count);\n    ",
           "thrown": "count 3",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "makes an array with Array.from of a length that a shorthand property gives (1)",
@@ -7757,7 +7757,7 @@
         {
           "name": "takes or drops up to Infinity or Number.MAX_SAFE_INTEGER",
           "source": "\n      function* g(): Generator<number> {\n        yield 0;\n        yield 1;\n      }\n      const largest = g().take(Number.MAX_SAFE_INTEGER).toArray();\n      const unlimited = g().take(Infinity).toArray();\n      const dropped = g().drop(Infinity).toArray();\n      if (largest.join() !== \"0,1\" || unlimited.join() !== \"0,1\" || dropped.length !== 0) {\n        throw new Error(\"limit\");\n      }\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "constructs Intl's objects without locales or options (1)",
@@ -8396,18 +8396,18 @@
         {
           "name": "fulfills disposeAsync's promise with undefined once the AsyncDisposableStack is disposed (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const stack = new AsyncDisposableStack();\n      stack.defer(() => { order.push(\"defer\"); });\n      stack.disposeAsync().then((value) => order.push(`done ${value} ${stack.disposed}`));\n      order.push(\"after call\");\n      setTimeout(() => {\n        if (order.join() !== \"defer,after call,done undefined true\") throw new Error(order.join());\n      });\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "fulfills disposeAsync's promise with undefined once the AsyncDisposableStack is disposed (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const stack = new AsyncDisposableStack();\n      stack.defer(() => { order.push(\"defer\"); });\n      stack.disposeAsync().then((value) => order.push(`done ${value} ${stack.disposed}`));\n      order.push(\"after call\");\n      setTimeout(() => {\n        if (order.join() !== \"defer,after call,done undefined false\") throw new Error(order.join());\n      });\n    ",
           "thrown": "defer,after call,done undefined true",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "stops where a method runs in a call other than the one that made it",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let kept: AsyncDisposable | undefined;\n      let count = 0;\n      const run = async (isFirst: boolean) => {\n        const label = isFirst ? \"first\" : \"second\";\n        const resource = { async [Symbol.asyncDispose]() { count += label === \"first\" ? 1 : 10; } };\n        if (isFirst) {\n          kept = resource;\n          return;\n        }\n        if (kept !== undefined) {\n          await using _ = kept;\n        }\n      };\n      run(true);\n      run(false);\n      setTimeout(() => {\n        if (count !== 1) throw new Error(String(count));\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs an async function that an AsyncDisposableStack defers, which changes the locals of the async call that made it (1)",
@@ -8453,13 +8453,13 @@
         {
           "name": "reads the dispose getter of what a using declaration holds once (1)",
           "source": "\n      let count = 0;\n      const resource = {\n        get [Symbol.dispose]() {\n          count += 1;\n          return function () {};\n        },\n      };\n      {\n        using held = resource;\n      }\n      if (count !== 1) throw new Error(String(count));\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "reads the dispose getter of what a using declaration holds once (2)",
           "source": "\n      let count = 0;\n      const resource = {\n        get [Symbol.dispose]() {\n          count += 1;\n          return function () {};\n        },\n      };\n      {\n        using held = resource;\n      }\n      if (count !== 2) throw new Error(String(count));\n    ",
           "thrown": "1",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "throws a TypeError where move runs on a stack of the other kind (1)",
@@ -8473,13 +8473,13 @@
         {
           "name": "rejects what an async function returns where disposing throws (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let count = 0;\n      const run = async () => {\n        await using held = { [Symbol.dispose]() { throw new TypeError(\"dispose\"); } };\n        throw new RangeError(\"body\");\n      };\n      const fail = async () => {\n        await using held = {} as AsyncDisposable;\n      };\n      const check = async () => {\n        try {\n          await run();\n        } catch (error) {\n          if (\n            error instanceof SuppressedError &&\n            error.error instanceof TypeError &&\n            error.suppressed instanceof RangeError\n          ) {\n            count += 1;\n          }\n        }\n        try {\n          await fail();\n        } catch (error) {\n          if (error instanceof TypeError) count += 10;\n        }\n      };\n      check();\n      setTimeout(() => {\n        if (count !== 11) throw new Error(String(count));\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "rejects what an async function returns where disposing throws (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let count = 0;\n      const run = async () => {\n        await using held = { [Symbol.dispose]() { throw new TypeError(\"dispose\"); } };\n        throw new RangeError(\"body\");\n      };\n      const fail = async () => {\n        await using held = {} as AsyncDisposable;\n      };\n      const check = async () => {\n        try {\n          await run();\n        } catch (error) {\n          if (\n            error instanceof SuppressedError &&\n            error.error instanceof TypeError &&\n            error.suppressed instanceof RangeError\n          ) {\n            count += 1;\n          }\n        }\n        try {\n          await fail();\n        } catch (error) {\n          if (error instanceof TypeError) count += 10;\n        }\n      };\n      check();\n      setTimeout(() => {\n        if (count !== 10) throw new Error(String(count));\n      });\n    ",
           "thrown": "11",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "stops where a script makes more symbols than it has calls of Symbol",
@@ -9368,30 +9368,30 @@
         {
           "name": "flattens the arrays that flatMap's mapper returns (1)",
           "source": "\n      const holder = { count: 0 };\n      function* letters() {\n        yield \"a\";\n        yield \"b\";\n        yield \"c\";\n      }\n      let calls = 0;\n      const flat = letters().flatMap((value, count) => {\n        calls += 1;\n        return value === \"a\" ? [count] : value === \"b\" ? [1, 2] : [];\n      });\n      if (Number(calls) !== 0) throw new Error(\"eager\");\n      const first = flat.next();\n      if (first.value !== 0 || Number(calls) !== 1) throw new Error(\"first\");\n      let total = 0;\n      for (const value of flat) total += value;\n      if (total !== 3 || Number(calls) !== 3) throw new Error(\"rest\");\n      let isThrown = false;\n      try {\n        for (const unused of letters().flatMap(() => \"string\"));\n      } catch (error) {\n        isThrown = error instanceof TypeError;\n      }\n      if (!isThrown) throw new Error(\"string\");\n      holder.count = 1;\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "flattens the arrays that flatMap's mapper returns (2)",
           "source": "\n      const holder = { count: 0 };\n      function* letters() {\n        yield \"a\";\n        yield \"b\";\n        yield \"c\";\n      }\n      let calls = 0;\n      const flat = letters().flatMap((value, count) => {\n        calls += 1;\n        return value === \"a\" ? [count] : value === \"b\" ? [1] : [];\n      });\n      if (Number(calls) !== 0) throw new Error(\"eager\");\n      const first = flat.next();\n      if (first.value !== 0 || Number(calls) !== 1) throw new Error(\"first\");\n      let total = 0;\n      for (const value of flat) total += value;\n      if (total !== 3 || Number(calls) !== 3) throw new Error(\"rest\");\n      let isThrown = false;\n      try {\n        for (const unused of letters().flatMap(() => \"string\"));\n      } catch (error) {\n        isThrown = error instanceof TypeError;\n      }\n      if (!isThrown) throw new Error(\"string\");\n      holder.count = 1;\n    ",
           "thrown": "rest",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "flattens the arrays that flatMap's mapper returns (3)",
           "source": "\n      const holder = { count: 0 };\n      function* letters() {\n        yield \"a\";\n        yield \"b\";\n        yield \"c\";\n      }\n      let calls = 0;\n      const flat = letters().flatMap((value, count) => {\n        calls += 1;\n        return value === \"a\" ? [count] : value === \"b\" ? [1, 2] : [];\n      });\n      if (Number(calls) !== 0) throw new Error(\"eager\");\n      const first = flat.next();\n      if (first.value !== 0 || Number(calls) !== 1) throw new Error(\"first\");\n      let total = 0;\n      for (const value of flat) total += value;\n      if (total !== 3 || Number(calls) !== 3) throw new Error(\"rest\");\n      let isThrown = false;\n      try {\n        for (const unused of letters().flatMap(() => [0]));\n      } catch (error) {\n        isThrown = error instanceof TypeError;\n      }\n      if (!isThrown) throw new Error(\"string\");\n      holder.count = 1;\n    ",
           "thrown": "string",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "iterates the helper that a call makes in a for-of (1)",
           "source": "\n      const holder = { count: 0 };\n      function* count() {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n      for (const value of count().map((value) => value * 2)) holder.count += value;\n      if (holder.count !== 12) throw new Error(\"sum\");\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "iterates the helper that a call makes in a for-of (2)",
           "source": "\n      const holder = { count: 0 };\n      function* count() {\n        yield 1;\n        yield 2;\n        yield 3;\n      }\n      for (const value of count().map((value) => value * 3)) holder.count += value;\n      if (holder.count !== 12) throw new Error(\"sum\");\n    ",
           "thrown": "sum",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "makes an array with Array.from of an array, a string, or an object of only a length (1)",
@@ -9423,7 +9423,7 @@
         {
           "name": "unrolls a generator's counted loop that yields",
           "source": "\n      function* g(): Generator<number> {\n        for (let i = 0; i < 5; ++i) {\n          if (i === 3) continue;\n          yield i * 10;\n        }\n        yield 99;\n      }\n      const iter = g();\n      const first = iter.next();\n      iter.next();\n      const third = iter.next();\n      const rest = iter.toArray();\n      function* h(): Generator<number> {\n        for (let i = 4; i >= 0; i -= 2) {\n          if (i === 0) break;\n          yield i;\n        }\n      }\n      const down = h().toArray();\n      if (first.value !== 0 || third.value !== 20 || rest.join() !== \"40,99\" || down.join() !== \"4,2\") {\n        throw new Error(\"unrolled\");\n      }\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "steps the array's iterator that Iterator.from gives back as the array changes",
@@ -10065,24 +10065,24 @@
         {
           "name": "throws what disposing a resource throws, suppressing the error before it (1)",
           "source": "\n      let count = 0;\n      try {\n        using held = { [Symbol.dispose]() { count += 1; } };\n        throw new RangeError(\"body\");\n      } catch (error) {\n        if (error instanceof RangeError) count += 10;\n      }\n      try {\n        using held = { [Symbol.dispose]() { throw new TypeError(\"dispose\"); } };\n        throw new RangeError(\"body\");\n      } catch (error) {\n        if (error instanceof SuppressedError) count += 100;\n        if (error instanceof SuppressedError && error.error instanceof TypeError) count += 1000;\n        if (error instanceof SuppressedError && error.suppressed instanceof RangeError) {\n          count += 10000;\n        }\n      }\n      try {\n        using held = {} as Disposable;\n      } catch (error) {\n        if (error instanceof TypeError) count += 100000;\n      }\n      if (count !== 111111) throw new Error(String(count));\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "throws what disposing a resource throws, suppressing the error before it (2)",
           "source": "\n      let count = 0;\n      try {\n        using held = { [Symbol.dispose]() { count += 1; } };\n        throw new RangeError(\"body\");\n      } catch (error) {\n        if (error instanceof RangeError) count += 10;\n      }\n      try {\n        using held = { [Symbol.dispose]() { throw new TypeError(\"dispose\"); } };\n        throw new RangeError(\"body\");\n      } catch (error) {\n        if (error instanceof SuppressedError) count += 100;\n        if (error instanceof SuppressedError && error.error instanceof TypeError) count += 1000;\n        if (error instanceof SuppressedError && error.suppressed instanceof RangeError) {\n          count += 10000;\n        }\n      }\n      try {\n        using held = {} as Disposable;\n      } catch (error) {\n        if (error instanceof TypeError) count += 100000;\n      }\n      if (count !== 11111) throw new Error(String(count));\n    ",
           "thrown": "111111",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "disposes the AsyncDisposableStack that an await using declaration holds (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const run = async () => {\n        {\n          await using stack = new AsyncDisposableStack();\n          stack.defer(() => { order.push(\"defer\"); });\n        }\n        order.push(\"after\");\n      };\n      run();\n      order.push(\"called\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"));\n      setTimeout(() => {\n        if (order.join() !== \"defer,called,tick 1,after,tick 2\") throw new Error(order.join());\n      });\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "disposes the AsyncDisposableStack that an await using declaration holds (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      const order: string[] = [];\n      const run = async () => {\n        {\n          await using stack = new AsyncDisposableStack();\n          stack.defer(() => { order.push(\"defer\"); });\n        }\n        order.push(\"after\");\n      };\n      run();\n      order.push(\"called\");\n      Promise.resolve()\n        .then(() => order.push(\"tick 1\"))\n        .then(() => order.push(\"tick 2\"));\n      setTimeout(() => {\n        if (order.join() !== \"defer,called,after,tick 1,tick 2\") throw new Error(order.join());\n      });\n    ",
           "thrown": "defer,called,tick 1,after,tick 2",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "awaits each function and resource that an AsyncDisposableStack disposes, as Node does (1)",
@@ -10096,24 +10096,24 @@
         {
           "name": "follows the DisposableStack that a callback calls in a helper that takes callbacks (1)",
           "source": "\n      const seen: string[] = [];\n      const record = (run: () => void) => {\n        try {\n          run();\n        } catch (error) {\n          seen.push(error instanceof ReferenceError ? \"ReferenceError\" : \"other\");\n          return;\n        }\n        seen.push(\"none\");\n      };\n      const stack = new DisposableStack();\n      record(() => {\n        stack.move();\n      });\n      const moved = new AsyncDisposableStack();\n      moved.disposeAsync();\n      record(() => {\n        moved.move();\n      });\n      seen.push(String(stack.disposed));\n      if (seen.join() !== \"none,ReferenceError,true\") throw new Error(seen.join());\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "follows the DisposableStack that a callback calls in a helper that takes callbacks (2)",
           "source": "\n      const seen: string[] = [];\n      const record = (run: () => void) => {\n        try {\n          run();\n        } catch (error) {\n          seen.push(error instanceof ReferenceError ? \"ReferenceError\" : \"other\");\n          return;\n        }\n        seen.push(\"none\");\n      };\n      const stack = new DisposableStack();\n      record(() => {\n        stack.move();\n      });\n      const moved = new AsyncDisposableStack();\n      moved.disposeAsync();\n      record(() => {\n        moved.move();\n      });\n      seen.push(String(stack.disposed));\n      if (seen.join() !== \"none,ReferenceError,false\") throw new Error(seen.join());\n    ",
           "thrown": "none,ReferenceError,true",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "runs an arrow that defer takes, which may change the locals of the async call that made it (1)",
           "source": "\n      const order: string[] = [];\n      const run = async (name: string) => {\n        let count = 0;\n        {\n          using stack = new DisposableStack();\n          stack.defer(() => { count += 1; });\n        }\n        order.push(`${name} ${count}`);\n      };\n      run(\"a\");\n      run(\"b\");\n      if (order.join() !== \"a 1,b 1\") throw new Error(order.join());\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "runs an arrow that defer takes, which may change the locals of the async call that made it (2)",
           "source": "\n      const order: string[] = [];\n      const run = async (name: string) => {\n        let count = 0;\n        {\n          using stack = new DisposableStack();\n          stack.defer(() => { count += 1; });\n        }\n        order.push(`${name} ${count}`);\n      };\n      run(\"a\");\n      run(\"b\");\n      if (order.join() !== \"a 1,b 2\") throw new Error(order.join());\n    ",
           "thrown": "a 1,b 1",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "resumes a function that an AsyncDisposableStack defers with the locals that its async call changed meanwhile (1)",
@@ -10781,13 +10781,13 @@
       "runs": [
         {
           "name": "agrees with Node on 4",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "rejects the expectation 3",
           "replace": ["= 4", "= 3"],
           "thrown": "thrown",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         }
       ]
     },
@@ -11103,7 +11103,7 @@
           "name": "rejects replacing !Object.isFrozen(missing) with Object.isFrozen(missing)",
           "source": "\n      const holder = { seen: 0 };\n      const made = () => 1;\n      function declared() {}\n      if (!Object.isExtensible(made) || Object.isFrozen(declared)) throw new Error(\"made\");\n      const revoke = Proxy.revocable({}, {}).revoke;\n      if (!Object.isExtensible(revoke)) throw new Error(\"revoke\");\n      const thrower = Object.getOwnPropertyDescriptor(Function.prototype, \"caller\")!.get!;\n      if (Object.isExtensible(thrower) || !Object.isFrozen(thrower)) throw new Error(\"thrower\");\n      const missing = Object.getOwnPropertyDescriptor({ a: 1 }, \"a\")!.get;\n      if (Object.isExtensible(missing) || Object.isFrozen(missing)) throw new Error(\"missing\");\n      holder.seen = 1;\n    ",
           "thrown": "thrower",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "rejects replacing !Object.isExtensible(revoke) with Object.isExtensible(revoke)",
@@ -11117,7 +11117,7 @@
           "name": "agrees with Node",
           "replace": ["f (", "f (!"],
           "thrown": "thrower",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "rejects replacing !Object.isFrozen(thrower) with Object.isFrozen(thrower)",
@@ -11734,7 +11734,7 @@
             "globalThis.parseInt;\n    \nif (holder.value !== 1) throw new Error(\"value\");"
           ],
           "thrown": "value",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "reads the var's value at globalThis.parseInt (2)",
@@ -11759,7 +11759,7 @@
             "globalThis[\"parseInt\"];\n    \nif (holder.value !== 1) throw new Error(\"value\");"
           ],
           "thrown": "value",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "reads the var's value at globalThis[\"parseInt\"] (2)",
@@ -12137,12 +12137,12 @@
         {
           "name": "reads the value of a var that declares the key (1)",
           "thrown": "seen 2",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "reads the value of a var that declares the key (2)",
           "replace": ["!== 1", "!== 2"],
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "stops where the host gives the global object the key",
@@ -12447,12 +12447,12 @@
           "name": "rejects a wrong closed",
           "source": "\n      const log: string[] = [];\n      function* g(): Generator<number, undefined, undefined> {\n        try {\n          yield 1;\n          yield 2;\n        } finally {\n          log.push(\"finally\");\n        }\n        return undefined;\n      }\n      const mapped = g().map((value) => value * 2);\n      mapped.next();\n      const closed = mapped.return!();\n      const after = mapped.next();\n      if (closed.done !== true || after.done !== true || log.join() !== \"\") {\n        throw new Error(\"closed\");\n      }\n    ",
           "thrown": "closed",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "runs the finally of a generator that the helper wraps",
           "source": "\n      const log: string[] = [];\n      function* g(): Generator<number, undefined, undefined> {\n        try {\n          yield 1;\n          yield 2;\n        } finally {\n          log.push(\"finally\");\n        }\n        return undefined;\n      }\n      const mapped = g().map((value) => value * 2);\n      mapped.next();\n      const closed = mapped.return!();\n      const after = mapped.next();\n      if (closed.done !== true || after.done !== true || log.join() !== \"finally\") {\n        throw new Error(\"closed\");\n      }\n    ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         }
       ]
     },
@@ -12712,24 +12712,24 @@
         {
           "name": "agrees with Node on run,0,1,loop,loop,for where a function returns and loops leave",
           "thrown": "Expected ';', got 'ident'",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "agrees with Node on body,c,b,a",
           "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      {\n        using first = make(\"a\"), second = make(\"b\");\n        using third = make(\"c\");\n        using nothing = null;\n        order.push(\"body\");\n      }\n      if (order.join() !== \"body,c,b,a\") throw new Error(order.join());\n    ",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "rejects the expectation run,0,1,for,loop,loop",
           "replace": ["loop,loop,for", "for,loop,loop"],
           "thrown": "Expected ';', got 'ident'",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects the expectation body,a,b,c",
           "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      {\n        using first = make(\"a\"), second = make(\"b\");\n        using third = make(\"c\");\n        using nothing = null;\n        order.push(\"body\");\n      }\n      if (order.join() !== \"body,a,b,c\") throw new Error(order.join());\n    ",
           "thrown": "body,c,b,a",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         }
       ]
     },
@@ -12740,24 +12740,24 @@
       "runs": [
         {
           "name": "calls the return method of the iterator that Iterator.prototype[Symbol.dispose] takes (1)",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "calls the return method of the iterator that Iterator.prototype[Symbol.dispose] takes (2)",
           "replace": ["== 1", "== 0"],
           "thrown": "1",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "rejects the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] where return throws (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      async function* generator() {}\n      const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype));\n      const order: string[] = [];\n    \n        const resource = { return() { throw new RangeError(\"return\"); } };\n        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);\n        promise.then(\n          () => order.push(\"fulfilled\"),\n          (error: unknown) => order.push(error instanceof RangeError ? \"rejected\" : \"other\"),\n        );\n        order.push(\"after call\");\n        setTimeout(() => {\n          if (order.join() !== \"after call,rejected\") throw new Error(order.join());\n        });\n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "rejects the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] where return throws (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      async function* generator() {}\n      const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype));\n      const order: string[] = [];\n    \n        const resource = { return() { throw new RangeError(\"return\"); } };\n        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);\n        promise.then(\n          () => order.push(\"fulfilled\"),\n          (error: unknown) => order.push(error instanceof RangeError ? \"rejected\" : \"other\"),\n        );\n        order.push(\"after call\");\n        setTimeout(() => {\n          if (order.join() !== \"rejected,after call\") throw new Error(order.join());\n        });\n      ",
           "thrown": "after call,rejected",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "reads the return method of the iterator through its getter once (1)",
@@ -12765,46 +12765,46 @@
             "return() { seen.count += 1; return {}",
             "get return() { seen.count += 1; return undefined"
           ],
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "reads the return method of the iterator through its getter once (2)",
           "source": "\n      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));\n    \n        const seen = { count: 0 };\n        const resource = { get return() { seen.count += 1; return undefined; } };\n        IteratorPrototype[Symbol.dispose].call(resource);\n        if (seen.count !== 2) throw new Error(String(seen.count));\n      ",
           "thrown": "1",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "fulfills the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] with undefined (1)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      async function* generator() {}\n      const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype));\n      const order: string[] = [];\n    \n        const resource = { return() { order.push(\"return\"); return 1; } };\n        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);\n        promise.then((value: unknown) => order.push(String(value)));\n        order.push(\"after call\");\n        setTimeout(() => {\n          if (order.join() !== \"return,after call,undefined\") throw new Error(order.join());\n        });\n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "fulfills the promise of %AsyncIteratorPrototype%[Symbol.asyncDispose] with undefined (2)",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      async function* generator() {}\n      const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(generator.prototype));\n      const order: string[] = [];\n    \n        const resource = { return() { order.push(\"return\"); return 1; } };\n        const promise: Promise<unknown> = AsyncIteratorPrototype[Symbol.asyncDispose].call(resource);\n        promise.then((value: unknown) => order.push(String(value)));\n        order.push(\"after call\");\n        setTimeout(() => {\n          if (order.join() !== \"return,after call,1\") throw new Error(order.join());\n        });\n      ",
           "thrown": "return,after call,undefined",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "returns undefined from Iterator.prototype[Symbol.dispose] (1)",
           "source": "\n      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));\n    \n        const result = IteratorPrototype[Symbol.dispose]();\n        if (result !== undefined) throw new Error(String(result));\n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "returns undefined from Iterator.prototype[Symbol.dispose] (2)",
           "source": "\n      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));\n    \n        const result = IteratorPrototype[Symbol.dispose]();\n        if (result !== null) throw new Error(String(result));\n      ",
           "thrown": "undefined",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "throws a TypeError where Iterator.prototype[Symbol.dispose] takes undefined (1)",
           "source": "\n      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));\n    \n        const seen = { name: \"none\" };\n        try {\n          IteratorPrototype[Symbol.dispose].call(undefined);\n        } catch (error) {\n          seen.name = error instanceof TypeError ? \"TypeError\" : \"other\";\n        }\n        if (seen.name !== \"TypeError\") throw new Error(seen.name);\n      ",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         },
         {
           "name": "throws a TypeError where Iterator.prototype[Symbol.dispose] takes undefined (2)",
           "source": "\n      const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));\n    \n        const seen = { name: \"none\" };\n        try {\n          IteratorPrototype[Symbol.dispose].call(undefined);\n        } catch (error) {\n          seen.name = error instanceof TypeError ? \"TypeError\" : \"other\";\n        }\n        if (seen.name !== \"none\") throw new Error(seen.name);\n      ",
           "thrown": "TypeError",
-          "stop": "tla-ts can't run a built-in that this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run a built-in that this program's spec leaves out of JS.tla"
         }
       ]
     },
@@ -14715,19 +14715,19 @@
           "name": "stops where tla-ts can't follow what a with statement's object binds (1)",
           "source": "with (globalThis) {}",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "stops where tla-ts can't follow what a with statement's object binds (2)",
           "source": "var text = \"text\";\nwith (text) {}",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "stops where tla-ts can't follow what a with statement's object binds (3)",
           "source": "var dynamic: { [key: string]: unknown } = {};\n        dynamic.read = () => \"dynamic\";\n        function read() { return \"outer\"; }\n        with (dynamic) read();",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -15420,19 +15420,19 @@
         {
           "name": "stops where the declaration runs",
           "thrown": "Declaration is not allowed",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "agrees with Node",
           "source": "\n      const seen: string[] = [];\n      (function () {\n        for (let i = 0; i < 2; i++) {\n          if (i > 5) function h() {}\n        }\n        // @ts-ignore\n        seen.push(typeof h);\n      })();\n      if (seen.join() !== \"undefined\") throw new Error(seen.join());\n    ",
           "thrown": "Declaration is not allowed",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects the wrong expectation",
           "replace": ["> 0", "> 5"],
           "thrown": "Declaration is not allowed",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -15840,13 +15840,13 @@
         {
           "name": "agrees with Node",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects a var that its initializer assigns where the object binds the name",
           "replace": ["1,", "0,1"],
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -15858,13 +15858,13 @@
         {
           "name": "rejects a write in strict mode to a binding that the object deleted",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "agrees with Node",
           "replace": ["e,", "e,true,"],
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -15876,19 +15876,19 @@
         {
           "name": "stops where the object holds the class",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "agrees with Node",
           "source": "\n      const seen: unknown[] = [];\n      function* values() {\n        var x = 1;\n        with ({ x: 2 }) {\n          yield x;\n        }\n        yield x;\n      }\n      const iterator = values();\n      seen.push(iterator.next().value, iterator.next().value);\n      try {\n        throw new TypeError(\"thrown\");\n      } catch (error) {\n        with ({}) seen.push(error instanceof TypeError);\n      }\n      if (seen.join() !== \"2,1,true\") throw new Error(\"seen \" + seen.join());\n    ",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects a yield of the outer binding",
           "source": "\n      const seen: unknown[] = [];\n      function* values() {\n        var x = 1;\n        with ({ x: 2 }) {\n          yield x;\n        }\n        yield x;\n      }\n      const iterator = values();\n      seen.push(iterator.next().value, iterator.next().value);\n      try {\n        throw new TypeError(\"thrown\");\n      } catch (error) {\n        with ({}) seen.push(error instanceof TypeError);\n      }\n      if (seen.join() !== \"1,1,true\") throw new Error(\"seen \" + seen.join());\n    ",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -16123,7 +16123,7 @@
       "runs": [
         {
           "name": "names eval",
-          "stop": "tla-ts can't run PerformEval, which this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run PerformEval, which this program's spec leaves out of JS.tla"
         },
         {
           "name": "agrees with Node",
@@ -16136,7 +16136,7 @@
           "name": "names Function",
           "replace": ["1", "2"],
           "thrown": "function anonymous(\n) {\n1 + 1\n}",
-          "stop": "tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of JS.tla"
         },
         {
           "name": "rejects a function that gives another value",
@@ -16149,7 +16149,7 @@
         {
           "name": "names Function where call runs it",
           "source": "\n        const found = Object.hasOwn({}, \"x\");\n        Function.call(globalThis, \"return 1\");\n        if (found) throw new Error(\"found\");\n      ",
-          "stop": "tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of ESCore"
+          "stop": "tla-ts can't run CreateDynamicFunction, which this program's spec leaves out of JS.tla"
         }
       ]
     },
@@ -16734,12 +16734,12 @@
         {
           "name": "agrees with Node",
           "thrown": "seen ,object,function,undefined",
-          "stop": "tla-ts can't run the host's setImmediate, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's setImmediate, which JS.tla leaves out"
         },
         {
           "name": "rejects a variable that the environment doesn't hold",
           "replace": ["checked", ""],
-          "stop": "tla-ts can't run the host's setImmediate, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's setImmediate, which JS.tla leaves out"
         },
         {
           "name": "stops where a script reads Node's process object otherwise",
@@ -17205,7 +17205,7 @@
         {
           "name": "rejects a size that the writes skip",
           "thrown": "seen 3",
-          "stop": "tla-ts can't run the host's console, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's console, which JS.tla leaves out"
         }
       ]
     },
@@ -18016,18 +18016,18 @@
       "runs": [
         {
           "name": "agrees with Node where the loop never runs",
-          "stop": "tla-ts can't run the host's console, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's console, which JS.tla leaves out"
         },
         {
           "name": "rejects another outcome",
           "replace": ["1", "2"],
           "thrown": "calls 1",
-          "stop": "tla-ts can't run the host's console, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's console, which JS.tla leaves out"
         },
         {
           "name": "stops where the loop runs",
           "replace": ["fals", "tru"],
-          "stop": "tla-ts can't run the host's console, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's console, which JS.tla leaves out"
         }
       ]
     },
@@ -20483,13 +20483,13 @@
       "runs": [
         {
           "name": "agrees with Node",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["left,async", "async,left"],
           "thrown": "body,after call,left,async,tick 1,sync,tick 2,tick 3,done",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         }
       ]
     },
@@ -21105,13 +21105,13 @@
         {
           "name": "agrees with Node",
           "thrown": "Declaration is not allowed",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects the wrong expectation",
           "replace": [",undefined", ",function"],
           "thrown": "Declaration is not allowed",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -21216,13 +21216,13 @@
         {
           "name": "agrees with Node",
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         },
         {
           "name": "rejects a binding that the object's unscopables block",
           "replace": [",var", ",env!"],
           "thrown": "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.",
-          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where JS.tla's runs it"
         }
       ]
     },
@@ -21936,13 +21936,13 @@
       "runs": [
         {
           "name": "agrees with Node",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         },
         {
           "name": "rejects the values in another order",
           "replace": ["0,1", "1,0"],
           "thrown": "seen 0,1,0,1",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "stop": "tla-ts can't compile a using declaration to JS.tla yet"
         }
       ]
     },
@@ -22080,7 +22080,7 @@
       "runs": [
         {
           "name": "stops where a script reads process.nextTick, as TypeScript's isNodeLikeSystem does",
-          "stop": "tla-ts can't run the host's process, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's process, which JS.tla leaves out"
         }
       ]
     },
@@ -22184,13 +22184,13 @@
         {
           "name": "agrees with Node",
           "thrown": "result 1,undefined,y,function",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         },
         {
           "name": "rejects another result",
           "replace": ["6", "5"],
           "thrown": "result 1,undefined,y,function",
-          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where ESCore runs it as a script in a new context, so its globals, this, and vars differ"
+          "wrong": "realcode: Node runs a .ts file without module syntax as CommonJS, where JS.tla runs it as a script in a new context, so its globals, this, and vars differ"
         }
       ]
     },
@@ -22970,7 +22970,7 @@
           "source": "\n          let isLeft = false;\n          let isRight = false;\n          const isClear = () => !isLeft || !isRight;\n          export const setLeft = () => {\n            if (isClear()) {} else return;\n            isLeft = true;\n          };\n        ",
           "status": "success",
           "generated": 3,
-          "correction": "Today's compiler counted 4 generated states; a search of the module in Node generates 3, as ESCore does: the call from the state where both flags are set writes nothing, so it is no step."
+          "correction": "Today's compiler counted 4 generated states; a search of the module in Node generates 3, as JS.tla does: the call from the state where both flags are set writes nothing, so it is no step."
         },
         {
           "name": "stops the check when an action throws",
@@ -23005,7 +23005,7 @@
           "source": "\n      type Key = \"a\" | \"b\";\n      let held = new Map<Key, Set<0 | 1>>([[\"a\", new Set()], [\"b\", new Set()]]);\n      export const take = (key: Key, item: 0 | 1) => {\n        held.get(key)!.add(item);\n      };\n    ",
           "status": "success",
           "distinct": 25,
-          "correction": "Today's compiler found 16 distinct states, 4 Sets per key; a Set keeps its insertion order, so {0, 1} and {1, 0} differ, and each key holds one of 5 Sets, as ESCore finds."
+          "correction": "Today's compiler found 16 distinct states, 4 Sets per key; a Set keeps its insertion order, so {0, 1} and {1, 0} differ, and each key holds one of 5 Sets, as JS.tla finds."
         }
       ]
     },
@@ -23030,7 +23030,7 @@
           "source": "\n      type Digit = 1 | 2 | 3;\n      let seen = new Set<Digit>();\n      export const see = (digit: Digit) => {\n        seen.add(digit);\n      };\n      export const isConsistent = () =>\n        [...seen].filter((digit) => digit > 1).length <= 2 &&\n        seen.values().every((digit) => digit >= 1) &&\n        new Set([...seen].map((digit) => digit * 2)).size === seen.size;\n    ",
           "status": "success",
           "distinct": 16,
-          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 16, as ESCore does."
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 16, as JS.tla does."
         },
         {
           "name": "compiles records with numeric keys to functions",
@@ -23043,7 +23043,7 @@
           "source": "\n      type Key = \"a\" | \"b\";\n      let owners = new Map<Key, 0 | 1>();\n      export const own = (key: Key, value: 0 | 1) => {\n        owners.set(key, value);\n      };\n      export const remove = (key: Key) => {\n        if (!owners.has(key)) return;\n        owners.delete(key);\n      };\n      export const isSmall = () => owners.size <= 2;\n    ",
           "status": "success",
           "distinct": 13,
-          "correction": "Today's compiler found 9 distinct states, as it kept a Map without its insertion order; a search of the module in Node finds 13, as ESCore does."
+          "correction": "Today's compiler found 9 distinct states, as it kept a Map without its insertion order; a search of the module in Node finds 13, as JS.tla does."
         },
         {
           "name": "matches JavaScript's remainder, division, and strings",
@@ -23066,7 +23066,7 @@
           "source": "\n      let names = new Set<string>();\n      export const add = (name: string) => {\n        names.add(name);\n      };\n      /** @noDeadlock */\n      export const isSmall = () => names.size < 3;\n    ",
           "status": "invariant-violation",
           "distinct": 11,
-          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 11, as ESCore does."
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 11, as JS.tla does."
         },
         {
           "name": "starts an array at every length up to 3",
@@ -23233,7 +23233,7 @@
           "source": "\n          \n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
           "distinct": 5,
-          "correction": "Without @symmetric, today's compiler found 4 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 5, as ESCore does."
+          "correction": "Without @symmetric, today's compiler found 4 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 5, as JS.tla does."
         },
         {
           "name": "reduces states with a symmetric type (2)",
@@ -23491,7 +23491,7 @@
           "name": "rejects a copy of the array",
           "source": "\n      interface Box {\n        items: number[];\n      }\n      const make = (size: number): Box => {\n        const box: Box = { items: [] };\n        const view = box.items;\n        for (let index = 0; index < size; index++) view.push(index);\n        return box;\n      };\n      export const count = (size: 0 | 1 | 2) => {\n        const made = make(size);\n        if (made.items.length === 2) throw new Error(\"count \" + size);\n        return made.items.length;\n      };\n    ",
           "status": "assumption-violation",
-          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which ESCore has no notion of.",
+          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which JS.tla has no notion of.",
           "failure": ["count 2"]
         }
       ]
@@ -23508,7 +23508,7 @@
           "name": "rejects an argument that the object lacks",
           "replace": ["] !", "] ="],
           "status": "assumption-violation",
-          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which ESCore has no notion of.",
+          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which JS.tla has no notion of.",
           "failure": ["arguments"]
         }
       ]
@@ -23655,7 +23655,7 @@
         {
           "name": "rejects the arguments unflipped",
           "status": "assumption-violation",
-          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which ESCore has no notion of.",
+          "correction": "A check that calls a function and reads no state is an ASSUME, so a throw in it fails the assumption. Today's compiler made it an invariant only because its heap held the objects, which JS.tla has no notion of.",
           "failure": ["result 9"]
         },
         {
@@ -23700,14 +23700,14 @@
         {
           "name": "rejects a smaller bound in the listed invariant",
           "status": "invariant-violation",
-          "stop": "tla-ts can't bind these parameters on ESCore yet"
+          "stop": "tla-ts can't bind these parameters on JS.tla yet"
         },
         {
           "name": "agrees with Node, and runs the listed action",
           "replace": ["= 3", "= 4"],
           "status": "deadlock",
           "distinct": 4,
-          "stop": "tla-ts can't bind these parameters on ESCore yet"
+          "stop": "tla-ts can't bind these parameters on JS.tla yet"
         }
       ]
     },
@@ -23797,14 +23797,14 @@
         {
           "name": "agrees with Node",
           "status": "success",
-          "stop": "tla-ts can't run the host's stackTraceLimit, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's stackTraceLimit, which JS.tla leaves out"
         },
         {
           "name": "rejects another description",
           "replace": ["fals", "tru"],
           "status": "error",
           "failure": ["seen true,1,false,false,true,1,function,false"],
-          "stop": "tla-ts can't run the host's stackTraceLimit, which ESCore leaves out"
+          "stop": "tla-ts can't run the host's stackTraceLimit, which JS.tla leaves out"
         }
       ]
     },

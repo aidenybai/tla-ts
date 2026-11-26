@@ -1,7 +1,7 @@
 import type { PreparedModule } from "./tlc/order";
 import type { Module } from "./ast";
 import { TlaTypeScriptError } from "./errors";
-import type { EscoreRuntime } from "./typescript/spec/prepare";
+import type { JsTlaRuntime } from "./typescript/spec/prepare";
 
 export interface CompileOptions {
   source: string;
@@ -23,25 +23,25 @@ export interface CompiledSpec {
   preparedModules: PreparedModule[];
 }
 
-// ESCore's runtime, which a process prepares once for every program it compiles.
-let escoreRuntime: EscoreRuntime | undefined;
+// JS.tla's runtime, which a process prepares once for every program it compiles.
+let jsTlaRuntime: JsTlaRuntime | undefined;
 
-// ESCore's runtime, prepared from ESCore's directory beside the package's sources. ESCore's host
+// JS.tla's runtime, prepared from JS.tla's directory beside the package's sources. JS.tla's host
 // runs on Node's vm, which a browser lacks.
-export const getEscoreRuntime = async () => {
+export const getJsTlaRuntime = async () => {
   const path = globalThis.process?.getBuiltinModule?.("node:path");
   if (path === undefined) {
     throw new TlaTypeScriptError("tla-ts can't compile TypeScript outside Node yet");
   }
   const prepare = await import("./typescript/spec/prepare");
-  escoreRuntime ??= prepare.prepareRuntime(path.join(import.meta.dirname, "../ecmascript"));
-  return escoreRuntime;
+  jsTlaRuntime ??= prepare.prepareRuntime(path.join(import.meta.dirname, "../ecmascript"));
+  return jsTlaRuntime;
 };
 
-// Compiles a TypeScript or JavaScript file into a spec by specializing ESCore. The TypeScript
+// Compiles a TypeScript or JavaScript file into a spec by specializing JS.tla. The TypeScript
 // compiler takes a while to load, so only compiling loads it.
 export const compile = async (options: CompileOptions): Promise<CompiledSpec> => {
-  const runtime = await getEscoreRuntime();
+  const runtime = await getJsTlaRuntime();
   const api = await import("./typescript/spec/api");
-  return api.compileEscore(options, runtime);
+  return api.compileJsTla(options, runtime);
 };

@@ -229,8 +229,8 @@ const VALUE_FINGERPRINTED = 2;
 const VALUE_SELF_COMPARED = 4;
 // A set or function that markNormalized walked, every set within which TLC has normalized.
 const VALUE_DEEPLY_NORMALIZED = 8;
-// A record of ESCore's heap that CanonicalStateOf made, which it keeps as it is where its
-// numbering leaves the record and what it refers to where they are (see escore-canonical.ts).
+// A record of JS.tla's heap that CanonicalStateOf made, which it keeps as it is where its
+// numbering leaves the record and what it refers to where they are (see js-tla-canonical.ts).
 const VALUE_CANONICAL = 16;
 // A function each key of whose domain isOrderless, which a key stays once it is.
 const VALUE_KEYS_ORDERLESS = 32;
@@ -244,7 +244,7 @@ export const markCanonical = (value: FunctionValue) => {
 export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
-// ESCore's heap pages hold 256 records. A CanonicalPage's edges hold the realm's sizes they were
+// JS.tla's heap pages hold 256 records. A CanonicalPage's edges hold the realm's sizes they were
 // walked from, a bit for each record that is a WeakMap, a bit for each that is a promise, where
 // each record's edges start, and then each record's edges, the nodes it refers to by their numbers.
 export const PAGE_BITS = 8;
@@ -253,10 +253,10 @@ export const WEAK_BITS = 2;
 export const PROMISE_BITS = WEAK_BITS + PAGE_SIZE / 32;
 export const EDGE_STARTS = PROMISE_BITS + PAGE_SIZE / 32;
 
-// A page of ESCore's heap that CanonicalStateOf made. Its edges hold the nodes that each record
+// A page of JS.tla's heap that CanonicalStateOf made. Its edges hold the nodes that each record
 // refers to, and its locations where the record holds them. Each record is its source with those
 // nodes at those locations, which makeRecord makes as a reader first reads it (see
-// escore-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
+// js-tla-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
 // its locations in its source. An EXCEPT or Append that writes a record gives a page with a bit set
 // for its slot in writtenSlots, whose source, locations, plan, hash and edges no longer hold, and
 // whose hash is 0 until the record's is ready, as EXCEPT leaves a function's.

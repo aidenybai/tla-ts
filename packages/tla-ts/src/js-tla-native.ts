@@ -271,10 +271,10 @@ const createDefine =
 const isStringCharacter = (code: number) =>
   (code >= 32 && code <= 126) || code === 9 || code === 10 || code === 12 || code === 13;
 
-// The operators of an ESCore program's module that convert TLA+ values to ESCore's: StringUnits,
+// The operators of a JS.tla program's module that convert TLA+ values to JS.tla's: StringUnits,
 // a string's code units, and a model's SetToSeq, a set's elements in the order CHOOSE takes them,
 // which for a normalized set is the order it holds them in.
-export const createEscoreProgramOperators = (callReplaced: CallReplaced): Builtin[] => {
+export const createJsTlaProgramOperators = (callReplaced: CallReplaced): Builtin[] => {
   const define = createDefine(callReplaced);
   return [
     define("StringUnits", 1, (args) => {
@@ -292,7 +292,7 @@ export const createEscoreProgramOperators = (callReplaced: CallReplaced): Builti
   ];
 };
 
-export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
+export const createJsTlaNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
   const define = createDefine(callReplaced);
   // An operator of values, which falls back where an argument is an operator.
   const defineValues = (
@@ -920,7 +920,7 @@ const getKeepLazyValue = (arg: BuiltinArgument, context: Context | undefined) =>
 
 const isLazyFunction = (value: Value) => typeof value === "object" && value.kind === "LazyFunction";
 
-// ESCore's HeapPageSize and NamedBucket.
+// JS.tla's HeapPageSize and NamedBucket.
 const HEAP_PAGE_SIZE = 256;
 const NAMED_BUCKET = -1;
 // The units of "4294967295", 2^32 - 1, the least integer that isn't an array index.
@@ -1175,7 +1175,7 @@ const createBindingOperator = (
   evaluateBinary: undefined,
 });
 
-// ESCore's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
+// JS.tla's operators on its heap and property keys that tla-ts runs natively, while TLC runs the
 // runtime's TLA+: HeapGet, a heap's record at an index, IsArrayIndex, PropBucket, the bucket of an
 // object's props that holds a key, and CanonicalNumericIndexString, which gives Undefined for a
 // string NumToString can't give and a nonzero integer's Number for its canonical string. Each falls
@@ -1263,7 +1263,7 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
     createBindingOperator(callReplaced, "GetBindingValue", 4, getBindingValue),
     // KeyIndex(list, v): the first index of the list whose entry isn't Empty and is SameValueZero to
     // v, or 0, where each entry it reaches compares exactly: a Number of kind "int" against
-    // another, or a value of another type of ESCore's, which SameValueZero compares as it is.
+    // another, or a value of another type of JS.tla's, which SameValueZero compares as it is.
     define("KeyIndex", 2, (args, context) => {
       const list = getTuple(getValue(args[0]));
       const value = getValue(args[1]);
@@ -1292,7 +1292,7 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
   ];
 };
 
-// The types of ESCore's values that SameValueZero compares as they are, but for Numbers, and whose
+// The types of JS.tla's values that SameValueZero compares as they are, but for Numbers, and whose
 // fields hold only integers and sequences of them, which compare without failing.
 const COMPARED_TYPES = new Set([
   "undefined",

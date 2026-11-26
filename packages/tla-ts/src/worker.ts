@@ -2,7 +2,7 @@ const WORKER_THREADS_MODULE = "node:worker_threads";
 const V8_MODULE = "node:v8";
 
 // The stack, in MB, of each thread that checks a spec, measured to hold the deepest evaluations
-// of Effect's modules on ESCore with room to spare. Node gives its main thread about 1 MB.
+// of Effect's modules on JS.tla with room to spare. Node gives its main thread about 1 MB.
 export const CHECK_STACK_MB = 8;
 const BUN_JSC_MODULE = "bun:jsc";
 

@@ -81,7 +81,7 @@ const runNodeOnJsx = (directory: string, file: string) =>
   );
 
 describe("the CLI with TypeScript files", () => {
-  // ESCore parses each character of a JSON string and each element of a JSON array in a loop of its
+  // JS.tla parses each character of a JSON string and each element of a JSON array in a loop of its
   // own, which overflowed the check's stack where its CASE nested a call for each one.
   const getLongInputs = (offset: number) => ({
     "string.ts": `const text = JSON.parse(JSON.stringify("a".repeat(20000)));\nif (text.length !== ${20000 + offset}) throw new Error("length");\n`,
@@ -137,7 +137,7 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
-  // Skipped until ESCore runs JSX: its compile stops at a namespace's declaration.
+  // Skipped until JS.tla runs JSX: its compile stops at a namespace's declaration.
   it.skip("checks a file of JSX", () => {
     const directory = copyFixtures("passing");
     cpSync(join(FIXTURES, "../jsx/likes.tsx"), join(directory, "likes.tsx"));
@@ -197,7 +197,7 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
-  // An export named as a constant of the runtime's modules, as ESCore's Empty, None, and Absent,
+  // An export named as a constant of the runtime's modules, as JS.tla's Empty, None, and Absent,
   // takes a name of its own in TLA+, as one named as a definition of theirs does.
   describe("names an export that a constant of the runtime's modules takes", () => {
     const getModel = (last: number) =>
@@ -955,7 +955,7 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
-  // Skipped until ESCore prints what Node prints for an error that nothing catches, whose stack V8
+  // Skipped until JS.tla prints what Node prints for an error that nothing catches, whose stack V8
   // writes, as the wrong variant throws one.
   it.skip("checks a script", () => {
     const directory = copyFixtures("passing");
@@ -1060,7 +1060,7 @@ describe("the CLI with TypeScript files", () => {
     expect(getExit(runCli(directory, ["caught.ts"]))).toEqual([0, ""]);
   });
 
-  // Skipped until ESCore prints what Node prints for an error that nothing catches, whose stack V8
+  // Skipped until JS.tla prints what Node prints for an error that nothing catches, whose stack V8
   // writes: the CLI stops instead.
   it.skip.each([
     [
@@ -1109,7 +1109,7 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain('the second argument was:\n"one"');
   });
 
-  // Skipped until ESCore checks a model that imports files: its compile stops as it compiles the
+  // Skipped until JS.tla checks a model that imports files: its compile stops as it compiles the
   // model as a script.
   it.skip("reads names that a module re-exports", () => {
     const result = runCli(copyFixtures("project"), ["relay.ts"]);
@@ -1292,14 +1292,14 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
-  // Skipped until ESCore checks a model that imports files, as above.
+  // Skipped until JS.tla checks a model that imports files, as above.
   it.skip("checks a file of a project with the project's tsconfig.json", () => {
     const result = runCli(copyFixtures("project"), ["counter.ts"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("4 distinct states found");
   });
 
-  // Skipped until ESCore checks a model that imports files, as above.
+  // Skipped until JS.tla checks a model that imports files, as above.
   it.skip("checks a project whose declaration files import Node's built-in modules", () => {
     const directory = copyFixtures("project");
     const types = join(directory, "types/host");
@@ -1329,7 +1329,7 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("4 distinct states found");
   });
 
-  // Skipped until ESCore stops at a name that only a declaration file gives: it runs the read, whose
+  // Skipped until JS.tla stops at a name that only a declaration file gives: it runs the read, whose
   // ReferenceError's message V8 writes, and stops there.
   it.skip("stops where a model reads a name that only a declaration file gives", () => {
     const directory = copyFixtures("project");
@@ -1345,7 +1345,7 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
-  // Skipped until ESCore stops at a name that only a declaration file gives, as above.
+  // Skipped until JS.tla stops at a name that only a declaration file gives, as above.
   it.skip("stops where a model reads a global that the rest of its project declares", () => {
     const directory = copyFixtures("project");
     writeFileSync(join(directory, "environment.d.ts"), "declare const hostLimit: number;\n");
@@ -1360,7 +1360,7 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
-  // Skipped until ESCore checks a model that imports files, as above.
+  // Skipped until JS.tla checks a model that imports files, as above.
   it.skip("checks a file of a project where a file it doesn't import has type errors", () => {
     const directory = copyFixtures("project");
     writeFileSync(join(directory, "broken.ts"), 'export const limit: number = "three";\n');
@@ -1529,7 +1529,7 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
-  // Skipped until ESCore prints what Node prints for an error that nothing catches, as above.
+  // Skipped until JS.tla prints what Node prints for an error that nothing catches, as above.
   it.skip("checks a helper that calls itself with the function that it takes", () => {
     const directory = copyFixtures("passing");
     const getSource = (expected: number) =>

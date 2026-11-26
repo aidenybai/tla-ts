@@ -6,12 +6,12 @@ config: |
   CONSTANTS None = None Empty = Empty Absent = Absent
 includes:
   - ESBigNat.tla
-  - ESCore.tla
+  - JS.tla
   - ESNames.tla
   - ESNumber.tla
 ---*)
 ---- MODULE functions_and_arrays ----
-EXTENDS ESCore
+EXTENDS JS
 \* function fib(n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
 \* const squares = [1, 2, 3].map((x) => x * x);
 \* print(fib(6) + ":" + squares.join(","));
