@@ -1268,6 +1268,19 @@ const HOST_PATCHES = [
      THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
      ELSE ResolveWaiters(`,
   },
+  // A match writes RegExp's legacy static properties into %RegExp%'s data slot, which a model's
+  // write count leaves out: a model stops where its code reads or sets them (see ModelCallBuiltin),
+  // so a call that only matches changes nothing that the model's code reads.
+  {
+    name: "UpdateLegacyRegExpStatics",
+    from: "ELSE SetO(s, C, [O(s, C) EXCEPT !.slots.data =",
+    to: "ELSE [s EXCEPT !.objs = HeapSet(@, C.id, [O(s, C) EXCEPT !.slots.data =",
+  },
+  {
+    name: "UpdateLegacyRegExpStatics",
+    from: "parens |-> [i \\in 1..9 |-> Capture(i)]]])",
+    to: "parens |-> [i \\in 1..9 |-> Capture(i)]]])]",
+  },
   // V8 keeps RegExp's legacy static properties as strings, empty ones before any match, for any
   // receiver and after a subclass's match too, where the legacy RegExp features proposal, as
   // ESCore has it, throws.

@@ -853,6 +853,54 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A match writes RegExp's legacy static properties, which a model's state leaves out, so a check
+  // that matches changes nothing that the model reads, and a model stops where its code reads them.
+  describe("checks a model whose checks match a RegExp", () => {
+    // Whether Node, renaming to "bb" after each check, finds isShort false.
+    const isViolatedInNode = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `const model = await import(${JSON.stringify(pathToFileURL(join(directory, "model.ts")).href)});\nconsole.log([model.isShort(), (model.rename("bb"), model.isShort())].includes(false));`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim() === "true";
+
+    it.each([
+      ["/^.$/", "Error: Invariant isShort is violated."],
+      ["/^.{1,2}$/", "No error has been found"],
+    ])("agrees with Node where isShort matches %s", (pattern, outcome) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "model.ts"),
+        `let name = "a";\nexport const rename = (next: "a" | "bb") => {\n  name = next;\n};\nexport const isShort = () => ${pattern}.test(name);\n`,
+      );
+      expect(isViolatedInNode(directory)).toBe(outcome.startsWith("Error"));
+      expect(runCli(directory, ["model.ts"]).stdout).toContain(outcome);
+    });
+
+    // A step reads what the check's match wrote in Node, which the model's state leaves out.
+    it.each([
+      ["RegExp.$1"],
+      ['RegExp["$" + 1]'],
+      ['Object.getOwnPropertyDescriptor(RegExp, "lastMatch")?.get?.call(RegExp)'],
+    ])("stops where a step reads %s that a check's match wrote", (read) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "model.ts"),
+        `let name = "a";\nexport const rename = (next: "a" | "bb") => {\n  name = String(${read}) + next;\n};\nexport const isShort = () => /(a)/.test("a") && name.length < 3;\n`,
+      );
+      expect(isViolatedInNode(directory)).toBe(true);
+      const result = runCli(directory, ["model.ts"]);
+      expect(result.stdout).not.toContain("No error has been found");
+      expect(result.stdout).toContain(
+        "tla-ts can't read or set a legacy static property of RegExp in a model",
+      );
+    });
+  });
+
   // A note names the kind of a parameter's type that keeps tla-ts from calling an export, or the
   // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {

@@ -121,7 +121,14 @@ Mutators ==
   {<<"Array", m>> : m \in {"copyWithin", "fill", "pop", "push", "reverse", "shift", "sort", "splice", "unshift"}}
   \cup {<<"Map", m>> : m \in {"clear", "delete", "set"}} \cup {<<"Set", m>> : m \in {"add", "clear", "delete"}}
   \cup {<<"WeakMap", m>> : m \in {"delete", "set"}} \cup {<<"WeakSet", m>> : m \in {"add", "delete"}}
+\* The accessors of RegExp's legacy static properties, whose values a model's write count leaves
+\* out, so a model stops where its code reads or sets one.
+LegacyRegExpAccessors ==
+  {<<"RegExp", m>> : m \in {"legacyInput", "legacySetInput", "legacyLastMatch", "legacyLastParen", "legacyLeftContext",
+                            "legacyRightContext", "legacyParen1", "legacyParen2", "legacyParen3", "legacyParen4",
+                            "legacyParen5", "legacyParen6", "legacyParen7", "legacyParen8", "legacyParen9"}}
 ModelCallBuiltin(s, f, id, this, args, nt) ==
+  IF id \in LegacyRegExpAccessors THEN Assert(FALSE, "tla-ts can't read or set a legacy static property of RegExp in a model, whose state leaves out what a match writes there") ELSE
   ProgramCallBuiltin(IF id \in Mutators /\ IsObject(this) /\ this.id <= s.writeMark.objects THEN [s EXCEPT !.written = TRUE] ELSE s,
                      f, id, this, args, nt)
 RECURSIVE SetToSeq(_)
