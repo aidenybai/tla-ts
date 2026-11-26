@@ -1217,7 +1217,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     return isEveryUnmoved;
   };
   const getLocated = (node: number, page: CanonicalPage | undefined) =>
-    walkedLocations.has(node) ? walkedLocations.get(node) : page?.locations[getSlot(node)];
+    page !== undefined && getEdgeStart(node) === PAGE_EDGES
+      ? page.locations[getSlot(node)]
+      : walkedLocations.has(node)
+        ? walkedLocations.get(node)
+        : page?.locations[getSlot(node)];
   let levelKeys = new Int32Array(0);
   let levelBases = new Int32Array(0);
   let levelEntries = new Int32Array(0);
@@ -1318,11 +1322,11 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const rename = (
     node: number,
     number: number,
+    page: CanonicalPage | undefined,
     renameRecord: (inner: Value) => FunctionValue,
     slots: Slots,
   ) => {
     const isInPlace = (node > 0 ? node : -node) === number;
-    const page = getPage(node);
     const slot = getSlot(node);
     const isEveryEdgeUnmoved = pushEdges(node, page);
     if (page !== undefined && page.records[slot] === undefined) {
@@ -1378,11 +1382,31 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const first = page * PAGE_SIZE;
       const count = Math.min(PAGE_SIZE, slots.sources.length - first);
       pageAt = EDGE_NODES;
+      pageScratch.fill(0, 0, EDGE_STARTS);
+      pageScratch[0] = realm.objects;
+      pageScratch[1] = realm.environments;
+      // eslint-disable-next-line unicorn/no-new-array
+      const locations = new Array<number[] | undefined>(count);
       for (let slot = 0; slot < count; slot++) {
         const number = first + slot + 1;
+        const node = nodes[number] === 0 ? number : nodes[number];
+        const nodePage = getPage(node);
         pageScratch[EDGE_STARTS + slot] = pageAt;
-        if (nodes[number] === 0) keepSlot(number, getPage(number), slots, true);
-        else rename(nodes[number], number, renameRecord, slots);
+        if (nodes[number] === 0) keepSlot(node, nodePage, slots, true);
+        else rename(node, number, nodePage, renameRecord, slots);
+        locations[slot] = getLocated(node, nodePage);
+        if (nodes !== objectNodes) continue;
+        if (nodePage === undefined) {
+          const objectClass = getString(slots.sources[first + slot], "class");
+          if (objectClass === "promise") setSlotBit(pageScratch, PROMISE_BITS, slot);
+          if (WEAK_CLASSES.has(objectClass)) setSlotBit(pageScratch, WEAK_CLASS_BITS, slot);
+          if (ENTRY_CLASSES.has(objectClass)) setSlotBit(pageScratch, ENTRY_CLASS_BITS, slot);
+          continue;
+        }
+        const nodeSlot = getSlot(node);
+        for (let bits = PROMISE_BITS; bits < EDGE_STARTS; bits += PAGE_SIZE / 32) {
+          if (hasSlotBit(nodePage.edges, bits, nodeSlot)) setSlotBit(pageScratch, bits, slot);
+        }
       }
       const at = pageAt;
       const previous = pagesBefore[page];
@@ -1394,34 +1418,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       for (let slot = 0; isKept && slot < count; slot++)
         isKept = slots.isInPlace[first + slot] === 1;
       if (isKept) return previous;
-      pageScratch.fill(0, 0, EDGE_STARTS);
-      pageScratch[0] = realm.objects;
-      pageScratch[1] = realm.environments;
-      // eslint-disable-next-line unicorn/no-new-array
-      const locations = new Array<number[] | undefined>(count);
-      for (let slot = 0; slot < PAGE_SIZE; slot++) {
-        if (slot >= count) {
-          pageScratch[EDGE_STARTS + slot] = at;
-          continue;
-        }
-        const node = nodes[first + slot + 1];
-        const heapNode = node === 0 ? first + slot + 1 : node;
-        const nodePage = getPage(heapNode);
-        locations[slot] = getLocated(heapNode, nodePage);
-        const nodeSlot = getSlot(heapNode);
-        if (nodes === objectNodes && nodePage === undefined) {
-          const objectClass = getString(slots.sources[first + slot], "class");
-          if (objectClass === "promise") setSlotBit(pageScratch, PROMISE_BITS, slot);
-          if (WEAK_CLASSES.has(objectClass)) setSlotBit(pageScratch, WEAK_CLASS_BITS, slot);
-          if (ENTRY_CLASSES.has(objectClass)) setSlotBit(pageScratch, ENTRY_CLASS_BITS, slot);
-        }
-        if (nodes === objectNodes && nodePage !== undefined) {
-          for (let bits = PROMISE_BITS; bits < EDGE_STARTS; bits += PAGE_SIZE / 32) {
-            if (hasSlotBit(nodePage.edges, bits, nodeSlot)) setSlotBit(pageScratch, bits, slot);
-          }
-        }
-      }
-      pageScratch[EDGE_STARTS + PAGE_SIZE] = at;
+      for (let slot = count; slot <= PAGE_SIZE; slot++) pageScratch[EDGE_STARTS + slot] = at;
       if (nodes === objectNodes) {
         for (let index = 0; index < weakMaps.length; index++) {
           const slot = objectNumbers[weakMaps[index]] - 1 - first;
