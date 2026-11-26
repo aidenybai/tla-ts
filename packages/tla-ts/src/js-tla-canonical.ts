@@ -13,6 +13,7 @@ import {
   createSortedFunction,
   createTuple,
   EDGE_STARTS,
+  ENTRY_CLASS_BITS,
   formatValue,
   getEntryContribution,
   getKeyPosition,
@@ -34,7 +35,8 @@ import {
   type FunctionValue,
   type Value,
   valuesEqual,
-  WEAK_BITS,
+  WEAK_CLASS_BITS,
+  WEAK_MAP_BITS,
 } from "./values";
 
 // ESCanonical's CanonicalStateOf, which tla-ts runs natively while TLC runs the module's TLA+
@@ -56,6 +58,13 @@ const stop = (what: string): never => {
     `The first argument of Assert evaluated to FALSE; the second argument was:\n${prettyPrint(formatValue(`tla-ts can't keep ${what} in a model's state yet`))}`,
     EXIT_STATUS.assertViolation,
   );
+};
+
+const hasSlotBit = (edges: Int32Array, bits: number, slot: number) =>
+  ((edges[bits + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
+
+const setSlotBit = (edges: Int32Array, bits: number, slot: number) => {
+  edges[bits + (slot >> 5)] |= 1 << (slot & 31);
 };
 
 const findFieldIndex = (domain: Value[], field: string) => {
@@ -871,7 +880,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       else environmentEdgeStarts[-node] = PAGE_EDGES;
       reachEdges(node, page);
       const slot = getSlot(node);
-      return ((page.edges[WEAK_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 1;
+      return hasSlotBit(page.edges, WEAK_MAP_BITS, slot);
     }
     const start = startEdges(node);
     if (node < 0) {
@@ -1307,10 +1316,19 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     }
     const record = page === undefined ? getRecord(node) : getPageRecord(page, slot);
     const isCanonicalRecord = isIncremental && isCanonical(record);
-    const objectClass = isCanonicalRecord && node > 0 ? getString(record, "class") : "";
-    const isKept = isCanonicalRecord && !WEAK_CLASSES.has(objectClass);
+    const objectClass =
+      isCanonicalRecord && node > 0 && page === undefined ? getString(record, "class") : "";
+    const isKept =
+      isCanonicalRecord &&
+      !(page === undefined
+        ? WEAK_CLASSES.has(objectClass)
+        : hasSlotBit(page.edges, WEAK_CLASS_BITS, slot));
     if (isKept && isEveryEdgeUnmoved(node, page)) return keepSlot(node, page, slots, isInPlace);
-    const located = isKept && !ENTRY_CLASSES.has(objectClass) ? getLocated(node, page) : undefined;
+    const isEntry =
+      page === undefined
+        ? ENTRY_CLASSES.has(objectClass)
+        : hasSlotBit(page.edges, ENTRY_CLASS_BITS, slot);
+    const located = isKept && !isEntry ? getLocated(node, page) : undefined;
     if (located !== undefined) {
       return page === undefined
         ? makeLater(node, page, record, located, undefined, slots)
@@ -1376,12 +1394,17 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         const nodePage = getPage(heapNode);
         locations[slot] = getLocated(heapNode, nodePage);
         const nodeSlot = getSlot(heapNode);
-        const isPromise =
-          nodes === objectNodes &&
-          (nodePage === undefined
-            ? getString(slots.sources[first + slot], "class") === "promise"
-            : ((nodePage.edges[PROMISE_BITS + (nodeSlot >> 5)] >>> (nodeSlot & 31)) & 1) === 1);
-        if (isPromise) pageScratch[PROMISE_BITS + (slot >> 5)] |= 1 << (slot & 31);
+        if (nodes === objectNodes && nodePage === undefined) {
+          const objectClass = getString(slots.sources[first + slot], "class");
+          if (objectClass === "promise") setSlotBit(pageScratch, PROMISE_BITS, slot);
+          if (WEAK_CLASSES.has(objectClass)) setSlotBit(pageScratch, WEAK_CLASS_BITS, slot);
+          if (ENTRY_CLASSES.has(objectClass)) setSlotBit(pageScratch, ENTRY_CLASS_BITS, slot);
+        }
+        if (nodes === objectNodes && nodePage !== undefined) {
+          for (let bits = PROMISE_BITS; bits < EDGE_STARTS; bits += PAGE_SIZE / 32) {
+            if (hasSlotBit(nodePage.edges, bits, nodeSlot)) setSlotBit(pageScratch, bits, slot);
+          }
+        }
         if (getEdgeStart(node) === -1) continue;
         const array = getEdgeArray(node, nodePage);
         const edgeFirst = getEdgeFirst(node, array);
@@ -1400,7 +1423,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       if (nodes === objectNodes) {
         for (let index = 0; index < weakMaps.length; index++) {
           const slot = objectNumbers[weakMaps[index]] - 1 - first;
-          if (slot >= 0 && slot < count) pageScratch[WEAK_BITS + (slot >> 5)] |= 1 << (slot & 31);
+          if (slot >= 0 && slot < count) setSlotBit(pageScratch, WEAK_MAP_BITS, slot);
         }
       }
       const made = new CanonicalPage(
