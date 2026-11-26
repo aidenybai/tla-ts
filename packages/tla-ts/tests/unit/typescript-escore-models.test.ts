@@ -537,6 +537,39 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // Promises that a step settles stay in the state, where each later step checks that none is
+  // rejected with no handler.
+  describe("keeps the promises that each step settles", () => {
+    const getSource = (operator: string, rejected = "Promise.reject(count).catch(() => count)") =>
+      `const promises: Promise<number>[] = [];\nlet count = 0;\nexport const tick = () => {\n  if (count < 2) {\n    promises.push(Promise.resolve(count), ${rejected});\n    count += 1;\n  }\n};\nexport const isSmall = () => count ${operator} 2;\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource("<=")))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource("<")))).toEqual(["invariant-violation", 3, 3]);
+    });
+
+    it("numbers the state natively as ESCanonical does", async () => {
+      expect(getCounts(await checkModel(getSource("<="), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops at a promise that a step rejects with no handler", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("<=", "count === 1 ? Promise.reject(count) : Promise.resolve(count)"),
+          )
+        ).message,
+      ).toContain('the second argument was:\n"1"');
+    });
+  });
+
   // An ES module that reads a host's global that a script's realm lacks, as Solid's build reads
   // queueMicrotask and console, runs as the module it is, where the host's globals are.
   describe("checks an ES module that reads the host's console", () => {

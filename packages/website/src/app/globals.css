@@ -19,9 +19,9 @@
   font-family: "Allo Fallback";
   src: local("Arial");
   font-weight: 100 499;
-  size-adjust: 104.3%;
-  ascent-override: 93%;
-  descent-override: 23.01%;
+  size-adjust: 104%;
+  ascent-override: 93.27%;
+  descent-override: 23.08%;
   line-gap-override: 0%;
 }
 @font-face {
