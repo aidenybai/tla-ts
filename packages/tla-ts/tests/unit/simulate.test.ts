@@ -420,15 +420,38 @@ it("shows the states of the lasso it finds past a revisited state", () => {
     [
       [
         [0, 0],
-        [1, 1],
-        [0, 2],
         [2, 3],
         [3, 4],
         [4, 5],
       ],
-      5,
+      3,
     ],
   ]);
+});
+
+// Deviation from TLC: TLC shows the first three states of the behavior, then a step from the third back to itself.
+it("starts the lasso with the shortest path to its cycle in a behavior that revisits states, as TLC's BEGraph#getPath does", () => {
+  const lassos: [unknown[], number | undefined][] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == \\/ x = 0 /\\ x' = 1\n        \\/ x = 1 /\\ x' \\in {0, 2}\n        \\/ x = 2 /\\ x' = 2\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == []<>(x = 0)\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop",
+    seed: 4n,
+    traceDepth: 10,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => step.state.x),
+        progress.violation.loopStart,
+      ]);
+    },
+  });
+  expect(lassos).toEqual([[[0, 1, 2], 2]]);
 });
 
 // Deviation from TLC: TLC prints "Back to state: <Step(2) …>", the behavior's step after the lasso's third state, which goes to n = 1.
@@ -502,13 +525,11 @@ it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", ()
     [
       [
         [0, 0],
-        [1, 1],
-        [0, 2],
         [2, 3],
         [3, 4],
         [4, 5],
       ],
-      5,
+      3,
     ],
   ]);
 });
