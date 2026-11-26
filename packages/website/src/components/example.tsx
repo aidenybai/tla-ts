@@ -225,7 +225,9 @@ const ExampleSource = () => {
       </Code.Actions>
       <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
+          {/* A new example starts on its TypeScript, which the toggle shows without sliding there. */}
           <ToggleGroup.Root
+            key={state.example.fileName}
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
             isDisabled={state.isRunning}
