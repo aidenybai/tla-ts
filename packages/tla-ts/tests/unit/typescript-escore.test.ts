@@ -96,13 +96,13 @@ const checkScript = (
     pending.push(resolve);
   });
 
-// Checks an ES module at /tla-ts/stack.ts, the entry Node runs, as node /tla-ts/stack.ts would.
-const checkModule = (source: string) =>
+// Checks an ES module at fileName, the entry Node runs, as node /tla-ts/stack.ts would.
+const checkModule = (source: string, fileName = "/tla-ts/stack.ts") =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
       source,
-      fileName: "/tla-ts/stack.ts",
+      fileName,
       isModule: true,
       appended: "",
     });
@@ -3977,7 +3977,9 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
 
   // Node runs no JSX, which a bundler compiles to the calls that TypeScript emits for it, here by
   // the factories that the file's pragmas name.
-  describe("runs a file of JSX as the calls that TypeScript emits for it", () => {
+  // TypeScript writes a file of JSX under React's runtime as an ES module, though a pragma names a
+  // factory of its own.
+  describe("runs a file of JSX as the ES module that TypeScript emits for it", () => {
     const getSource = (expected: string) => `/** @jsxRuntime classic */
 /** @jsx h */
 /** @jsxFrag Fragment */
@@ -3998,21 +4000,19 @@ if (view !== "${expected}") throw new Error(view);
 
     it("agrees with Node", async () => {
       expect(
-        (await checkScript(getSource("div(id+title:1, ,span(:x),frag(:y))"), false, "", "spec.tsx"))
-          .message,
+        (await checkModule(getSource("div(id+title:1, ,span(:x),frag(:y))"), "spec.tsx")).message,
       ).toBeUndefined();
     });
 
     it("rejects another result", async () => {
       expect(
-        (await checkScript(getSource("div(id+title:1,span(:x),frag(:y))"), false, "", "spec.tsx"))
-          .message,
+        (await checkModule(getSource("div(id+title:1,span(:x),frag(:y))"), "spec.tsx")).message,
       ).toContain(THREW);
     });
   });
 
   // A .jsx file is JavaScript with JSX, which compiles as a .tsx file does.
-  describe("runs a file of JavaScript's JSX as the calls that TypeScript emits for it", () => {
+  describe("runs a file of JavaScript's JSX as the ES module that TypeScript emits for it", () => {
     const getSource = (expected: string) => `/** @jsxRuntime classic */
 /** @jsx h */
 const h = (type, props, ...children) => \`\${type}(\${props === null ? "" : Object.keys(props).join("+")}:\${children.join(",")})\`;
@@ -4021,15 +4021,11 @@ if (view !== "${expected}") throw new Error(view);
 `;
 
     it("agrees with Node", async () => {
-      expect(
-        (await checkScript(getSource("p(id:1,b(:x))"), false, "", "spec.jsx")).message,
-      ).toBeUndefined();
+      expect((await checkModule(getSource("p(id:1,b(:x))"), "spec.jsx")).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect(
-        (await checkScript(getSource("p(id:b(:x))"), false, "", "spec.jsx")).message,
-      ).toContain(THREW);
+      expect((await checkModule(getSource("p(id:b(:x))"), "spec.jsx")).message).toContain(THREW);
     });
   });
 
