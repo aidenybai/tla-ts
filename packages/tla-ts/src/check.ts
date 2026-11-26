@@ -207,7 +207,18 @@ export interface EvaluationWarning {
   text: string;
 }
 
-export type OutputLine = string | InitialStatesProgress | InitialStateViolation | EvaluationWarning;
+export interface ViolationProgress {
+  kind: "violation";
+  status: CheckStatus;
+  violation: Violation;
+}
+
+export type OutputLine =
+  | string
+  | InitialStatesProgress
+  | InitialStateViolation
+  | EvaluationWarning
+  | ViolationProgress;
 
 export type CheckProgress =
   | { kind: "parsed" }
@@ -231,7 +242,7 @@ export type CheckProgress =
   | { kind: "liveness-finished" }
   | { kind: "sequential-fallback"; string: string }
   | EvaluationWarning
-  | { kind: "violation"; status: CheckStatus; violation: Violation }
+  | ViolationProgress
   | ({ kind: "java-override" } & JavaOverride);
 
 export interface SearchStatistics extends Pick<
@@ -732,9 +743,26 @@ const searchStates = (
           return isUnseen;
         };
         const distinctStates = runtime.distinctStates;
-        if (!search.checkReplayedSuccessor(state, next, tracing, addFingerprint)) {
-          throw STOP_REPLAY;
-        }
+        const isGoingOn = search.checkReplayedSuccessor(
+          state,
+          next,
+          tracing,
+          addFingerprint,
+          (violation) => {
+            if (!options.isContinued) return false;
+            output.getCapturedLines()?.push({
+              kind: "violation",
+              status: violation.status,
+              violation: {
+                name: violation.name,
+                ...getViolationTrace(index, { state: next, action: action.name }, true),
+                loopStart: undefined,
+              },
+            });
+            return true;
+          },
+        );
+        if (!isGoingOn) throw STOP_REPLAY;
         runtime.queueSize += runtime.distinctStates - distinctStates;
       });
     });
@@ -1722,7 +1750,7 @@ const searchStates = (
     }).result;
   };
   // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
-  // Deviation from TLC: under -continue, ModelChecker#doNextEvalFailed rethrows a failed invariant to Worker#doNextFailed, which reports it again with the code of its error.
+  // Deviation from TLC: under -continue, ModelChecker#doNextEvalFailed rethrows a failed invariant or action property to Worker#doNextFailed, which reports it again with the code of its error.
   const reportNextStateFailure = (
     error: unknown,
     index: number,

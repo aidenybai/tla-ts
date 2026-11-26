@@ -242,6 +242,71 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [true, ["Inv: [a |-> 1] [a |-> 3]", "Inv: [a |-> 1] [a |-> 4]"], [5, 3]],
+    [false, [], [4, 1]],
+  ])(
+    "reports what the replay of a failed invariant finds in later successors when isContinued is %s, like TLC's ModelChecker#doNext",
+    async (isContinued, violations, counts) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = [a |-> 1]\nNext == y' \\in {r \\in [a : 0..4] : 10 \\div (r.a - 5) # 99}\nInv == 2 \\div y.a > 0\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        isContinued,
+      });
+      expect([
+        result.failure?.code,
+        result.failure?.exitCode,
+        result.failure?.traceOutput?.flatMap((line) =>
+          typeof line === "object" && line.kind === "violation"
+            ? [
+                `${line.violation.name}: ${line.violation.trace.map((step) => formatValue(step.state.y)).join(" ")}`,
+              ]
+            : [],
+        ),
+        [result.distinctStates, result.queuedStates],
+      ]).toEqual([2111, 76, violations, counts]);
+    },
+  );
+
+  it("reports a failed constraint once under -continue, where TLC's replay fails on it again and reports it twice", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = [a |-> 1]\nNext == y' \\in {r \\in [a : 0..2] : 10 \\div (r.a - 3) # 99}\nCon == 1 \\div y.a > 0\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT Con",
+      isContinued: true,
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.length,
+      result.failure?.traceOutput,
+      formatCallStack(result.failure?.callStack),
+      result.failure?.exitCode,
+    ]).toEqual(["The second argument of \\div is 0.", 2, [], ["6.8-6.21", "6.8-6.17"], 255]);
+  });
+
+  it("reports a failed action property once under -continue, where TLC's Worker#doNextFailed and its replay report it three more times", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = [a |-> 1]\nNext == y' \\in {r \\in [a : 0..2] : 10 \\div (r.a - 3) # 99}\nProp == [][1 \\div y'.a > 0]_y\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+      isContinued: true,
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.length,
+      result.failure?.traceOutput,
+      formatCallStack(result.failure?.callStack),
+      result.failure?.exitCode,
+    ]).toEqual([
+      "Evaluating action property Prop failed.\nThe second argument of \\div is 0.",
+      2,
+      [],
+      ["6.11-6.29", "6.12-6.26", "6.12-6.22"],
+      255,
+    ]);
+  });
+
   it("reports a violating step that fails to rebuild as a failure of the next-state relation under -continue, where TLC reports it as a failure of the invariant", async () => {
     const kinds: string[] = [];
     const result = await check({

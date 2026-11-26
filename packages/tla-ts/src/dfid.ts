@@ -641,18 +641,24 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         return successors.every(
           (successor) =>
             successor.every((value) => value !== undefined) &&
-            search.checkReplayedSuccessor(entry.state, successor, tracing, () => {
-              const fingerprint = runtime.getFingerprint(successor);
-              const isNew = setStatus(fingerprint, 0) === 0;
-              if (source) {
-                stateWriter?.writeUnlabeledSuccessor(
-                  source,
-                  search.getGraphState(successor, fingerprint, level + 1, isTool),
-                  !isNew,
-                );
-              }
-              return isNew;
-            }),
+            search.checkReplayedSuccessor(
+              entry.state,
+              successor,
+              tracing,
+              () => {
+                const fingerprint = runtime.getFingerprint(successor);
+                const isNew = setStatus(fingerprint, 0) === 0;
+                if (source) {
+                  stateWriter?.writeUnlabeledSuccessor(
+                    source,
+                    search.getGraphState(successor, fingerprint, level + 1, isTool),
+                    !isNew,
+                  );
+                }
+                return isNew;
+              },
+              () => false,
+            ),
         );
       });
       if (isPassed) return;
