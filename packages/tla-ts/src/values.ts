@@ -245,13 +245,16 @@ export const isCanonical = (value: Value) =>
   typeof value === "object" && value.kind === "Function" && (value.flags & VALUE_CANONICAL) !== 0;
 
 // ESCore's heap pages hold 256 records. A CanonicalPage's edges hold the realm's sizes they were
-// walked from, a bit for each record that is a WeakMap, a bit for each that is a promise, where
-// each record's edges start, and then each record's edges, the nodes it refers to by their numbers.
+// walked from, a bit for each record that is a WeakMap, a bit for each that is a promise, a bit for
+// each that is a WeakMap, WeakSet or WeakRef, a bit for each that is a Map or Set, where each
+// record's edges start, and then each record's edges, the nodes it refers to by their numbers.
 export const PAGE_BITS = 8;
 export const PAGE_SIZE = 1 << PAGE_BITS;
-export const WEAK_BITS = 2;
-export const PROMISE_BITS = WEAK_BITS + PAGE_SIZE / 32;
-export const EDGE_STARTS = PROMISE_BITS + PAGE_SIZE / 32;
+export const WEAK_MAP_BITS = 2;
+export const PROMISE_BITS = WEAK_MAP_BITS + PAGE_SIZE / 32;
+export const WEAK_CLASS_BITS = PROMISE_BITS + PAGE_SIZE / 32;
+export const ENTRY_CLASS_BITS = WEAK_CLASS_BITS + PAGE_SIZE / 32;
+export const EDGE_STARTS = ENTRY_CLASS_BITS + PAGE_SIZE / 32;
 
 // A page of ESCore's heap that CanonicalStateOf made. Its edges hold the nodes that each record
 // refers to, and its locations where the record holds them. Each record is its source with those
