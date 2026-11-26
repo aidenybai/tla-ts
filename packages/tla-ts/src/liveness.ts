@@ -50,6 +50,7 @@ import {
   getActionPredicate,
   getSubstitutedName,
   getSubstitutedOccurrence,
+  hasSubstitutedName,
   mapChildren,
   substitutionFrames,
   withBoundFrames,
@@ -287,6 +288,10 @@ export const getLevel = (
     });
     return level;
   };
+  // SymbolNodeValueLookupProvider#getLevelBoundAppl returns 1 for a substituted declaration named like a root variable (opName.getVarLoc() >= 0).
+  if (isLevelBound && hasSubstitutedName(expression, environment.variableIndex)) {
+    return VARIABLE_LEVEL;
+  }
   switch (expression.kind) {
     case "Prime":
     case "Unchanged":

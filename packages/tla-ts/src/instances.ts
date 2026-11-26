@@ -22,6 +22,7 @@ import {
   copyResolution,
   getArity,
   getBoundNames,
+  getKeyName,
   getPatternNames,
   hasNoOperands,
   isBefore,
@@ -522,6 +523,21 @@ export const getSubstitutedName = (expression: Expression) => {
     ? expression.name.slice(0, -SUBSTITUTION_SUFFIX.length)
     : undefined;
 };
+
+export const hasSubstitutedName = (expression: Expression, names: ReadonlyMap<string, number>) =>
+  (expression.kind === "Identifier" &&
+    isLocallyResolved(expression) &&
+    expression.name.endsWith(SUBSTITUTION_SUFFIX) &&
+    names.has(getKeyName(expression.name.slice(0, -SUBSTITUTION_SUFFIX.length)))) ||
+  (substitutionFrames
+    .get(expression)
+    ?.some(
+      (frame) =>
+        frame.kind === "Identifier" &&
+        !frameSubstitutions.has(frame) &&
+        names.has(getKeyName(frame.name)),
+    ) ??
+    false);
 
 const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
