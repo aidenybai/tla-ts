@@ -85,6 +85,17 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  it.each(["y \\notin [a : Int]", "~([a |-> 1] = y)"])(
+    "checks %s on a function on 1..0 as on the equal <<>>, where TLC fails on a non-record",
+    async (invariant) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE y\nInit == y = [i \\in 1..0 |-> i]\nNext == UNCHANGED y\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+    },
+  );
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
