@@ -47,6 +47,38 @@ const getExit = (result: ReturnType<typeof runCli>) => [
 const runNode = (directory: string, file: string) =>
   spawnSync(process.execPath, [file], { cwd: directory, encoding: "utf8" });
 
+// Node runs no JSX, so a program of JSX runs as Node runs the JavaScript that TypeScript writes for
+// each file of JSX, by its project's tsconfig.json, or with React's automatic runtime without one,
+// in the format of a .js file: its package's type, or else its syntax.
+const JSX_HOOKS = `import { createRequire, registerHooks } from "node:module";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const ts = createRequire(${JSON.stringify(join(import.meta.dirname, "../../package.json"))})("@typescript/typescript6");
+const getType = (directory) => existsSync(join(directory, "package.json"))
+  ? JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).type
+  : dirname(directory) === directory ? undefined : getType(dirname(directory));
+registerHooks({
+  load: (url, context, next) => {
+    if (!/\\.[jt]sx$/.test(url)) return next(url, context);
+    const path = fileURLToPath(url);
+    const config = ts.findConfigFile(dirname(path), ts.sys.fileExists);
+    const project = config && ts.getParsedCommandLineOfConfigFile(config, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
+    const options = project?.fileNames.includes(path) ? project.options : { jsx: ts.JsxEmit.ReactJSX };
+    const source = ts.transpileModule(readFileSync(path, "utf8"), { fileName: path, compilerOptions: { ...options, noEmit: false } }).outputText;
+    const type = getType(dirname(path));
+    const isModule = type === undefined ? ts.isExternalModule(ts.createSourceFile(path, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS)) : type === "module";
+    return { format: isModule ? "module" : "commonjs", source, shortCircuit: true };
+  },
+});`;
+
+const runNodeOnJsx = (directory: string, file: string) =>
+  spawnSync(
+    process.execPath,
+    ["--import", `data:text/javascript,${encodeURIComponent(JSX_HOOKS)}`, file],
+    { cwd: directory, encoding: "utf8" },
+  );
+
 describe("the CLI with TypeScript files", () => {
   // ESCore parses each character of a JSON string and each element of a JSON array in a loop of its
   // own, which overflowed the check's stack where its CASE nested a call for each one.
@@ -1541,6 +1573,30 @@ describe("the CLI with TypeScript files", () => {
     const wrong = runCli(directory, ["wrong.jsx"]);
     expect(wrong.status).toBe(1);
     expect(wrong.stderr).toContain("Error: p(1,b(x))");
+  });
+
+  // A require of an ES module gives its namespace, and a file of JSX is one by the syntax of the
+  // code TypeScript writes for it, not by the JSX that its own text holds.
+  it("requires a .tsx file as the ES module that TypeScript writes", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "view.tsx"),
+      `/** @jsxRuntime classic */\n/** @jsx h */\nconst h = (type: string, props: unknown, ...children: string[]) => type + "(" + children.join(",") + ")";\nexport const view = <p>{"x"}</p>;\n`,
+    );
+    const getScript = (expected: string) =>
+      `const loaded = require("./view.tsx");\nif (loaded.view !== "${expected}") throw new Error(loaded.view);\n`;
+    writeFileSync(join(directory, "main.cjs"), getScript("p(x)"));
+    expect(getExit(runNodeOnJsx(directory, "main.cjs"))).toEqual([0, ""]);
+    expect(getExit(runCli(directory, ["main.cjs"]))).toEqual([0, ""]);
+    writeFileSync(join(directory, "main.cjs"), getScript("p()"));
+    // Node's ESM loader, which runs the hooks, puts its caret elsewhere than its CommonJS loader.
+    const node = runNodeOnJsx(directory, "main.cjs");
+    const wrong = runCli(directory, ["main.cjs"]);
+    expect([wrong.status, node.status]).toEqual([1, 1]);
+    expect([wrong.stderr, node.stderr]).toEqual([
+      expect.stringContaining("\n\nError: p(x)\n"),
+      expect.stringContaining("\n\nError: p(x)\n"),
+    ]);
   });
 
   it("exits with Node's warning where a module's top-level await never settles", () => {

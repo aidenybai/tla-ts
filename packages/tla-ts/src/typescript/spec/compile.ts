@@ -911,7 +911,7 @@ const loadFiles = (
             kind === "commonjs" &&
             !target.endsWith(".json") &&
             !facades.has(facade) &&
-            getKind(target, readFileSync(target, "utf8")) === "module"
+            getKind(target, getJsxText(target, readFileSync(target, "utf8"))) === "module"
           ) {
             facades.set(facade, target);
             numbers.set(facade, numbers.size + 1);
