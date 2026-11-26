@@ -5879,6 +5879,9 @@ const writeValue = (
       }
       const isRangeNormalized = isNormalized && getFunctionClass(value) !== "lambda";
       if (isSequenceDomain(functionValue.domain)) {
+        if (functionValue.range.every((item) => typeof item === "number")) {
+          return writeText(writer, `<<${functionValue.range.join(", ")}>>`);
+        }
         writeText(writer, "<<");
         writeItems(writer, functionValue.range, ", ", isStrict, isRangeNormalized);
         return writeText(writer, ">>");
