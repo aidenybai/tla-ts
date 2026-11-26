@@ -1,9 +1,11 @@
+import { CaretRight } from "@phosphor-icons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, type ReactNode, type Ref } from "react";
 import { cn } from "cn";
 import { getLineHoveredName } from "@/lib/line-marks";
 import { usePlaygroundView } from "@/lib/playground-view";
-import { getStateNames } from "@/lib/search";
+import { getStateNames, type SearchState } from "@/lib/search";
+import type { Mark, Token } from "@/lib/site-data";
 import { useIsHydrated } from "@/hooks/use-is-hydrated";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { CodeEditor } from "./code-editor";
@@ -15,6 +17,7 @@ import { Resizable } from "@/components/ui/resizable";
 // The height of a line of code that fits its pane, and of the pane before it is measured.
 const LINE_HEIGHT_PX = 22;
 const BUILT_PANE_HEIGHT_PX = 900;
+const NO_MARKS: Mark[] = [];
 
 interface PaneProps {
   name: string;
@@ -63,12 +66,77 @@ export const PlaygroundSource = () => {
   );
 };
 
+interface OutputLineProps {
+  number: number;
+  tokens: Token[];
+  hoveredName: string | undefined;
+  activeLine: number | undefined;
+  steps: SearchState[];
+}
+
+const OutputLine = (props: OutputLineProps) => {
+  const playground = usePlayground();
+  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
+  const marks = playground.outputLineMarks.at(props.number - 1) ?? NO_MARKS;
+  return (
+    <CodeLine
+      number={props.number}
+      tokens={props.tokens}
+      marks={marks}
+      hoveredName={getLineHoveredName(marks, props.hoveredName)}
+      isHighlighted={isArrowsShown}
+      colors={playground.colors}
+      note={playground.result?.notes.find((note) => note.line === props.number)}
+      isActive={props.activeLine === props.number}
+      isDimmed={props.steps.length > 0 && props.steps.every((step) => step.line !== props.number)}
+      className="-mr-4 -ml-4 pr-4 pl-4"
+    />
+  );
+};
+
+interface FoldProps {
+  name: string;
+  lineCount: number;
+  isOpen: boolean;
+}
+
+// The lines of ESCore's own code that a program's module holds between two of its definitions.
+const OutputFold = (props: FoldProps) => {
+  const playground = usePlayground();
+  return (
+    <button
+      type="button"
+      aria-expanded={props.isOpen}
+      disabled={playground.isSkeleton}
+      onClick={() => playground.toggleFold(props.name)}
+      className={cn(
+        "flex min-h-[1.7em] w-full cursor-pointer items-center gap-x-4 text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground disabled:cursor-default",
+        !playground.isSkeleton && "text-faint",
+      )}
+    >
+      <span className="flex min-w-[3ch] shrink-0 justify-end">
+        <CaretRight
+          weight="bold"
+          className={cn(
+            "size-3 transition-transform duration-150 ease-out",
+            props.isOpen && "rotate-90",
+            playground.isSkeleton && "invisible",
+          )}
+        />
+      </span>
+      <span data-token>
+        {props.isOpen ? "Hide" : "Show"} {props.lineCount.toLocaleString("en-US")}{" "}
+        {props.lineCount === 1 ? "line" : "lines"} of ESCore
+      </span>
+    </button>
+  );
+};
+
 export const PlaygroundOutput = () => {
   const playground = usePlayground();
   const paneRef = useRef<HTMLElement>(null);
   const hoveredName = usePlaygroundView((view) => view.hoveredName);
   const hoverName = usePlaygroundView((view) => view.hoverName);
-  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
   const search = playground.result?.search;
   const steps = useSearchPath(
     search,
@@ -76,17 +144,21 @@ export const PlaygroundOutput = () => {
   );
   // ESCore's code of a program runs to a thousand lines, so the pane holds only the lines in view.
   const virtualizer = useVirtualizer({
-    count: playground.outputLines.length,
+    count: playground.outputRows.length,
     getScrollElement: () => paneRef.current,
     estimateSize: () => LINE_HEIGHT_PX,
     overscan: 20,
     initialRect: { width: 0, height: BUILT_PANE_HEIGHT_PX },
   });
   const rows = virtualizer.getVirtualItems();
+  const outputRows = playground.outputRows;
   useEffect(() => {
     const failingLine = search?.states.find((found) => found.isFailing)?.line;
-    if (failingLine !== undefined) virtualizer.scrollToIndex(failingLine - 1, { align: "center" });
-  }, [search, virtualizer]);
+    const failingRow = outputRows.findIndex(
+      (row) => row.kind === "line" && row.number === failingLine,
+    );
+    if (failingRow !== -1) virtualizer.scrollToIndex(failingRow, { align: "center" });
+  }, [search, outputRows, virtualizer]);
   return (
     <Pane name="output" ref={paneRef}>
       {playground.isSkeleton && (
@@ -127,7 +199,10 @@ export const PlaygroundOutput = () => {
         )}
       >
         {rows
-          .map((row) => ({ row, number: row.index + 1, tokens: playground.outputLines[row.index] }))
+          .flatMap((row) => {
+            const output = outputRows.at(row.index);
+            return output ? { row, output } : [];
+          })
           .map((line) => (
             <span
               key={line.row.key}
@@ -135,21 +210,36 @@ export const PlaygroundOutput = () => {
               data-index={line.row.index}
               className="block"
             >
-              <CodeLine
-                number={line.number}
-                tokens={line.tokens}
-                marks={playground.outputLineMarks[line.number - 1]}
-                hoveredName={getLineHoveredName(
-                  playground.outputLineMarks[line.number - 1],
-                  hoveredName,
-                )}
-                isHighlighted={isArrowsShown}
-                colors={playground.colors}
-                note={playground.result?.notes.find((note) => note.line === line.number)}
-                isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
-                isDimmed={steps.length > 0 && steps.every((step) => step.line !== line.number)}
-                className="-mr-4 -ml-4 pr-4 pl-4"
-              />
+              {line.output.kind === "line" && (
+                <OutputLine
+                  number={line.output.number}
+                  tokens={line.output.tokens}
+                  hoveredName={hoveredName}
+                  activeLine={steps.at(0)?.line ?? playground.result?.activeLine}
+                  steps={steps}
+                />
+              )}
+              {line.output.kind === "comment" && (
+                <span
+                  className={cn(
+                    "flex min-h-[1.7em] gap-x-4",
+                    line.row.index > 0 && "pt-[0.85em]",
+                    !playground.isSkeleton && "text-faint",
+                  )}
+                >
+                  <span className="min-w-[3ch] shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span data-token>{line.output.text}</span>
+                  </span>
+                </span>
+              )}
+              {line.output.kind === "fold" && (
+                <OutputFold
+                  name={line.output.name}
+                  lineCount={line.output.lineCount}
+                  isOpen={line.output.isOpen}
+                />
+              )}
             </span>
           ))}
       </code>

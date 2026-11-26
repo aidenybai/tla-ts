@@ -7,6 +7,8 @@ export const BUILT_OUTPUT_LINES = 60;
 
 export interface Compilation {
   name: string;
+  // The TypeScript that compiled to this.
+  source: string;
   tla: string;
   config: string;
   modules: Record<string, string>;
