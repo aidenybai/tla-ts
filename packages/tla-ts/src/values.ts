@@ -4015,6 +4015,16 @@ const describeModelValueCardinality = (value: Value) =>
 const describeOverriddenCardinality = (value: Value) =>
   `Attempted to compute the number of elements in the overridden value ${prettyPrint(formatValue(value))}.`;
 
+export const getIntervalSize = (low: number, high: number) => {
+  const size = Math.max(0, high - low + 1);
+  if (size > MAXIMUM_INTEGER) {
+    throw new TlaEvaluationError(
+      `Size of interval value exceeds the maximum representable size (32bits): ${low}..${high}.`,
+    );
+  }
+  return size;
+};
+
 export const getCardinality = (value: Value, version?: TlcVersion): number => {
   if (typeof value !== "object") throw createAttemptError(describeScalarCardinality, value);
   switch (value.kind) {
@@ -4026,15 +4036,8 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       return value.domain.length;
     case "LazyFunction":
       return getCardinality(value.domain, version);
-    case "Interval": {
-      const size = Math.max(0, value.high - value.low + 1);
-      if (size > MAXIMUM_INTEGER) {
-        throw new TlaEvaluationError(
-          `Size of interval value exceeds the maximum representable size (32bits): ${value.low}..${value.high}.`,
-        );
-      }
-      return size;
-    }
+    case "Interval":
+      return getIntervalSize(value.low, value.high);
     case "InfiniteSet":
     case "SequenceSet":
       throw createAttemptError(describeOverriddenCardinality, value);

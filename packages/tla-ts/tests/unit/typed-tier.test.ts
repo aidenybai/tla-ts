@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { check, type CheckProgress } from "../../src";
+import { check, type CheckProgress, formatValue } from "../../src";
 import type { SearchStatistics } from "../../src/check";
 import { getActualProbability } from "../../src/tlc/summary";
+import { formatCallStackLines } from "./check-harness";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/typed-tier");
 
@@ -307,6 +308,135 @@ describe("typed tier matches TLC", () => {
     ]);
     expect(typed.failure?.message).toContain("too many elements (>20)");
     expect(typed).toEqual(interpreted);
+  });
+
+  const getIntervalSizeMessage = (interval: string) =>
+    `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Size of interval value exceeds the maximum representable size (32bits): ${interval}.`;
+
+  it.each([
+    [
+      "(CHOOSE n \\in 0..2147483647 : TRUE) = x",
+      "0..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 70 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 70 in M",
+        "Line 5, column 33 to line 5, column 65 in M",
+      ],
+    ],
+    [
+      "\\E n \\in 0..2147483647 : n = x",
+      "0..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 61 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 61 in M",
+      ],
+    ],
+    [
+      "\\A n \\in 0..2147483647 : n >= 0",
+      "0..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 62 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 62 in M",
+      ],
+    ],
+    [
+      "\\E a \\in 0..1, b \\in 0..2147483647 : a = b",
+      "0..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 73 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 73 in M",
+      ],
+    ],
+    [
+      "(CHOOSE n \\in (x - 1)..2147483647 : TRUE) = x",
+      "-1..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 76 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 76 in M",
+        "Line 5, column 33 to line 5, column 71 in M",
+      ],
+    ],
+    [
+      "\\E n \\in (x - 1)..2147483647 : n = x",
+      "-1..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 67 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 67 in M",
+      ],
+    ],
+    [
+      "\\A n \\in (x - 1)..2147483647 : n >= 0",
+      "-1..2147483647",
+      [
+        "Line 5, column 9 to line 5, column 68 in M",
+        "Line 5, column 9 to line 5, column 27 in M",
+        "Line 5, column 9 to line 5, column 13 in M",
+        "Line 5, column 18 to line 5, column 27 in M",
+        "Line 5, column 32 to line 5, column 68 in M",
+      ],
+    ],
+  ])(
+    "sizes the interval bound of %s before it enumerates it, as TLC's toSetEnum does",
+    async (conjunct, interval, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ ${conjunct}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([
+        result.failure?.message,
+        result.failure?.trace.map((step) => formatValue(step.state.x)),
+        formatCallStackLines(result),
+        [result.generatedStates, result.distinctStates, result.queuedStates, result.depth],
+        result.failure?.exitCode,
+      ]).toEqual([getIntervalSizeMessage(interval), ["0"], callStack, [1, 1, 0, 1], 75]);
+    },
+  );
+
+  it("reports the behavior up to a disabled action whose CHOOSE sizes an interval past 32 bits, which the tier took for a deadlock", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nA1 == (x < 4) /\\ (x' = x + 1) /\\ ((CHOOSE n \\in 0..2147483647 : TRUE) = (x - 2)) /\\ (y' = ((-7) \\div (-1)))\nA2 == x >= 4 /\\ UNCHANGED <<x, y>>\nNext == A1 \\/ A2\nInit == x = 0 /\\ y = ((-7) \\div 7)\nInv1 == (y # ((-x) * x))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv1",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.map((step) => [formatValue(step.state.x), formatValue(step.state.y)]),
+      formatCallStackLines(result),
+      [result.generatedStates, result.distinctStates, result.queuedStates, result.depth],
+      result.failure?.exitCode,
+    ]).toEqual([
+      getIntervalSizeMessage("0..2147483647"),
+      [["0", "-1"]],
+      [
+        "Line 4, column 7 to line 4, column 107 in M",
+        "Line 4, column 7 to line 4, column 80 in M",
+        "Line 4, column 7 to line 4, column 29 in M",
+        "Line 4, column 8 to line 4, column 12 in M",
+        "Line 4, column 19 to line 4, column 28 in M",
+        "Line 4, column 35 to line 4, column 79 in M",
+        "Line 4, column 36 to line 4, column 68 in M",
+      ],
+      [1, 1, 0, 1],
+      75,
+    ]);
   });
 
   it.each([

@@ -53,6 +53,7 @@ import {
   createSortedSet,
   createTuple,
   getFunctionClass,
+  getIntervalSize,
   getMaximumSetSize,
   getStreamedElements,
   isEnumerable,
@@ -1795,9 +1796,10 @@ const compileBound = (
   if (isConstantExpression(program, setExpression, frame.scope)) {
     const value = evaluateConstant(program, setExpression);
     if (typeof value === "object" && value.kind === "Interval") {
+      const end = value.low + getIntervalSize(value.low, value.high);
       return {
         element: createInt(),
-        header: (name) => `for (let ${name} = ${value.low}; ${name} <= ${value.high}; ${name}++)`,
+        header: (name) => `for (let ${name} = ${value.low}; ${name} < ${end}; ${name}++)`,
       };
     }
     if (getSize(value) > MAXIMUM_CONSTANT_SET || hasStreamedDuplicates(value)) return unsupported();
@@ -1857,7 +1859,7 @@ const compileBound = (
       element: createInt(),
       header: (name) => {
         const end = getName(program, "e");
-        return `for (let ${name} = ${low.emit()}, ${end} = ${high.emit()}; ${name} <= ${end}; ${name}++)`;
+        return `for (let ${name} = ${low.emit()}, ${end} = ${name} + H.intervalSize(${name}, ${high.emit()}); ${name} < ${end}; ${name}++)`;
       },
     };
   }
@@ -5098,6 +5100,7 @@ const HELPERS = {
       : low >= 0 && high < MASK_BITS
         ? ((2 ** (high - low + 1) - 1) << low) | 0
         : widen(),
+  intervalSize: getIntervalSize,
   interval: (low: number, high: number) =>
     high - low + 1 > getMaximumSetSize()
       ? deopt()
