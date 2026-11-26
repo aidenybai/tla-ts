@@ -231,30 +231,55 @@ const getRefBaseHash = (value: Value) => {
   return (getValueHash(renamed) - getEntryContribution(ID_HASH, getValueHash(id))) | 0;
 };
 
-// For each of a source's locations: the hashes of its key and its value in its holder, the base hash
-// of the object value there, and then the hashes of the key and the value of each holder on the way.
+// How many of its first steps a location shares with the location before, of those into holders.
+const getCommonSteps = (located: number[], previousAt: number, at: number) => {
+  if (previousAt === -1) return 0;
+  const limit = Math.min(located[previousAt + 1], located[at + 1]) - 1;
+  let common = 0;
+  while (common < limit && located[previousAt + 2 + common] === located[at + 2 + common]) common++;
+  return common;
+};
+
+// For each of a source's locations in turn: its position among the edges, how many of the holders
+// that the location before went into it leaves, how many holders it goes into after those, and the
+// hashes of each one's key, its value and its entry; then the hashes of its key in its holder, its
+// value and its entry, and the base hash of the object value there.
 const createHashPlan = (source: Value, located: number[]) => {
   let size = 0;
-  for (let at = 0; at < located.length; at += 2 + located[at + 1]) size += 1 + 2 * located[at + 1];
+  for (let at = 0, previousAt = -1; at < located.length; at += 2 + located[at + 1]) {
+    size += 7 + 3 * (located[at + 1] - 1 - getCommonSteps(located, previousAt, at));
+    previousAt = at;
+  }
   const plan = new Int32Array(size);
   let planAt = 0;
-  for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
+  for (let at = 0, previousAt = -1; at < located.length; at += 2 + located[at + 1]) {
     const depth = located[at + 1] - 1;
-    const leafAt = planAt;
-    planAt += 3;
+    const common = getCommonSteps(located, previousAt, at);
+    plan[planAt++] = located[at];
+    plan[planAt++] = previousAt === -1 ? 0 : located[previousAt + 1] - 1 - common;
+    plan[planAt++] = depth - common;
     let holder = toFiniteFunction(source);
     for (let level = 0; level < depth; level++) {
       const position = located[at + 2 + level] >> 1;
       const inner = holder.range[position];
-      plan[planAt++] = getValueHash(holder.domain[position]);
-      plan[planAt++] = getValueHash(inner);
+      if (level >= common) {
+        const keyHash = getValueHash(holder.domain[position]);
+        const innerHash = getValueHash(inner);
+        plan[planAt++] = keyHash;
+        plan[planAt++] = innerHash;
+        plan[planAt++] = getEntryContribution(keyHash, innerHash);
+      }
       holder = toFiniteFunction(inner);
     }
     const position = located[at + 2 + depth] >> 1;
     const leaf = holder.range[position];
-    plan[leafAt] = getValueHash(holder.domain[position]);
-    plan[leafAt + 1] = getValueHash(leaf);
-    plan[leafAt + 2] = typeof leaf === "object" ? getRefBaseHash(leaf) : 0;
+    const keyHash = getValueHash(holder.domain[position]);
+    const leafHash = getValueHash(leaf);
+    plan[planAt++] = keyHash;
+    plan[planAt++] = leafHash;
+    plan[planAt++] = getEntryContribution(keyHash, leafHash);
+    plan[planAt++] = typeof leaf === "object" ? getRefBaseHash(leaf) : 0;
+    previousAt = at;
   }
   return plan;
 };
@@ -1193,64 +1218,47 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   };
   const getLocated = (node: number, page: CanonicalPage | undefined) =>
     walkedLocations.has(node) ? walkedLocations.get(node) : page?.locations[getSlot(node)];
-  let hashSteps = new Int32Array(0);
   let levelKeys = new Int32Array(0);
   let levelBases = new Int32Array(0);
+  let levelEntries = new Int32Array(0);
   let levelHashes = new Int32Array(0);
   const closeHashLevel = (level: number) => {
     if (levelHashes[level] === levelBases[level]) return;
     levelHashes[level - 1] =
       (levelHashes[level - 1] -
-        getEntryContribution(levelKeys[level - 1], levelBases[level]) +
-        getEntryContribution(levelKeys[level - 1], levelHashes[level])) |
+        levelEntries[level] +
+        getEntryContribution(levelKeys[level], levelHashes[level])) |
       0;
   };
   // The hash of the record that makeRecord makes of a source of the given hash with the edges by
-  // their new numbers from first in renamedEdges, at located, from the source's plan.
-  const getMadeHash = (
-    renamedEdges: Int32Array,
-    first: number,
-    hash: number,
-    located: number[],
-    plan: Int32Array,
-  ) => {
-    if (located.length > levelHashes.length) {
-      hashSteps = new Int32Array(located.length);
-      levelKeys = new Int32Array(located.length);
-      levelBases = new Int32Array(located.length);
-      levelHashes = new Int32Array(located.length);
+  // their new numbers from first in renamedEdges, from the source's plan.
+  const getMadeHash = (renamedEdges: Int32Array, first: number, hash: number, plan: Int32Array) => {
+    if (plan.length > levelHashes.length) {
+      levelKeys = new Int32Array(plan.length);
+      levelBases = new Int32Array(plan.length);
+      levelEntries = new Int32Array(plan.length);
+      levelHashes = new Int32Array(plan.length);
     }
     levelHashes[0] = hash;
     let open = 0;
-    let planAt = 0;
-    for (let at = 0; at < located.length; at += 2 + located[at + 1]) {
-      const depth = located[at + 1] - 1;
-      let common = 0;
-      while (common < open && common < depth && hashSteps[common] === located[at + 2 + common]) {
-        common++;
+    for (let at = 0; at < plan.length; at += 4) {
+      const target = renamedEdges[first + plan[at]];
+      for (let left = plan[at + 1]; left > 0; left--, open--) closeHashLevel(open);
+      const entered = plan[at + 2];
+      at += 3;
+      for (let index = 0; index < entered; index++, at += 3) {
+        open++;
+        levelKeys[open] = plan[at];
+        levelBases[open] = plan[at + 1];
+        levelEntries[open] = plan[at + 2];
+        levelHashes[open] = plan[at + 1];
       }
-      for (; open > common; open--) closeHashLevel(open);
-      for (; open < depth; open++) {
-        hashSteps[open] = located[at + 2 + open];
-        levelKeys[open] = plan[planAt + 3 + 2 * open];
-        levelBases[open + 1] = plan[planAt + 4 + 2 * open];
-        levelHashes[open + 1] = levelBases[open + 1];
-      }
-      const target = renamedEdges[first + located[at]];
       const numberHash = getValueHash(target > 0 ? target : -target);
-      const key = plan[planAt];
-      const previous = plan[planAt + 1];
       const next =
-        target > 0
-          ? (plan[planAt + 2] + getEntryContribution(ID_HASH, numberHash)) | 0
-          : numberHash;
-      planAt += 3 + 2 * depth;
-      if (next === previous) continue;
+        target > 0 ? (plan[at + 3] + getEntryContribution(ID_HASH, numberHash)) | 0 : numberHash;
+      if (next === plan[at + 1]) continue;
       levelHashes[open] =
-        (levelHashes[open] -
-          getEntryContribution(key, previous) +
-          getEntryContribution(key, next)) |
-        0;
+        (levelHashes[open] - plan[at + 2] + getEntryContribution(plan[at], next)) | 0;
     }
     for (; open > 0; open--) closeHashLevel(open);
     return levelHashes[0];
@@ -1300,7 +1308,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         pageScratch,
         pageScratch[EDGE_STARTS + (slots.count & (PAGE_SIZE - 1))],
         hash,
-        located,
         sourcePlan,
       ),
       false,
