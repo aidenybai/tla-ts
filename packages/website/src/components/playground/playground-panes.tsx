@@ -102,9 +102,15 @@ export const PlaygroundOutput = () => {
       <code
         aria-hidden={playground.isSkeleton || undefined}
         data-skeleton={playground.isSkeleton ? "" : undefined}
-        onPointerOver={(event) =>
-          hoverName(event.target instanceof HTMLElement ? event.target.dataset.region : undefined)
-        }
+        // The space between two words of a name is not a word of it, so the pointer there takes
+        // the name of its line. Otherwise the name would drop and come back on each word crossed.
+        onPointerOver={(event) => {
+          if (!(event.target instanceof HTMLElement)) return hoverName(undefined);
+          const line = Number(event.target.closest<HTMLElement>("[data-line]")?.dataset.line);
+          hoverName(
+            event.target.dataset.region ?? playground.outputLineMarks[line - 1]?.at(0)?.name,
+          );
+        }}
         onPointerLeave={() => hoverName(undefined)}
         // The lines in view flow as the page lays them out, so a line that wraps is as tall on the
         // built page as it is once the pane has measured it. Padding stands for the rest.
