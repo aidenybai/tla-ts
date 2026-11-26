@@ -1221,6 +1221,26 @@ describe("check matches TLC", () => {
     expect(prints).toEqual(["<<FALSE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, FALSE>>"]);
   });
 
+  it.each([
+    ["0", "0..2147483646", "by default", undefined],
+    ["0", "0..2147483646", "under -maxSetSize", 1000000],
+    ["-2", "(0 - 2)..2147483640", "by default", undefined],
+    ["-2", "(0 - 2)..2147483640", "under -maxSetSize", 1000000],
+  ])(
+    "chooses the low bound %s of %s %s, where TLC's CHOOSE exhausts the heap",
+    async (low, interval, _tier, maxSetSize) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = (CHOOSE n \\in ${interval} : TRUE) /\\ PrintT(x)\nNext == UNCHANGED x\n====`,
+        config: "INIT Init\nNEXT Next",
+        maxSetSize,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(result.status).toBe("success");
+      expect(prints).toEqual([low]);
+    },
+  );
+
   it("filters a set by a predicate that ignores the element like TLC", async () => {
     const prints: string[] = [];
     await check({

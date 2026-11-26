@@ -3035,6 +3035,7 @@ export const getChoiceElements = (
   version: TlcVersion,
 ) => {
   normalizeChoices(base, expression);
+  // Deviation from TLC: Tool's OPCODE_bc takes elements(Ordering.NORMALIZED), and EnumerableValue's default answers an interval with a toSetEnum that allocates every element, so a large interval exhausts the heap.
   return getNormalizedElements(base, set, version);
 };
 
