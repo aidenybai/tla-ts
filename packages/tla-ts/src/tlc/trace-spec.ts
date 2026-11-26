@@ -172,12 +172,18 @@ ${lassoStep}${variables
       }
     : { config: "", definition: "" };
   const deserializedTrace = `\n${getPrimer(traceModule, getHashMapOrder(["IOUtils", ...constantModules, specName], getJavaHashCode))}trace == IODeserialize("${input.module}.bin", TRUE)\n\n${CLOSING_TAG}`;
-  const traceFunction = `${INDENT}<<\n${states
-    .map(
-      (state) =>
-        `${INDENT}([${state.map((assignment) => `${assignment[0]} |-> ${assignment[1]}`).join(",")}])`,
-    )
-    .join(",\n")}\n${INDENT}>>${SEPARATOR}\n`;
+  const traceFunction = [
+    `${INDENT}<<\n`,
+    ...states.flatMap((state, index) => [
+      `${index > 0 ? ",\n" : ""}${INDENT}([`,
+      ...state.flatMap((assignment, position) => [
+        `${position > 0 ? "," : ""}${assignment[0]} |-> `,
+        assignment[1],
+      ]),
+      "])",
+    ]),
+    `\n${INDENT}>>${SEPARATOR}\n`,
+  ];
 
   const tla = [
     getPrimer(input.module, extendedModules),
@@ -203,7 +209,9 @@ ${lassoStep}${variables
     " trace from a generated binary file.\n",
     `\n\\*${deserializedTrace.replaceAll("\n", "\n\\*")}\n\n`,
     getPrimer(traceModule, getHashMapOrder([...constantModules, specName], getJavaHashCode)),
-    `trace == \n${traceFunction}\n`,
+    "trace == \n",
+    ...traceFunction,
+    "\n",
     ...(teConstants.length > 0
       ? [
           CLOSING_TAG,
@@ -213,7 +221,7 @@ ${lassoStep}${variables
         ]
       : []),
     CLOSING_TAG,
-  ].join("");
+  ];
   const config = [
     `\n---- CONFIG ${input.module} ----\n`,
     constantLines.length > 0
@@ -228,6 +236,6 @@ ${lassoStep}${variables
     "\nALIAS\n    _expression\n",
     CLOSING_TAG,
     `\\* Generated on ${formatJavaDate(new Date())}`,
-  ].join("");
-  return tla + config;
+  ];
+  return [...tla, ...config].join("");
 };
