@@ -64,14 +64,19 @@ ThrownText(r) ==
 Completed(r) == IF r.c.type = "throw" THEN Assert(FALSE, ThrownText(r)) ELSE r
 \* A step's state, which starts counting the writes to what exists.
 StepStart(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> s.objs.size, environments |-> s.envs.size]]
+\* A call of name that a check makes, which stops where it changes what existed as the check
+\* started, as only a step may: the frame reads a function as a check where it sees no change.
+CheckCall(s, name, args) ==
+  LET r == ModelCall(s, name, args) IN
+  IF r.s.written THEN Assert(FALSE, "tla-ts can't check " \o UnitsToString(name) \o " as a function that changes nothing: its call changes the program's state") ELSE r
 \* Whether a call of name returns true.
-HoldsOf(s, name, args) == Val(Completed(ModelCall(s, name, args))) = True
+HoldsOf(s, name, args) == Val(Completed(CheckCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
-ReturnsOf(s, name, args) == Completed(ModelCall(s, name, args)).c.type = "normal"
+ReturnsOf(s, name, args) == Completed(CheckCall(s, name, args)).c.type = "normal"
 \* What a call of name throws, as data rather than a failure of the check: <<>> where it returns,
 \* and the text of what it throws.
 ThrownOf(s, name, args) ==
-  LET r == ModelCall(s, name, args) IN IF r.c.type = "throw" THEN <<ThrownText(r)>> ELSE <<>>
+  LET r == CheckCall(s, name, args) IN IF r.c.type = "throw" THEN <<ThrownText(r)>> ELSE <<>>
 \* What a check shows of a value: TLA+'s values of today's compiler's model, where a number is an
 \* integer, a string a string, an array a sequence, a Set a set, a Map a function, and another
 \* object a record of its enumerable own data properties.
@@ -1336,7 +1341,7 @@ export const planModel = (
     const operator = define(
       "Check",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getBinding(name)}, converted.args)`,
+        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, `StepStart(${getState("a[1]")})`, (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getBinding(name)}, converted.args)`,
     );
     const nativeCall = getNativeCall(name, "a[1]", (index) => `a[${index + 2}]`);
     const checked =

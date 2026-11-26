@@ -725,6 +725,54 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A model's state may live in a module it imports, which a call of an export changes though the
+  // model's own code writes no binding of it: an export that returns nothing is a step, and one
+  // that returns a value is a check, which stops where its call changes the state.
+  describe("checks a model whose exports change the state of a module it imports", () => {
+    const STORE =
+      "let count: number = 0;\nexports.bump = () => {\n  count = (count + 1) % 4;\n  return count;\n};\nexports.get = () => count;\n";
+    const getModel = (tick: string) =>
+      `import { bump, get } from "./store.cts";\nexport const tick = ${tick};\nexport const isLow = () => get() < 3;\n`;
+    // Whether Node, ticking the model's module three times, finds isLow false.
+    const isViolatedInNode = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `const model = await import(${JSON.stringify(pathToFileURL(join(directory, "model.ts")).href)});\n[1, 2, 3].forEach(() => model.tick());\nconsole.log(model.isLow());`,
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim() === "false";
+
+    it.each([
+      ["returns nothing", "() => {\n  bump();\n}"],
+      ["returns a value", "() => bump()"],
+    ])("never passes where Node violates an invariant and an export %s", (_, tick) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "store.cts"), STORE);
+      writeFileSync(join(directory, "model.ts"), getModel(tick));
+      expect(isViolatedInNode(directory)).toBe(true);
+      const result = runCli(directory, ["model.ts"]);
+      expect(result.stdout).not.toContain("No error has been found");
+      expect(result.stdout).toContain(
+        tick.includes("{")
+          ? "Error: Invariant isLow is violated."
+          : "tla-ts can't check tick as a function that changes nothing: its call changes the program's state",
+      );
+    });
+
+    it("checks an export that returns a value and changes nothing", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "store.cts"), STORE);
+      writeFileSync(join(directory, "model.ts"), getModel("() => get() + 1"));
+      expect(isViolatedInNode(directory)).toBe(false);
+      const result = runCli(directory, ["model.ts"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("No error has been found");
+    });
+  });
+
   // A note names the kind of a parameter's type that keeps tla-ts from calling an export, or the
   // kinds of a union's values that TLC can't compare, beside the check of the exports that it calls.
   describe("names the kind of each parameter that it can't list the values of", () => {
