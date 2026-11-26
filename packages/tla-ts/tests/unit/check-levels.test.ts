@@ -1285,6 +1285,19 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("levels an operator that a builtin replaced by its TLA+, as SANY does", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, IOUtils\nVARIABLE x\nInv == IF x = 5 THEN Serialize(x\', "f", [format |-> "NDJSON"]) = 0 ELSE TRUE\nInit == x = 0\nNext == x\' = x\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+    });
+    expect(result.distinctStates).toBe(1);
+  });
+
   it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
       check({

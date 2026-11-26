@@ -34,7 +34,6 @@ import {
   createBigNumberError,
   createRealNumberError,
   evaluate,
-  getDefinition,
   getDefinitionClosure,
   type Builtin,
   type BuiltinArgument,
@@ -436,6 +435,10 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>(base?.standardExports);
   const standardSources = new Map<string, LinkedModule>(base?.standardSources);
   const replacedDefinitions = new Map<string, Definition>(base?.replacedDefinitions);
+  // SANY levels an operator by its TLA+, which a builtin that replaced it keeps, where no signature
+  // levels the builtin.
+  const getReplacedLevelDefinition = (key: string, name: string) =>
+    getSignatureLevels(name) === undefined ? replacedDefinitions.get(key) : undefined;
   // The definition that an INSTANCE copies under a key: one that a builtin replaced is copied as its
   // TLA+ where its module has CONSTANTS or VARIABLES, which the INSTANCE may substitute, as the
   // builtin can't read the substitutes.
@@ -1854,7 +1857,9 @@ export const createEnvironment = (
       getLevels: (name) => {
         if (RUNTIME_VARIABLES.includes(name)) return undefined;
         const key = visible.get(name)?.key ?? name;
-        if (definitions.has(key)) return preparedLevels.get(key);
+        if (definitions.has(key) || getReplacedLevelDefinition(key, name)) {
+          return preparedLevels.get(key);
+        }
         return getSignatureLevels(name) ?? "declared";
       },
     };
@@ -2051,7 +2056,10 @@ export const createEnvironment = (
           module: module.name,
           constants: linked.levelConstants,
           variables: linked.levelVariables,
-          getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
+          getDefinition: (symbol) => {
+            const key = visible.get(symbol)?.key ?? symbol;
+            return getLinkedDefinition(key) ?? getReplacedLevelDefinition(key, symbol);
+          },
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           getPreparedLevels: (symbol) => preparedLevels.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
@@ -2254,7 +2262,10 @@ export const createEnvironment = (
     // TLC's getLevelBound counts a theorem's arguments but not its body.
     constants: new Map([...constants.keys(), ...theorems.keys()].map((key) => [key, 0])),
     variables: new Set([...variables, ...runtimeVariables]),
-    getDefinition: (name) => getDefinition(name, environment),
+    getDefinition: (name) => {
+      const key = substitutions.get(name) ?? name;
+      return definitions.get(key) ?? getReplacedLevelDefinition(key, name);
+    },
     getPreparedLevels,
     instances: instanceLevels.instances,
     recursiveSections,
@@ -2295,7 +2306,7 @@ export const createEnvironment = (
     sanyLevels: createLevelAnalyzer({
       constants: new Map([...constants.keys()].map((key) => [key, 0])),
       variables: new Set(variables),
-      getDefinition: (name) => definitions.get(name),
+      getDefinition: (name) => definitions.get(name) ?? getReplacedLevelDefinition(name, name),
       getPreparedLevels,
       instances: instanceLevels.instances,
       recursiveSections,
