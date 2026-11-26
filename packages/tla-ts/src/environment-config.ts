@@ -17,8 +17,8 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { LinkedModule } from "./environment";
 import type { Builtin } from "./evaluate";
-import { createLocalAlias } from "./instances";
-import { KEY_SEPARATOR, type Symbols } from "./resolve";
+import { createLocalAlias, sortByDependencies } from "./instances";
+import { KEY_SEPARATOR, LOCAL_RESOLUTION, type Symbols } from "./resolve";
 import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
   createEnumeratedSet,
@@ -34,6 +34,14 @@ import {
 export interface CopySource {
   source: string;
   prefix: number;
+  getCopy: (key: string) => string | undefined;
+  letCopies: Definition[] | undefined;
+}
+
+interface RootOverride {
+  source: string;
+  prefix: number;
+  target: string | undefined;
 }
 
 interface ConfigName {
@@ -180,7 +188,10 @@ export const createScopedOverrides = (
     }),
   );
   // Deviation from TLC: a copy passes an override its instance's arguments too, and the ArrayIndexOutOfBoundsException crashes TLC.
-  const getOverride = (key: string, prefix: number): CopySource | undefined => {
+  const getOverride = (
+    key: string,
+    prefix: number,
+  ): Pick<CopySource, "source" | "prefix"> | undefined => {
     if (scopedKeys.has(key)) return { source: key, prefix };
     const copy = copySources.get(key);
     return copy && getOverride(copy.source, prefix + copy.prefix);
@@ -478,20 +489,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     (module) => linked.moduleSymbols.get(module),
     linked.copySources,
   );
-  linked.copySources.forEach((copy, key) => {
-    const override = getOverride(copy.source, copy.prefix);
-    const definition = linked.definitions.get(key);
-    if (!override || !definition) return;
-    const params = definition.kind === "Operator" ? definition.params : [];
-    const alias = createLocalAlias(
-      key,
-      override.source,
-      params,
-      params.slice(override.prefix),
-      definition.location,
-    );
-    linked.definitions.set(key, alias);
-  });
   const rootOverridden = new Set(
     [...config.constants, ...config.substitutions].flatMap((item) => {
       const symbol = item.module === undefined ? linked.root.visible.get(item.name) : undefined;
@@ -499,34 +496,69 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     }),
   );
   // TLC sets a root override on the definition's OpDefNode, which the bodies an instance copies still name, but I!D is a node of its own.
-  const getRootOverride = (key: string, prefix: number): CopySource | undefined => {
+  const getRootOverride = (key: string, prefix: number): RootOverride | undefined => {
     const copy = linked.copySources.get(key);
     if (!copy || linked.exportedCopies.has(key)) return undefined;
     const copyPrefix = prefix + copy.prefix;
-    return rootOverridden.has(copy.source)
-      ? { source: copy.source, prefix: copyPrefix }
+    const override = rootOverridden.has(copy.source)
+      ? {
+          source: copy.source,
+          prefix: copyPrefix,
+          target: rootSubstituted.has(copy.source) ? substitutions.get(copy.source) : undefined,
+        }
       : getRootOverride(copy.source, copyPrefix);
+    // Deviation from TLC: SpecProcessor#processConstantDefns caches a definition the target names in the empty context, so TLC reads it outside the instance if it cached it first.
+    return override && { ...override, target: override.target && copy.getCopy(override.target) };
   };
-  const getRootAlias = (definition: Definition, key: string) => {
+  const getRootAlias = (
+    definition: Definition,
+    key: string,
+    resolution: typeof LOCAL_RESOLUTION | undefined,
+  ) => {
     const override = getRootOverride(key, 0);
     if (!override) return definition;
     const params = definition.kind === "Operator" ? definition.params : [];
-    return createLocalAlias(
-      key,
-      override.source,
-      params,
-      params.slice(override.prefix),
-      definition.location,
-    );
+    return override.target === undefined
+      ? createLocalAlias(
+          key,
+          override.source,
+          params,
+          params.slice(override.prefix),
+          definition.location,
+        )
+      : createLocalAlias(key, override.target, params, params, definition.location, resolution);
   };
-  linked.copySources.forEach((_copy, key) => {
+  linked.copySources.forEach((copy, key) => {
     const definition = linked.definitions.get(key);
-    if (definition) linked.definitions.set(key, getRootAlias(definition, key));
+    if (!definition) return;
+    const override = getOverride(copy.source, copy.prefix);
+    const params = definition.kind === "Operator" ? definition.params : [];
+    const scoped = override
+      ? createLocalAlias(
+          key,
+          override.source,
+          params,
+          params.slice(override.prefix),
+          definition.location,
+        )
+      : definition;
+    linked.definitions.set(key, getRootAlias(scoped, key, undefined));
   });
   const isLetOverridden = [...linked.copySources.keys()].some(
     (key) => !linked.definitions.has(key) && getRootOverride(key, 0) !== undefined,
   );
   if (isLetOverridden) {
+    const getLetAlias = (definition: Definition) =>
+      getRootAlias(definition, definition.name, LOCAL_RESOLUTION);
+    const getAddedCopies = (definitions: Definition[]) => {
+      const names = new Set(definitions.map((definition) => definition.name));
+      const letCopies = new Set(
+        definitions.map((definition) => linked.copySources.get(definition.name)?.letCopies),
+      );
+      return [...letCopies].flatMap(
+        (copies) => copies?.filter((copy) => !names.has(copy.name)) ?? [],
+      );
+    };
     const visited = new Set<Expression>();
     const pending = [
       ...[...linked.definitions.values()].flatMap(getDefinitionExpressions),
@@ -539,9 +571,15 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         expression.kind === "Let" &&
         expression.definitions.some((definition) => getRootOverride(definition.name, 0))
       ) {
-        expression.definitions = expression.definitions.map((definition) =>
-          getRootAlias(definition, definition.name),
-        );
+        let definitions = expression.definitions.map(getLetAlias);
+        for (
+          let added = getAddedCopies(definitions);
+          added.length > 0;
+          added = getAddedCopies(definitions)
+        ) {
+          definitions = [...definitions, ...added.map(getLetAlias)];
+        }
+        expression.definitions = sortByDependencies(definitions);
       }
       for (const child of getChildren(expression)) pending.push(child);
     }

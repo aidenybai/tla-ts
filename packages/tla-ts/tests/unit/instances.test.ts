@@ -397,6 +397,50 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "evaluates a root redirect's target with the substitutions of the instance whose copy names the definition, as TLC does",
+      "I == INSTANCE Q WITH S <- {2}\nOther == S\nInv == I!val = {2}",
+    ],
+    [
+      "evaluates a definition a root redirect's target names with the instance's substitutions, as TLC does",
+      "I == INSTANCE Q WITH S <- {2}\nHelper == S\nOther == Helper\nInv == I!val = {2}",
+    ],
+    [
+      "evaluates a definition a root redirect's target names with the instance's substitutions when it precedes the instance, a deviation from TLC, which reads the value SpecProcessor#processConstantDefns cached in the empty context",
+      "Helper == S\nI == INSTANCE Q WITH S <- {2}\nOther == Helper\nInv == I!val = {2}",
+    ],
+    [
+      "evaluates a root redirect's target with the substitutions of a LET instance with parameters, as TLC does",
+      "Other == S\nInv == LET J(T) == INSTANCE Q WITH S <- T IN J({2})!val = {2}",
+    ],
+  ])("%s", async (_title, definitions) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS P\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n${definitions}\n====`,
+      config: "CONSTANTS S = {1} None <- Other\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
+      1,
+    ]);
+  });
+
+  it("evaluates an extended definition an instance's copy names with the instance's substitutions, a deviation from TLC, which reads the value SpecProcessor#processConstantDefns cached in the empty context", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS P, TLC\nVARIABLE x\nI == INSTANCE Q WITH S <- {2}\nASSUME PrintT(<<I!val, I!None, None>>)\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "CONSTANTS S = {1}\nINIT Init\nNEXT Next",
+      loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual(["<<1, 1, 2>>"]);
+  });
+
   it("substitutes operator parameters with LAMBDA expressions without capturing bound names", async () => {
     const result = await checkInstances("Operators.cfg", "Operators");
     expect(result.status).toBe("success");
