@@ -21,6 +21,11 @@ interface TraceChecks {
   isConsistent: (tableauNode: number, position: number) => boolean;
 }
 
+interface NodeAndParent {
+  node: GraphNode;
+  parent: GraphNode | undefined;
+}
+
 interface BehaviorGraph {
   initial: GraphNode[];
   isPartial: boolean;
@@ -64,6 +69,36 @@ const addTransition = (
 
 const getStepTo = (source: GraphNode, target: GraphNode) =>
   source.stepPositions[source.successors.indexOf(target)];
+
+const getPath = (start: GraphNode, end: GraphNode) => {
+  const parents = new Map<GraphNode, GraphNode | undefined>();
+  if (start !== end) {
+    const visited = new Set([start]);
+    const queue: NodeAndParent[] = [{ node: start, parent: undefined }];
+    let isFound = false;
+    for (let head = 0; !isFound; head++) {
+      const current = queue[head];
+      const successors = current.node.successors;
+      for (let index = 0; index < successors.length; index++) {
+        const target = successors[index];
+        if (visited.has(target)) continue;
+        if (target === end) {
+          parents.set(end, current.node);
+          isFound = true;
+          break;
+        }
+        visited.add(target);
+        queue.push({ node: target, parent: current.node });
+      }
+      parents.set(current.node, current.parent);
+    }
+  }
+  const path: GraphNode[] = [];
+  for (let node: GraphNode | undefined = end; node !== undefined; node = parents.get(node)) {
+    path.push(node);
+  }
+  return path.reverse();
+};
 
 const pop = (nodes: GraphNode[]) => {
   const top = nodes[nodes.length - 1];
@@ -171,11 +206,7 @@ const createGraph = (
   return graph;
 };
 
-const findLasso = (
-  fingerprints: bigint[],
-  solution: Solution,
-  initial: GraphNode[],
-): TraceLasso | undefined => {
+const findLasso = (solution: Solution, initial: GraphNode[]): TraceLasso | undefined => {
   const promises = solution.promises;
   const tableauNodes = solution.tableau?.nodes ?? [];
   const stack: GraphNode[] = [];
@@ -187,6 +218,7 @@ const findLasso = (
   let firstComponentNumber = secondNumber;
   let secondComponentNumber = thirdNumber;
   let model = solution.models[0];
+  let initialNode = initial[0];
   let lasso: TraceLasso | undefined;
 
   const isEventuallyAlways = (node: GraphNode, transition: number) => {
@@ -291,10 +323,11 @@ const findLasso = (
     }
     if (cycle.length === 0) cycle.push(current);
     // Deviation from TLC: LiveCheck1#printErrorTrace shows the behavior's states in order, not those of the lasso it found, which differ once the behavior revisits a state.
-    const positions: number[] = [];
-    for (let position = 0; position <= node.position; position++) {
-      if (position === 0 || fingerprints[position] !== fingerprints[position - 1]) {
-        positions.push(position);
+    const prefix = getPath(initialNode, node);
+    const positions = [0];
+    for (let index = 1; index < prefix.length; index++) {
+      if (prefix[index].fingerprint !== prefix[index - 1].fingerprint) {
+        positions.push(getStepTo(prefix[index - 1], prefix[index]));
       }
     }
     const cyclePosition = positions.length;
@@ -437,6 +470,7 @@ const findLasso = (
     return lowlink;
   };
   for (const node of initial) {
+    initialNode = node;
     if (node.number === 0) checkComponents(node);
     if (lasso) return lasso;
   }
@@ -516,14 +550,14 @@ export const findTraceLasso = (
   const partial: number[] = [];
   for (let index = 0; index < solutions.length; index++) {
     const graph = createGraph(fingerprints, solutions[index], solutionChecks[index], false);
-    const lasso = findLasso(fingerprints, solutions[index], graph.initial);
+    const lasso = findLasso(solutions[index], graph.initial);
     if (lasso) return lasso;
     if (graph.isPartial) partial.push(index);
   }
   // Deviation from TLC: LiveCheck1#constructBEGraph gives the initial state no stuttering step to a tableau node that isn't initial and goes on from no node a revisited state reaches, so it misses a violation past them.
   for (const index of partial) {
     const graph = createGraph(fingerprints, solutions[index], solutionChecks[index], true);
-    const lasso = findLasso(fingerprints, solutions[index], graph.initial);
+    const lasso = findLasso(solutions[index], graph.initial);
     if (lasso) return lasso;
   }
   return undefined;
