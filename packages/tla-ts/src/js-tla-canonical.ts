@@ -240,18 +240,19 @@ const getCommonSteps = (located: number[], previousAt: number, at: number) => {
   return common;
 };
 
-// For each of a source's locations in turn: its position among the edges, how many of the holders
-// that the location before went into it leaves, how many holders it goes into after those, and the
-// hashes of each one's key, its value and its entry; then the hashes of its key in its holder, its
-// value and its entry, and the base hash of the object value there.
-const createHashPlan = (source: Value, located: number[]) => {
-  let size = 0;
+// The source's hash, then for each of its locations in turn: its position among the edges, how many
+// of the holders that the location before went into it leaves, how many holders it goes into after
+// those, and the hashes of each one's key, its value and its entry; then the hashes of its key in its
+// holder, its value and its entry, and the base hash of the object value there.
+const createHashPlan = (source: Value, hash: number, located: number[]) => {
+  let size = 1;
   for (let at = 0, previousAt = -1; at < located.length; at += 2 + located[at + 1]) {
     size += 7 + 3 * (located[at + 1] - 1 - getCommonSteps(located, previousAt, at));
     previousAt = at;
   }
   const plan = new Int32Array(size);
-  let planAt = 0;
+  plan[0] = hash;
+  let planAt = 1;
   for (let at = 0, previousAt = -1; at < located.length; at += 2 + located[at + 1]) {
     const depth = located[at + 1] - 1;
     const common = getCommonSteps(located, previousAt, at);
@@ -1234,18 +1235,18 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         getEntryContribution(levelKeys[level], levelHashes[level])) |
       0;
   };
-  // The hash of the record that makeRecord makes of a source of the given hash with the edges by
-  // their new numbers from first in renamedEdges, from the source's plan.
-  const getMadeHash = (renamedEdges: Int32Array, first: number, hash: number, plan: Int32Array) => {
+  // The hash of the record that makeRecord makes of a source with the edges by their new numbers
+  // from first in renamedEdges, from the source's plan.
+  const getMadeHash = (renamedEdges: Int32Array, first: number, plan: Int32Array) => {
     if (plan.length > levelHashes.length) {
       levelKeys = new Int32Array(plan.length);
       levelBases = new Int32Array(plan.length);
       levelEntries = new Int32Array(plan.length);
       levelHashes = new Int32Array(plan.length);
     }
-    levelHashes[0] = hash;
+    levelHashes[0] = plan[0];
     let open = 0;
-    for (let at = 0; at < plan.length; at += 4) {
+    for (let at = 1; at < plan.length; at += 4) {
       const target = renamedEdges[first + plan[at]];
       for (let left = plan[at + 1]; left > 0; left--, open--) closeHashLevel(open);
       const entered = plan[at + 2];
@@ -1297,12 +1298,12 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     plan: Int32Array | undefined,
     slots: Slots,
   ) => {
-    const hash = getValueHash(source);
+    const hash = plan === undefined ? getValueHash(source) : plan[0];
     if (located === undefined || isUnfingerprintableHash(hash)) {
       pushSlot(slots, undefined, source, plan, hash, false);
       return;
     }
-    const sourcePlan = plan ?? createHashPlan(source, located);
+    const sourcePlan = plan ?? createHashPlan(source, hash, located);
     pushSlot(
       slots,
       undefined,
@@ -1311,7 +1312,6 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       getMadeHash(
         pageScratch,
         pageScratch[EDGE_STARTS + (slots.count & (PAGE_SIZE - 1))],
-        hash,
         sourcePlan,
       ),
       false,
