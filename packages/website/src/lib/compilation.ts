@@ -5,6 +5,10 @@ import type { Mark, Source, Token } from "./site-data";
 // the rest render once the page has hydrated, and an outline holds no more.
 export const BUILT_OUTPUT_LINES = 60;
 
+// The language that a file's source is highlighted in, by its extension.
+export const getSourceLanguage = (fileName: string) =>
+  fileName.endsWith(".tsx") ? "tsx" : "typescript";
+
 export interface Compilation {
   name: string;
   tla: string;

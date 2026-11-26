@@ -8,7 +8,7 @@ import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { parseModule } from "../tla-ts/src/parser";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
-import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/lib/compilation";
+import { BUILT_OUTPUT_LINES, getSourceLanguage, type Precompiled } from "./src/lib/compilation";
 import { getEscoreCompilation } from "./src/lib/escore";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
@@ -78,7 +78,7 @@ const getExample = (
     name: compiled.name,
     config: compiled.config,
     modules: compiled.modules,
-    typescript: highlight(typescript, "typescript"),
+    typescript: highlight(typescript, getSourceLanguage(fileName)),
     tla: highlight(compiled.tla, "tlaplus"),
     highlightNames: [...module.variables, ...module.definitions]
       .map((declared) => declared.name)
@@ -306,7 +306,7 @@ const compilations = (): Plugin => ({
     const built: Omit<Precompiled, "tla"> = {
       fileName: getFileName(path),
       source,
-      typescript: highlight(source, "typescript").lines,
+      typescript: highlight(source, getSourceLanguage(getFileName(path))).lines,
       compilation,
     };
     return `const built = ${JSON.stringify(built)};\nexport default { ...built, tla: ${packSource(highlight(compilation.tla, "tlaplus"), "built.compilation.tla")} };`;

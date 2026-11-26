@@ -7,6 +7,7 @@ import {
   compileOnEscore,
   listenToCompiles,
 } from "@/lib/escore-worker";
+import { getSourceLanguage } from "@/lib/compilation";
 import type { createHighlighter } from "@/lib/highlighter";
 
 interface CompileState {
@@ -74,9 +75,9 @@ export const useCompile = (source: string, fileName: string) => {
   const tokens = useMemo(
     () =>
       (isBuilt ? built?.typescript : undefined) ??
-      highlight?.(source, "typescript").lines ??
+      highlight?.(source, getSourceLanguage(fileName)).lines ??
       source.split("\n").map((content) => [{ content, style: {} }]),
-    [isBuilt, built, highlight, source],
+    [isBuilt, built, highlight, source, fileName],
   );
   const tla = useMemo(
     () =>
