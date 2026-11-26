@@ -2792,6 +2792,27 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe("answers for a locale that V8 resolves to its default as it answers for none", () => {
+    const getSource = (expected: string) => `
+      const tags = ["laaaa", "lbaaa", "en-GB"];
+      const format = new Intl.NumberFormat(tags[1], { style: "percent" });
+      const result = [
+        format.format(0.5),
+        format.resolvedOptions().locale === new Intl.NumberFormat().resolvedOptions().locale,
+        new Intl.NumberFormat(tags[2]).format(1234.5),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("50%|true|1,234.5"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("50%|false|1,234.5"))).message).toContain(THREW);
+    });
+  });
+
   describe.runIf(Reflect.has(globalThis, "Temporal"))(
     "gives Date's locale strings through Intl.DateTimeFormat",
     () => {

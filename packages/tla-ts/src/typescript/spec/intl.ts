@@ -1269,6 +1269,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   const literals = getLiterals(
     services.length === 0 && !isNamed && !isLocaleRead ? [] : sourceFiles,
   );
+  const defaultLocales = new Map<string, Set<string>>();
   for (const service of services) {
     if (service.name === "NumberFormat") {
       for (const text of literals.strings) {
@@ -1291,18 +1292,24 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     const bags = getBags(service, literals);
     const isResolving = RESOLVING.has(service.name);
     const reads = bags.map((bag) => (isResolving ? undefined : getRead(service, bag)));
-    const defaults: (InstanceType<typeof Constructor> | undefined)[] = [];
     for (const locales of getLocaleCandidates(service, literals)) {
       const requested = getCanonical(locales);
       if (requested === undefined) continue;
-      // V8 resolves a locale that neither matcher supports to its default, as it resolves none.
-      const isDefaultLocale =
-        locales === undefined ||
+      const units = requested.map(getUnitsOf).join(", ");
+      // V8 resolves locales that neither matcher supports to its default, as it resolves none.
+      if (
+        requested.length > 0 &&
         ["best fit", "lookup"].every(
           (localeMatcher) =>
             Constructor.supportedLocalesOf(locales, { localeMatcher }).length === 0,
+        )
+      ) {
+        defaultLocales.set(
+          service.name,
+          (defaultLocales.get(service.name) ?? new Set()).add(`<<${units}>>`),
         );
-      const units = requested.map(getUnitsOf).join(", ");
+        continue;
+      }
       for (const [position, bag] of bags.entries()) {
         if (
           !isResolving &&
@@ -1310,23 +1317,20 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         ) {
           continue;
         }
-        const object =
-          (isDefaultLocale ? defaults[position] : undefined) ??
-          (() => {
-            try {
-              return new Constructor(locales, bag);
-            } catch (error) {
-              // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
-              if (service.name === "DurationFormat") {
-                entries.set(
-                  `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
-                  `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
-                );
-              }
-              return undefined;
+        const object = (() => {
+          try {
+            return new Constructor(locales, bag);
+          } catch (error) {
+            // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
+            if (service.name === "DurationFormat") {
+              entries.set(
+                `<<"${service.name}", <<<<${units}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
+                `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
+              );
             }
-          })();
-        if (locales === undefined) defaults[position] = object;
+            return undefined;
+          }
+        })();
         if (object === undefined) continue;
         const resolved = { ...object.resolvedOptions() };
         const pairs = Object.entries(resolved).map(([key, value]) => [key, getEscoreValue(value)]);
@@ -1442,6 +1446,7 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
       ),
     ),
   );
+  const tableKey = defaultLocales.size === 0 ? "key" : "read";
   const definitions = [
     ...[...parts].map(([part, name]) => ({ name, arity: 0, text: `${name} == ${part}` })),
     ...tables.map((table) => ({
@@ -1452,13 +1457,22 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         (left, right) => `(${left}\n  @@ ${right})`,
       )}`,
     })),
+    ...(defaultLocales.size === 0
+      ? []
+      : [
+          {
+            name: "IntlDefaultLocales",
+            arity: 0,
+            text: `IntlDefaultLocales ==\n  [${[...defaultLocales].map(([name, lists]) => `${name} |-> {${[...lists].join(", ")}}`).join(",\n   ")}]`,
+          },
+        ]),
     {
       name: "HostIntl",
       arity: 1,
       text:
         tables.length === 0
           ? `HostIntl(key) == [found |-> "unknown"]`
-          : `HostIntl(key) ==\n  CASE ${[...tables.map((table) => `key \\in DOMAIN ${table.name} -> ${table.name}[key]`), `OTHER -> [found |-> "unknown"]`].join("\n    [] ")}`,
+          : `HostIntl(key) ==\n  ${defaultLocales.size === 0 ? "" : "LET read == IF Len(key) = 4 /\\ key[1] \\in DOMAIN IntlDefaultLocales /\\ key[2][1] \\in IntlDefaultLocales[key[1]]\n              THEN [key EXCEPT ![2][1] = <<>>]\n              ELSE key\n  IN "}CASE ${[...tables.map((table) => `${tableKey} \\in DOMAIN ${table.name} -> ${table.name}[${tableKey}]`), `OTHER -> [found |-> "unknown"]`].join("\n    [] ")}`,
     },
   ];
   return { definitions, strings, literals: literals.strings };
