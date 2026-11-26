@@ -317,7 +317,7 @@ const getInstanceActions = (
         scope: values.reduce<Scope | undefined>(
           (current, value, index) => ({
             name: called.params[index].name,
-            binding: { kind: "Value", value },
+            binding: { kind: "Value", value, argument: undefined, isSelf: false },
             parent: current,
           }),
           called.scope,
@@ -482,6 +482,8 @@ const getActions = (
         binding: {
           kind: "Value",
           value: evaluate(arg, getSplitContext(environment, scope)),
+          argument: undefined,
+          isSelf: false,
         },
         parent: current,
       }),

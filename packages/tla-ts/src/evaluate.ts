@@ -206,16 +206,21 @@ export interface Thunk {
   isStreamed: boolean;
   isRebuilt: boolean;
   isUncached: boolean;
-  isReleased?: boolean;
+  isReleased: boolean;
   // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
   // its scope rather than read the cached value.
-  isNamed?: boolean;
+  isNamed: boolean;
 }
 
-type Binding =
-  | { kind: "Value"; value: Value; argument?: Expression; isSelf?: boolean }
-  | Thunk
-  | { kind: "Operator"; operator: Operator };
+// Every binding of a kind has the same fields in the same order, so V8 sees one shape per kind.
+interface ValueBinding {
+  kind: "Value";
+  value: Value;
+  argument: Expression | undefined;
+  isSelf: boolean;
+}
+
+type Binding = ValueBinding | Thunk | { kind: "Operator"; operator: Operator };
 
 export interface Scope {
   name: string;
@@ -493,13 +498,13 @@ export const lookupScope = (scope: Scope | undefined, name: string): Binding | u
 
 export const bindValue = (scope: Scope | undefined, name: string, value: Value): Scope => ({
   name,
-  binding: { kind: "Value", value },
+  binding: { kind: "Value", value, argument: undefined, isSelf: false },
   parent: scope,
 });
 
 const bindSelf = (scope: Scope | undefined, name: string, value: Value): Scope => ({
   name,
-  binding: { kind: "Value", value, isSelf: true },
+  binding: { kind: "Value", value, argument: undefined, isSelf: true },
   parent: scope,
 });
 
@@ -1095,7 +1100,7 @@ const compileDefinitionBody = (
 
 const CALLER_SCOPE: Scope = {
   name: "",
-  binding: { kind: "Value", value: false },
+  binding: { kind: "Value", value: false, argument: undefined, isSelf: false },
   parent: undefined,
 };
 
@@ -1481,6 +1486,7 @@ const createThunk = (
   isRebuilt: false,
   isNamed: context.isNaming === true,
   isUncached: false,
+  isReleased: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1539,7 +1545,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
-    const binding: Binding = { kind: "Value", value: argument.value, argument };
+    const binding: Binding = { kind: "Value", value: argument.value, argument, isSelf: false };
     return () => binding;
   }
   const coverage = environment.coverage;
@@ -1559,7 +1565,12 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       ? undefined
       : findGlobalName(argument.name, environment);
     if (global?.kind === "Value") {
-      const binding: Binding = { kind: "Value", value: global.value };
+      const binding: Binding = {
+        kind: "Value",
+        value: global.value,
+        argument: undefined,
+        isSelf: false,
+      };
       return () => binding;
     }
     if (global === undefined && !environment.callStack) {
@@ -1625,6 +1636,8 @@ const bindArgumentValues = (
           : {
               kind: "Value",
               value: (step.values[index] ??= getEntryEvaluator(arg, context.environment))(context),
+              argument: undefined,
+              isSelf: false,
             };
     scope = { name: param.name, binding, parent: scope };
   }
@@ -1987,7 +2000,7 @@ export const bindDefinitions = (
 ): Scope | undefined => {
   const nodes = definitions.map((definition): Scope => ({
     name: definition.name,
-    binding: { kind: "Value", value: false },
+    binding: { kind: "Value", value: false, argument: undefined, isSelf: false },
     parent: undefined,
   }));
   let scope = context.scope;
@@ -2041,6 +2054,7 @@ export const bindDefinitions = (
             reevaluated?.isFunctionRebuilt === true,
           isNamed: context.isNaming === true,
           isUncached: false,
+          isReleased: false,
         };
   }
   const coverage = context.environment.coverage;
@@ -3045,7 +3059,11 @@ const trimScope = (scope: Scope | undefined, names: string[] | undefined) =>
           const binding = lookupScope(scope, name);
           return binding ? { name, binding, parent: trimmed } : trimmed;
         },
-        { name: "", binding: { kind: "Value", value: false }, parent: undefined },
+        {
+          name: "",
+          binding: { kind: "Value", value: false, argument: undefined, isSelf: false },
+          parent: undefined,
+        },
       );
 
 export const isKeptLazy = (expression: Expression) => keptLazyExpressions.has(expression);
