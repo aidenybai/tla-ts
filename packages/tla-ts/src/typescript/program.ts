@@ -1,7 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { createJavaScriptFile, isJavaScriptFile, resolveModule } from "./common-js";
-import { rewriteJsx } from "./jsx";
 
 const COMPILER_OPTIONS: ts.CompilerOptions = {
   strict: true,
@@ -243,22 +242,34 @@ export const getProjectCompilerOptions = (path: string) => {
   return project === undefined ? undefined : getProjectOptions(project.options);
 };
 
-// The text of a file as tla-ts runs it: a file of JSX's with each JSX expression the call that
-// TypeScript emits for it, by the options of its project, as createProgram reads it (see
-// rewriteJsx), and any other file's as it is.
+// The text of a file as tla-ts runs it: a file of JSX's as TypeScript emits it, by the options of
+// its project, or by TypeScript's defaults with React's automatic runtime where no project holds
+// it, as Node runs the JavaScript that TypeScript writes, and any other file's as it is. A project
+// that leaves JSX for another tool to compile has no JavaScript for Node to run.
 export const getJsxText = (path: string, text: string) => {
   if (!/\.[jt]sx$/.test(path)) return text;
   const project = getProject(path);
-  const options =
-    project === undefined
-      ? { ...COMPILER_OPTIONS, jsx: ts.JsxEmit.ReactJSX }
-      : getProjectOptions(project.options);
-  return rewriteJsx(
-    path,
-    text,
-    options,
-    ts.sys === undefined ? createLibraryHost(new Map()) : ts.createCompilerHost(options),
-  );
+  const options = project?.options ?? { jsx: ts.JsxEmit.ReactJSX };
+  if (options.jsx === ts.JsxEmit.Preserve || options.jsx === ts.JsxEmit.ReactNative) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run ${path}, whose tsconfig.json leaves its JSX for another tool to compile`,
+    );
+  }
+  const emitted = ts.transpileModule(text, {
+    fileName: path,
+    compilerOptions: { ...options, noEmit: false },
+    reportDiagnostics: true,
+  });
+  const syntaxErrors = emitted.diagnostics ?? [];
+  if (syntaxErrors.length > 0) {
+    throw new TlaTypeScriptError(
+      ts.formatDiagnostics(
+        syntaxErrors,
+        ts.sys === undefined ? createLibraryHost(new Map()) : ts.createCompilerHost(options),
+      ),
+    );
+  }
+  return emitted.outputText;
 };
 
 // The files that a run's programs parse, by the options they parse with and their path, which each

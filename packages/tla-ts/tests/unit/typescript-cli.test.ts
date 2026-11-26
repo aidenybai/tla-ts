@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1597,6 +1598,92 @@ describe("the CLI with TypeScript files", () => {
       expect.stringContaining("\n\nError: p(x)\n"),
       expect.stringContaining("\n\nError: p(x)\n"),
     ]);
+  });
+
+  // TypeScript writes a file of JSX as an ES module, with its calls on lines of their own and its
+  // types gone, whose code Node shows where it throws.
+  describe("runs a file of JSX as the code that TypeScript writes for it", () => {
+    const REACT = join(import.meta.dirname, "../../../website/node_modules/react");
+    const getScript = (extension: string, expected: string) =>
+      `${extension === "tsx" ? "type Item = { n: number };\n" : ""}const Item = (props${extension === "tsx" ? ": Item" : ""}) =>\n  <li>\n    {props.n * 2}\n  </li>;\nconst list = <ul id="u">{[1, 2].map((n) => <Item key={n} n={n} />)}<>x</></ul>;\nconst seen = [typeof module, list.props.children.length, String(list.props.children[0][1].key), Item({ n: 3 }).props.children].join(" ");\nif (seen !== "${expected}") throw new Error(seen);\n`;
+
+    it.each(["tsx", "jsx"])(
+      "agrees with Node on a .%s file of React's automatic runtime",
+      (extension) => {
+        const directory = copyFixtures("passing");
+        mkdirSync(join(directory, "node_modules"));
+        symlinkSync(REACT, join(directory, "node_modules/react"));
+        const file = `view.${extension}`;
+        writeFileSync(join(directory, file), getScript(extension, "undefined 2 2 6"));
+        expect(getExit(runNodeOnJsx(directory, file))).toEqual([0, ""]);
+        expect(getExit(runCli(directory, [file]))).toEqual([0, ""]);
+        writeFileSync(join(directory, file), getScript(extension, "object 2 2 6"));
+        const wrong = runCli(directory, [file]);
+        expect(getExit(wrong)).toEqual(getExit(runNodeOnJsx(directory, file)));
+        expect(wrong.status).toBe(1);
+      },
+    );
+
+    // TypeScript writes a file of JSX as an ES module under React's runtime, though a pragma names a
+    // factory of the file's own and the file imports nothing.
+    it("runs a file of a classic pragma's JSX as the ES module that TypeScript writes", () => {
+      const directory = copyFixtures("passing");
+      const getPragmaScript = (expected: string) =>
+        `/** @jsxRuntime classic */\n/** @jsx h */\nconst h = (type, props, ...children) => type + "(" + children.join(",") + ")";\nconst seen = [typeof module, String(this), <p>{1}</p>].join(" ");\nif (seen !== "${expected}") throw new Error(seen);\n`;
+      writeFileSync(join(directory, "view.jsx"), getPragmaScript("undefined undefined p(1)"));
+      expect(getExit(runNodeOnJsx(directory, "view.jsx"))).toEqual([0, ""]);
+      expect(getExit(runCli(directory, ["view.jsx"]))).toEqual([0, ""]);
+      writeFileSync(join(directory, "view.jsx"), getPragmaScript("object [object Object] p(1)"));
+      const wrong = runCli(directory, ["view.jsx"]);
+      expect(getExit(wrong)).toEqual(getExit(runNodeOnJsx(directory, "view.jsx")));
+      expect(wrong.status).toBe(1);
+    });
+
+    // Node names a CommonJS file of JavaScript, as TypeScript writes one under a project of CommonJS,
+    // by its path, and an ES module by its URL. Node's ESM loader, which runs the hooks, puts the
+    // caret of a CommonJS file elsewhere than its CommonJS loader, so the lines after it differ.
+    it("names a file of JSX that TypeScript writes as CommonJS by its path", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: { jsx: "react", jsxFactory: "h", module: "commonjs", strict: true },
+          include: ["*"],
+        }),
+      );
+      writeFileSync(
+        join(directory, "view.tsx"),
+        'const h = (type: string, props: unknown, ...children: unknown[]) => `${type}(${children.join(",")})`;\nconst view: string = <p>{1}</p>;\nexport const shown = view;\nif (view !== "p(2)") throw new Error(view);\n',
+      );
+      const node = runNodeOnJsx(directory, "view.tsx");
+      const result = runCli(directory, ["view.tsx"]);
+      expect([result.status, node.status]).toEqual([1, 1]);
+      expect(result.stderr).toMatch(/^\/[^\n]*\/view\.tsx:\d+\n/);
+      expect(node.stderr.split("\n").slice(0, 2)).toEqual(result.stderr.split("\n").slice(0, 2));
+    });
+
+    // TypeScript's emit keeps JSX that a project's tsconfig.json preserves, which Node can't run.
+    it.each([
+      ["preserve", "react"],
+      ["react-native", "react"],
+    ])("stops at a project whose jsx is %s, and runs one whose jsx is %s", (kept, compiled) => {
+      const directory = copyFixtures("passing");
+      const getConfig = (jsx: string) =>
+        JSON.stringify({ compilerOptions: { jsx, jsxFactory: "h", strict: true }, include: ["*"] });
+      writeFileSync(
+        join(directory, "view.tsx"),
+        'const h = (type: string, props: unknown, ...children: unknown[]) => `${type}(${children.join(",")})`;\nconst view = <p>{1}</p>;\nif (view !== "p(1)") throw new Error(view);\n',
+      );
+      writeFileSync(join(directory, "tsconfig.json"), getConfig(kept));
+      expect(runNodeOnJsx(directory, "view.tsx").stderr).toContain("SyntaxError");
+      expect(getExit(runCli(directory, ["view.tsx"]))).toEqual([
+        255,
+        "TlaTypeScriptError: tla-ts can't run view.tsx, whose tsconfig.json leaves its JSX for another tool to compile\n",
+      ]);
+      writeFileSync(join(directory, "tsconfig.json"), getConfig(compiled));
+      expect(getExit(runNodeOnJsx(directory, "view.tsx"))).toEqual([0, ""]);
+      expect(getExit(runCli(directory, ["view.tsx"]))).toEqual([0, ""]);
+    });
   });
 
   it("exits with Node's warning where a module's top-level await never settles", () => {

@@ -429,7 +429,7 @@ const parseCode = (code: string, fileName: string, isModule: boolean) => {
 // CommonJS module's JavaScript is in the function that Node wraps it in, where a .js file may
 // return.
 const transpile = (source: string, fileName: string, isModule: boolean, wrapper = ["", ""]) => {
-  const isTypeScript = /\.[cm]?tsx?$/.test(fileName);
+  const isTypeScript = /\.[cm]?ts$/.test(fileName);
   const sourceFile = parseCode(
     isTypeScript ? source : `${wrapper[0]}${source}${wrapper[1]}`,
     fileName,
@@ -807,7 +807,7 @@ const loadFiles = (
     // The specifiers of the code that the file holds, which a JavaScript file that Node wraps parses
     // outside the wrapper.
     const written = getSpecifiers(
-      kind === "commonjs" && !/\.[cm]?tsx?$/.test(path)
+      kind === "commonjs" && !/\.[cm]?ts$/.test(path)
         ? parseFile(path, text)
         : transpiled.sourceFile,
       kind,

@@ -356,19 +356,19 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
   const { stripTypes } = await import("../typescript/spec/strip-types");
   const runtime = await getEscoreRuntime();
   const source = readFileSync(path, "utf8");
-  // The code that Node runs, whose lines it shows: the file's text, with its JSX the calls it
-  // compiles to, and a TypeScript file's types stripped, which keeps every position.
+  // The code that Node runs, whose lines it shows: a file of JSX's as TypeScript writes it, and
+  // another TypeScript file's text with its types stripped, which keeps every position.
   const text = getJsxText(path, source);
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
-  const code = /\.[cm]?tsx?$/.test(path)
+  const code = /\.[cm]?ts$/.test(path)
     ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
     : text;
   const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
   // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
-  // names it by its URL, but a CommonJS file of JavaScript by its path.
+  // names it by its URL, but a CommonJS file of JavaScript, as TypeScript writes JSX, by its path.
   const isModule = getModuleFormat(path, text) === "module";
   const url =
-    isModule || /\.[cm]?tsx?$/.test(path)
+    isModule || /\.[cm]?ts$/.test(path)
       ? pathToFileURL(realpathSync(path)).href
       : realpathSync(path);
   // Where Node says code is: the file's URL and the line, then the line, with a caret under the
@@ -395,7 +395,7 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
       return [];
     }
     const fileText = isEntry ? text : getJsxText(file.path, readFileSync(file.path, "utf8"));
-    const fileCode = /\.[cm]?tsx?$/.test(file.path)
+    const fileCode = /\.[cm]?ts$/.test(file.path)
       ? stripTypes(
           ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
         )
@@ -403,7 +403,7 @@ const compileEscoreEntry = async (path: string, setBound?: number): Promise<Comp
     const fileLines = isEntry ? lines : fileCode.split(/\r\n|[\n\r\u2028\u2029]/);
     const fileUrl = isEntry
       ? url
-      : file.kind === "module" || /\.[cm]?tsx?$/.test(file.path)
+      : file.kind === "module" || /\.[cm]?ts$/.test(file.path)
         ? pathToFileURL(realpathSync(file.path)).href
         : realpathSync(file.path);
     const parsed = isEntry

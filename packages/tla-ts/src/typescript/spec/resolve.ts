@@ -195,7 +195,7 @@ const getPackageType = (path: string): string | undefined => {
 // names no type: an import or an export, import.meta, or an await at its top level, in the code
 // that runs once a TypeScript file's types are stripped.
 const hasModuleSyntax = (path: string, text: string) => {
-  const isTypeScript = /\.[cm]?tsx?$/.test(path);
+  const isTypeScript = /\.[cm]?ts$/.test(path);
   const code = isTypeScript
     ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
     : text;
