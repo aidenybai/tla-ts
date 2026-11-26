@@ -741,6 +741,70 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "a number for a variable",
+      "VARIABLE y\nI == INSTANCE Q WITH y <- 5\nInit == y = 0\nNext == UNCHANGED y\nInv == I!val = 6",
+      "VARIABLE y\nval == y",
+    ],
+    [
+      "a set for a variable",
+      "VARIABLE y\nI == INSTANCE Q WITH y <- {5}\nInit == y = 0\nNext == UNCHANGED y\nInv == I!val = {6}",
+      "VARIABLE y\nval == y \\cup y",
+    ],
+    [
+      "a number for a constant",
+      "VARIABLE S\nI == INSTANCE Q WITH S <- 3\nInit == S = 0\nNext == UNCHANGED S\nInv == I!val = 4",
+      "CONSTANT S\nval == S",
+    ],
+  ])(
+    "checks an invariant on each state when its instance substitutes %s named like a root variable, as TLC does",
+    async (_kind, definitions, instanced) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule: (name) => (name === "Q" ? `---- MODULE Q ----\n${instanced}\n====` : undefined),
+      });
+      expect([result.status, result.violation?.name, result.violation?.trace.length]).toEqual([
+        "invariant-violation",
+        "Inv",
+        1,
+      ]);
+    },
+  );
+
+  it("evaluates an invariant once as it starts when its instance substitutes a number for a variable no root variable is named like, as TLC does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\nI == INSTANCE Q WITH w <- 5\nInit == y = 0\nNext == UNCHANGED y\nInv == I!val = 6\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule: (name) =>
+          name === "Q" ? "---- MODULE Q ----\nVARIABLE w\nval == w\n====" : undefined,
+      }),
+    ).rejects.toThrow(new TlaConfigError("The invariant of Inv is equal to FALSE"));
+  });
+
+  it.each([
+    ["y", ["5", "5", "5"]],
+    ["w", ["5"]],
+  ])(
+    "evaluates a property on each state only when its instance substitutes for a variable named like a root variable, here %s, as TLC does",
+    async (name, expected) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y\nI == INSTANCE Q WITH ${name} <- 5\nInit == y = 0\nNext == y' = (y + 1) % 3\nSpec == Init /\\ [][Next]_y /\\ WF_y(Next)\nProp == <>[](I!val)\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "Q"
+            ? `---- MODULE Q ----\nEXTENDS TLC\nVARIABLE ${name}\nval == PrintT(${name})\n====`
+            : undefined,
+        onPrint: (text) => prints.push(text),
+      });
+      expect([result.status, prints]).toEqual(["success", expected]);
+    },
+  );
+
   it("substitutes a replacement an instance of an instance binds once in a function the operator it copies refers to", async () => {
     const result = await check({
       source:

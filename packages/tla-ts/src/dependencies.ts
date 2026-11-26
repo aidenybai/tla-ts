@@ -8,6 +8,7 @@ import {
   type Expression,
 } from "./ast";
 import type { Environment } from "./evaluate";
+import { hasSubstitutedName } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { getBoundNames } from "./resolve";
 
@@ -170,8 +171,11 @@ const collectLocalFacts = (
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
     const name = getReferencedName(node);
     const isLocal = name !== undefined && isLocallyResolved(node);
-    // TLC's getLevelBound takes a parameter named like a variable for that variable.
-    if (isLocal && environment.variableIndex.has(name)) {
+    // SymbolNodeValueLookupProvider#getLevelBoundAppl returns 1 for a name a root variable shares (opName.getVarLoc() >= 0), such as a parameter's or a substituted declaration's.
+    if (
+      (isLocal && environment.variableIndex.has(name)) ||
+      hasSubstitutedName(node, environment.variableIndex)
+    ) {
       if (!isOperatorArgument) row[0] |= ABOVE_CONSTANT_BOUND;
       if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
     }
