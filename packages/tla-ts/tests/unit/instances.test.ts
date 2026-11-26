@@ -58,6 +58,12 @@ const OVERRIDDEN_MODULES = new Map([
   ["Q", "---- MODULE Q ----\nEXTENDS P\nval == None\n===="],
 ]);
 
+const DUPLICATE_VARIABLE_MODULES = new Map([
+  ["P1", "---- MODULE P1 ----\nVARIABLE y\nf1 == y\n===="],
+  ["P2", "---- MODULE P2 ----\nVARIABLE y\nf2 == y\n===="],
+  ["M2", "---- MODULE M2 ----\nVARIABLE y, z\nI == INSTANCE Q WITH y <- z\n===="],
+]);
+
 const PRINTED_ACTION_INSTANCE =
   'LET L == INSTANCE Pure3 WITH c <- IF PrintT(<<"c">>) THEN 1 ELSE 0, v <- x IN';
 
@@ -321,6 +327,76 @@ describe("INSTANCE matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    [
+      "substitutes the variable of the first extended module that declares it, not the second's, as TLC does",
+      "P1, P2",
+      "I == INSTANCE Q WITH y <- z\nInit == y = 1 /\\ z = 2\nNext == UNCHANGED <<y, z>>\nInv == I!val = <<2, 1, 2>>",
+    ],
+    [
+      "substitutes the variable of the first extended module that declares it when the order is swapped, as TLC does",
+      "P2, P1",
+      "I == INSTANCE Q WITH y <- z\nInit == y = 1 /\\ z = 2\nNext == UNCHANGED <<y, z>>\nInv == I!val = <<1, 2, 2>>",
+    ],
+    [
+      "keeps the variable of the second extended module that declares it unsubstituted through a chain of instances, as TLC does",
+      "P1, P2",
+      "VARIABLE w\nK == INSTANCE M2 WITH y <- w, z <- z\nInit == y = 1 /\\ z = 2 /\\ w = 3\nNext == UNCHANGED <<y, z, w>>\nInv == <<K!I!f1, K!I!f2>> = <<2, 1>>",
+    ],
+  ])("%s", async (_title, extended, definitions) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE y, z\n${definitions}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) =>
+        name === "Q"
+          ? `---- MODULE Q ----\nEXTENDS ${extended}\nval == <<f1, f2, y>>\n====`
+          : DUPLICATE_VARIABLE_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
+      1,
+    ]);
+  });
+
+  it.each([
+    [
+      "primes the variable of the second extended module that declares it in its own slot under ENABLED, a deviation from TLC, whose Tool#enabled binds a primed variable by name through TLCStateMut#bind",
+      "EXTENDS Naturals\nVARIABLE y, z\nI == INSTANCE Q WITH y <- z\nInit == y = 1 /\\ z = 2\nNext == I!B\nInv == I!en",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      new Map([
+        ["P1", "---- MODULE P1 ----\nVARIABLE y\nf1 == y\n===="],
+        ["P2", "---- MODULE P2 ----\nVARIABLE y\nf2 == y'\nA == y' = 7\n===="],
+        ["Q", "---- MODULE Q ----\nEXTENDS P1, P2\nB == y' = 3 /\\ A\nen == ENABLED B\n===="],
+      ]),
+      [3, 2, 2],
+    ],
+    [
+      "primes a root variable named like the instanced module's substituted variable in its own slot under ENABLED, a deviation from TLC, whose Tool#enabled binds a primed variable by name through TLCStateMut#bind",
+      "EXTENDS P, Naturals\nVARIABLE x, y\nI == INSTANCE Q WITH y <- x\nOther == y' = 2\nInit == x = 0 /\\ y = 0\nNext == UNCHANGED <<x, y>>\nInv == I!en",
+      "CONSTANTS None <- Other\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      new Map([
+        ["P", "---- MODULE P ----\nNone == TRUE\n===="],
+        [
+          "Q",
+          "---- MODULE Q ----\nEXTENDS P\nVARIABLE y\nA == y' = 1 /\\ None\nen == ENABLED A\n====",
+        ],
+      ]),
+      [2, 1, 1],
+    ],
+  ])("%s", async (_title, definitions, config, modules, counts) => {
+    const result = await check({
+      source: `---- MODULE M ----\n${definitions}\n====`,
+      config,
+      loadModule: (name) => modules.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      ...counts,
+    ]);
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
@@ -419,6 +495,43 @@ describe("INSTANCE matches TLC", () => {
       source: `---- MODULE M ----\nEXTENDS P\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n${definitions}\n====`,
       config: "CONSTANTS S = {1} None <- Other\nINIT Init\nNEXT Next\nINVARIANT Inv",
       loadModule: (name) => OVERRIDDEN_MODULES.get(name),
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      2,
+      1,
+      1,
+    ]);
+  });
+
+  it.each([
+    [
+      "evaluates a root redirect's target without substituting a root variable named like a variable of the instanced module, as TLC does",
+      "EXTENDS P, Naturals\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nVARIABLE y\nI == INSTANCE Q WITH S <- {2}, y <- 5\nOther == S \\cup {y}\nInit2 == Init /\\ y = 0\nNext2 == UNCHANGED <<x, y>>\nInv == I!val = {0, 2}",
+      "CONSTANTS S = {1} None <- Other\nINIT Init2\nNEXT Next2\nINVARIANT Inv",
+      new Map([
+        ["P", OVERRIDDEN_MODULES.get("P")],
+        [
+          "Q",
+          "---- MODULE Q ----\nEXTENDS P\nVARIABLE y\nval == IF y = y THEN None ELSE None\n====",
+        ],
+      ]),
+    ],
+    [
+      "evaluates a root redirect's target through a chain of instances, substituting each variable only where its declaration is instanced, as TLC does",
+      "EXTENDS P2, Naturals\nVARIABLE y\nI == INSTANCE Q WITH y <- 5\nOther == {v, y}\nInit == v = 1 /\\ y = 0\nNext == UNCHANGED <<v, y>>\nInv == I!J!rv = {5, 0}",
+      "CONSTANTS S = {1} None <- Other\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      new Map([
+        ["P2", "---- MODULE P2 ----\nCONSTANT S\nVARIABLE v\nNone == S\n===="],
+        ["R", "---- MODULE R ----\nEXTENDS P2\nrv == None\n===="],
+        ["Q", "---- MODULE Q ----\nCONSTANT S\nVARIABLE y\nJ == INSTANCE R WITH v <- y\n===="],
+      ]),
+    ],
+  ])("%s", async (_title, definitions, config, modules) => {
+    const result = await check({
+      source: `---- MODULE M ----\n${definitions}\n====`,
+      config,
+      loadModule: (name) => modules.get(name),
     });
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
       "success",

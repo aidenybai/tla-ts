@@ -35,7 +35,7 @@ interface StringExpression {
   location: SourceLocation;
 }
 
-interface IdentifierExpression {
+export interface IdentifierExpression {
   kind: "Identifier";
   name: string;
   spelling?: string;

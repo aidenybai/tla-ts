@@ -9,11 +9,13 @@ import {
   type Definition,
   type Expression,
   type FunctionDefinition,
+  type IdentifierExpression,
   type Instance,
   type Module,
   type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
+  type SourceRange,
   type Theorem,
 } from "./ast";
 import {
@@ -24,9 +26,11 @@ import {
   hasNoOperands,
   isBefore,
   isInstantiated,
+  isSameRange,
   KEY_SEPARATOR,
   LOCAL_RESOLUTION,
   untracedExpressions,
+  variableDeclarations,
 } from "./resolve";
 import type { Lookup } from "./subexpressions";
 
@@ -59,6 +63,8 @@ const addFrames = (expression: Expression, frames: Expression[]) => {
   const copy = { ...expression };
   if (contextualApplications.has(expression)) contextualApplications.add(copy);
   if (untracedExpressions.has(expression)) untracedExpressions.add(copy);
+  const declaration = variableDeclarations.get(expression);
+  if (declaration) variableDeclarations.set(copy, declaration);
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
@@ -450,6 +456,7 @@ interface Instantiation {
   params: OperatorParam[];
   substitutions: Map<string, Expression>;
   substitutedVariables: Set<string>;
+  variableRanges: Map<string, SourceRange | undefined>;
   enabledSubstitutions: WeakSet<Expression>;
   boundSubstitutions: BoundSubstitutions;
   instanceArguments: WeakSet<Expression>;
@@ -651,11 +658,21 @@ export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
 
 const getMode = (rewrite: Rewrite, mode: RewriteMode) => rewrite.modes.get(mode) ?? rewrite;
 
+const isForeignVariable = (expression: IdentifierExpression, instantiation: Instantiation) => {
+  const declaration = variableDeclarations.get(expression);
+  return (
+    declaration !== undefined &&
+    !isSameRange(declaration, instantiation.variableRanges.get(expression.name))
+  );
+};
+
+// Deviation from TLC: Tool#enabled binds a primed variable by name through TLCStateMut#bind, so a variable another module declares under the same name shares the substituted one's slot.
 const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string, string>) =>
   expression.kind === "Identifier" &&
   !bound.has(expression.name) &&
   !isLocallyResolved(expression) &&
-  rewrite.instantiation.substitutedVariables.has(expression.name);
+  rewrite.instantiation.substitutedVariables.has(expression.name) &&
+  !isForeignVariable(expression, rewrite.instantiation);
 
 const substituteInEnabled = (
   expression: Expression,
@@ -848,7 +865,9 @@ const substituteExpression = (
   const enabled = substituteInEnabled(expression, rewrite, bound);
   if (enabled) return enabled;
   if (expression.kind === "Identifier" && isFree(expression.name)) {
-    const replacement = instantiation.substitutions.get(expression.name);
+    const replacement = isForeignVariable(expression, instantiation)
+      ? undefined
+      : instantiation.substitutions.get(expression.name);
     const binding = rewrite.binding;
     if (replacement && (!binding || !isBoundOnce(replacement, instantiation))) {
       const copy = withReplacedFrames(replacement, expression);
