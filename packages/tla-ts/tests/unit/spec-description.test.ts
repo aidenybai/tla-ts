@@ -68,7 +68,7 @@ describe("the description of the specification", () => {
     });
     expect(result.status).toBe("error");
     expect(printed).toEqual(['"walk"']);
-    expect(result.failure?.traceOutput).toEqual([]);
+    expect(result.failure?.trailingOutput).toEqual([]);
   });
 });
 

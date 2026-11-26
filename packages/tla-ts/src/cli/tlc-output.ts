@@ -482,6 +482,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     (status === "postcondition-violation" ? undefined : violation.postcondition);
   printTraceOutput(printer, violation.postconditionOutput);
   printPostcondition(printer, postcondition);
+  printTraceOutput(printer, violation.trailingOutput);
   return !isInitial && status !== "assumption-violation";
 };
 
@@ -573,6 +574,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     printTraceFailure(printer, failure.traceFailure);
     printTraceOutput(printer, failure.traceOutput);
     printPostcondition(printer, failure.postcondition);
+    printTraceOutput(printer, failure.trailingOutput);
     if (!failure.isCallStackFirst) printCallStack();
   } else if (result.violation) {
     if (!printViolation(result.status, result.violation, printer)) return;

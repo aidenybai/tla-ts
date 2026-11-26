@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { printCheckProgress, printResult, type Timing } from "../../src/cli/tlc-output";
 import { simulate } from "../../src/simulate";
+import { formatMessage, type MessagePrinter } from "../../src/tlc/messages";
 import { checkFixture } from "./check-harness";
 
 const checkCounterExample = async (configName: string) => {
@@ -200,6 +202,191 @@ describe("POSTCONDITION after a next-state failure matches TLC", () => {
         checkFailedNext("x' = x + 1 \\/ (x = 1 /\\ CHOOSE e \\in {} : TRUE)", ""),
       ]),
     ).toEqual([['{"action", "state", "console"}'], [], []]);
+  });
+});
+
+const printAfterLastTrace = async (
+  definitions: string,
+  post: string,
+  config: string,
+  isContinued: boolean,
+) => {
+  const lines: string[] = [];
+  const printer: MessagePrinter = {
+    isTool: false,
+    isDiffTrace: false,
+    version: "master",
+    print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+    printOutput: (text) => lines.push(text),
+  };
+  const timing: Timing = {
+    startTime: Date.now(),
+    isParsed: true,
+    livenessStartTime: undefined,
+    lastProgress: undefined,
+  };
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC\n${definitions}\nPost == ${post}\n====`,
+    config: `${config}\nPOSTCONDITION Post`,
+    isContinued,
+    onPrint: printer.printOutput,
+    onProgress: (progress) => {
+      if (progress.kind === "violation") printCheckProgress(printer, progress, timing, ".");
+    },
+  });
+  printResult(result, printer, timing);
+  return lines.slice(lines.lastIndexOf("Error: The behavior up to this point is:") + 1);
+};
+
+describe("POSTCONDITION before what TLC prints after it matches TLC", () => {
+  const callStack = (positions: string[]) =>
+    `Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n${positions.map((position, index) => `${index}. ${position} in M\n`).join("")}\n`;
+  const failedNextPositions = [
+    "Line 5, column 9 to line 5, column 46",
+    "Line 5, column 9 to line 5, column 29",
+    "Line 5, column 34 to line 5, column 46",
+    "Line 5, column 39 to line 5, column 46",
+  ];
+  const step = (state: number) =>
+    `State ${state}: <Next line 5, col 9 to line 5, col 52 of module M>\nx = ${state - 1}\n`;
+  const statistics = (states: number) => [
+    `${states} states generated, ${states} distinct states found, 0 states left on queue.`,
+    `The depth of the complete state graph search is ${states}.`,
+  ];
+
+  it.each([
+    [
+      "prints the replay of a failed next-state relation after the postconditions",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x\' = 1 \\div x',
+      'TLCGet("distinct") < 0',
+      "INIT Init\nNEXT Next",
+      false,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        "Error: Postcondition Post at line 6, col 9 to line 6, col 30 of module M is false.",
+        '<<"next", 0>>',
+        callStack(failedNextPositions),
+        ...statistics(1),
+      ],
+    ],
+    [
+      "prints the replay of a failed next-state relation after a postcondition that fails to evaluate",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x\' = 1 \\div x',
+      "1 \\div 0 = 0",
+      "INIT Init\nNEXT Next",
+      false,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        "Error: Evaluating postcondition Post at line 6, col 9 to line 6, col 20 of module M failed.\nThe second argument of \\div is 0.",
+        '<<"next", 0>>',
+        callStack(failedNextPositions),
+        ...statistics(1),
+      ],
+    ],
+    [
+      "prints what a failed next-state relation adds to the behavior graph and replays after the postconditions",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x\' = 1 \\div x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 5)',
+      'TLCGet("distinct") < 0',
+      "SPECIFICATION Spec\nPROPERTY Live",
+      false,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        "Error: Postcondition Post at line 8, col 9 to line 8, col 30 of module M is false.",
+        '<<"next", 0>>',
+        '<<"next", 0>>',
+        callStack(["Line 6, column 36 to line 6, column 39", ...failedNextPositions]),
+        ...statistics(1),
+      ],
+    ],
+    [
+      "prints what the state before an invariant violation adds to the behavior graph after the postconditions",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x < 3 /\\ x\' = x + 1\nInv == x < 2\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 5)',
+      'TLCGet("distinct") < 0',
+      "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Live",
+      false,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        '<<"next", 0>>',
+        step(2),
+        '<<"next", 1>>',
+        step(3),
+        '<<"next", 0>>',
+        '<<"next", 1>>',
+        "Error: Postcondition Post at line 9, col 9 to line 9, col 30 of module M is false.",
+        '<<"next", 1>>',
+        '<<"next", 1>>',
+        '<<"next", 1>>',
+        ...statistics(3),
+      ],
+    ],
+    [
+      "prints what a deadlocked state adds to the behavior graph after the postconditions",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x < 2 /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 5)',
+      'TLCGet("distinct") < 0',
+      "SPECIFICATION Spec\nPROPERTY Live",
+      false,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        step(2),
+        '<<"next", 1>>',
+        step(3),
+        '<<"next", 0>>',
+        '<<"next", 1>>',
+        "Error: Postcondition Post at line 8, col 9 to line 8, col 30 of module M is false.",
+        '<<"next", 2>>',
+        ...statistics(3),
+      ],
+    ],
+    [
+      "prints what a deadlocked state adds to the behavior graph after the postconditions under -continue",
+      'VARIABLE x\nInit == x = 0\nNext == PrintT(<<"next", x>>) /\\ x < 3 /\\ x\' = x + 1\nInv == x < 2\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(x = 5)',
+      'TLCGet("distinct") < 0',
+      "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Live",
+      true,
+      [
+        "State 1: <Initial predicate>\nx = 0\n",
+        step(2),
+        step(3),
+        '<<"next", 2>>',
+        step(4),
+        '<<"next", 0>>',
+        '<<"next", 1>>',
+        '<<"next", 2>>',
+        "Error: Postcondition Post at line 9, col 9 to line 9, col 30 of module M is false.",
+        '<<"next", 3>>',
+        ...statistics(4),
+      ],
+    ],
+  ])("%s", async (_title, definitions, post, config, isContinued, lines) => {
+    expect(await printAfterLastTrace(definitions, post, config, isContinued)).toEqual(lines);
+  });
+
+  it("prints what an incomplete successor adds to the behavior graph and replays after the postconditions, where TLC fails before them", async () => {
+    expect(
+      await printAfterLastTrace(
+        'VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == PrintT(<<"next", x>>) /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nLive == <>(x = 5)',
+        'TLCGet("distinct") < 0',
+        "SPECIFICATION Spec\nPROPERTY Live",
+        false,
+      ),
+    ).toEqual([
+      "State 1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n",
+      '<<"next", 0>>',
+      "State 2: <Next line 5, col 9 to line 5, col 43 of module M>\n/\\ x = 1\n/\\ y = null\n",
+      "Error: Postcondition Post at line 8, col 9 to line 8, col 30 of module M is false.",
+      '<<"next", 0>>',
+      '<<"next", 0>>',
+      callStack([
+        "Line 6, column 50 to line 6, column 53",
+        "Line 5, column 9 to line 5, column 43",
+        "Line 5, column 9 to line 5, column 29",
+        "Line 5, column 34 to line 5, column 43",
+        "Line 6, column 41 to line 6, column 48",
+        "Line 6, column 46 to line 6, column 46",
+      ]),
+      "2 states generated, 1 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+    ]);
   });
 });
 
