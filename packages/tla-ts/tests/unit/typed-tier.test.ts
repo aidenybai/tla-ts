@@ -440,6 +440,27 @@ describe("typed tier matches TLC", () => {
   });
 
   it.each([
+    ["", "x < 0 /\\ x' = Len([i \\in 1..2147483647 |-> i])"],
+    ["", "x < 0 /\\ x' = [i \\in 1..2147483647 |-> i][1]"],
+    ["", "x < 0 /\\ <<x>> \\in [1..2147483647 -> Int] /\\ x' = 1"],
+    ["S == 1..2147483647", "x < 0 /\\ x' = Cardinality(S \\cup {x})"],
+    ["S == SUBSET (1..30)", "x < 0 /\\ x' = Cardinality(S \\cup {{x}})"],
+  ])(
+    "compiles no constant set too large to enumerate, which TLC never enumerates in a disabled action: %s Next == %s",
+    async (definition, next) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets\nVARIABLE x\n${definition}\nInit == x = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+        "success",
+        1,
+        1,
+      ]);
+    },
+  );
+
+  it.each([
     ["Torus", 90153, 45076, 2.8e-13],
     ["SymmetricTorus", 98404, 32801, 1e-12],
     ["ProjectedTorus", 90153, 45076, 5.4e-13],
