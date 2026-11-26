@@ -725,6 +725,53 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // The frame calls a CommonJS file's functions by the bindings that its exports name, and stops at
+  // a function that it exports without one, which it would otherwise leave unchecked.
+  describe("checks a CommonJS model by the bindings that its exports name", () => {
+    const getModel = (limit: number, exported: string) =>
+      `let count = 0;\nconst tick = () => {\n  count = count === 3 ? 0 : count + 1;\n};\nconst isBounded = () => count < ${limit};\n${exported}\n`;
+    // Whether Node, ticking the model's module up to three times, finds isBounded false.
+    const isViolatedInNode = (directory: string) =>
+      spawnSync(
+        process.execPath,
+        [
+          "-e",
+          'const model = require("./model.cjs");\nconsole.log([1, 2, 3].some(() => (model.tick(), !model.isBounded())));',
+        ],
+        { cwd: directory, encoding: "utf8" },
+      ).stdout.trim() === "true";
+
+    it.each([
+      ["exports.tick = tick;\nexports.isBounded = isBounded;"],
+      ["module.exports = { tick, isBounded };"],
+      ["module.exports = { tick: tick, isBounded: isBounded };"],
+    ])("agrees with Node where %s", (exported) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
+      expect(isViolatedInNode(directory)).toBe(true);
+      expect(runCli(directory, ["model.cjs"]).stdout).toContain(
+        "Error: Invariant isBounded is violated.",
+      );
+      writeFileSync(join(directory, "model.cjs"), getModel(4, exported));
+      expect(isViolatedInNode(directory)).toBe(false);
+      expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
+    });
+
+    it.each([
+      ["exports.tick", "exports.tick = () => tick();\nexports.isBounded = isBounded;"],
+      ["module.exports", "module.exports = { tick() {\n  tick();\n}, isBounded };"],
+    ])("stops where %s sets a function that no binding names", (target, exported) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
+      expect(isViolatedInNode(directory)).toBe(true);
+      const result = runCli(directory, ["model.cjs"]);
+      expect(result.stdout).not.toContain("No error has been found");
+      expect(result.stderr).toContain(
+        `tla-ts can't check a function that ${target} sets without a binding that names it`,
+      );
+    });
+  });
+
   // A model's state may live in a module it imports, which a call of an export changes though the
   // model's own code writes no binding of it: an export that returns nothing is a step, and one
   // that returns a value is a check, which stops where its call changes the state.

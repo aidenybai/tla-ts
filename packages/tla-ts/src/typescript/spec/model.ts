@@ -3,7 +3,7 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
-import { getCommonJsExports } from "../context";
+import { findUnnamedCommonJsExport, getCommonJsExports } from "../context";
 import { getJsxText, parseFile, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
@@ -413,6 +413,16 @@ export const planModel = (
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
   const isCommonJs = commonJsExports.size > 0 && getModuleFormat(fileName, text) === "commonjs";
+  // The frame calls the functions that bindings name, which a function a CommonJS file exports
+  // without one has none of.
+  const unnamed =
+    getModuleFormat(fileName, text) === "commonjs" ? findUnnamedCommonJsExport(file) : undefined;
+  if (unnamed !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't check a function that ${unnamed.getText()} sets without a binding that names it, as exports.name = name names one`,
+      unnamed,
+    );
+  }
   const today = frameModel(source, fileName, library, runtime.names, setBound, LOCAL_NAMES);
   if (today.isScript) {
     return { isScript: true, notes: today.notes, isAugmented: today.isAugmented };

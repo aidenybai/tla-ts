@@ -87,43 +87,89 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
+// Whether a file has an ES module's import or export syntax, which a CommonJS file lacks.
+const hasModuleSyntax = (sourceFile: ts.SourceFile) =>
+  sourceFile.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) ||
+      ts.isExportDeclaration(statement) ||
+      ts.isExportAssignment(statement) ||
+      (ts.canHaveModifiers(statement) &&
+        (ts.getModifiers(statement) ?? []).some(
+          (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+        )),
+  );
+
+// The assignments of a CommonJS file's top level, by what they assign to: exports, module.exports,
+// or a property of either, as exports.name = value and module.exports.name = value assign it.
+const getCommonJsAssignments = (sourceFile: ts.SourceFile) =>
+  hasModuleSyntax(sourceFile)
+    ? []
+    : sourceFile.statements.flatMap((statement) => {
+        const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
+        if (
+          expression === undefined ||
+          !ts.isBinaryExpression(expression) ||
+          expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+        ) {
+          return [];
+        }
+        const isExports = (node: ts.Expression) =>
+          (ts.isIdentifier(node) && node.text === "exports") ||
+          (ts.isPropertyAccessExpression(node) &&
+            ts.isIdentifier(node.expression) &&
+            node.expression.text === "module" &&
+            node.name.text === "exports");
+        const left = expression.left;
+        const name = isExports(left)
+          ? undefined
+          : ts.isPropertyAccessExpression(left) && isExports(left.expression)
+            ? left.name.text
+            : null;
+        return name === null ? [] : [{ name, left, right: skipCasts(expression.right) }];
+      });
+
 // The local names that a CommonJS file's top level exports by name, by the names it exports them
-// as, in exports.name = local or module.exports.name = local. A file of an ES module's import or
-// export syntax exports none this way.
+// as, in exports.name = local, module.exports.name = local, or module.exports = { name: local },
+// or { local } as its shorthand. A file of an ES module's import or export syntax exports none
+// this way.
 export const getCommonJsExports = (sourceFile: ts.SourceFile) =>
   new Map(
-    sourceFile.statements.some(
-      (statement) =>
-        ts.isImportDeclaration(statement) ||
-        ts.isExportDeclaration(statement) ||
-        ts.isExportAssignment(statement) ||
-        (ts.canHaveModifiers(statement) &&
-          (ts.getModifiers(statement) ?? []).some(
-            (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-          )),
-    )
-      ? []
-      : sourceFile.statements.flatMap((statement): [string, string][] => {
-          const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
-          if (
-            expression === undefined ||
-            !ts.isBinaryExpression(expression) ||
-            expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-            !ts.isPropertyAccessExpression(expression.left) ||
-            !ts.isIdentifier(expression.right)
-          ) {
-            return [];
-          }
-          const target = expression.left.expression;
-          const isExports =
-            (ts.isIdentifier(target) && target.text === "exports") ||
-            (ts.isPropertyAccessExpression(target) &&
-              ts.isIdentifier(target.expression) &&
-              target.expression.text === "module" &&
-              target.name.text === "exports");
-          return isExports ? [[expression.left.name.text, expression.right.text]] : [];
-        }),
+    getCommonJsAssignments(sourceFile).flatMap((assignment): [string, string][] => {
+      const right = assignment.right;
+      if (assignment.name !== undefined) {
+        return ts.isIdentifier(right) ? [[assignment.name, right.text]] : [];
+      }
+      return ts.isObjectLiteralExpression(right)
+        ? right.properties.flatMap((property): [string, string][] =>
+            ts.isShorthandPropertyAssignment(property)
+              ? [[property.name.text, property.name.text]]
+              : ts.isPropertyAssignment(property) &&
+                  ts.isIdentifier(property.name) &&
+                  ts.isIdentifier(skipCasts(property.initializer))
+                ? [[property.name.text, skipCasts(property.initializer).getText()]]
+                : [],
+          )
+        : [];
+    }),
   );
+
+// Where a CommonJS file's top level exports a function that no binding of the file names, which the
+// model's frame can't call: exports.name = () => {}, or module.exports = { name() {} }.
+export const findUnnamedCommonJsExport = (sourceFile: ts.SourceFile) =>
+  getCommonJsAssignments(sourceFile).find(
+    (assignment) =>
+      ts.isFunctionLike(assignment.right) ||
+      (assignment.name === undefined &&
+        ts.isObjectLiteralExpression(assignment.right) &&
+        assignment.right.properties.some(
+          (property) =>
+            ts.isMethodDeclaration(property) ||
+            ts.isAccessor(property) ||
+            (ts.isPropertyAssignment(property) &&
+              ts.isFunctionLike(skipCasts(property.initializer))),
+        )),
+  )?.left;
 
 // A file that exports no function, which a spec exports as an action, runs as JavaScript does
 // rather than as a spec's model. A CommonJS file may export a function by name, which the model's
@@ -143,6 +189,7 @@ const isTypedCallable = (declaration: ts.VariableDeclaration) => {
 
 export const isScript = (sourceFile: ts.SourceFile) =>
   getCommonJsExports(sourceFile).size === 0 &&
+  findUnnamedCommonJsExport(sourceFile) === undefined &&
   sourceFile.statements.every(
     (statement) =>
       // An export list may name a function, which the model's frame tells.
