@@ -1707,6 +1707,8 @@ describe("the CLI with TypeScript files", () => {
         expect(getExit(wrong)).toEqual(getExit(runNodeOnJsx(directory, file)));
         expect(wrong.status).toBe(1);
       },
+      // Both checks load React's development build, 15 s together at a load of 40, and more above it.
+      120_000,
     );
 
     // TypeScript writes a file of JSX as an ES module under React's runtime, though a pragma names a
