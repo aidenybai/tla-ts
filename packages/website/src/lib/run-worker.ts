@@ -94,11 +94,13 @@ const host: Promise<EscoreHost> = fetch(
 const escore = Promise.all([
   import("./escore"),
   import("virtual:typescript-libraries"),
+  import("virtual:package-files"),
   import("../../../tla-ts/src/typescript/program"),
   import("../../../tla-ts/src/typescript/spec/api"),
   import("../../../tla-ts/src/typescript/spec/prepare"),
-]).then(async ([loaded, libraries, program, api, prepare]) => ({
+]).then(async ([loaded, libraries, packageFiles, program, api, prepare]) => ({
   library: program.createLibrary(libraries.default),
+  files: packageFiles.default,
   runtime: prepare.prepareHostRuntime(await host),
   compile: api.compileEscore,
   getCompilation: loaded.getEscoreCompilation,
@@ -118,7 +120,11 @@ const getRun = async (request: RunRequest) => {
       shown: request.source,
     };
   }
-  const spec = loaded.compile(request.typescript, loaded.runtime, loaded.library);
+  const spec = loaded.compile(
+    { ...request.typescript, files: loaded.files },
+    loaded.runtime,
+    loaded.library,
+  );
   const shown = spec.loadModule("ProgramCode") ?? "";
   checkCodeLength(shown);
   return { spec, shown };
@@ -223,7 +229,13 @@ const getErrorMessage = (error: unknown, isTypeScript: boolean) =>
 const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
   try {
     const loaded = await escore;
-    const compilation = loaded.getCompilation(source, fileName, loaded.runtime, loaded.library);
+    const compilation = loaded.getCompilation(
+      source,
+      fileName,
+      loaded.runtime,
+      loaded.files,
+      loaded.library,
+    );
     checkCodeLength(compilation.tla);
     return { source, fileName, compilation };
   } catch (error) {

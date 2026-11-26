@@ -16,7 +16,7 @@ tla-ts runs a file as Node does:
 - It rejects the TypeScript syntax that Node's type stripping rejects, with Node's message, as in `TlaTypeScriptError: enum.ts:1:1 TypeScript enum is not supported in strip-only mode`.
 - It reads the types only to build a model's frame, as [The model's frame](#the-models-frame) describes.
 
-The CLI takes `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs`, `.tsx`, and `.jsx` files. tla-ts doesn't run JSX yet, so a file with JSX stops with V8's `SyntaxError`, as in `TlaTypeScriptError: plain.jsx:1:1 SyntaxError: Unexpected token '<'`.
+The CLI takes `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs`, `.tsx`, and `.jsx` files. tla-ts runs a `.tsx` or `.jsx` file as the JavaScript that TypeScript writes for it, by the options of its `tsconfig.json`, or with React's automatic runtime, which imports `react/jsx-runtime`, where no project holds the file. A project whose `jsx` option is `preserve` or `react-native` stops, since it leaves the JSX for another tool.
 
 A file is a model where it puts `export` on a function declaration or on a variable whose value is a function, other than an async function or a generator. Any other file is a script.
 
@@ -358,6 +358,8 @@ The website at [tla-ts.com](https://tla-ts.com) compiles and checks in the brows
 - It answers the locale tags that the realm recorded and stops at others: `en-US`, `en`, `en-GB`, `ar`, `de`, `de-DE`, `es`, `es-ES`, `fr`, `fr-FR`, `hi`, `it`, `ja`, `ja-JP`, `ko`, `nl`, `pt`, `pt-BR`, `ru`, `sv`, `tr`, `zh`, `zh-CN`, and `zh-TW`.
 - It doesn't answer what Intl formats or how `Date.parse` reads a date string outside ECMA-262's formats, so those stop with a message that starts with `tla-ts can't`.
 - It finds a file's early errors with TypeScript's checks, since it has no V8 to parse with.
+- It runs a program on the files of the React package that the site was built with, at `/node_modules/react`, from `/`, in an empty environment. `process.env.NODE_ENV` is undefined, so React's development build runs, as in Node with no `NODE_ENV`.
+- It finds a package by its `exports`, as Node does. A package without `exports`, or whose `exports` use patterns or arrays, stops with `tla-ts can't resolve`. A model that imports a module stops with `tla-ts can't read the types of`, since TypeScript reads only the model's own file.
 
 The package's `compile` runs in Node only. Elsewhere, it throws `TlaTypeScriptError: tla-ts can't compile TypeScript outside Node yet`.
 

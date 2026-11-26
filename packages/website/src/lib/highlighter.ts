@@ -8,7 +8,7 @@ import { codeToTokens } from "@pierre/highlights";
 import type { Source, Token } from "./site-data";
 import { TLA_GRAMMAR } from "./tla-grammar";
 
-type Language = "shellscript" | "typescript" | "tlaplus";
+type Language = "shellscript" | "typescript" | "tsx" | "tlaplus";
 
 interface Palette {
   foreground: string;
@@ -87,7 +87,7 @@ const getToken = (content: string, style: Record<string, string>, prefix: string
   },
 });
 
-const getHighlightedLines = (code: string, language: "shellscript" | "typescript") =>
+const getHighlightedLines = (code: string, language: Exclude<Language, "tlaplus">) =>
   codeToTokens(code, { lang: language, themes: HIGHLIGHTS_THEMES, defaultColor: false }).tokens.map(
     (line) => line.map((token) => getToken(token.content, token.htmlStyle ?? {}, "--hls-")),
   );

@@ -7,15 +7,17 @@ import type { Compilation } from "./compilation";
 // are indented.
 const DEFINITION_END = /\n(?=\S)/g;
 
-// A file compiled by specializing ESCore: the module of the program's code, where each declaration
-// at the top of the file marks the definitions it compiles to.
+// A file compiled by specializing ESCore, on the files of the packages that the site passes: the
+// module of the program's code, where each declaration at the top of the file marks the
+// definitions it compiles to.
 export const getEscoreCompilation = (
   source: string,
   fileName: string,
   runtime: EscoreRuntime,
+  files: ReadonlyMap<string, string>,
   library?: Library,
 ): Compilation => {
-  const compiled = compileEscore({ source, fileName }, runtime, library);
+  const compiled = compileEscore({ source, fileName, files }, runtime, library);
   const code = compiled.loadModule("ProgramCode") ?? "";
   return {
     name: compiled.name,

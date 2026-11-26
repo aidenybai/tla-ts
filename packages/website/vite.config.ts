@@ -7,7 +7,7 @@ import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { type EscoreRuntime, prepareHostRuntime } from "../tla-ts/src/typescript/spec/prepare";
-import { BUILT_OUTPUT_LINES, type Precompiled } from "./src/lib/compilation";
+import { BUILT_OUTPUT_LINES, getSourceLanguage, type Precompiled } from "./src/lib/compilation";
 import { getLineMarks } from "./src/lib/line-marks";
 import { getOutputRows } from "./src/lib/output-rows";
 import { getEscoreCompilation } from "./src/lib/escore";
@@ -26,11 +26,11 @@ const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
 const EXAMPLE_PATHS = [
   "./src/examples/likes.ts",
-  "./src/examples/search-box.ts",
+  "./src/examples/search-box.tsx",
   "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
 ];
 const PLAYGROUND_PATHS = [
-  "./src/examples/*.ts",
+  "./src/examples/*.{ts,tsx}",
   "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",
 ];
 const BENCHMARK_ROW =
@@ -42,7 +42,7 @@ let escoreRuntime: EscoreRuntime | undefined;
 const getEscoreRuntime = () => (escoreRuntime ??= prepareHostRuntime(JSON.parse(getEscoreHost())));
 
 const compileOnEscore = (source: string, fileName: string) =>
-  getEscoreCompilation(source, fileName, getEscoreRuntime());
+  getEscoreCompilation(source, fileName, getEscoreRuntime(), getPackageFiles());
 
 // The code that builds a source: each distinct style once, and each run of tokens of one style as
 // its text with the style's number. ESCore's code of a program runs to a thousand lines, whose
@@ -75,7 +75,7 @@ const getExample = (
     name: compiled.name,
     config: compiled.config,
     modules: compiled.modules,
-    typescript: highlight(typescript, "typescript"),
+    typescript: highlight(typescript, getSourceLanguage(fileName)),
     tla: highlight(compiled.tla, "tlaplus"),
     sourceMarks: compiled.sourceMarks,
   };
@@ -313,11 +313,42 @@ const compilations = (): Plugin => ({
     const built: Omit<Precompiled, "tla"> = {
       fileName: getFileName(path),
       source,
-      typescript: highlight(source, "typescript").lines,
+      typescript: highlight(source, getSourceLanguage(getFileName(path))).lines,
       compilation,
     };
     return `const built = ${JSON.stringify(built)};\nexport default { ...built, tla: ${packSource(highlight(compilation.tla, "tlaplus"), "built.compilation.tla")} };`;
   },
+});
+
+// The packages that the site's programs import, whose files the page passes as the files that a
+// program runs on, from the root's node_modules, as a browser has no file system.
+const PACKAGES = ["react"];
+
+const PACKAGE_FILES = "virtual:package-files";
+
+const getPackageFiles = () =>
+  new Map(
+    PACKAGES.flatMap((name) => {
+      const directory = fileURLToPath(new URL(`./node_modules/${name}/`, import.meta.url));
+      return globSync("**/*", { cwd: directory, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => {
+          const path = join(entry.parentPath, entry.name);
+          return [
+            `/node_modules/${name}/${path.slice(directory.length)}`,
+            readFileSync(path, "utf8"),
+          ] as const;
+        });
+    }),
+  );
+
+const packageFiles = (): Plugin => ({
+  name: "package-files",
+  resolveId: (id) => (id === PACKAGE_FILES ? `\0${PACKAGE_FILES}` : undefined),
+  load: (id) =>
+    id === `\0${PACKAGE_FILES}`
+      ? `export default new Map(${JSON.stringify([...getPackageFiles()])});`
+      : undefined,
 });
 
 const TYPESCRIPT_LIBRARIES = "virtual:typescript-libraries";
@@ -426,6 +457,7 @@ export default defineConfig({
     outlines(),
     compilations(),
     typescriptLibraries(),
+    packageFiles(),
     logoFiles(),
     hostFile(),
     pages(),
@@ -443,5 +475,5 @@ export default defineConfig({
       "tla-ts": fileURLToPath(new URL("../tla-ts/src/index.ts", import.meta.url)),
     },
   },
-  worker: { format: "es", plugins: () => [typescriptLibraries()] },
+  worker: { format: "es", plugins: () => [typescriptLibraries(), packageFiles()] },
 });

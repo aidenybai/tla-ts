@@ -965,6 +965,8 @@ const METHOD_PRODUCTIONS = {
 export const specialize = (
   files: readonly ProgramFile[],
   internalKeys: ReadonlySet<string>,
+  // The variables of the environment that the program's process.env holds.
+  getEnvironmentVariable: (name: string) => string | undefined,
 ): SpecializedProgram => {
   // The names of the bindings of the function that Node wraps the entry module in, which the
   // environment holds rather than its frame.
@@ -981,9 +983,7 @@ export const specialize = (
   // Whether the program's process is Node's, whose env a module's code reads, where no file
   // declares process and a module runs in Node's context, whose global object has it.
   const isHostProcess =
-    typeof process !== "undefined" &&
-    files[0].kind !== "script" &&
-    !files.some((file) => isProcessDeclared(file.sourceFile));
+    files[0].kind !== "script" && !files.some((file) => isProcessDeclared(file.sourceFile));
   // Each file's number, from 1, and where its text starts in the program's texts, one after
   // another, which makes the sites of the program's nodes distinct.
   const fileNumbers = new Map(files.map((file, index) => [file.sourceFile, index + 1]));
@@ -2145,8 +2145,8 @@ export const specialize = (
       words.add(node.text);
       return (state) => apply("Ok", [state, getStr(node.text)]);
     }
-    // A read of process.env.NAME, of Node's process, is the environment's value as the process
-    // that compiles has it.
+    // A read of process.env.NAME, of Node's process, is the environment's value as the program's
+    // system has it: the process's that compiles, or none of a host's files.
     if (
       isHostProcess &&
       ts.isPropertyAccessExpression(node) &&
@@ -2155,7 +2155,7 @@ export const specialize = (
       ts.isIdentifier(node.expression.expression) &&
       node.expression.expression.text === "process"
     ) {
-      const variable = process.env[node.name.text];
+      const variable = getEnvironmentVariable(node.name.text);
       return (state) =>
         apply("Ok", [state, variable === undefined ? "Undefined" : getStr(variable)]);
     }

@@ -1,11 +1,9 @@
 import ts from "@typescript/typescript6";
-import { stripTypes } from "./strip-types";
+import { TlaTypeScriptError } from "../../errors";
+import { isNodeModule } from "../common-js";
 import { getProjectCompilerOptions } from "../program";
-
-// Node's paths, which only a program of files reads, so that a host without them, such as a
-// browser, compiles a script without loading them.
-const dirname = (path: string) => process.getBuiltinModule("node:path").dirname(path);
-const join = (...paths: string[]) => process.getBuiltinModule("node:path").join(...paths);
+import { getHostSystem, type ProgramSystem } from "../system";
+import { stripTypes } from "./strip-types";
 
 // The options that a program's modules resolve by where no project holds its entry: Node's.
 const NODE_OPTIONS: ts.CompilerOptions = {
@@ -30,9 +28,6 @@ const RESOLUTION_ERRORS = new Set([
   "ERR_INVALID_PACKAGE_TARGET",
   "ERR_UNSUPPORTED_RESOLVE_REQUEST",
 ]);
-
-// The files of a host without a file system, such as a browser: none.
-const NO_FILES: ts.ModuleResolutionHost = { fileExists: () => false, readFile: () => undefined };
 
 // Node's module, where Node runs this process, whose resolution the code that runs takes.
 const getNodeModule = () =>
@@ -132,42 +127,234 @@ const isNodeFile = (specifier: string, containingFile: string, file: string, isR
   !(isRequire && /\.[cm]?tsx?$/.test(file)) &&
   decodeURIComponent(new URL(specifier, `file://${containingFile}`).pathname) === file;
 
+// The conditions that Node 26 matches in a package's exports, by default, for an import and for a
+// require (getDefaultConditions and getCjsConditions), besides default.
+const IMPORT_CONDITIONS = new Set(["node", "import", "module-sync", "node-addons"]);
+const REQUIRE_CONDITIONS = new Set(["require", "node", "node-addons", "module-sync"]);
+
+// A specifier that names a package, and a subpath of it, which Node finds in a node_modules
+// directory: a scoped or a plain name that starts with neither a dot nor @, and has no percent
+// sign, backslash or colon, as a URL, a builtin's scheme, or Node's checks of a name read them.
+const PACKAGE_SPECIFIER = /^((?:@[^./\\%:][^/\\%:]*\/)?[^./\\%:@#][^/\\%:]*)(\/[^\\%:]*)?$/;
+
+// The fields of the package.json in a directory, or undefined where there is none. Node stops at
+// one that isn't JSON, and tla-ts at one that isn't an object.
+const readPackage = (system: ProgramSystem, directory: string, literal: ts.StringLiteralLike) => {
+  const text = system.readFile(`${directory}/package.json`);
+  if (text === undefined) return undefined;
+  const parsed = parseJson(text);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't resolve ${literal.text} without Node, as ${directory}/package.json isn't a JSON object`,
+      literal,
+    );
+  }
+  return new Map(Object.entries(parsed));
+};
+
+// A JSON text's value, or undefined where JSON.parse rejects it.
+const parseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+
+// The file that a package's exports name for a subpath, as Node's packageExportsResolve finds it
+// with resolvePackageTarget and finalizeResolution, or undefined where Node finds none. It reads
+// exports of strings, nulls and conditions, and stops at patterns, arrays of fallbacks, and targets
+// whose path Node reads by its URL, which may leave the package's directory.
+const resolveExports = (
+  system: ProgramSystem,
+  directory: string,
+  subpath: string,
+  exports: unknown,
+  conditions: ReadonlySet<string>,
+  literal: ts.StringLiteralLike,
+) => {
+  const getStop = (reason: string) =>
+    new TlaTypeScriptError(
+      `tla-ts can't resolve ${literal.text} without Node, as ${directory}/package.json ${reason}`,
+      literal,
+    );
+  const resolveTarget = (target: unknown): string | null | undefined => {
+    if (typeof target === "string") {
+      const segments = target.split("/");
+      if (
+        segments[0] !== "." ||
+        /[%\\#?]/.test(target) ||
+        segments
+          .slice(1)
+          .some(
+            (segment) =>
+              ["", ".", ".."].includes(segment) || segment.toLowerCase() === "node_modules",
+          )
+      ) {
+        throw getStop(`exports ${JSON.stringify(target)}`);
+      }
+      return `${directory}${target.slice(1)}`;
+    }
+    if (target === null) return null;
+    if (typeof target !== "object" || Array.isArray(target)) {
+      throw getStop("exports a target that is neither a string, null nor conditions");
+    }
+    const keys = Object.keys(target);
+    if (keys.some((key) => /^(?:0|[1-9]\d*)$/.test(key))) {
+      throw getStop("exports a numeric condition");
+    }
+    for (const key of keys) {
+      if (key !== "default" && !conditions.has(key)) continue;
+      const found = resolveTarget(Reflect.get(target, key));
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  if (typeof exports !== "string" && (typeof exports !== "object" || Array.isArray(exports))) {
+    throw getStop("exports neither a string nor an object");
+  }
+  const keys = typeof exports === "string" ? [] : Object.keys(exports ?? {});
+  const isSugar = keys.every((key) => key === "" || !key.startsWith("."));
+  if (!isSugar && !keys.every((key) => key.startsWith("."))) {
+    throw getStop("exports subpaths beside conditions");
+  }
+  const map = new Map(isSugar ? [[".", exports]] : Object.entries(exports ?? {}));
+  if (
+    subpath.includes("*") ||
+    subpath.endsWith("/") ||
+    [...map.keys()].some((key) => key.includes("*"))
+  ) {
+    throw getStop("exports patterns, which Node matches the subpath against");
+  }
+  const file = map.has(subpath) ? resolveTarget(map.get(subpath)) : undefined;
+  return file !== null && file !== undefined && system.fileExists(file)
+    ? system.realpath(file)
+    : undefined;
+};
+
+// The file that Node 26 loads for a package's specifier where the program's files are a host's that
+// Node doesn't see, as its ES modules' resolution (packageResolve) and require's (trySelf and
+// Module._findPath) find it: by the exports of the file's own package, where the specifier names
+// it, and else of the package of the nearest node_modules directory that holds one, which a
+// require looks in but in a directory named node_modules. Node reads a package without exports by
+// its main field and its subpaths' files, at which tla-ts stops. A require that finds no file may
+// find one in Node's global folders, which only the code that runs it reads.
+const resolvePackage = (
+  system: ProgramSystem,
+  literal: ts.StringLiteralLike,
+  containingFile: string,
+  isRequire: boolean,
+) => {
+  const specifier = literal.text;
+  if (isNodeModule(specifier)) return { file: undefined, isMissing: false };
+  const parts = PACKAGE_SPECIFIER.exec(specifier);
+  if (parts === null) {
+    throw new TlaTypeScriptError(`tla-ts can't resolve ${specifier} without Node`, literal);
+  }
+  const name = parts[1];
+  const subpath = `.${parts[2] ?? ""}`;
+  const conditions = isRequire ? REQUIRE_CONDITIONS : IMPORT_CONDITIONS;
+  // The directories that hold the file, from its own to the root, which is "".
+  const segments = system.resolvePath(containingFile).split("/").slice(0, -1);
+  const directories = segments.map((_segment, index) =>
+    segments.slice(0, segments.length - index).join("/"),
+  );
+  const resolveIn = (directory: string, manifest: ReadonlyMap<string, unknown> | undefined) => {
+    const exports = manifest?.get("exports");
+    if (exports === undefined || exports === null) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't resolve ${specifier} without Node, as ${directory} has no exports`,
+        literal,
+      );
+    }
+    const file = resolveExports(system, directory, subpath, exports, conditions, literal);
+    return { file, isMissing: file === undefined };
+  };
+  // The file's own package: the nearest package.json, which Node looks for up to a directory named
+  // node_modules.
+  const boundary = directories.findIndex((directory) => directory.endsWith("/node_modules"));
+  const scope = directories
+    .slice(0, boundary === -1 ? undefined : boundary)
+    .find((directory) => system.fileExists(`${directory}/package.json`));
+  const own = scope === undefined ? undefined : readPackage(system, scope, literal);
+  const ownName = own?.get("name");
+  if (
+    scope !== undefined &&
+    typeof ownName === "string" &&
+    (specifier === ownName || specifier.startsWith(`${ownName}/`)) &&
+    own?.get("exports") !== undefined
+  ) {
+    if (ownName !== name) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't resolve ${specifier} without Node, as its own package's name is ${ownName}`,
+        literal,
+      );
+    }
+    return resolveIn(scope, own);
+  }
+  for (const directory of directories) {
+    if (isRequire && directory.endsWith("/node_modules")) continue;
+    const modules = `${directory}/node_modules`;
+    const found = `${modules}/${name}`;
+    const manifest = system.directoryExists(found)
+      ? readPackage(system, found, literal)
+      : undefined;
+    // An import takes the first package's directory, and a require the first package with exports,
+    // or any file at the specifier's path, which it loads by its extensions.
+    if (
+      system.directoryExists(found) ||
+      (isRequire &&
+        ["", ".js", ".json", ".node", ".ts", ".cts", ".mts"].some((extension) =>
+          system.fileExists(`${modules}/${specifier}${extension}`),
+        ))
+    ) {
+      return resolveIn(found, manifest);
+    }
+  }
+  return { file: undefined, isMissing: !isRequire };
+};
+
 // The file that each specifier of a program loads as Node loads it, for the code that runs, and the
 // file that TypeScript resolves it to, which its program reads the types of: TypeScript's under the
 // project of the entry, or Node's own without one (moduleResolution nodenext), of the code rather
 // than the declaration files that type it, which maps an import of a .js file to the TypeScript
 // beside it, as Node doesn't. A require resolves in CommonJS's mode, and an import in an ES
-// module's. Where Node isn't at hand, as in a browser, a specifier loads TypeScript's file where
-// Node would load it too, and else none, and is missing only where Node's resolution rejects it.
-export const createModuleResolver = (entry: string) => {
+// module's. Where Node isn't at hand, as in a browser or under Bun, a relative specifier loads
+// TypeScript's file where Node would load it too, and else none, and is missing only where Node's
+// resolution rejects it, and a package's loads the file its exports name in the files of a host
+// that Node doesn't see.
+export const createModuleResolver = (entry: string, system: ProgramSystem) => {
   const options: ts.CompilerOptions = {
-    ...(getProjectCompilerOptions(entry) ?? NODE_OPTIONS),
+    ...(getProjectCompilerOptions(entry, system) ?? NODE_OPTIONS),
     allowJs: true,
     resolveJsonModule: true,
     allowImportingTsExtensions: true,
     noDtsResolution: true,
   };
-  const host = ts.sys ?? NO_FILES;
   const cache = ts.createModuleResolutionCache(
-    ts.sys?.getCurrentDirectory() ?? "/",
+    system.getCurrentDirectory(),
     (name) => name,
     options,
   );
-  const module = getNodeModule();
-  return (specifier: string, containingFile: string, isRequire: boolean) => {
+  const module = system.isHost ? getNodeModule() : undefined;
+  return (literal: ts.StringLiteralLike, isRequire: boolean) => {
+    const specifier = literal.text;
+    const containingFile = literal.getSourceFile().fileName;
     const typeScriptFile = ts.resolveModuleName(
       specifier,
       containingFile,
       options,
-      host,
+      system,
       cache,
       undefined,
       isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
     ).resolvedModule?.resolvedFileName;
     const node =
-      module === undefined
-        ? undefined
-        : resolveWithNode(module, specifier, containingFile, isRequire);
+      module !== undefined
+        ? resolveWithNode(module, specifier, containingFile, isRequire)
+        : !system.isHost && !/^(?:\.\.?(?:\/|$)|\/)/.test(specifier)
+          ? resolvePackage(system, literal, containingFile, isRequire)
+          : undefined;
     const file =
       node !== undefined
         ? node.file
@@ -181,14 +368,14 @@ export const createModuleResolver = (entry: string) => {
 
 // The type of the package.json nearest a file, which Node reads its format by, or undefined where
 // that package.json names none, or none holds the file.
-const getPackageType = (path: string): string | undefined => {
-  const directory = dirname(path);
-  const manifest = join(directory, "package.json");
-  if (ts.sys.fileExists(manifest)) {
-    const type: unknown = JSON.parse(ts.sys.readFile(manifest) ?? "{}").type;
+const getPackageType = (path: string, system: ProgramSystem): string | undefined => {
+  const directory = path.slice(0, Math.max(path.lastIndexOf("/"), 1));
+  const manifest = `${directory === "/" ? "" : directory}/package.json`;
+  if (system.fileExists(manifest)) {
+    const type: unknown = JSON.parse(system.readFile(manifest) ?? "{}").type;
     return typeof type === "string" ? type : undefined;
   }
-  return dirname(directory) === directory ? undefined : getPackageType(directory);
+  return directory === "/" ? undefined : getPackageType(directory, system);
 };
 
 // Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
@@ -212,19 +399,17 @@ const hasModuleSyntax = (path: string, text: string) => {
 // The format that Node loads a file in, as TypeScript tells it by the file's extension and its
 // package's type (getImpliedNodeFormatForFile under nodenext), and, where no type says, as Node
 // detects it by the file's syntax. TypeScript finds the package of an absolute path only, so a
-// relative one resolves first. Without a file system, as in a browser, no package names a type,
-// so only the file's extension and syntax tell.
-export const getModuleFormat = (path: string, text: string): "module" | "commonjs" => {
-  if (ts.sys === undefined) {
-    return /\.m[jt]s$/.test(path) || (!/\.c[jt]s$/.test(path) && hasModuleSyntax(path, text))
-      ? "module"
-      : "commonjs";
-  }
-  const absolute = ts.sys.resolvePath(path);
-  return ts.getImpliedNodeFormatForFile(absolute, undefined, ts.sys, NODE_OPTIONS) ===
+// relative one resolves first.
+export const getModuleFormat = (
+  path: string,
+  text: string,
+  system = getHostSystem(),
+): "module" | "commonjs" => {
+  const absolute = system.resolvePath(path);
+  return ts.getImpliedNodeFormatForFile(absolute, undefined, system, NODE_OPTIONS) ===
     ts.ModuleKind.ESNext
     ? "module"
-    : /\.c[jt]s$/.test(absolute) || getPackageType(absolute) !== undefined
+    : /\.c[jt]s$/.test(absolute) || getPackageType(absolute, system) !== undefined
       ? "commonjs"
       : hasModuleSyntax(absolute, text)
         ? "module"
