@@ -63,6 +63,7 @@ import {
 import {
   applyFunctionWith,
   createTuple,
+  forEachChargedElement,
   formatValue,
   getLazyFunctionNode,
   getStreamedElements,
@@ -71,7 +72,7 @@ import {
   isFunctionValue,
   isTlcEnumerable,
   setTrace,
-  streamChargedSet,
+  someStreamedElement,
   type Value,
 } from "../values";
 import {
@@ -848,24 +849,33 @@ const visitAssignment = (
   if (!isTlcEnumerable(set))
     throw createRunError(replay, getNotEnumerableMessage(replay, expression));
   const generator = replay.generator;
-  const streamed =
-    replay.coverage && !generator ? streamChargedSet(replay.coverage, set) : undefined;
-  const elements = streamed ?? getStreamedElements(set);
+  const coverage = replay.coverage;
+  let isProduced = false;
+  const proceedWith = (element: Value) => {
+    isProduced = proceed(replay, items, assign(partial, index, element), node) || isProduced;
+    return false;
+  };
+  if (!generator && coverage && forEachChargedElement(coverage, set, proceedWith)) {
+    return isProduced;
+  }
+  const isUncachedFilter = typeof set === "object" && set.kind === "FilteredSet" && !set.isCached;
+  if (!generator && (!coverage || isUncachedFilter)) {
+    someStreamedElement(set, proceedWith);
+    return isProduced;
+  }
+  const elements = getStreamedElements(set);
   if (generator) {
     const order = getRandomOrder(replay, set, elements);
     for (let position = 0; position < order.length; position++) {
-      const isProduced = proceed(replay, items, assign(partial, index, order[position]), node);
-      if (generator.kept > 0) return isProduced;
+      const isKeptProduced = proceed(replay, items, assign(partial, index, order[position]), node);
+      if (generator.kept > 0) return isKeptProduced;
     }
   }
-  const enumerator =
-    replay.coverage && streamed === undefined
-      ? createChargedEnumerator(replay.coverage, set, elements, false)
-      : undefined;
-  const isProduced = elements.reduce<boolean>((isProduced, element) => {
+  const enumerator = coverage ? createChargedEnumerator(coverage, set, elements, false) : undefined;
+  for (let position = 0; position < elements.length; position++) {
     enumerator?.next();
-    return proceed(replay, items, assign(partial, index, element), node) || isProduced;
-  }, false);
+    proceedWith(elements[position]);
+  }
   enumerator?.next();
   return isProduced;
 };

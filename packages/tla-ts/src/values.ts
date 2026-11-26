@@ -3476,15 +3476,14 @@ const getNextFilteredElement = (charges: ChargeTable, stream: ChargedFilterStrea
   return undefined;
 };
 
-const drainChargedStream = (charges: ChargeTable, stream: ChargedStream, isBounded: boolean) => {
+const drainChargedStream = (charges: ChargeTable, stream: ChargedStream) => {
   const elements: Value[] = [];
   for (
     let element = getNextChargedElement(charges, stream);
     element !== undefined;
     element = getNextChargedElement(charges, stream)
   ) {
-    if (isBounded) addBoundedElement(elements, element);
-    else elements.push(element);
+    addBoundedElement(elements, element);
   }
   return elements;
 };
@@ -3496,11 +3495,12 @@ const drainChargedFilter = (charges: ChargeTable, value: FilteredSetValue, isKep
   }
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = drainChargedStream(
-    charges,
-    { kind: "ChargedFilter", node, set: value, base: openChargedPart(charges, value.base) },
-    true,
-  );
+  const elements = drainChargedStream(charges, {
+    kind: "ChargedFilter",
+    node,
+    set: value,
+    base: openChargedPart(charges, value.base),
+  });
   sets?.pop();
   charges.secondary[node] += elements.length;
   const set = createSortedSet(toFiniteSet(createEnumeratedSet(elements)).elements);
@@ -3519,10 +3519,22 @@ const hasChargedStream = (charges: ChargeTable, value: ObjectValue) =>
         getValueNode(charges, value) !== undefined;
 
 // TLC's x' \in S draws S through its enumerator, which charges its draws, and keeps nothing.
-export const streamChargedSet = (charges: ChargeTable, value: Value) =>
-  typeof value === "object" && hasChargedStream(charges, value)
-    ? drainChargedStream(charges, openChargedPart(charges, value), false)
-    : undefined;
+export const forEachChargedElement = (
+  charges: ChargeTable,
+  value: Value,
+  visit: (element: Value) => void,
+) => {
+  if (typeof value !== "object" || !hasChargedStream(charges, value)) return false;
+  const stream = openChargedPart(charges, value);
+  for (
+    let element = getNextChargedElement(charges, stream);
+    element !== undefined;
+    element = getNextChargedElement(charges, stream)
+  ) {
+    visit(element);
+  }
+  return true;
+};
 
 export const isChargedMember = (
   charges: ChargeTable,
@@ -3564,7 +3576,7 @@ export const drainChargedSet = (charges: ChargeTable, value: Value, isKept: bool
         ? undefined
         : getChargedProduct(charges, value);
   if (drained === undefined) return undefined;
-  const elements = drainChargedStream(charges, openChargedPart(charges, drained), true);
+  const elements = drainChargedStream(charges, openChargedPart(charges, drained));
   if (node !== undefined) charges.secondary[node] += elements.length;
   const sorted =
     drained.kind !== "SetOperation" && isStreamedApart(drained) ? sortLikeTlc(elements) : elements;

@@ -671,6 +671,7 @@ const searchStates = (
   const replayInit = () => {
     let replayedCount = 0;
     const deferred: unknown[] = [];
+    let frozenDepth = 0;
     return getReplayFailure(environment, (tracing) => {
       const addReplayed = createReplayedStates(tracing);
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
@@ -702,9 +703,13 @@ const searchStates = (
             error instanceof TlaEvaluationError && tracing.callStack?.fingerprint !== undefined;
           if (!isFingerprintFailure && !isStackOverflow(error)) throw error;
           deferred.push(error);
+          frozenDepth = tracing.callStack?.expressions.length ?? 0;
         }
       });
-      if (deferred.length > 0) throw deferred[0];
+      if (deferred.length === 0) return;
+      // Deviation from TLC: DoInitFunctor keeps enumerating initial states past a FingerprintException, and CallStack#pop stops popping once frozen, so TLC prints the frames of every later test of a set filter.
+      if (tracing.callStack) tracing.callStack.expressions.length = frozenDepth;
+      throw deferred[0];
     });
   };
   // Deviation from TLC: ModelChecker's main-thread replay throws a NullPointerException in TLCExt#getTrace, so TLC blames a constraint that reads Trace.
