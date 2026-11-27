@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,16 +31,13 @@ interface Outcome {
   error?: { name: string; isTlaError: boolean; message: string };
 }
 
-// The texts of TypeScript's declaration files that a file's, by name, references, with its own, as
-// the website bundles them.
-const getLibraries = (fileName: string, libraries: Map<string, string>) => {
-  if (libraries.has(fileName)) return libraries;
-  const text = readFileSync(join(dirname(ts.getDefaultLibFilePath({})), fileName), "utf8");
-  libraries.set(fileName, text);
-  for (const match of text.matchAll(/<reference lib="([^"]+)"/g)) {
-    getLibraries(`lib.${match[1]}.d.ts`, libraries);
-  }
-  return libraries;
+// The texts of TypeScript's declaration files, by name, every one of them, as the website bundles
+// them.
+const getLibraries = () => {
+  const directory = dirname(ts.getDefaultLibFilePath({}));
+  return readdirSync(directory)
+    .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+    .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")] as const);
 };
 
 // JS.tla's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
@@ -125,7 +130,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
         directory: join(import.meta.dirname, "../../ecmascript"),
         isBrowser,
-        libraries: isBrowser ? [...getLibraries("lib.esnext.d.ts", new Map())] : [],
+        libraries: isBrowser ? getLibraries() : [],
       },
       resourceLimits: { stackSizeMb },
     },
@@ -704,14 +709,16 @@ describe("run a program on the files that a host passes, as Node runs it on them
   });
 
   // A project's options name the declaration files that give the globals of its files, as Set,
-  // which the host passes the texts of, as the website bundles them: here lib.esnext.d.ts and those
-  // that it references, but not lib.es2022.full.d.ts, the default library of ES2022's target.
+  // which the host passes the texts of, as the website bundles every one of them (see
+  // typescript-libraries.test.ts for a host that passes too few).
   describe("read a project's declaration files from the texts that the host passes", () => {
     const SOURCE = `const seen = new Set<number>();\n\nexport const add = () => {\n  if (seen.size < 3) seen.add(seen.size);\n};\n\nexport const reset = () => {\n  seen.clear();\n};\n\nexport const small = () => seen.size <= 2;\n`;
-    const getProjectFiles = (options: string) =>
-      getHostFiles({ "tsconfig.json": `{ "compilerOptions": ${options} }\n` });
+    const getTsconfig = (options: string) => `{ "compilerOptions": ${options} }\n`;
 
-    it("agrees with Node where the host passes the project's declaration files", async () => {
+    it.each([
+      ["the default library of its target", '{ "target": "ES2022" }'],
+      ["the libraries that it names", '{ "target": "ES2022", "lib": ["ESNext"] }'],
+    ])("agrees with Node on %s", async (_, options) => {
       const node = await getOutcome(SOURCE, "seen.ts");
       expect(node).toMatchObject({ status: "invariant-violation", name: "small" });
       const outcome = await getBrowserOutcome(
@@ -719,31 +726,10 @@ describe("run a program on the files that a host passes, as Node runs it on them
         "seen.ts",
         true,
         true,
-        getProjectFiles('{ "target": "ES2022", "lib": ["ESNext"] }'),
+        getHostFiles({ "tsconfig.json": getTsconfig(options) }),
       );
       expect(outcome).toMatchObject({ status: "invariant-violation", name: "small" });
       expect(outcome.trace).toEqual(node.trace);
-    });
-
-    // Without them, TypeScript's checker finds no Set, and the model's state would lose the Set that
-    // Node keeps.
-    it("stops where the host passes no text of a declaration file that the project names", async () => {
-      expect(
-        (
-          await getBrowserOutcome(
-            SOURCE,
-            "seen.ts",
-            true,
-            true,
-            getProjectFiles('{ "target": "ES2022" }'),
-          )
-        ).error,
-      ).toEqual({
-        name: "TlaTypeScriptError",
-        isTlaError: true,
-        message:
-          "tla-ts can't read the declaration file lib.es2022.full.d.ts, which the project's options name, as the host gives no text of it",
-      });
     });
   });
 });

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { globSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -353,15 +353,15 @@ const packageFiles = (): Plugin => ({
 
 const TYPESCRIPT_LIBRARIES = "virtual:typescript-libraries";
 
-const getLibraries = (directory: string, fileName: string, libraries: Map<string, string>) => {
-  if (libraries.has(fileName)) return libraries;
-  const text = readFileSync(join(directory, fileName), "utf8");
-  libraries.set(fileName, text);
-  for (const match of text.matchAll(/<reference lib="([^"]+)"/g)) {
-    getLibraries(directory, `lib.${match[1]}.d.ts`, libraries);
-  }
-  return libraries;
-};
+// Every declaration file of TypeScript's library, as a project's options may name any of them, as its
+// target's default library does.
+const getLibraries = (directory: string) =>
+  new Map(
+    readdirSync(directory)
+      .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+      .sort()
+      .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")]),
+  );
 
 const typescriptLibraries = (): Plugin => ({
   name: "typescript-libraries",
@@ -369,11 +369,7 @@ const typescriptLibraries = (): Plugin => ({
   load: (id) =>
     id === `\0${TYPESCRIPT_LIBRARIES}`
       ? `export default new Map(${JSON.stringify([
-          ...getLibraries(
-            dirname(typescript.getDefaultLibFilePath({})),
-            "lib.esnext.d.ts",
-            new Map(),
-          ),
+          ...getLibraries(dirname(typescript.getDefaultLibFilePath({}))),
         ])});`
       : undefined,
 });
