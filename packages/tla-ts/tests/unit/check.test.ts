@@ -5085,6 +5085,46 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["Nat = [Naturals] {1, 2}", "<<{1, 2}, {1, 2}, {1, 2}>>"],
+    ["Nat = [Naturals] {1, 2} Nat <- PlainSub", "<<{1, 2, 3}, {1, 2, 3}, {1, 2}>>"],
+    ["Nat <- PlainSub Nat = [Naturals] {1, 2}", "<<{1, 2, 3}, {1, 2, 3}, {1, 2}>>"],
+  ])(
+    "applies CONSTANT %s to the builtin Nat, where TLC's Java override replaces the [Naturals] value",
+    async (constants, printed) => {
+      expect(
+        await getCopyPrints(
+          "EXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE Mid\nASSUME PrintT(<<Nat, I!MidNat, I!Nat>>)",
+          constants,
+        ),
+      ).toEqual([printed]);
+    },
+  );
+
+  it.each([
+    ["+ = [Naturals] 7", "1 + 1", [["<<7>>"], "success", undefined]],
+    [
+      "Cardinality({1}) = [FiniteSets] 7",
+      "Cardinality({1}), Cardinality({1, 2})",
+      [
+        [],
+        "assumption-violation",
+        "Attempted to apply operator:\n{ <{1}, 7>}\nto arguments ({1, 2}), which is undefined.",
+      ],
+    ],
+  ])(
+    "applies CONSTANT %s to the builtin, where TLC's Java override replaces the [Mod] value or table",
+    async (constants, expression, expected) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets, TLC\nVARIABLE x\nASSUME PrintT(<<${expression}>>)\nInit == x = 0\nNext == x' = x\n====`,
+        config: `CONSTANT ${constants}\nINIT Init\nNEXT Next`,
+        onPrint: (text) => printed.push(text),
+      });
+      expect([printed, result.status, result.violation?.message]).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "{(a :> b)[b]}",
       `${UNEXPECTED_EXCEPTION}Attempted to apply function:\n(a :> b)\nto argument b, which is not in the domain of the function.`,
