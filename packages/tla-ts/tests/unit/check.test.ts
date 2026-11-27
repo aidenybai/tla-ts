@@ -6455,6 +6455,33 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts an operator argument's body into its parameter's application in a definition the config substitutes, as CostModelCreator walks the substitute with a Context that binds no operator argument", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nApply(F(_), v) == F(v)\nMCApply(F(_), v) == F(v) + 10\nInc(n) == n + 1\nInit == x = 0\nNext == x < 20 /\\ x' = Apply(Inc, x)\nInv == Apply(LAMBDA n : n - 1, x) > 0\n====",
+      "CONSTANT Apply <- MCApply\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect(lines?.slice(1)).toEqual([
+      [
+        "line 8, col 9 to line 8, col 14 of module M: 2",
+        "|line 8, col 9 to line 8, col 9 of module M: 3",
+        "line 8, col 19 to line 8, col 36 of module M: 2",
+        "|line 8, col 24 to line 8, col 36 of module M: 2",
+        "||line 5, col 21 to line 5, col 29 of module M: 2",
+        "|||line 5, col 21 to line 5, col 24 of module M: 6",
+        "||||line 5, col 23 to line 5, col 23 of module M: 2",
+        "||line 8, col 35 to line 8, col 35 of module M: 2",
+      ],
+      [
+        "line 9, col 8 to line 9, col 37 of module M: 3",
+        "|line 9, col 8 to line 9, col 33 of module M: 3",
+        "||line 5, col 21 to line 5, col 29 of module M: 3",
+        "|||line 5, col 21 to line 5, col 24 of module M: 9",
+        "||||line 5, col 23 to line 5, col 23 of module M: 3",
+        "||line 9, col 32 to line 9, col 32 of module M: 3",
+      ],
+    ]);
+  });
+
   it("charges a function constructor its domain and size, as TLC's FcnLambdaValue#toFcnRcd does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLES y, z\nInit == z = 1 /\\ y = [p \\in {1, 2} |-> z]\nNext == z' = 2 /\\ y' = [p \\in {1, 2} |-> z + 1]\nInv == y = [p \\in {1, 2} |-> z] \\/ z = 2\n====",
