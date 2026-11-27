@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "@/lib/examples";
 import { getHighlightColors } from "@/lib/highlight-colors";
+import { startJsTlaWorker } from "@/lib/js-tla-worker";
 import { getLineMarks } from "@/lib/line-marks";
 import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
@@ -86,7 +87,15 @@ const ExampleRoot = (props: RootProps) => {
         run,
       }}
     >
-      <div className="relative flex flex-col gap-3">{props.children}</div>
+      <div
+        // The checker takes seconds to load, so it starts as a pointer or the focus reaches the
+        // example, ahead of the run. A touch comes with the tap, too late to help.
+        onPointerEnter={(event) => event.pointerType === "mouse" && startJsTlaWorker()}
+        onFocus={startJsTlaWorker}
+        className="relative flex flex-col gap-3"
+      >
+        {props.children}
+      </div>
     </exampleContext.PartsContext>
   );
 };
