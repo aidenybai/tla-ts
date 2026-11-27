@@ -99,11 +99,11 @@ import {
 } from "./state-graph";
 import {
   createIncompleteSuccessorError,
+  findIncompleteSuccessor,
   forEachInitialState,
   forEachSuccessor,
   getInitialStates,
   getSuccessors,
-  hasIncompleteSuccessor,
   isComplete,
   type Successor,
 } from "./successors";
@@ -131,6 +131,7 @@ import {
   createCanonicalizer,
   createModelValue,
   getFingerprintError,
+  getValueHash,
   isSameValue,
   type Value,
 } from "./values";
@@ -379,6 +380,17 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
 
+const findIncompleteStep = <Action>(
+  actions: Action[],
+  findSuccessor: (action: Action) => State | undefined,
+) => {
+  for (const action of actions) {
+    const successor = findSuccessor(action);
+    if (successor) return { action, successor };
+  }
+  return undefined;
+};
+
 const STOP_REPLAY = new Error("The replay stopped");
 
 export type ParallelCheck = (
@@ -613,22 +625,24 @@ const searchStates = (
   const covered = coverage && addActionCoverage(coverage, environment, getDescription());
   const coverageInits = covered?.inits ?? [];
   const coverageActions = covered?.actions ?? [];
-  const hasCoveredIncompleteSuccessor = (action: CoveredAction, state: Value[]) => {
+  const findCoveredIncompleteSuccessor = (action: CoveredAction, state: Value[]) => {
     let complete = 0;
     let incomplete = 0;
+    let successor: State | undefined;
     walkSuccessors(
       action,
       action.node,
       state,
       environment,
       () => complete++,
-      () => {
+      (partial) => {
         incomplete++;
+        successor ??= [...partial];
         return true;
       },
     );
     if (coverage) coverage.primary[action.node] += complete + incomplete;
-    return incomplete > 0;
+    return successor;
   };
   // TLC generates the successors of each action again, which its coverage counts.
   const findSuccessorAction = (state: Value[], isMatch: (successor: Successor) => boolean) =>
@@ -1036,19 +1050,22 @@ const searchStates = (
     const found = captureOutput(() => {
       try {
         return {
-          action: coverage
-            ? coverageActions.find((item) => hasCoveredIncompleteSuccessor(item, states[index]))
-            : nextActions.find((item) =>
-                hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+          step: coverage
+            ? findIncompleteStep(coverageActions, (item) =>
+                findCoveredIncompleteSuccessor(item, states[index]),
+              )
+            : findIncompleteStep(nextActions, (item) =>
+                findIncompleteSuccessor(item.expression, states[index], environment, item.scope),
               ),
           failed: undefined,
         };
       } catch (failed) {
         if (!(failed instanceof TlaEvaluationError)) throw failed;
-        return { action: undefined, failed };
+        return { step: undefined, failed };
       }
     });
-    const action = found.result.action;
+    const action = found.result.step?.action;
+    const successor = found.result.step?.successor;
     const actionName = action?.name ?? error.action;
     const traceFailure = found.result.failed && getTraceFailure(found.result.failed, found.lines);
     const message = getIncompleteSuccessorMessage(
@@ -1062,6 +1079,9 @@ const searchStates = (
       incomplete: error.state,
       isPrintedOnly: true,
     }).trace;
+    // TLCTrace#printTrace prints the successor Tool#getState generates again, which TLCState#equals sorts as it compares it.
+    // Deviation from TLC: TLCState#equals fails on a function of Nat, so TLCTrace#printTrace throws a NullPointerException where tla-ts prints the successor.
+    for (const value of successor ?? []) if (value !== undefined) getValueHash(value);
     const checked = checkFailedTrace(
       withTrailingOutput(
         {
@@ -1070,7 +1090,7 @@ const searchStates = (
             : [
                 ...trace,
                 traces.getIncompleteStep(
-                  error.state,
+                  successor ?? error.state,
                   trace.length + 1,
                   {
                     action: actionName,
