@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CaretUp } from "@phosphor-icons/react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -6,20 +6,22 @@ import type { Search, SearchState } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 
 // The board of the example's code, and its two moves, with the mistake in `turn`.
-const SIZE = 5;
-const STEP_MS = 300;
+const SIZE = 7;
+const CELL = 10;
+const STEP_MS = 260;
 const REPLAY_MS = 60;
-const HINT_STEPS = 30;
+const HINT_STEPS = 40;
+const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
 
 const DIRECTIONS = [
-  { name: "up", icon: ArrowUp, key: "ArrowUp", move: [0, -1], opposite: "down", turn: "" },
+  { name: "up", icon: ArrowUp, key: "ArrowUp", move: [0, -1], opposite: "down", angle: 0 },
   {
     name: "left",
     icon: ArrowLeft,
     key: "ArrowLeft",
     move: [-1, 0],
     opposite: "right",
-    turn: "-rotate-90",
+    angle: -90,
   },
   {
     name: "down",
@@ -27,7 +29,7 @@ const DIRECTIONS = [
     key: "ArrowDown",
     move: [0, 1],
     opposite: "up",
-    turn: "rotate-180",
+    angle: 180,
   },
   {
     name: "right",
@@ -35,7 +37,7 @@ const DIRECTIONS = [
     key: "ArrowRight",
     move: [1, 0],
     opposite: "left",
-    turn: "rotate-90",
+    angle: 90,
   },
 ] as const;
 const AREAS = ["[grid-area:1/2]", "[grid-area:2/1]", "[grid-area:2/2]", "[grid-area:2/3]"];
@@ -43,35 +45,54 @@ const AREAS = ["[grid-area:1/2]", "[grid-area:2/1]", "[grid-area:2/2]", "[grid-a
 type Direction = (typeof DIRECTIONS)[number];
 
 interface Snake {
-  head: number;
-  neck: number;
-  tail: number;
+  // The squares of the snake, head first.
+  body: number[];
+  apple: number;
   direction: Direction;
 }
 
-const START: Snake = { head: 12, neck: 11, tail: 10, direction: DIRECTIONS[3] };
+const START: Snake = { body: [23, 22, 21], apple: 26, direction: DIRECTIONS[3] };
 
 const turn = (snake: Snake, next: Direction): Snake =>
   next.name === snake.direction.opposite ? snake : { ...snake, direction: next };
 
 const step = (snake: Snake): Snake => {
-  const x = ((snake.head % SIZE) + snake.direction.move[0] + SIZE) % SIZE;
-  const y = (Math.floor(snake.head / SIZE) + snake.direction.move[1] + SIZE) % SIZE;
-  return { ...snake, tail: snake.neck, neck: snake.head, head: y * SIZE + x };
+  const x = ((snake.body[0] % SIZE) + snake.direction.move[0] + SIZE) % SIZE;
+  const y = (Math.floor(snake.body[0] / SIZE) + snake.direction.move[1] + SIZE) % SIZE;
+  const head = y * SIZE + x;
+  return head === snake.apple
+    ? { ...snake, body: [head, ...snake.body], apple: (snake.apple * 5 + 3) % (SIZE * SIZE) }
+    : { ...snake, body: [head, ...snake.body.slice(0, -1)] };
 };
 
-const isBitten = (snake: Snake) => snake.head === snake.neck || snake.head === snake.tail;
+const isBitten = (snake: Snake) => snake.body.slice(1).includes(snake.body[0]);
 
 const getSnake = (state: SearchState): Snake => {
   const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
   return {
-    head: Number(values.get("head")),
-    neck: Number(values.get("neck")),
-    tail: Number(values.get("tail")),
+    body: (values.get("snake")?.match(/\d+/g) ?? []).map(Number),
+    apple: Number(values.get("apple")),
     direction:
       DIRECTIONS.find((found) => values.get("direction") === `"${found.name}"`) ?? START.direction,
   };
 };
+
+const getCenter = (square: number) => ({
+  x: (square % SIZE) * CELL + CELL / 2,
+  y: Math.floor(square / SIZE) * CELL + CELL / 2,
+});
+
+// The line down the snake's back. It lifts where the snake leaves one edge and comes in at the
+// other, so that no stroke crosses the board.
+const getBackPath = (body: number[]) =>
+  body
+    .map((square, index) => {
+      const center = getCenter(square);
+      const last = index > 0 ? getCenter(body[index - 1]) : center;
+      const isJoined = Math.abs(center.x - last.x) + Math.abs(center.y - last.y) === CELL;
+      return `${isJoined ? "L" : "M"}${center.x} ${center.y}${isJoined ? "" : "h0"}`;
+    })
+    .join("");
 
 interface Replay {
   search: Search;
@@ -154,31 +175,61 @@ export const SnakeGame = (props: SnakeGameProps) => {
     <div className="my-2 flex flex-wrap items-start gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
       <div
         ref={boardRef}
-        role="img"
-        aria-label="A snake on a board. The arrow keys steer it."
-        className={cn("grid shrink-0 grid-cols-5 gap-1", hasBitten && "motion-safe:animate-shake")}
+        className={cn(
+          "w-full max-w-[266px] shrink-0 overflow-hidden rounded-lg",
+          hasBitten && "motion-safe:animate-shake",
+        )}
       >
-        {Array.from({ length: SIZE * SIZE }, (_square, index) => (
-          <span
-            key={index}
-            className={cn(
-              "flex size-10 items-center justify-center rounded-md",
-              index === shown.head
-                ? hasBitten
-                  ? "bg-destructive text-white"
-                  : "bg-foreground text-background"
-                : index === shown.neck
-                  ? "bg-foreground/55"
-                  : index === shown.tail
-                    ? "bg-foreground/30"
-                    : "bg-muted",
-            )}
+        <svg
+          role="img"
+          aria-label="A snake and an apple on a board. The arrow keys steer the snake."
+          viewBox={`0 0 ${SIZE * CELL} ${SIZE * CELL}`}
+          className="block w-full"
+        >
+          {Array.from({ length: SIZE * SIZE }, (_square, index) => (
+            <rect
+              key={index}
+              x={(index % SIZE) * CELL}
+              y={Math.floor(index / SIZE) * CELL}
+              width={CELL}
+              height={CELL}
+              className={
+                index % 2 === 0
+                  ? "fill-[oklch(93%_0.05_140)] dark:fill-[oklch(31%_0.04_140)]"
+                  : "fill-[oklch(90%_0.06_140)] dark:fill-[oklch(28%_0.04_140)]"
+              }
+            />
+          ))}
+          <g transform={`translate(${getCenter(shown.apple).x} ${getCenter(shown.apple).y})`}>
+            <path
+              d="M0 -2.4 Q0.4 -3.8 1.8 -4"
+              fill="none"
+              strokeWidth={0.7}
+              strokeLinecap="round"
+              className="stroke-[oklch(45%_0.08_60)]"
+            />
+            <ellipse cx={1.6} cy={-3.1} rx={1.3} ry={0.7} className="fill-[oklch(65%_0.16_140)]" />
+            <circle r={3} className="fill-[oklch(62%_0.21_27)]" />
+            <circle cx={-1} cy={-1} r={0.8} className="fill-white/40" />
+          </g>
+          <path
+            d={getBackPath(shown.body)}
+            fill="none"
+            strokeWidth={6.6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
+          />
+          <g
+            transform={`translate(${getCenter(shown.body[0]).x} ${getCenter(shown.body[0]).y}) rotate(${shown.direction.angle})`}
           >
-            {index === shown.head && (
-              <CaretUp weight="bold" className={cn("size-4", shown.direction.turn)} />
-            )}
-          </span>
-        ))}
+            <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
+            <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
+            <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
+            <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+            <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+          </g>
+        </svg>
       </div>
       <div className="flex min-w-48 flex-1 flex-col items-start gap-4">
         <p aria-live="polite" className="text-sm text-pretty text-muted-foreground tabular-nums">
@@ -194,7 +245,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           ) : stepCount >= HINT_STEPS ? (
             "Hint: turn twice before the snake moves."
           ) : (
-            "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys and make it bite anyway."
+            "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys, eat the apples, and make it bite anyway."
           )}
         </p>
         <div className="grid grid-cols-3 gap-1">
