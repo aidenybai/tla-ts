@@ -5462,6 +5462,19 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("keeps the [Mod] value of a definition's <- target at each reference, where TLC caches the target's body over it", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Ext, TLC\nVARIABLE x\nPair == {1, 2}\nASSUME PrintT(<<ExtSet, Pair>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "CONSTANT ExtSet = [Ext] {5} Pair <- ExtSet\nINIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+      loadModule: (module) =>
+        module === "Ext" ? "---- MODULE Ext ----\nExtSet == {1, 2}\n====" : undefined,
+    });
+    expect(printed).toEqual(["<<{5}, {5}>>"]);
+  });
+
   it("treats a definition with a [Mod] value as a definition under each name of the configuration, as TLC does", async () => {
     const invariants = await Promise.all(
       [
