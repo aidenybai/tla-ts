@@ -5016,6 +5016,74 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const COPIED_MODULES = new Map([
+    ["Ext", "---- MODULE Ext ----\nExtSet == {1, 2, 3, 4, 5}\nExtBig == ExtSet \\cup {9}\n===="],
+    ["Mid", "---- MODULE Mid ----\nEXTENDS Naturals\nMidNat == Nat\n===="],
+  ]);
+  const getCopyPrints = async (source: string, constants: string) => {
+    const printed: string[] = [];
+    await check({
+      source: `---- MODULE M ----\n${source}\nPlainSub == {1, 2, 3}\nModSub == {1}\nInit == x = 0\nNext == x' = x\n====`,
+      config: `CONSTANT ${constants}\nINIT Init\nNEXT Next`,
+      onPrint: (text) => printed.push(text),
+      loadModule: (module) => COPIED_MODULES.get(module),
+    });
+    return printed;
+  };
+
+  it.each([
+    ["ExtSet = {1, 2, 3, 4}", "<<{1, 2, 3, 4}, {1, 2, 3, 4, 5}, {1, 2, 3, 4, 9}>>"],
+    ["ExtSet <- PlainSub", "<<{1, 2, 3}, {1, 2, 3, 4, 5}, {1, 2, 3, 9}>>"],
+    ["ExtSet = [Ext] {1, 2}", "<<{1, 2}, {1, 2}, {1, 2, 9}>>"],
+    ["ExtSet <- [Ext] ModSub", "<<{1}, {1}, {1, 9}>>"],
+    ["ExtSet = {1, 2, 3, 4} ExtSet <- PlainSub", "<<{1, 2, 3}, {1, 2, 3, 4, 5}, {1, 2, 3, 9}>>"],
+    ["ExtSet = {1, 2, 3, 4} ExtSet = [Ext] {1, 2}", "<<{1, 2, 3, 4}, {1, 2}, {1, 2, 3, 4, 9}>>"],
+    ["ExtSet = {1, 2, 3, 4} ExtSet <- [Ext] ModSub", "<<{1, 2, 3, 4}, {1}, {1, 2, 3, 4, 9}>>"],
+    ["ExtSet <- PlainSub ExtSet = {1, 2, 3, 4}", "<<{1, 2, 3}, {1, 2, 3, 4, 5}, {1, 2, 3, 9}>>"],
+    ["ExtSet <- PlainSub ExtSet = [Ext] {1, 2}", "<<{1, 2, 3}, {1, 2}, {1, 2, 3, 9}>>"],
+    ["ExtSet <- PlainSub ExtSet <- [Ext] ModSub", "<<{1, 2, 3}, {1}, {1, 2, 3, 9}>>"],
+    ["ExtSet = [Ext] {1, 2} ExtSet = {1, 2, 3, 4}", "<<{1, 2, 3, 4}, {1, 2}, {1, 2, 3, 4, 9}>>"],
+    ["ExtSet = [Ext] {1, 2} ExtSet <- PlainSub", "<<{1, 2, 3}, {1, 2}, {1, 2, 3, 9}>>"],
+    ["ExtSet = [Ext] {1, 2} ExtSet <- [Ext] ModSub", "<<{1}, {1}, {1, 9}>>"],
+    ["ExtSet <- [Ext] ModSub ExtSet = {1, 2, 3, 4}", "<<{1, 2, 3, 4}, {1}, {1, 2, 3, 4, 9}>>"],
+    ["ExtSet <- [Ext] ModSub ExtSet <- PlainSub", "<<{1, 2, 3}, {1}, {1, 2, 3, 9}>>"],
+    ["ExtSet <- [Ext] ModSub ExtSet = [Ext] {1, 2}", "<<{1}, {1}, {1, 9}>>"],
+  ])(
+    "gives ExtSet, the instance's reference in I!ExtBig and its copy I!ExtSet what TLC does under CONSTANT %s",
+    async (constants, printed) => {
+      expect(
+        await getCopyPrints(
+          "EXTENDS Naturals, TLC, Ext\nVARIABLE x\nI == INSTANCE Ext\nASSUME PrintT(<<ExtSet, I!ExtSet, I!ExtBig>>)",
+          constants,
+        ),
+      ).toEqual([printed]);
+    },
+  );
+
+  it.each([
+    ["Nat = {1, 2, 3, 4}", "<<{1, 2, 3, 4}, {1, 2, 3, 4}, Nat>>"],
+    ["Nat <- PlainSub", "<<{1, 2, 3}, {1, 2, 3}, Nat>>"],
+    ["Nat <- [Naturals] ModSub", "<<{1}, {1}, {1}>>"],
+    ["Nat = {1, 2, 3, 4} Nat <- PlainSub", "<<{1, 2, 3}, {1, 2, 3}, Nat>>"],
+    ["Nat = {1, 2, 3, 4} Nat <- [Naturals] ModSub", "<<{1, 2, 3, 4}, {1, 2, 3, 4}, {1}>>"],
+    ["Nat <- PlainSub Nat = {1, 2, 3, 4}", "<<{1, 2, 3}, {1, 2, 3}, Nat>>"],
+    ["Nat <- PlainSub Nat <- [Naturals] ModSub", "<<{1, 2, 3}, {1, 2, 3}, {1}>>"],
+    ["Nat = [Naturals] {1, 2} Nat <- [Naturals] ModSub", "<<{1}, {1}, {1}>>"],
+    ["Nat <- [Naturals] ModSub Nat = {1, 2, 3, 4}", "<<{1, 2, 3, 4}, {1, 2, 3, 4}, {1}>>"],
+    ["Nat <- [Naturals] ModSub Nat <- PlainSub", "<<{1, 2, 3}, {1, 2, 3}, {1}>>"],
+    ["Nat <- [Naturals] ModSub Nat = [Naturals] {1, 2}", "<<{1}, {1}, {1}>>"],
+  ])(
+    "gives Nat, the instance's reference in I!MidNat and its copy I!Nat what TLC does under CONSTANT %s",
+    async (constants, printed) => {
+      expect(
+        await getCopyPrints(
+          "EXTENDS Naturals, TLC\nVARIABLE x\nI == INSTANCE Mid\nASSUME PrintT(<<Nat, I!MidNat, I!Nat>>)",
+          constants,
+        ),
+      ).toEqual([printed]);
+    },
+  );
+
   it.each([
     [
       "{(a :> b)[b]}",
