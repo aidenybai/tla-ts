@@ -4,8 +4,13 @@ import { EXIT_STATUS, getExitCode, setExitCode } from "./exit-codes";
 import type { PcalNode } from "./pcal/ast";
 import type { Value } from "./values";
 
+const getUnexpectedThrowable = (throwableClass: string) =>
+  `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${throwableClass}\n`;
+
 export const getUnexpectedException = (exceptionClass: string) =>
-  `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a ${exceptionClass}\n: `;
+  `${getUnexpectedThrowable(exceptionClass)}: `;
+
+export const UNEXPECTED_STACK_OVERFLOW = `${getUnexpectedThrowable("java.lang.StackOverflowError")}java.lang.StackOverflowError`;
 
 export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeException");
 
