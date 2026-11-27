@@ -18,7 +18,7 @@ const SectionTitle = (props: TitleProps) => {
   return (
     <h2
       id={id}
-      className="group relative flex scroll-mt-8 items-center gap-4 font-pixel text-[11px] text-faint uppercase after:dot-rule after:flex-1"
+      className="group relative flex scroll-mt-8 items-center gap-4 font-pixel text-[11px] text-faint uppercase after:h-px after:flex-1 after:bg-border"
     >
       <a
         href={`#${id}`}

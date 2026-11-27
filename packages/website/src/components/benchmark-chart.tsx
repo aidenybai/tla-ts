@@ -40,7 +40,7 @@ export const BenchmarkChart = () => {
                 scale: `${isInView ? benchmark.tlaTsSeconds / benchmark.tlcSeconds : 0} 1`,
                 transitionDuration: `${(benchmark.tlaTsSeconds / benchmark.tlcSeconds) * RACE_MS}ms`,
               }}
-              className="absolute inset-0 origin-left bg-primary transition-[scale] ease-linear motion-reduce:transition-none"
+              className="absolute inset-0 origin-left bg-muted-foreground transition-[scale] ease-linear motion-reduce:transition-none"
             />
           </div>
           <span

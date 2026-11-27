@@ -2,10 +2,10 @@ import { cva } from "class-variance-authority";
 import { cn } from "cn";
 
 export const LINK_CLASS_NAME =
-  "text-foreground underline decoration-input decoration-1 underline-offset-[3px] hover:text-primary hover:decoration-primary";
+  "text-foreground underline decoration-input decoration-dotted decoration-[1.5px] underline-offset-[3px] hover:decoration-faint";
 
 const RAISED_CLASS_NAME =
-  "border-primary bg-primary text-primary-foreground hover:bg-primary/90 not-disabled:active:scale-[0.97] disabled:opacity-60";
+  "border-[oklch(48%_0.11_152)] bg-[oklch(57%_0.13_152)] text-white hover:bg-[oklch(54%_0.13_152)] not-disabled:active:scale-[0.97] disabled:opacity-60 dark:border-[oklch(40%_0.1_152)] dark:bg-[oklch(49%_0.12_152)]";
 
 export const buttonVariants = cva(
   "relative inline-flex shrink-0 cursor-pointer select-none aria-disabled:pointer-events-none pointer-coarse:after:absolute pointer-coarse:after:-inset-1 items-center justify-center gap-1.5 rounded-lg border border-transparent font-pixel text-[11px] uppercase whitespace-nowrap outline-none transition-[scale,background-color,color] duration-150 ease-out focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default [&_svg]:pointer-events-none [&_svg]:shrink-0",
@@ -13,13 +13,13 @@ export const buttonVariants = cva(
     variants: {
       variant: {
         outline:
-          "border-input bg-transparent text-foreground hover:border-foreground hover:bg-accent not-disabled:active:scale-[0.97]",
+          "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground not-disabled:active:scale-[0.97]",
         primary:
-          "bg-foreground text-background hover:bg-foreground/85 not-disabled:active:scale-[0.97] disabled:opacity-60",
+          "bg-primary text-primary-foreground hover:bg-primary/90 not-disabled:active:scale-[0.97] disabled:opacity-60",
         success: RAISED_CLASS_NAME,
         link: cn(
           LINK_CLASS_NAME,
-          "inline rounded-xs font-sans normal-case aria-pressed:no-underline aria-pressed:hover:text-foreground",
+          "inline rounded-xs font-sans text-[length:inherit] normal-case aria-pressed:no-underline",
         ),
       },
       size: {

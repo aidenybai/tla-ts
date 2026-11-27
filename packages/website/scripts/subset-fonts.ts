@@ -18,11 +18,10 @@ const getText = (ranges: number[][]) =>
 // smaller one, so any other character or weight still loads it.
 const FONTS = [
   {
-    family: "EB Garamond",
-    fileName: "eb-garamond.woff2",
-    source:
-      "node_modules/@fontsource-variable/eb-garamond/files/eb-garamond-latin-wght-normal.woff2",
-    // English letters, punctuation, and a few arrows and signs.
+    family: "Allo",
+    fileName: "allo.woff2",
+    source: "node_modules/allo-font/fonts/webfonts/AlloVariableFriendly.woff2",
+    // English letters, punctuation, and a few arrows and signs, from the regular weight up.
     text: getText([
       [0x20, 0x7e],
       [0xa0, 0xa0],
@@ -36,8 +35,8 @@ const FONTS = [
       [0x2212, 0x2212],
       [0x2318, 0x2318],
     ]),
-    weight: "400 800",
-    variationAxes: undefined,
+    weight: "400 900",
+    variationAxes: { wght: { min: 400, max: 900 } },
     isInline: false,
   },
   {
@@ -50,6 +49,15 @@ const FONTS = [
       [0x2190, 0x2193],
     ]),
     weight: "400",
+    variationAxes: undefined,
+    isInline: false,
+  },
+  {
+    family: "Caveat",
+    fileName: "caveat.woff2",
+    source: "node_modules/@fontsource/caveat/files/caveat-latin-600-normal.woff2",
+    text: "Click me!",
+    weight: "600",
     variationAxes: undefined,
     isInline: false,
   },

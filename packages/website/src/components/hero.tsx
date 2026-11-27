@@ -10,7 +10,7 @@ const HeroRoot = (props: PartProps) => (
 );
 
 const HeroTitle = (props: PartProps) => (
-  <h1 className="group/logo flex items-center gap-4 font-pixel text-[44px]/[1] text-primary uppercase">
+  <h1 className="group/logo flex items-center gap-4 font-pixel text-[44px]/[1] text-foreground uppercase">
     <Logo className="size-9" />
     {props.children}
   </h1>

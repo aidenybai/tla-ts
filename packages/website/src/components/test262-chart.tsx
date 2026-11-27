@@ -80,7 +80,7 @@ export const Test262Chart = () => {
           ))}
         </div>
         <div
-          className="relative h-28 touch-pan-y dot-grid"
+          className="relative h-28 touch-pan-y"
           onPointerMove={hover}
           onPointerDown={hover}
           onPointerLeave={() => setHoveredIndex(undefined)}
@@ -99,7 +99,7 @@ export const Test262Chart = () => {
             aria-hidden
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
-            className="absolute inset-0 size-full overflow-visible text-primary"
+            className="absolute inset-0 size-full overflow-visible text-foreground"
           >
             <defs>
               <linearGradient id="test262-area" x1="0" y1="0" x2="0" y2="1">
@@ -120,13 +120,13 @@ export const Test262Chart = () => {
           <div
             style={{ left: `${getX(activeIndex)}%` }}
             className={cn(
-              "absolute -inset-y-2 border-l border-primary",
+              "absolute -inset-y-2 border-l border-foreground",
               hoveredIndex === undefined && "hidden",
             )}
           />
           <div
             style={{ left: `${getX(activeIndex)}%`, top: `${getY(active)}%` }}
-            className="absolute size-2 -translate-1/2 rounded-full bg-primary ring-2 ring-background"
+            className="absolute size-2 -translate-1/2 rounded-full bg-foreground ring-2 ring-background"
           />
         </div>
         <div className="relative col-start-2 mt-1 h-6">

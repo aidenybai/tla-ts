@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "allo-font/friendly";
 @import "@fontsource-variable/geist-mono";
 
 /* System fonts sized to the width of Geist Mono's letters, so that code wraps at the same words
@@ -11,78 +12,102 @@
     local("DejaVu Sans Mono");
   size-adjust: 99.69%;
 }
+/* Arial with the width of Allo's letters and the height of its lines, so that text keeps its rows
+   and its baseline when Allo loads. Arial's bold stands in from the medium weight up, with
+   its own width. */
+@font-face {
+  font-family: "Allo Fallback";
+  src: local("Arial");
+  font-weight: 100 499;
+  size-adjust: 104%;
+  ascent-override: 93.27%;
+  descent-override: 23.08%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Allo Fallback";
+  src: local("Arial");
+  font-weight: 500 900;
+  size-adjust: 102.3%;
+  ascent-override: 94.82%;
+  descent-override: 23.46%;
+  line-gap-override: 0%;
+}
 @font-face {
   font-family: "Geist Mono Fallback Consolas";
   src: local("Consolas");
   size-adjust: 109.16%;
 }
+@import "@fontsource/caveat/600.css";
 @import "../generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #fbfbfb;
-  --foreground: #111;
+  --background: #fdfdfc;
+  --foreground: #21201c;
   --card: #fff;
-  --card-foreground: #111;
+  --card-foreground: #21201c;
   --popover: #fff;
-  --popover-foreground: #111;
-  --primary: oklch(50.58% 0.2886 264.84);
-  --primary-foreground: #fff;
-  --secondary: #f0f0f0;
-  --secondary-foreground: #111;
-  --muted: #f0f0f0;
-  --muted-foreground: #5c5c5c;
-  --accent: #f4f4f4;
-  --accent-foreground: #111;
+  --popover-foreground: #21201c;
+  --primary: #21201c;
+  --primary-foreground: #fdfdfc;
+  --secondary: #f1f0ef;
+  --secondary-foreground: #21201c;
+  --muted: #f1f0ef;
+  --muted-foreground: #63635e;
+  --accent: #f9f9f8;
+  --accent-foreground: #21201c;
   --destructive: oklch(57.7% 0.245 27.325);
-  --border: rgb(0 0 0 / 0.12);
-  --input: rgb(0 0 0 / 0.3);
-  --ring: oklch(50.58% 0.2886 264.84);
+  --border: rgb(33 32 28 / 0.094);
+  --input: #dad9d6;
+  --ring: #bcbbb5;
   --radius: 0.25rem;
-  --prose: #111;
-  --faint: #7d7d7d;
+  --prose: #42413e;
+  --faint: #74746e;
   --raised: #fff;
-  --success: #1f7a3a;
-  --syntax-number: oklch(50.58% 0.2886 264.84);
-  --syntax-keyword: oklch(50.58% 0.2886 264.84);
-  --shadow-edge: rgb(0 0 0 / 0.14);
-  --shadow-soft: transparent;
+  --success: #22863a;
+  --syntax-number: #005cc5;
+  --syntax-keyword: #6f42c1;
+  --shadow-edge: #0000000f;
+  --shadow-soft: #0000000a;
   --scrollbar: rgb(0 0 0 / 0.15);
 }
 
 .dark {
-  --background: #0c0c0c;
-  --foreground: #f2f2f2;
-  --card: #121212;
-  --card-foreground: #f2f2f2;
-  --popover: #181818;
-  --popover-foreground: #f2f2f2;
-  --primary: oklch(72% 0.17 264.84);
-  --primary-foreground: #0c0c0c;
-  --secondary: #1c1c1c;
-  --secondary-foreground: #f2f2f2;
-  --muted: #1c1c1c;
-  --muted-foreground: #b0b0b0;
-  --accent: #171717;
-  --accent-foreground: #f2f2f2;
+  --background: #111110;
+  --foreground: #eeeeec;
+  --card: #191918;
+  --card-foreground: #eeeeec;
+  --popover: #222221;
+  --popover-foreground: #eeeeec;
+  --primary: #eeeeec;
+  --primary-foreground: #111110;
+  --secondary: #222221;
+  --secondary-foreground: #eeeeec;
+  --muted: #222221;
+  --muted-foreground: #b5b3ad;
+  --accent: #191918;
+  --accent-foreground: #eeeeec;
   --destructive: oklch(70.4% 0.191 22.216);
-  --border: rgb(255 255 255 / 0.14);
-  --input: rgb(255 255 255 / 0.32);
-  --ring: oklch(72% 0.17 264.84);
-  --prose: #f2f2f2;
-  --faint: #8a8a8a;
-  --raised: #2a2a2a;
+  --border: rgb(238 238 236 / 0.113);
+  --input: #3b3a37;
+  --ring: #62605b;
+  --prose: #cdccc8;
+  --faint: #8a8982;
+  --raised: #3b3a37;
   --success: #85e89d;
-  --syntax-number: oklch(72% 0.17 264.84);
-  --syntax-keyword: oklch(72% 0.17 264.84);
-  --shadow-edge: rgb(255 255 255 / 0.16);
-  --shadow-soft: transparent;
+  --syntax-number: #79b8ff;
+  --syntax-keyword: #b392f0;
+  --shadow-edge: #ffffff17;
+  --shadow-soft: #00000066;
   --scrollbar: rgb(255 255 255 / 0.2);
 }
 
 @theme inline {
-  --font-sans: "EB Garamond", Georgia, "Times New Roman", serif;
+  --font-sans:
+    "Allo", "Allo Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-hand: "Caveat", cursive;
   --font-pixel: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-mono:
     "Geist Mono Variable", "Geist Mono Fallback", "Geist Mono Fallback Consolas", ui-monospace,
@@ -117,7 +142,7 @@
   --radius-md: calc(var(--radius) * 0.75);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.5);
-  --shadow-raised: 0 0 0 1px var(--shadow-edge);
+  --shadow-raised: 0 0 0 1px var(--border);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
   --animate-logo-body: logo-body 1800ms steps(1) infinite;
@@ -324,23 +349,6 @@
       opacity: 0.15;
     }
   }
-}
-
-@utility dot-grid {
-  background-image: radial-gradient(
-    color-mix(in srgb, var(--foreground) 16%, transparent) 0.5px,
-    transparent 0.5px
-  );
-  background-size: 6px 6px;
-}
-
-@utility dot-rule {
-  height: 4px;
-  background-image: radial-gradient(
-    color-mix(in srgb, var(--foreground) 36%, transparent) 1px,
-    transparent 1px
-  );
-  background-size: 4px 4px;
 }
 
 @layer base {
