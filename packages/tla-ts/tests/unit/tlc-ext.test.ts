@@ -179,6 +179,20 @@ describe("TLCExt matches TLC", () => {
     ]);
   });
 
+  it("reads Trace in the initial predicate as the initial state alone as TLCTrace rebuilds the counterexample", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x \\in {0, 1} /\\ PrintT(Trace)\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([prints, result.violation?.traceOutput]).toEqual([
+      ["<<[x |-> 0]>>", "<<[x |-> 1]>>"],
+      ["<<[x |-> 0]>>", "<<[x |-> 1]>>"],
+    ]);
+  });
+
   // Deviation from TLC: it prints 773, 484, 773, 773, 773, 484, 484.
   it("draws after Trace as for the state the search expands, unlike TLC", async () => {
     expect(

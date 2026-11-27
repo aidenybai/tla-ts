@@ -1165,6 +1165,7 @@ const searchStates = (
     return isWritten ? current.index : parents[current.index];
   };
   runtime.getBehavior = (state) => {
+    if (rebuiltInitLevel !== -1) return [state];
     const index =
       state === current.candidate
         ? -1
