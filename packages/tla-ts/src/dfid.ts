@@ -753,6 +753,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       }
       if (errorEntry && checker.isKeepingCallStack) {
         runtime.getRandom = () => mainRandom;
+        // Deviation from TLC: under -continue, DFIDModelChecker#printTrace throws a ClassCastException on the main thread when the replay fails again, and doNext's catch records it as a general error, so TLC exits 255.
         replayExpansion(errorEntry);
       }
       break;
