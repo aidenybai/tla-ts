@@ -229,7 +229,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   }, [shown.body, isReplayShown]);
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
   return (
-    <div className="my-2 flex flex-wrap gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
+    <div className="my-4 flex flex-wrap gap-x-10 gap-y-6 rounded-[22px] bg-card p-5 shadow-raised sm:-mx-6 sm:p-7 lg:-mx-10">
       <div
         ref={boardRef}
         // A click heads the snake for the eighth of a turn nearest to it.
@@ -243,7 +243,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[266px] shrink-0 cursor-pointer self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
@@ -330,14 +330,14 @@ export const SnakeGame = (props: SnakeGameProps) => {
       </div>
       {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
           or the tree moves nothing. */}
-      <div className="flex min-h-40 min-w-48 flex-1 flex-col items-start gap-3 self-stretch">
+      <div className="flex min-h-44 min-w-56 flex-1 flex-col items-start gap-4 self-stretch">
         {hasBitten && !isReplayShown && (
           <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5" />
             Bug found · It turned twice at once
           </p>
         )}
-        <p aria-live="polite" className="text-[15px] text-pretty text-foreground tabular-nums">
+        <p aria-live="polite" className="text-pretty text-foreground tabular-nums">
           {isReplaying ? (
             `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
           ) : isReplayShown ? (
@@ -346,7 +346,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
             </>
           ) : hasBitten ? (
-            "A test finds this only if you thought to write it. TLA-ts finds it without being told."
+            "Would your tests have tried that? See how TLA-ts gets there."
           ) : !isMoving ? (
             isTouch ? (
               "Tap the board to start the snake."
@@ -377,7 +377,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               </>
             )
           ) : (
-            "The snake cannot turn straight back, so it should never bite itself. Make it bite anyway."
+            "It can\u2019t reverse, so it should never bite itself. Make it."
           )}
         </p>
         {isReplayShown && (
@@ -388,7 +388,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
             onHover={setHoveredId}
           />
         )}
-        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 text-sm">
+        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 text-sm">
           <Button
             variant="success"
             disabled={props.isRunning || isReplaying}

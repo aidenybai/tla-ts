@@ -43,19 +43,12 @@ const Page = () => (
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <p className="text-pretty">
-          Here is a snake. It cannot turn straight back on itself, so it should never bite itself.
-          The code has a bug. Try to find it.
-        </p>
+        <p className="text-pretty">This snake game has a bug. Find it before TLA-ts does.</p>
         <Example.Root>
           <Example.Game />
-          <p className="mt-4 text-pretty">
-            You try one run of moves at a time. So does a test: it plays the one run you thought to
-            write. TLA-ts plays every run, and checks the rule after each move.
-          </p>
-          <p className="text-pretty">
-            This is the code behind the game, with the rule on its last line. You write the rule.
-            You never write the moves.
+          <p className="mt-8 text-pretty">
+            A test only checks the moves you thought to try. TLA-ts tries all of them against one
+            rule, which is the last line of the game&rsquo;s code:
           </p>
           <Example.Source />
           <Example.Hint />
