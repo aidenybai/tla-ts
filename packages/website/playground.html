@@ -7,6 +7,9 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="description" content="Formally verify TypeScript code with TLA+." />
     <meta name="theme-color" content="#fdfdfc" />
+    <script type="speculationrules">
+      { "prefetch": [{ "where": { "href_matches": "/*" }, "eagerness": "moderate" }] }
+    </script>
     <script>
       if (
         document.documentElement.classList.toggle(
