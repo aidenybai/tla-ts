@@ -509,7 +509,8 @@ const VIEW_CLASSES = new Set(["typedArray", "dataView"]);
 // The built-in functions whose data is a value: the cell of a promise's resolving functions or
 // capability, and the host's: console.createTask's function that runs a task, the getter of a
 // global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
-// a TextEncoder, of the value each one reads, and the call of performance.now, of performance.
+// a TextEncoder, of the value each one reads, the call of performance.now, of performance, and the
+// calls of a replaceable accessor's getter and setter, of the cell that holds its value.
 const OBJECT_DATA_BUILTINS = new Set([
   "Promise resolveFunction",
   "Promise rejectFunction",
@@ -520,6 +521,8 @@ const OBJECT_DATA_BUILTINS = new Set([
   "Module asyncResourceGet",
   "Module textEncoderGet",
   "Module performanceNow",
+  "Module replaceableGet",
+  "Module replaceableSet",
 ]);
 
 const BUILTIN_SLOTS = ["constructor", "data", "id", "initialName", "realm"];
@@ -628,6 +631,8 @@ const slotRefs = (object: Value, realm: Realm, refs: number[], path: Path) => {
   } else if (objectClass === "cell" && getDomain(slots).join() === "reject,resolve") {
     fieldRefs(slots, "resolve", realm, refs, path, maybeRef);
     fieldRefs(slots, "reject", realm, refs, path, maybeRef);
+  } else if (objectClass === "cell" && getDomain(slots).join() === "value") {
+    fieldRefs(slots, "value", realm, refs, path, maybeRef);
   } else if (objectClass === "weakMap" || objectClass === "weakSet" || objectClass === "weakRef") {
     // A weak collection's entries refer to objects only where the walk reaches their keys.
   } else if (objectClass === "finalizationRegistry" && getList(get(slots, "cells")).length === 0) {

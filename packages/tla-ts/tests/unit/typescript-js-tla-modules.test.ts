@@ -831,6 +831,66 @@ describe("calls performance.now on performance, and stops at every other use", (
   });
 });
 
+// A program replaces the host's clock as Node lets it: performance is an accessor of the global
+// object whose setter keeps the program's value, performance.now and Date.now take the program's
+// functions, and a read of the host's own clock still stops where its time is used.
+describe("reads the clock that a program gives in place of the host's", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": getMain(
+      `const log = [];
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "performance");
+      log.push(descriptor.get.name, descriptor.get.length, descriptor.set.name, descriptor.set.length, descriptor.enumerable, descriptor.configurable);
+      const host = performance;
+      performance.now = () => 5;
+      log.push(performance.now(), host === performance);
+      globalThis.performance = { now: () => 7 };
+      log.push(performance.now(), typeof Object.getOwnPropertyDescriptor(globalThis, "performance").get, host.now());
+      Reflect.apply(descriptor.set, undefined, [3]);
+      log.push(performance, Reflect.apply(descriptor.get, 1, []));
+      Object.defineProperty(globalThis, "performance", { value: 9, writable: true, configurable: true });
+      log.push(performance, "get" in Object.getOwnPropertyDescriptor(globalThis, "performance"));
+      Date.now = () => 11;
+      log.push(Date.now());`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("get performance,0,set performance,1,true,true,5,true,7,function,5,3,3,9,false,11"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("get performance,0,set performance,1,true,true,5,true,7,function,7,3,3,9,false,11"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  it.each([
+    "const host = performance; globalThis.performance = { now: () => 0 }; host.now() > 0;",
+    "Date.now = () => 0; new Date().getTime() > 0;",
+  ])("stops where %s reads the host's clock", async (code) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(
+      "tla-ts can't read the host's clock",
+    );
+  });
+
+  it.each(["performance.mark", "performance.timeOrigin = 0", "Object.create(performance).now = 0"])(
+    "stops at %s",
+    async (use) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        "tla-ts can't run the host's performance",
+      );
+    },
+  );
+});
+
 // A global binding that holds the host's performance, which HasBinding and GetBindingValue read
 // natively from the global object's own data property, and a missing one, which reaches the trap
 // of a proxy on the global object's prototype, so that the host's object and the trap still run.

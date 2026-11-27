@@ -512,14 +512,27 @@ const DEFINITIONS = [
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
-                 [] p.kind = "performance" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"]>>)
+                 [] p.kind = "performance" ->
+                      StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"],
+                                                                     [trap |-> SV("set"), method |-> "performanceSet"]>>)
                  [] OTHER -> ProxyCreate(target.s, Val(target), handler)
       getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
                 ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
-      d == IF p.isAccessor
+      d == IF p.kind = "performance" THEN ReplaceableAccessor(value.s, Intrinsic(s, p.owner), p.name, Val(value))
+           ELSE IF p.isAccessor
            THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, p.owner), Str(p.name), AccessorDesc(Val(getter), Val(stop), p.enumerable, p.configurable))
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
+  // An accessor of the host that a program may replace the value of, as Node's
+  // defineReplaceableLazyAttribute defines performance on the global object (lib/internal/util.js):
+  // its getter gives the host's value until its setter, which ignores its receiver, keeps another,
+  // which each later read gives. Both are functions of Node's code, whose names and lengths a
+  // program may read.
+  `ReplaceableAccessor(s, owner, name, value) ==
+  LET cell == Alloc(s, MakeObject(Null, "cell", [value |-> value]))
+      get == HostMethod(cell.s, N("get ") \\o name, 0, TRUE, name, "replaceableGet", cell.v)
+      set == HostMethod(get.s, N("set ") \\o name, 1, TRUE, name, "replaceableSet", cell.v)
+  IN DefinePropertyOrThrow(set.s, owner, Str(name), AccessorDesc(Val(get), Val(set), TRUE, TRUE))`,
   // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
   // filename, and url are where the host loaded m from, whose resolve, which the runtime leaves
   // out, stops, and whose main tells whether m is the entry, the module the host loaded first. Of a
@@ -1557,6 +1570,14 @@ const HOST_PATCHES = [
     [] m = "hostGlobal" -> Ok(s, data)
     [] m = "performanceGet" ->
          IF Arg(args, 2) # SV("now") THEN HostStop(N("performance")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "performanceSet" ->
+         IF Arg(args, 2) # SV("now") \\/ ~IsObject(Arg(args, 4)) \\/ O(s, Arg(args, 4)).class # "proxy" \\/ O(s, Arg(args, 4)).slots.target # Arg(args, 1)
+         THEN HostStop(N("performance"))
+         ELSE ResultThen(True, CreateDataProperty(s, Arg(args, 1), SV("now"), Arg(args, 3)))
+    [] m = "replaceableGet" -> Ok(s, O(s, data).slots.value)
+    [] m = "replaceableSet" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list ELSE Ok(SetO(list.s, data, [O(list.s, data) EXCEPT !.slots.value = Arg(Val(list), 1)]), Undefined)
     [] m = "hostMethodGet" -> IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(data) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "performanceNow" ->
          IF ~IsObject(Arg(args, 2)) \\/ O(s, Arg(args, 2)).class # "proxy" \\/ O(s, Arg(args, 2)).slots.target # data
