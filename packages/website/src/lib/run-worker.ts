@@ -33,7 +33,13 @@ export interface RunResult {
   search?: Search;
   // The most states of a search that the run kept no graph of, as it passed them.
   graphOmittedPast?: number;
+  // Whether the program's files name process.env, which a page gives NODE_ENV=production alone, as
+  // a bundler gives a program that it builds for a browser.
+  isEnvironmentNamed?: boolean;
 }
+
+// A name of process.env in a file's text.
+const ENVIRONMENT_NAME = /\bprocess\s*\.\s*env\b/;
 
 // The most states whose graph a run keeps. The graph holds the text of every state it reaches, which
 // for a model of a large heap runs to megabytes a state: Solid's solid.js reached 600 states and
@@ -122,16 +128,20 @@ const getRun = async (request: RunRequest) => {
         loadModule: (name: string) => request.modules?.[name],
       },
       shown: request.source,
+      isEnvironmentNamed: false,
     };
   }
-  const spec = loaded.compile(
-    { ...request.typescript, files: request.typescript.files ?? loaded.files },
-    loaded.runtime,
-    loaded.library,
-  );
+  const files = request.typescript.files ?? loaded.files;
+  const spec = loaded.compile({ ...request.typescript, files }, loaded.runtime, loaded.library);
   const shown = spec.loadModule("ProgramCode") ?? "";
   checkCodeLength(shown);
-  return { spec, shown };
+  return {
+    spec,
+    shown,
+    isEnvironmentNamed: [request.typescript.source, ...files.values()].some((text) =>
+      ENVIRONMENT_NAME.test(text),
+    ),
+  };
 };
 
 // A check of the spec, with the graph of its search where it's shown, which the check stops keeping
@@ -199,6 +209,7 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
           )
         : undefined,
     graphOmittedPast: checked.isGraphOmitted ? MOST_GRAPH_STATES : undefined,
+    isEnvironmentNamed: run.isEnvironmentNamed,
     notes: [
       ...(lastStep === undefined ||
       variableLine === undefined ||

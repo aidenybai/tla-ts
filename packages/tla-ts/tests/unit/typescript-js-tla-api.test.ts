@@ -438,7 +438,7 @@ describe("compile a program on a browser's worker, which has no files", () => {
 });
 
 // A browser has no file system, so it passes the files of the packages that a program imports, on
-// which the program runs as Node runs it from / in an empty environment.
+// which the program runs as Node runs it from / in an environment of NODE_ENV=production alone.
 describe("run a program on the files that a host passes, as Node runs it on them", () => {
   // The files of a package in a node_modules directory, by their path from the root.
   const getPackageFiles = (name: string, directory: string) =>
@@ -467,7 +467,8 @@ describe("run a program on the files that a host passes, as Node runs it on them
     const getSource = (shown: string) =>
       `type Query = "t" | "tl";\nlet query: Query | "" = "";\nlet results: Query | "" = "";\nconst sent = new Set<Query>();\nexport const SearchBox = () => (\n  <label>\n    Search <input value={query} onChange={(event) => type(event.target.value as Query)} />\n    <output>{results}</output>\n  </label>\n);\nexport const type = (text: Query) => {\n  query = text;\n  sent.add(text);\n};\nexport const respond = (text: Query) => {\n  if (!sent.has(text)) return;\n  sent.delete(text);\n  ${shown}\n};\nexport const showsLatest = () => sent.size > 0 || results === query;\n/** @view */\nexport const shown = () => [query, results, [...sent]];\n`;
     // The invariant after each action that Node runs in turn, on the JavaScript that TypeScript
-    // writes for the file's JSX, in an empty environment, which loads React's development build.
+    // writes for the file's JSX, in the environment that a page gives, which loads React's
+    // production build.
     const replay = (source: string, actions: string[]) =>
       JSON.parse(
         runNode(
@@ -480,11 +481,10 @@ describe("run a program on the files that a host passes, as Node runs it on them
             "replay.mjs": `import * as model from "./search-box.mjs";\nconst held = [model.showsLatest()];\nfor (const action of ${JSON.stringify(actions)}) {\n  const call = /^(\\w+)\\((.*)\\)$/.exec(action);\n  model[call[1]](...JSON.parse("[" + call[2] + "]"));\n  held.push(model.showsLatest());\n}\nconsole.log(JSON.stringify(held));\n`,
           },
           "replay.mjs",
-          {},
+          { NODE_ENV: "production" },
         ).stdout,
       );
 
-    // Both checks load React's development build, which compiles to 840,000 characters of TLA+.
     it("agrees with Node", async () => {
       const source = getSource("results = text;");
       const outcome = await getBrowserOutcome(
@@ -566,29 +566,43 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
-  // The program's process.env is an empty environment's, though the process that compiles it has
-  // NODE_ENV, which vitest sets.
-  describe("read process.env as Node does in an empty environment", () => {
+  // The program's process.env holds NODE_ENV=production alone, as a bundler gives a program that
+  // it builds for a browser, though the process that compiles it has NODE_ENV=test, which vitest
+  // sets, and HOME. A package's index then requires its production build, as React's does.
+  describe("read process.env as Node does in a bundler's environment", () => {
+    const PACKAGE = {
+      "node_modules/build/package.json": JSON.stringify({ name: "build", exports: "./index.js" }),
+      "node_modules/build/index.js":
+        'module.exports = process.env.NODE_ENV === "production" ? require("./production.js") : require("./development.js");\n',
+      "node_modules/build/production.js": 'module.exports = "production";\n',
+      "node_modules/build/development.js": 'module.exports = "development";\n',
+    };
     const getSource = (expected: string) =>
-      `if (process.env.NODE_ENV !== ${expected}) throw new Error(String(process.env.NODE_ENV));\nexport {};\n`;
+      `import build from "build";\nconst seen = [process.env.NODE_ENV, process.env.HOME, build].join();\nif (seen !== ${JSON.stringify(expected)}) throw new Error(seen);\n`;
+    const ENVIRONMENT = { NODE_ENV: "production" };
 
     it("agrees with Node", async () => {
-      expect(runNode({ "env.mjs": getSource("undefined") }, "env.mjs", {}).status).toBe(0);
-      expect(await getOutcome(getSource("undefined"), "env.mjs", false, true, {})).toMatchObject({
-        status: "success",
-      });
-      expect(await getBrowserOutcome(getSource("undefined"), "env.mjs", true)).toMatchObject({
-        status: "success",
-      });
+      const source = getSource("production,,production");
+      expect(runNode({ ...PACKAGE, "env.mjs": source }, "env.mjs", ENVIRONMENT).status).toBe(0);
+      expect(await getOutcome(source, "env.mjs", false, true, getHostFiles(PACKAGE))).toMatchObject(
+        { status: "success" },
+      );
+      expect(
+        await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
     });
 
     it("rejects another result", async () => {
-      const source = getSource('"test"');
-      expect(runNode({ "env.mjs": source }, "env.mjs", {}).stderr).toContain("Error: undefined");
-      expect(getFailure(await getOutcome(source, "env.mjs", false, true, {}))).toContain(
-        "undefined",
+      const source = getSource(",,development");
+      expect(runNode({ ...PACKAGE, "env.mjs": source }, "env.mjs", ENVIRONMENT).stderr).toContain(
+        "Error: production,,production",
       );
-      expect(getFailure(await getBrowserOutcome(source, "env.mjs", true))).toContain("undefined");
+      expect(
+        getFailure(await getOutcome(source, "env.mjs", false, true, getHostFiles(PACKAGE))),
+      ).toContain("production,,production");
+      expect(
+        getFailure(await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("production,,production");
     });
   });
 

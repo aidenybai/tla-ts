@@ -22,7 +22,9 @@ const matchFiles: (
 
 // The files and the environment that a program runs on, as Node runs it: the host's own, where the
 // host has a file system, or, for a host without one, such as a browser, the texts of the files
-// that it holds, by absolute path, in a Node that runs from / in an empty environment.
+// that it holds, by absolute path, in a Node that runs from / in the environment that a bundler,
+// such as Vite, gives a program that it builds for a browser: NODE_ENV=production, and no other
+// variable.
 export interface ProgramSystem {
   // Whether the files are the host's own, which Node's resolution finds where Node runs.
   isHost: boolean;
@@ -113,6 +115,6 @@ export const createMemorySystem = (
     realpath: resolveFromRoot,
     resolvePath: resolveFromRoot,
     getCurrentDirectory: () => "/",
-    getEnvironmentVariable: () => undefined,
+    getEnvironmentVariable: (name) => (name === "NODE_ENV" ? "production" : undefined),
   };
 };
