@@ -13,6 +13,7 @@ import type {
   Postcondition,
   CheckResult,
   CheckStatus,
+  EvaluationFailure,
   InitialStates,
   SearchStatistics,
   TraceFailure,
@@ -359,6 +360,9 @@ export const printCheckProgress = (
       return;
     case "violation":
       printViolation(progress.status, progress.violation, printer);
+      return;
+    case "failure":
+      printFailure(progress.failure, printer);
   }
 };
 
@@ -539,43 +543,47 @@ export const printDepthFirst = (
   }
 };
 
+const printFailure = (failure: EvaluationFailure, printer: MessagePrinter) => {
+  const print = printer.print;
+  const message = printer.isTool ? failure.toolMessage : failure.message;
+  const printCallStack = () => {
+    const fingerprint = failure.fingerprint;
+    if (fingerprint) {
+      const trace =
+        failure.callStack?.length && printer.version !== "1.7.4"
+          ? formatCallStack(failure.callStack)
+          : formatFingerprintTrace(fingerprint.sources);
+      print(
+        MESSAGE_CODE.fingerprintFailed,
+        MESSAGE_LEVEL.error,
+        `TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${trace}\nReason:\n${formatNestedMessage(fingerprint.reason, printer.isTool)}`,
+      );
+      return;
+    }
+    if (failure.callStack) printNestedExpressions(printer, failure.callStack);
+  };
+  if (failure.isCallStackFirst) printCallStack();
+  const initialState =
+    failure.initialState &&
+    `While working on the initial state:\n${formatErrorState(failure.initialState)}`;
+  print(
+    initialState ? MESSAGE_CODE.initialState : failure.code,
+    MESSAGE_LEVEL.error,
+    initialState ? `${message}\n${initialState}` : message,
+  );
+  printTraceOutput(printer, failure.trace[0]?.output);
+  printTrace(printer, failure.trace, "error-trace");
+  printTraceFailure(printer, failure.traceFailure);
+  printTraceOutput(printer, failure.traceOutput);
+  printPostcondition(printer, failure.postcondition);
+  printTraceOutput(printer, failure.trailingOutput);
+  if (!failure.isCallStackFirst) printCallStack();
+};
+
 export const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timing) => {
   const print = printer.print;
   if (result.failure) {
-    const failure = result.failure;
-    const message = printer.isTool ? failure.toolMessage : failure.message;
-    const printCallStack = () => {
-      const fingerprint = failure.fingerprint;
-      if (fingerprint) {
-        const trace =
-          failure.callStack?.length && printer.version !== "1.7.4"
-            ? formatCallStack(failure.callStack)
-            : formatFingerprintTrace(fingerprint.sources);
-        print(
-          MESSAGE_CODE.fingerprintFailed,
-          MESSAGE_LEVEL.error,
-          `TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n${trace}\nReason:\n${formatNestedMessage(fingerprint.reason, printer.isTool)}`,
-        );
-        return;
-      }
-      if (failure.callStack) printNestedExpressions(printer, failure.callStack);
-    };
-    if (failure.isCallStackFirst) printCallStack();
-    const initialState =
-      failure.initialState &&
-      `While working on the initial state:\n${formatErrorState(failure.initialState)}`;
-    print(
-      initialState ? MESSAGE_CODE.initialState : failure.code,
-      MESSAGE_LEVEL.error,
-      initialState ? `${message}\n${initialState}` : message,
-    );
-    printTraceOutput(printer, failure.trace[0]?.output);
-    printTrace(printer, failure.trace, "error-trace");
-    printTraceFailure(printer, failure.traceFailure);
-    printTraceOutput(printer, failure.traceOutput);
-    printPostcondition(printer, failure.postcondition);
-    printTraceOutput(printer, failure.trailingOutput);
-    if (!failure.isCallStackFirst) printCallStack();
+    printFailure(result.failure, printer);
   } else if (result.violation) {
     if (!printViolation(result.status, result.violation, printer)) return;
     const additionalViolation = result.additionalViolation;
