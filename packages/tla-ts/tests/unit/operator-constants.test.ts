@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
-import { checkFixture } from "./check-harness";
+import { checkFixture, formatCallStackLines } from "./check-harness";
 
 const SOURCE =
   "---- MODULE Op ----\nEXTENDS Naturals\nCONSTANT F(_), G(_, _), C\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\nInc(n) == n + 1\nAdd(a, b) == a + b\nZero == 0\n====";
@@ -88,6 +88,27 @@ describe("operator constants match TLC", () => {
       expect((await checkConstants(constants)).failure?.message).toBe(message);
     }
   });
+
+  it.each(["CONSTRAINT Constr", "INVARIANT Constr"])(
+    "keeps the frames of the expression that applies a table to a name without arguments under %s, as TLC does",
+    async (line) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nLim == 3\nInit == x = 0 /\\ x \\in 0..1\nNext == x' = x\nConstr == x < Lim + 1\n====",
+        config: `INIT Init\nNEXT Next\n${line}\nCONSTANT Lim(1) = 2`,
+      });
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        "Attempted to apply the operator { <1, 2>}\nwith wrong number of arguments.",
+        [
+          "Line 5, column 9 to line 5, column 27 in M",
+          "Line 5, column 9 to line 5, column 13 in M",
+          "Line 7, column 11 to line 7, column 21 in M",
+          "Line 7, column 15 to line 7, column 21 in M",
+          "Line 7, column 15 to line 7, column 17 in M",
+        ],
+      ]);
+    },
+  );
 
   it("rejects configurations TLC rejects", async () => {
     const cases = [
