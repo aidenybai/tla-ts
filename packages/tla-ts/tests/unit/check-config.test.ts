@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseConfig, TlaConfigError } from "../../src";
+import { check, parseConfig, TlaConfigError } from "../../src";
 import { checkModule } from "./check-harness";
 
 describe("parseConfig matches TLC", () => {
@@ -176,6 +176,54 @@ describe("parseConfig matches TLC", () => {
     expect(() => parseConfig(source)).toThrow(
       new TlaConfigError(`TLC found an error in the configuration file${message}`),
     );
+  });
+});
+
+describe("check validates the configuration in TLC's order", () => {
+  const NOT_STATE_PREDICATE =
+    "The invariant BadInv is not a state predicate (one with no primes or temporal operators).\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
+
+  it.each([
+    [
+      "VIEW Nope\nSYMMETRY Sym",
+      "The view function Nope specified in the configuration file\nis not defined in the specification.",
+    ],
+    [
+      "SYMMETRY Nope2\nVIEW Nope",
+      "The view function Nope specified in the configuration file\nis not defined in the specification.",
+    ],
+    [
+      "VIEW Dbl\nSYMMETRY Nope",
+      "TLC requires view function not to take any argument, but one was given: Dbl",
+    ],
+  ])("checks the VIEW before the SYMMETRY in %j", async (config, message) => {
+    await expect(
+      checkModule("Sym == Permutations({1, 2})\nDbl(a) == 2 * a", config),
+    ).rejects.toThrow(new TlaConfigError(message));
+  });
+
+  it.each(["Nope", "Dbl"])(
+    "checks an invariant's level before it looks up the invariant %s after it",
+    async (name) => {
+      await expect(
+        checkModule("BadInv == x' = x\nDbl(a) == 2 * a", `INVARIANT BadInv ${name}`),
+      ).rejects.toThrow(new TlaConfigError(NOT_STATE_PREDICATE));
+    },
+  );
+
+  it("warns about no constant-level invariant after one that is not a state predicate", async () => {
+    const warned: string[] = [];
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nBadInv == x' = x\nConstInv == TRUE\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT BadInv ConstInv",
+        onProgress: (event) => {
+          if (event.kind === "constant-level-invariant") warned.push(event.name);
+        },
+      }),
+    ).rejects.toThrow(new TlaConfigError(NOT_STATE_PREDICATE));
+    expect(warned).toEqual([]);
   });
 });
 
