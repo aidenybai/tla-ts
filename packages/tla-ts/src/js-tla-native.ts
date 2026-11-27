@@ -5,6 +5,7 @@ import {
   type Builtin,
   type BuiltinArgument,
   type Context,
+  type KeptEvaluation,
   type OperatorValue,
 } from "./evaluate";
 import {
@@ -1182,6 +1183,12 @@ const createBindingOperator = (
 // back where its operands aren't the common ones.
 export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] => {
   const define = createDefine(callReplaced);
+  const heapGet: KeptEvaluation = {
+    accepts: (heap) => getField(heap, "pages") !== undefined || isLazyFunction(heap),
+    evaluate: (heap, index, context) =>
+      getHeapEntry(getField(heap, "pages"), index) ??
+      callReplaced("HeapGet", [heap, index], context),
+  };
   return [
     {
       kind: "Builtin",
@@ -1194,13 +1201,11 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
       evaluateLazy: (args, context) => {
         const lazyContext = toKeepLazyContext(context);
         const heap = evaluate(args[0], lazyContext);
-        const pages = getField(heap, "pages");
-        if (pages === undefined && !isLazyFunction(heap)) {
-          return callReplaced("HeapGet", [heap, getLazyArgument(args[1], context)], context);
-        }
-        const index = evaluate(args[1], lazyContext);
-        return getHeapEntry(pages, index) ?? callReplaced("HeapGet", [heap, index], context);
+        return heapGet.accepts(heap)
+          ? heapGet.evaluate(heap, evaluate(args[1], lazyContext), context)
+          : callReplaced("HeapGet", [heap, getLazyArgument(args[1], context)], context);
       },
+      kept: heapGet,
       evaluateUnary: undefined,
       evaluateBinary: undefined,
     },

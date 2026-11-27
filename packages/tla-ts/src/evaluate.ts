@@ -160,7 +160,14 @@ export interface Builtin {
   isLazy?: boolean;
   // A lazy builtin's evaluation from its arguments' expressions, which makes a thunk only of one it passes on.
   evaluateLazy?: (args: Expression[], context: Context) => Value;
+  // A lazy builtin of two arguments that reads each kept lazy, the second only where the first is one it accepts.
+  kept?: KeptEvaluation;
   signature?: string;
+}
+
+export interface KeptEvaluation {
+  accepts: (first: Value) => boolean;
+  evaluate: (first: Value, second: Value, context: Context) => Value;
 }
 
 export interface Closure {

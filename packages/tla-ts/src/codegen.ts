@@ -44,6 +44,7 @@ import {
   readBinding,
   createCompiledThunk,
   getDetachedContext,
+  getLazyArgument,
   getOperatorCode,
   getCalledBody,
   createCaseConditionError,
@@ -170,6 +171,7 @@ const createGeneratedHelpers = () => ({
   prime: toNextContext,
   keepLazyContext: toKeepLazyContext,
   read: readBinding,
+  lazyArgument: getLazyArgument,
   thunk: createCompiledThunk,
   detached: getDetachedContext,
   valueBinding: (value: Value): ArgumentBinding => ({
@@ -553,6 +555,11 @@ const generateApply = (
     return `${code}.call(${[frame.context, ...bindings].join(", ")})`;
   }
   if (builtin?.kind !== "Builtin") return generateDelegate(generator, expression, frame);
+  if (builtin.kept !== undefined && args.length === 2) {
+    const kept = addReference(generator, builtin.kept);
+    const lazy = `lazyArgument(${addReference(generator, args[1])}, ${getDelegateContext(generator, args[1], frame)})`;
+    return `(applied = ${generateKeptLazy(generator, args[0], frame)}, ${kept}.accepts(applied) ? ${kept}.evaluate(applied, ${generateKeptLazy(generator, args[1], frame)}, ${frame.context}) : ${addReference(generator, builtin)}.evaluate([applied, ${lazy}], ${frame.context}))`;
+  }
   if (builtin.name === "DOMAIN") {
     const domain = addReference(generator, getDomainOperator(expression));
     return `${domain}(${generateExpression(generator, args[0], frame)})`;
@@ -626,6 +633,15 @@ const isReadOnly = (expression: Expression): boolean => {
     default:
       return false;
   }
+};
+
+const generateKeptLazy = (generator: Generator, expression: Expression, frame: Frame) => {
+  const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
+  return isConstructionFree(expression, frame, generator.environment)
+    ? generateExpression(generator, expression, frame)
+    : isReadOnly(expression)
+      ? generateExpression(generator, expression, keepLazyFrame)
+      : generateDelegate(generator, expression, keepLazyFrame);
 };
 
 const generateExpression = (generator: Generator, expression: Expression, frame: Frame): string => {
@@ -730,16 +746,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       return frame.locals.get("@") ?? generateDelegate(generator, expression, frame);
     case "FunctionApplication": {
       keepLazy(expression.function);
-      const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
-      const evaluatedFunction = isConstructionFree(
-        expression.function,
-        frame,
-        generator.environment,
-      )
-        ? generate(expression.function)
-        : isReadOnly(expression.function)
-          ? generate(expression.function, keepLazyFrame)
-          : generateDelegate(generator, expression.function, keepLazyFrame);
+      const evaluatedFunction = generateKeptLazy(generator, expression.function, frame);
       const functionCode = `(applied = ${evaluatedFunction}, typeof applied === "object" && (applied.kind === "Function" || applied.kind === "LazyFunction") ? applied : expectFunction(applied, ${addReference(generator, expression)}))`;
       const describeMissing = getMissingArgumentDescriber(generator.environment.runtime.version);
       const error = describeMissing ? `, ${addReference(generator, describeMissing)}` : "";
