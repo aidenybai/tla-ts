@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { check, formatValue, TlaError, type CheckResult } from "../../src";
-import { printResult } from "../../src/cli/tlc-output";
+import { check, formatValue, TlaError, type CheckProgress, type CheckResult } from "../../src";
+import { printCheckProgress, printResult, type Timing } from "../../src/cli/tlc-output";
 import { getErrorExitCode, getUnexpectedException, STACK_OVERFLOW_MESSAGE } from "../../src/errors";
+import type { MessagePrinter } from "../../src/tlc/messages";
 import type { TlcVersion } from "../../src/tlc/version";
 import { checkFixture, formatCallStackLines } from "./check-harness";
 
@@ -22,24 +23,23 @@ const SYMMETRY_MERGE =
 
 const SYMMETRY_CONFIG = "CONSTANTS Procs = {a, b}\nSYMMETRY Perms";
 
-const getPrintedResult = (result: CheckResult) => {
+const getPrintedResult = (result: CheckResult, progress: CheckProgress[] = []) => {
   const printed: string[] = [];
-  printResult(
-    result,
-    {
-      isTool: false,
-      isDiffTrace: false,
-      version: "master",
-      print: (_code, _level, text) => printed.push(text),
-      printOutput: () => {},
-    },
-    {
-      startTime: Date.now(),
-      isParsed: true,
-      livenessStartTime: undefined,
-      lastProgress: undefined,
-    },
-  );
+  const printer: MessagePrinter = {
+    isTool: false,
+    isDiffTrace: false,
+    version: "master",
+    print: (_code, _level, text) => printed.push(text),
+    printOutput: () => {},
+  };
+  const timing: Timing = {
+    startTime: Date.now(),
+    isParsed: true,
+    livenessStartTime: undefined,
+    lastProgress: undefined,
+  };
+  for (const item of progress) printCheckProgress(printer, item, timing, ".");
+  printResult(result, printer, timing);
   return printed;
 };
 
@@ -552,6 +552,8 @@ describe("liveness matches TLC", () => {
 
   const getSpinSource = (definitions: string) =>
     `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}\n====`;
+  const getFailedSpinSource = (next: string) =>
+    `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nvars == <<x, y>>\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0 /\\ y = 0\n${next}\nSpec == Init /\\ [][Next]_vars\nProp == []<>(IF x = 0 THEN Spin(x) = 0 ELSE TRUE)\n====`;
 
   it.each([
     [
@@ -661,12 +663,106 @@ describe("liveness matches TLC", () => {
     "ignores a stack overflow in the behavior graph after %s like TLC",
     async (_title, next, config, exitCode, printed) => {
       const result = await check({
-        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nvars == <<x, y>>\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0 /\\ y = 0\n${next}\nSpec == Init /\\ [][Next]_vars\nProp == []<>(IF x = 0 THEN Spin(x) = 0 ELSE TRUE)\n====`,
+        source: getFailedSpinSource(next),
         config: `SPECIFICATION Spec\nPROPERTY Prop${config}`,
       });
       expect([result.failure?.exitCode, getPrintedResult(result)]).toEqual([exitCode, printed]);
     },
   );
+
+  it.each([
+    [
+      "a failure of the next-state relation",
+      "Next == x' = 1 \\div x /\\ y' = y",
+      ["The second argument of \\div is 0.", "The behavior up to this point is:"],
+      [],
+      1,
+    ],
+    [
+      "an incomplete successor (without the exception of TLC's Worker#doPostCondition)",
+      "Next == x' = x + 1",
+      [
+        "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
+        "The behavior up to this point is:",
+      ],
+      ["2: <Next line 8, col 9 to line 8, col 18 of module M>\n/\\ x = 1\n/\\ y = null\n"],
+      2,
+    ],
+  ])(
+    "reports a stack overflow in the behavior graph under -continue after %s like TLC",
+    async (_title, next, failure, step, generated) => {
+      const progress: CheckProgress[] = [];
+      const result = await check({
+        source: getFailedSpinSource(next),
+        config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+        isContinued: true,
+        onProgress: (item) => {
+          if (item.kind === "failure") progress.push(item);
+        },
+      });
+      const initial = "1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n";
+      expect([result.failure?.exitCode, getPrintedResult(result, progress)]).toEqual([
+        255,
+        [
+          ...failure,
+          initial,
+          ...step,
+          STACK_OVERFLOW_MESSAGE,
+          "The behavior up to this point is:",
+          initial,
+          `${generated} states generated, 1 distinct states found, 0 states left on queue.`,
+          "The depth of the complete state graph search is 1.",
+        ],
+      ]);
+    },
+  );
+
+  const checkContinuedDeadlock = async (fault: string) => {
+    const violations: unknown[] = [];
+    const result = await check({
+      source: getSpinSource(
+        `Next == x < 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x\nProp == []<>(${fault})`,
+      ),
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      isContinued: true,
+      onProgress: (progress) => {
+        if (progress.kind === "violation") {
+          violations.push([progress.status, progress.violation.trace.map((step) => step.state.x)]);
+        }
+      },
+    });
+    return [violations, result.failure?.exitCode, getPrintedResult(result)];
+  };
+
+  it("reports a stack overflow in the behavior graph after a deadlock under -continue like TLC", async () => {
+    expect(await checkContinuedDeadlock("Spin(x) = 0")).toEqual([
+      [["deadlock", [0]]],
+      255,
+      [
+        STACK_OVERFLOW_MESSAGE,
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\nx = 0\n",
+        "1 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+      ],
+    ]);
+  });
+
+  it("reports a failure in the behavior graph after a deadlock once under -continue, where TLC's replay reports the deadlock again and exits with 11", async () => {
+    expect(await checkContinuedDeadlock("(CHOOSE e \\in {x} : e > 5) = 0")).toEqual([
+      [["deadlock", [0]]],
+      255,
+      [
+        "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 9, column 14 to line 9, column 43 in M\n1. Line 9, column 15 to line 9, column 38 in M\n\n",
+        `${getUnexpectedException("java.lang.RuntimeException")}Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 9, col 15 to line 9, col 38 of module M`,
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\nx = 0\n",
+        "1 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+      ],
+    ]);
+  });
 
   it.each([
     ["[][x' >= x]_vars", 1],

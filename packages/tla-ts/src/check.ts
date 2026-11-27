@@ -215,6 +215,11 @@ export interface ViolationProgress {
   violation: Violation;
 }
 
+export interface FailureProgress {
+  kind: "failure";
+  failure: EvaluationFailure;
+}
+
 export type OutputLine =
   | string
   | InitialStatesProgress
@@ -245,6 +250,7 @@ export type CheckProgress =
   | { kind: "sequential-fallback"; string: string }
   | EvaluationWarning
   | ViolationProgress
+  | FailureProgress
   | ({ kind: "java-override" } & JavaOverride);
 
 export interface SearchStatistics extends Pick<
@@ -367,6 +373,15 @@ export interface CheckResult {
 interface ReportedViolation extends Omit<Violation, "loopStart"> {
   loopStart?: number;
 }
+
+type FailedLiveState =
+  | { kind: "checked"; callStack: Expression[] | undefined }
+  | { kind: "overflowed" };
+
+type LiveStateReport =
+  | { kind: "added"; additional: Violation | undefined }
+  | { kind: "failed"; callStack: Expression[] | undefined }
+  | { kind: "continued"; failure: CheckResult };
 
 interface CounterExampleOptions {
   isConsole: boolean;
@@ -1075,6 +1090,7 @@ const searchStates = (
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
+    const added = live.result;
     const trace = traces.getStateTrace(index, {
       incomplete: error.state,
       isPrintedOnly: true,
@@ -1108,10 +1124,10 @@ const searchStates = (
     const failure = createFailureResult(
       error,
       checked.behavior,
-      { callStack: live.result, traceFailure },
+      { callStack: added.kind === "checked" ? added.callStack : undefined, traceFailure },
       checked.postcondition,
     );
-    return withOutDegrees({
+    const incomplete = withOutDegrees({
       ...failure,
       failure: failure.failure && {
         ...failure.failure,
@@ -1121,6 +1137,7 @@ const searchStates = (
         exitCode: EXIT_STATUS.specEvaluationFailure,
       },
     });
+    return added.kind === "overflowed" ? reportFailureThenOverflow(incomplete, index) : incomplete;
   };
   const fingerprintModelState = (state: Value[]) => {
     for (const value of state) {
@@ -1395,14 +1412,13 @@ const searchStates = (
           isPrintedOnly: true,
           isRebuildFailureKept: true,
         });
-        const replay = is174
-          ? captureOutput(() => replayNext(index))
-          : replayFailedNext(index, liveSuccessors);
-        return createFailureResult(
+        const replay = replayFailedSuccessor(index, liveSuccessors);
+        const failure = createFailureResult(
           error,
           withTrailingOutput(behavior, replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
+        return replay.isOverflowed ? reportFailureThenOverflow(failure, index) : failure;
       }
     }
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
@@ -1732,28 +1748,44 @@ const searchStates = (
     );
     return replay?.callStack.length && !replay.fingerprint ? replay.callStack : undefined;
   };
-  const addFailedLiveState = (index: number, liveSuccessors: LiveSuccessor[]) => {
+  const addFailedLiveState = (index: number, liveSuccessors: LiveSuccessor[]): FailedLiveState => {
     try {
       liveness?.addState(index, states[index], liveSuccessors);
-      return undefined;
+      return { kind: "checked", callStack: undefined };
     } catch (error) {
-      if (isStackOverflow(error)) return undefined;
+      // TLC's setErrState refuses a StackOverflowError after the first error, except under -continue.
+      if (isStackOverflow(error)) {
+        return options.isContinued
+          ? { kind: "overflowed" }
+          : { kind: "checked", callStack: undefined };
+      }
       if (!(error instanceof TlaEvaluationError)) throw error;
       // TLC fails to fingerprint an incomplete successor with an exception Worker#doNextCheckLiveness doesn't rerun for a call stack.
-      if (error instanceof TlaIncompleteSuccessorError) return undefined;
-      return getLiveCallStack(index, liveSuccessors);
+      if (error instanceof TlaIncompleteSuccessorError)
+        return { kind: "checked", callStack: undefined };
+      return { kind: "checked", callStack: getLiveCallStack(index, liveSuccessors) };
     }
   };
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    if (live.result) {
-      const result: FailureOptions = { phase: "behavior-graph", callStack: live.result };
-      return { result, lines: live.lines };
+    const added = live.result;
+    if (added.kind === "overflowed") return { result: {}, lines: live.lines, isOverflowed: true };
+    if (added.callStack) {
+      const result: FailureOptions = { phase: "behavior-graph", callStack: added.callStack };
+      return { result, lines: live.lines, isOverflowed: false };
     }
     const replay = captureOutput(() => replayNext(index));
     const result: FailureOptions =
       replay.result ?? (is174 ? {} : { outDegrees: getFailureOutDegrees() });
-    return { result, lines: [...live.lines, ...replay.lines] };
+    return { result, lines: [...live.lines, ...replay.lines], isOverflowed: false };
+  };
+  const replayFailedSuccessor = (index: number, liveSuccessors: LiveSuccessor[]) =>
+    is174
+      ? { ...captureOutput(() => replayNext(index)), isOverflowed: false }
+      : replayFailedNext(index, liveSuccessors);
+  const reportFailureThenOverflow = (first: CheckResult, index: number) => {
+    if (first.failure) options.onProgress?.({ kind: "failure", failure: first.failure });
+    return reportNextStateOverflow(index);
   };
   const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
     checkFailedTrace(
@@ -1813,12 +1845,13 @@ const searchStates = (
     if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
     const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
-    return createFailureResult(
+    const failure = createFailureResult(
       withNextStateExitCode(error),
       withTrailingOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
       checked.postcondition,
     );
+    return replay.isOverflowed ? reportFailureThenOverflow(failure, index) : failure;
   };
   const addLiveState = (
     index: number,
@@ -1841,28 +1874,47 @@ const searchStates = (
       ...traces.toTrace(steps, accepted, { known: 0 }),
     });
   };
+  const reportLiveFailure = (error: unknown, index: number, liveSuccessors: LiveSuccessor[]) => {
+    if (isStackOverflow(error)) return reportNextStateOverflow(index);
+    if (is174 && error instanceof TlaEvaluationError) {
+      return createFailureResult(
+        setExitCode(toUnexpectedError(error), EXIT_STATUS.error),
+        { trace: [] },
+        { outDegrees: getFailureOutDegrees() },
+      );
+    }
+    // Deviation from TLC: ModelChecker#doNextFailed prints no message for the FingerprintException that TupleValue#equals throws when Worker#doNextCheckLiveness compares a subscript, where tla-ts reports the comparison's error.
+    const replay = getReplayFailure(environment, (tracing) =>
+      liveness?.addState(index, states[index], liveSuccessors, tracing),
+    );
+    const behavior = traces.getStateTrace(index, { isPrintedOnly: true });
+    const replayed = captureOutput(() => replayNext(index));
+    return createFailureResult(error, withTrailingOutput(behavior, replayed.lines), {
+      outDegrees: getFailureOutDegrees(),
+      callStack: replay?.callStack.length ? replay.callStack : undefined,
+      phase: "liveness",
+    });
+  };
   const addReportedLiveState = (
     index: number,
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
   ) =>
-    captureOutput(() => {
+    captureOutput((): LiveStateReport => {
       try {
         return {
+          kind: "added",
           additional: addLiveState(index, liveSuccessors, source)?.violation,
-          isFailed: false,
-          callStack: undefined,
         };
       } catch (error) {
+        // Deviation from TLC: under -continue, ModelChecker#modelCheckImpl replays the state for the call stack of the failure, which reports its deadlock again, where tla-ts reports it once.
+        if (options.isContinued) {
+          return { kind: "continued", failure: reportLiveFailure(error, index, liveSuccessors) };
+        }
         // TLC's ModelChecker#doNextFailed prints nothing for a StackOverflowError once an error state is set.
-        if (isStackOverflow(error))
-          return { additional: undefined, isFailed: true, callStack: undefined };
+        if (isStackOverflow(error)) return { kind: "failed", callStack: undefined };
         if (!(error instanceof TlaEvaluationError)) throw error;
-        return {
-          additional: undefined,
-          isFailed: true,
-          callStack: getLiveCallStack(index, liveSuccessors),
-        };
+        return { kind: "failed", callStack: getLiveCallStack(index, liveSuccessors) };
       }
     });
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
@@ -1914,14 +1966,13 @@ const searchStates = (
             }
           });
         const traceFailure = rebuilt && getTraceFailure(rebuilt.result, rebuilt.lines);
-        const replay = is174
-          ? captureOutput(() => replayNext(index))
-          : replayFailedNext(index, liveSuccessors);
-        outcome = createFailureResult(error, withTrailingOutput(behavior, replay.lines), {
+        const replay = replayFailedSuccessor(index, liveSuccessors);
+        const failure = createFailureResult(error, withTrailingOutput(behavior, replay.lines), {
           phase: "next",
           ...replay.result,
           traceFailure,
         });
+        outcome = replay.isOverflowed ? reportFailureThenOverflow(failure, index) : failure;
       }
       return outcome !== undefined;
     });
@@ -1929,13 +1980,15 @@ const searchStates = (
     const result = outcome;
     if (result?.violation && !is174) {
       const live = addReportedLiveState(index, liveSuccessors, source);
+      const report = live.result;
       return {
         ...result,
         violation: withTrailingOutput(result.violation, live.lines),
         // TLC adds the state to the behavior graph before it reports the coverage.
         coverage: getCoverage(),
-        ...(live.result.additional && { additionalViolation: live.result.additional }),
-        ...(live.result.callStack && { liveCallStack: live.result.callStack }),
+        ...(report.kind === "added" &&
+          report.additional && { additionalViolation: report.additional }),
+        ...(report.kind === "failed" && report.callStack && { liveCallStack: report.callStack }),
       };
     }
     if (result) return result;
@@ -1945,41 +1998,27 @@ const searchStates = (
         ...traces.getStateTrace(index),
       });
       const live = addReportedLiveState(index, liveSuccessors, source);
-      const reported = {
-        ...deadlock,
-        violation: deadlock.violation && withTrailingOutput(deadlock.violation, live.lines),
-        coverage: getCoverage(),
-      };
+      const violation = deadlock.violation && withTrailingOutput(deadlock.violation, live.lines);
+      const report = live.result;
+      if (report.kind === "continued") {
+        if (violation) reportContinuedViolation("deadlock", violation);
+        return report.failure;
+      }
       const counted = withOutDegrees(
-        reported,
-        live.result.isFailed ? getFailureOutDegrees() : getPartialOutDegrees(),
+        { ...deadlock, violation, coverage: getCoverage() },
+        report.kind === "failed" ? getFailureOutDegrees() : getPartialOutDegrees(),
       );
-      if (live.result.additional)
-        return { ...counted, additionalViolation: live.result.additional };
-      return live.result.callStack ? { ...counted, liveCallStack: live.result.callStack } : counted;
+      if (report.kind === "added" && report.additional) {
+        return { ...counted, additionalViolation: report.additional };
+      }
+      return report.kind === "failed" && report.callStack
+        ? { ...counted, liveCallStack: report.callStack }
+        : counted;
     }
     try {
       return addLiveState(index, liveSuccessors, source);
     } catch (error) {
-      if (isStackOverflow(error)) return reportNextStateOverflow(index);
-      if (is174 && error instanceof TlaEvaluationError) {
-        return createFailureResult(
-          setExitCode(toUnexpectedError(error), EXIT_STATUS.error),
-          { trace: [] },
-          { outDegrees: getFailureOutDegrees() },
-        );
-      }
-      // Deviation from TLC: ModelChecker#doNextFailed prints no message for the FingerprintException that TupleValue#equals throws when Worker#doNextCheckLiveness compares a subscript, where tla-ts reports the comparison's error.
-      const replay = getReplayFailure(environment, (tracing) =>
-        liveness?.addState(index, state, liveSuccessors, tracing),
-      );
-      const behavior = traces.getStateTrace(index, { isPrintedOnly: true });
-      const replayed = captureOutput(() => replayNext(index));
-      return createFailureResult(error, withTrailingOutput(behavior, replayed.lines), {
-        outDegrees: getFailureOutDegrees(),
-        callStack: replay?.callStack.length ? replay.callStack : undefined,
-        phase: "liveness",
-      });
+      return reportLiveFailure(error, index, liveSuccessors);
     }
   };
   const getStutteringWarning = () => {
