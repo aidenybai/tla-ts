@@ -1415,20 +1415,24 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
-  // setTimeout, of a callback and no delay, whose callback RunTasks calls once the jobs ran. In a
-  // module program, which runs in the host's own context, it gives a Timeout, as Node does, which
-  // stops at any use, and on which Node calls the callback, and a script may only call it as a
-  // statement.
+  // setTimeout, of a callback and no delay, or a delay that Node runs as none, a Number from 0 to 1,
+  // which Node's timers make 1 without a warning (lib/internal/timers.js), whose callback RunTasks
+  // calls of the arguments after the delay once the jobs ran. In a module program, which runs in the host's own context, it gives a Timeout, as
+  // Node does, which stops at any use, and on which Node calls the callback, and a script may only
+  // call it as a statement.
   {
     name: "GlobalBuiltin",
     from: `    [] m = "gc" ->`,
     to: `    [] m = "setTimeout" ->
-         IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
+         IF ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
+         ELSE IF ~(Arg(args, 2) = Undefined \\/ (IsNumber(Arg(args, 2)) /\\ Arg(args, 2) # HostTime /\\ ~NumIsNaN(Arg(args, 2).value)
+                                                /\\ ~NumLess(Arg(args, 2).value, NumFromInt(0)) /\\ ~NumLess(NumFromInt(1), Arg(args, 2).value)))
+         THEN Assert(FALSE, "tla-ts can't run a timer of a delay, which Node's clock times")
          ELSE IF s.hostHandler = Empty
-         THEN Ok([s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Undefined, args |-> <<>>])], Undefined)
+         THEN Ok([s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Undefined, args |-> Rest(args, 3)])], Undefined)
          ELSE LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
                   timeout == ProxyCreate(target.s, target.v, s.hostHandler)
-              IN Ok([timeout.s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Val(timeout), args |-> <<>>])],
+              IN Ok([timeout.s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Val(timeout), args |-> Rest(args, 3)])],
                     Val(timeout))
     [] m = "gc" ->`,
   },

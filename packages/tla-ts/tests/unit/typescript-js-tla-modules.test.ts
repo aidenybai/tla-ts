@@ -1125,6 +1125,39 @@ describe("gives a module a Timeout of setTimeout, which stops where its code use
     );
   });
 
+  // Node runs a timer of a delay from 0 to 1 as one of no delay, which its timers make 1, and calls
+  // its callback of the arguments after the delay.
+  describe("runs a timer of a delay that Node runs as none", () => {
+    const getDelayFiles = (expected: string) => ({
+      "package.json": '{ "type": "module" }',
+      "main.js": `const log = [];
+        setTimeout(() => log.push("a"), 0);
+        setTimeout((x, y) => log.push(\`b:\${x}:\${y}\`), 1, "x", "y");
+        setTimeout(() => log.push("c"), -0);
+        setTimeout(() => log.push("d"), undefined);
+        setTimeout(() => log.push("e"), 0.5);
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(getDelayFiles("a,b:x:y,c,d,e"), "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(getDelayFiles("a,b:x:undefined,c,d,e"), "main.js");
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+
+    // Node times a longer delay on its clock, and warns of a negative one and of NaN, and converts
+    // a delay of another type.
+    it.each(["2", "1.5", "-1", "NaN", '"0"'])("stops at a delay of %s", async (delay) => {
+      expect(
+        (await checkModules({ "main.js": `setTimeout(() => {}, ${delay});` })).message,
+      ).toContain("tla-ts can't run a timer of a delay, which Node's clock times");
+    });
+  });
+
   // Node calls a timer's callback on its Timeout (lib/internal/timers.js), of no arguments.
   describe("calls the callback on its Timeout", () => {
     const getReceiverFiles = (expected: string) => ({
