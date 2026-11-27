@@ -46,6 +46,7 @@ import {
   getChargedBound,
   getCoverageFrames,
   getCoverageNode,
+  getLazyValueNode,
   getSubstitutionNode,
   isChargedSubset,
   runAtCoverageNode,
@@ -1686,7 +1687,10 @@ export const bindDefinitions = (
     nodes.forEach((node, index) => {
       // TLC finds the definitions an instanced body calls as OpDefNodes, not as the LazyValues of a LET instance, so it evaluates them in the caller's CostModel.
       if (node.binding.kind === "Thunk" && !isCalledCopy(definitions[index])) {
-        coverage.values.set(node.binding, coverage.current);
+        coverage.values.set(
+          node.binding,
+          getLazyValueNode(coverage, coverage.current, node.binding.expression),
+        );
       }
     });
   }
