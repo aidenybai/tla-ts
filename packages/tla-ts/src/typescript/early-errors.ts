@@ -39,12 +39,10 @@ try {
   process.exit(1);
 }`;
 
-// The program that Node runs to parse modules as its loader does, with vm's SourceTextModule, which
-// compiles a module as the loader's ModuleWrap does and runs nothing of it: it reads their texts,
-// as JSON, and prints whether V8 accepts each one.
-const MODULES_CHECK = `const { SourceTextModule } = require("node:vm");
-const texts = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-console.log(JSON.stringify(texts.map((text) => {
+// Whether V8 accepts a module's text, as vm's SourceTextModule compiles it, as the loader's
+// ModuleWrap does, and runs nothing of it.
+const IS_ACCEPTED = `const { SourceTextModule } = require("node:vm");
+const isAccepted = (text) => {
   try {
     new SourceTextModule(text);
     return true;
@@ -52,7 +50,26 @@ console.log(JSON.stringify(texts.map((text) => {
     if (!(error instanceof SyntaxError)) throw error;
     return false;
   }
-})));`;
+};`;
+
+// The program that a Node on the path runs under Bun to parse modules as its loader does: it reads
+// their texts, as JSON, and prints whether V8 accepts each one.
+const MODULES_CHECK = `${IS_ACCEPTED}
+console.log(JSON.stringify(JSON.parse(require("node:fs").readFileSync(0, "utf8")).map(isAccepted)));`;
+
+// The program of a worker that parses modules as MODULES_CHECK does, for each request of texts,
+// which posts whether V8 accepts each one, or nothing where V8 stops on what isn't a SyntaxError,
+// as a Node that MODULES_CHECK stops prints nothing.
+const MODULES_WORKER = `${IS_ACCEPTED}
+require("node:worker_threads").parentPort.on("message", (request) => {
+  let accepted = [];
+  try {
+    accepted = request.texts.map(isAccepted);
+  } catch {}
+  request.port.postMessage(accepted);
+  Atomics.store(request.done, 0, 1);
+  Atomics.notify(request.done, 0);
+});`;
 
 // Whether a file parses as a script: one of no import or export declaration, which a model's
 // file, whose compile reads it as a script, is not.
@@ -96,24 +113,57 @@ const getNodeParse = (sourceFile: ts.SourceFile) => {
     : { error: { message: message.slice("SyntaxError: ".length), line: Number(line ?? 1) } };
 };
 
-// V8's parse of each file's JavaScript, as getNodeParse gives it, where one Node parses every module
-// at once, rather than one Node each, and only a module that it rejects parses again on its own,
-// for its SyntaxError and its line, which Node's loader prints.
-export const getNodeParses = (sourceFiles: readonly ts.SourceFile[]) => {
+// A worker of the Node that runs tla-ts, which parses modules as MODULES_WORKER does while the
+// thread that asks it waits, or undefined where Node doesn't run tla-ts, as under Bun, whose vm
+// parses with JavaScriptCore.
+export const createModulesParser = () => {
+  const host = globalThis.process;
+  const threads = host?.getBuiltinModule?.("node:worker_threads");
+  if (threads === undefined || host.versions.bun !== undefined) return undefined;
+  const worker = new threads.Worker(MODULES_WORKER, {
+    eval: true,
+    execArgv: ["--experimental-vm-modules", "--no-warnings"],
+  });
+  worker.unref();
+  return {
+    parse: (texts: readonly string[]) => {
+      const channel = new threads.MessageChannel();
+      const done = new Int32Array(new SharedArrayBuffer(4));
+      worker.postMessage({ texts, port: channel.port2, done }, [channel.port2]);
+      Atomics.wait(done, 0, 0);
+      const accepted: boolean[] = threads.receiveMessageOnPort(channel.port1)?.message ?? [];
+      channel.port1.close();
+      return accepted;
+    },
+    close: () => void worker.terminate(),
+  };
+};
+
+// V8's parse of each file's JavaScript, as getNodeParse gives it, where parser, or else a Node on
+// the path, parses every module at once, rather than one Node each, and only a module that it
+// rejects parses again on its own, for its SyntaxError and its line, which Node's loader prints.
+export const getNodeParses = (
+  sourceFiles: readonly ts.SourceFile[],
+  parser: ReturnType<typeof createModulesParser>,
+) => {
   const host = globalThis.process;
   const modules = sourceFiles.filter((sourceFile) => !isScriptFile(sourceFile));
+  const texts = modules.map((module) => module.text);
   const run =
-    host?.getBuiltinModule?.("node:vm") === undefined || modules.length === 0
+    parser !== undefined || host?.getBuiltinModule?.("node:vm") === undefined || texts.length === 0
       ? undefined
       : host
           .getBuiltinModule("node:child_process")
-          .spawnSync(
-            host.versions.bun !== undefined ? "node" : host.execPath,
-            ["--experimental-vm-modules", "--no-warnings", "-e", MODULES_CHECK],
-            { input: JSON.stringify(modules.map((module) => module.text)), encoding: "utf8" },
-          );
+          .spawnSync("node", ["--experimental-vm-modules", "--no-warnings", "-e", MODULES_CHECK], {
+            input: JSON.stringify(texts),
+            encoding: "utf8",
+          });
   const accepted: boolean[] =
-    run === undefined || run.error !== undefined || run.status !== 0 ? [] : JSON.parse(run.stdout);
+    parser !== undefined && texts.length > 0
+      ? parser.parse(texts)
+      : run === undefined || run.error !== undefined || run.status !== 0
+        ? []
+        : JSON.parse(run.stdout);
   return sourceFiles.map((sourceFile) =>
     accepted[modules.indexOf(sourceFile)] === true
       ? { error: undefined }

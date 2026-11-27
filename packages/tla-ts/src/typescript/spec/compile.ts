@@ -1,6 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
-import { getNodeParses, rejectEarlyErrors } from "../early-errors";
+import { createModulesParser, getNodeParses, rejectEarlyErrors } from "../early-errors";
 import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
@@ -977,7 +977,7 @@ const loadFiles = (
         ? [outcome.value.sourceFile]
         : [],
     );
-    const nodeParses = getNodeParses(parsed);
+    const nodeParses = getNodeParses(parsed, parser);
     for (const outcome of outcomes) {
       if ("error" in outcome) throw outcome.error;
       const file = outcome.value;
@@ -985,7 +985,12 @@ const loadFiles = (
     }
     loadWave(start + wave.length);
   };
-  loadWave(0);
+  const parser = createModulesParser();
+  try {
+    loadWave(0);
+  } finally {
+    parser?.close();
+  }
   const withFacades = files.map((file) => ({
     ...file,
     facade: numbers.get(`${file.path}.facade.mjs`),
