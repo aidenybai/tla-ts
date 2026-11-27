@@ -108,6 +108,7 @@
   --font-sans:
     "Allo", "Allo Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-hand: "Caveat", cursive;
+  --font-pixel: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-mono:
     "Geist Mono Variable", "Geist Mono Fallback", "Geist Mono Fallback Consolas", ui-monospace,
     SFMono-Regular, Menlo, Consolas, monospace;
