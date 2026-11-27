@@ -3397,6 +3397,90 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "a record written in the other order",
+      "[a |-> 0, b |-> TRUE]",
+      "[b |-> FALSE, a |-> 1]",
+      "[a |-> 1, b |-> FALSE]",
+      undefined,
+    ],
+    [
+      "a record written in the order Init doesn't use",
+      "[b |-> TRUE, a |-> 0]",
+      "[a |-> 1, b |-> FALSE]",
+      "[b |-> FALSE, a |-> 1]",
+      undefined,
+    ],
+    [
+      "a record in a set",
+      "[a |-> 0, b |-> 0]",
+      "{[b |-> 1, a |-> 2]}",
+      "{[a |-> 2, b |-> 1]}",
+      undefined,
+    ],
+    [
+      "a record in a function's domain",
+      "[a |-> 0, b |-> 0]",
+      "[e \\in {[b |-> 1, a |-> 2]} |-> 0]",
+      "([a |-> 2, b |-> 1] :> 0)",
+      undefined,
+    ],
+    [
+      "a record under -coverage",
+      "[a |-> 0, b |-> TRUE]",
+      "[b |-> FALSE, a |-> 1]",
+      "[a |-> 1, b |-> FALSE]",
+      1,
+    ],
+  ])(
+    "sorts %s in an incomplete successor as TLC's Tool#getState does",
+    async (_title, init, next, expected, coverage) => {
+      const result = await check({
+        source: `---- MODULE M ----\nVARIABLES x, r\nInit == x = 0 /\\ r = ${init}\nNext == r' = ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage,
+      });
+      expect(result.failure?.trace.map((step) => formatValue(step.state.r))).toEqual([
+        init,
+        expected,
+      ]);
+    },
+  );
+
+  it("sorts the ALIAS of an incomplete successor but not the ALIAS before it, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, r\nInit == x = 0 /\\ r = [a |-> 0, b |-> TRUE]\nNext == r' = [b |-> FALSE, a |-> 1]\nAlias == [r |-> r, n |-> r']\n====",
+      config: "INIT Init\nNEXT Next\nALIAS Alias",
+    });
+    expect(
+      result.failure?.trace.map((step) => [formatValue(step.state.r), formatValue(step.state.n)]),
+    ).toEqual([
+      ["[a |-> 0, b |-> TRUE]", "[b |-> FALSE, a |-> 1]"],
+      ["[a |-> 1, b |-> FALSE]", "[a |-> 1, b |-> FALSE]"],
+    ]);
+  });
+
+  // Deviation from TLC: TLCState#equals fails on a function of Nat, so TLCTrace#printTrace throws a NullPointerException.
+  it("prints an incomplete successor that holds a function of Nat", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, r\nInit == x = 0 /\\ r = [a |-> 0, b |-> TRUE]\nNext == r' = [i \\in Nat |-> [b |-> i, a |-> 0]]\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.map((step) => formatValue(step.state.r)),
+    ]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: x.\n",
+      [
+        "[a |-> 0, b |-> TRUE]",
+        "[i \\in Nat |-> <expression line 5, col 29 to line 5, col 46 of module M>]",
+      ],
+    ]);
+  });
+
   it("prints what finding the action of an incomplete successor prints, and nothing after the trace, like TLC", async () => {
     const result = await check({
       source:

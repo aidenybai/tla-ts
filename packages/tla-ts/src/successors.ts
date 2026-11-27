@@ -1543,12 +1543,13 @@ export const forEachSuccessor = (
   return run.successors;
 };
 
-export const hasIncompleteSuccessor = (
+export const findIncompleteSuccessor = (
   expression: Expression,
   state: Value[],
   environment: Environment,
   scope?: Scope,
 ) => {
+  let incomplete: State | undefined;
   const run: Run = {
     environment,
     isInit: false,
@@ -1567,10 +1568,10 @@ export const hasIncompleteSuccessor = (
     undefined,
     false,
     (partial) => {
-      if (!isComplete(partial)) run.successors++;
+      if (!isComplete(partial)) incomplete ??= [...partial];
     },
   );
-  return run.successors > 0;
+  return incomplete;
 };
 
 export const getSuccessors = (
