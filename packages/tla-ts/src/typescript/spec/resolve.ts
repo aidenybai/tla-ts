@@ -163,8 +163,9 @@ const parseJson = (text: string): unknown => {
 
 // The file that a package's exports name for a subpath, as Node's packageExportsResolve finds it
 // with resolvePackageTarget and finalizeResolution, or undefined where Node finds none. It reads
-// exports of strings, nulls and conditions, and stops at patterns, arrays of fallbacks, and targets
-// whose path Node reads by its URL, which may leave the package's directory.
+// exports of strings, nulls and conditions, by the subpath's own key, which Node reads before any
+// pattern, and stops at a subpath that only a pattern could match, at arrays of fallbacks, and at
+// targets whose path Node reads by its URL, which may leave the package's directory.
 const resolveExports = (
   system: ProgramSystem,
   directory: string,
@@ -219,14 +220,16 @@ const resolveExports = (
     throw getStop("exports subpaths beside conditions");
   }
   const map = new Map(isSugar ? [[".", exports]] : Object.entries(exports ?? {}));
+  const isExact = map.has(subpath) && !subpath.includes("*") && !subpath.endsWith("/");
   if (
-    subpath.includes("*") ||
-    subpath.endsWith("/") ||
-    [...map.keys()].some((key) => key.includes("*"))
+    !isExact &&
+    (subpath.includes("*") ||
+      subpath.endsWith("/") ||
+      [...map.keys()].some((key) => key.includes("*")))
   ) {
     throw getStop("exports patterns, which Node matches the subpath against");
   }
-  const file = map.has(subpath) ? resolveTarget(map.get(subpath)) : undefined;
+  const file = isExact ? resolveTarget(map.get(subpath)) : undefined;
   return file !== null && file !== undefined && system.fileExists(file)
     ? system.realpath(file)
     : undefined;

@@ -1,4 +1,5 @@
 import ts from "@typescript/typescript6";
+import type { ProgramSystem } from "./system";
 
 // The modules that Node builds in, which a specifier names before any package does.
 const NODE_MODULES = new Set([
@@ -73,8 +74,8 @@ const REQUIRE_CONDITIONS = new Set(["node", "require", "module-sync", "default"]
 // The directory that holds a path, which Node finds from the absolute path, as it resolves a relative
 // one from the working directory, which a host without a file system, such as a browser, takes as
 // the root.
-const getDirectory = (path: string) => {
-  const absolute = (ts.sys?.resolvePath(path) ?? joinPath("/", path)).replaceAll("\\", "/");
+const getDirectory = (system: ProgramSystem, path: string) => {
+  const absolute = system.resolvePath(path).replaceAll("\\", "/");
   return absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
 };
 
@@ -95,15 +96,14 @@ export const joinPath = (directory: string, relative: string) =>
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const readPackage = (directory: string): Record<string, unknown> | undefined => {
-  const text = ts.sys?.readFile(`${directory}/package.json`);
+const readPackage = (
+  system: ProgramSystem,
+  directory: string,
+): Record<string, unknown> | undefined => {
+  const text = system.readFile(`${directory}/package.json`);
   const parsed: unknown = text === undefined ? undefined : JSON.parse(text);
   return isObject(parsed) ? parsed : undefined;
 };
-
-const getRealPath = (path: string) => ts.sys?.realpath?.(path) ?? path;
-
-const isFile = (path: string) => ts.sys?.fileExists(path) === true;
 
 // PACKAGE_TARGET_RESOLVE of Node's resolver: a target of a package's exports, with what a pattern
 // matched in place of each star.
@@ -184,12 +184,12 @@ const getPackageName = (specifier: string) => {
   return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
 };
 
-const getNodeModuleDirectories = (directory: string): string[] =>
+const getNodeModuleDirectories = (system: ProgramSystem, directory: string): string[] =>
   directory === "/"
     ? ["/node_modules"]
     : [
         ...(directory.endsWith("/node_modules") ? [] : [`${directory}/node_modules`]),
-        ...getNodeModuleDirectories(getDirectory(directory)),
+        ...getNodeModuleDirectories(system, getDirectory(system, directory)),
       ];
 
 // The file of the first package of the node_modules directories that a subpath names: the one
@@ -197,6 +197,7 @@ const getNodeModuleDirectories = (directory: string): string[] =>
 // where Node looks on in the next directory if there's none. Node finds no file where a package
 // doesn't export the subpath.
 const resolvePackage = (
+  system: ProgramSystem,
   specifier: string,
   directories: readonly string[],
   conditions: ReadonlySet<string>,
@@ -205,11 +206,11 @@ const resolvePackage = (
   const modules = directories.at(0);
   if (modules === undefined) return undefined;
   const name = getPackageName(specifier);
-  const exports = readPackage(`${modules}/${name}`)?.exports;
+  const exports = readPackage(system, `${modules}/${name}`)?.exports;
   if (exports === undefined) {
     return (
       load(`${modules}/${specifier}`) ??
-      resolvePackage(specifier, directories.slice(1), conditions, load)
+      resolvePackage(system, specifier, directories.slice(1), conditions, load)
     );
   }
   const target = resolveExports(
@@ -218,27 +219,28 @@ const resolvePackage = (
     exports,
     conditions,
   );
-  return target !== undefined && isFile(target) ? target : undefined;
+  return target !== undefined && system.fileExists(target) ? target : undefined;
 };
 
 // LOAD_AS_FILE and LOAD_AS_DIRECTORY of Node's require.
-const loadAsFile = (path: string) =>
-  [path, `${path}.js`, `${path}.json`, `${path}.node`].find(isFile);
+const loadAsFile = (system: ProgramSystem, path: string) =>
+  [path, `${path}.js`, `${path}.json`, `${path}.node`].find(system.fileExists);
 
-const loadIndex = (path: string) =>
-  [`${path}/index.js`, `${path}/index.json`, `${path}/index.node`].find(isFile);
+const loadIndex = (system: ProgramSystem, path: string) =>
+  [`${path}/index.js`, `${path}/index.json`, `${path}/index.node`].find(system.fileExists);
 
-const loadAsDirectory = (path: string) => {
-  const main = readPackage(path)?.main;
+const loadAsDirectory = (system: ProgramSystem, path: string) => {
+  const main = readPackage(system, path)?.main;
   const mainPath = typeof main === "string" ? joinPath(path, main) : undefined;
   return (
-    (mainPath === undefined ? undefined : (loadAsFile(mainPath) ?? loadIndex(mainPath))) ??
-    loadIndex(path)
+    (mainPath === undefined
+      ? undefined
+      : (loadAsFile(system, mainPath) ?? loadIndex(system, mainPath))) ?? loadIndex(system, path)
   );
 };
 
-const loadRequired = (path: string) =>
-  (path.endsWith("/") ? undefined : loadAsFile(path)) ?? loadAsDirectory(path);
+const loadRequired = (system: ProgramSystem, path: string) =>
+  (path.endsWith("/") ? undefined : loadAsFile(system, path)) ?? loadAsDirectory(system, path);
 
 const isRelative = (specifier: string) =>
   specifier.startsWith("./") ||
@@ -253,18 +255,19 @@ export const isNodeModule = (specifier: string) =>
 
 // The file that a require of a specifier loads, as Node's require resolves it from a module, or
 // undefined where it loads none, or a module that Node builds in or a package's import.
-const resolveRequire = (specifier: string, fileName: string) => {
+const resolveRequire = (system: ProgramSystem, specifier: string, fileName: string) => {
   if (isNodeModule(specifier) || specifier.startsWith("#")) return undefined;
-  const directory = getDirectory(fileName);
+  const directory = getDirectory(system, fileName);
   const found = isRelative(specifier)
-    ? loadRequired(joinPath(directory, specifier))
+    ? loadRequired(system, joinPath(directory, specifier))
     : resolvePackage(
+        system,
         specifier,
-        getNodeModuleDirectories(directory),
+        getNodeModuleDirectories(system, directory),
         REQUIRE_CONDITIONS,
-        loadRequired,
+        (path) => loadRequired(system, path),
       );
-  return found === undefined ? undefined : getRealPath(found);
+  return found === undefined ? undefined : system.realpath(found);
 };
 
 // A name that a node declares, rather than one that it reads or a property's name.
@@ -290,12 +293,15 @@ export const isProcessDeclared = (file: ts.SourceFile) => {
 };
 
 // The value of an expression that only compares literals and the environment variables that
-// process.env names, as Node gives the environment that tla-ts runs in, or undefined for another.
+// process.env names, as the system's environment gives them, or undefined for another.
 const getConstant = (
   node: ts.Expression,
   isProcessDeclared: boolean,
+  system: ProgramSystem,
 ): { value: unknown } | undefined => {
-  if (ts.isParenthesizedExpression(node)) return getConstant(node.expression, isProcessDeclared);
+  if (ts.isParenthesizedExpression(node)) {
+    return getConstant(node.expression, isProcessDeclared, system);
+  }
   if (ts.isStringLiteralLike(node)) return { value: node.text };
   if (node.kind === ts.SyntaxKind.TrueKeyword) return { value: true };
   if (node.kind === ts.SyntaxKind.FalseKeyword) return { value: false };
@@ -308,15 +314,15 @@ const getConstant = (
     ts.isIdentifier(node.expression.expression) &&
     node.expression.expression.text === "process"
   ) {
-    return { value: typeof process === "undefined" ? undefined : process.env[node.name.text] };
+    return { value: system.getEnvironmentVariable(node.name.text) };
   }
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
-    const operand = getConstant(node.operand, isProcessDeclared);
+    const operand = getConstant(node.operand, isProcessDeclared, system);
     return operand === undefined ? undefined : { value: !operand.value };
   }
   if (!ts.isBinaryExpression(node)) return undefined;
-  const left = getConstant(node.left, isProcessDeclared);
-  const right = getConstant(node.right, isProcessDeclared);
+  const left = getConstant(node.left, isProcessDeclared, system);
+  const right = getConstant(node.right, isProcessDeclared, system);
   if (left === undefined || right === undefined) return undefined;
   const kind = node.operatorToken.kind;
   return kind === ts.SyntaxKind.EqualsEqualsEqualsToken
@@ -332,11 +338,11 @@ const getConstant = (
 
 // Code that never runs, as a condition that only compares constants skips it, such as the branch
 // of a package's index for the other NODE_ENV, whose requires load nothing.
-const isDeadCode = (node: ts.Node, isProcessDeclared: boolean): boolean => {
+const isDeadCode = (node: ts.Node, isProcessDeclared: boolean, system: ProgramSystem): boolean => {
   const parent = node.parent;
   if (parent === undefined) return false;
   const getTruth = (condition: ts.Expression) => {
-    const constant = getConstant(condition, isProcessDeclared);
+    const constant = getConstant(condition, isProcessDeclared, system);
     return constant === undefined ? undefined : Boolean(constant.value);
   };
   const isSkipped =
@@ -350,21 +356,27 @@ const isDeadCode = (node: ts.Node, isProcessDeclared: boolean): boolean => {
             getTruth(parent.left) === false) ||
             (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken &&
               getTruth(parent.left) === true));
-  return isSkipped || isDeadCode(parent, isProcessDeclared);
+  return isSkipped || isDeadCode(parent, isProcessDeclared, system);
 };
 
 // The file that an import of a specifier loads, as Node's import resolves it, or undefined where
 // it loads none, or a module that Node builds in or a package's import.
-const resolveImport = (specifier: string, fileName: string) => {
+const resolveImport = (system: ProgramSystem, specifier: string, fileName: string) => {
   if (isNodeModule(specifier) || specifier.startsWith("#")) return undefined;
-  const directory = getDirectory(fileName);
-  const loadExact = (path: string) => (isFile(path) ? path : undefined);
+  const directory = getDirectory(system, fileName);
+  const loadExact = (path: string) => (system.fileExists(path) ? path : undefined);
   const loadMain = (path: string) =>
-    specifier === getPackageName(specifier) ? loadAsDirectory(path) : loadExact(path);
+    specifier === getPackageName(specifier) ? loadAsDirectory(system, path) : loadExact(path);
   const found = isRelative(specifier)
     ? loadExact(joinPath(directory, specifier))
-    : resolvePackage(specifier, getNodeModuleDirectories(directory), IMPORT_CONDITIONS, loadMain);
-  return found === undefined ? undefined : getRealPath(found);
+    : resolvePackage(
+        system,
+        specifier,
+        getNodeModuleDirectories(system, directory),
+        IMPORT_CONDITIONS,
+        loadMain,
+      );
+  return found === undefined ? undefined : system.realpath(found);
 };
 
 export const isJavaScriptFile = (fileName: string) => /\.[cm]?js$/.test(fileName);
@@ -377,25 +389,29 @@ const isRequireCall = (node: ts.Node): node is ts.CallExpression =>
   node.arguments.length === 1 &&
   ts.isStringLiteralLike(node.arguments[0]);
 
-// The file that Node loads for a module's specifier, which a require or an import names, or
-// undefined for a require that never runs, where a condition that only compares constants skips
-// it, such as the one of a package's index for the other NODE_ENV.
-export const resolveModule = (specifier: ts.StringLiteralLike, fileName: string) => {
+// The file that Node loads for a module's specifier, which a require or an import names, among the
+// system's files, or undefined for a require that never runs, where a condition that only compares
+// constants skips it, such as the one of a package's index for the other NODE_ENV.
+export const resolveModule = (
+  specifier: ts.StringLiteralLike,
+  fileName: string,
+  system: ProgramSystem,
+) => {
   const call = specifier.parent;
   if (isRequireCall(call)) {
-    return isDeadCode(call, isProcessDeclared(specifier.getSourceFile()))
+    return isDeadCode(call, isProcessDeclared(specifier.getSourceFile()), system)
       ? undefined
-      : resolveRequire(specifier.text, fileName);
+      : resolveRequire(system, specifier.text, fileName);
   }
-  return resolveImport(specifier.text, fileName);
+  return resolveImport(system, specifier.text, fileName);
 };
 
 // The type that the package.json nearest a directory gives its JavaScript files.
-const getPackageType = (directory: string): unknown => {
-  const found = readPackage(directory);
+const getPackageType = (system: ProgramSystem, directory: string): unknown => {
+  const found = readPackage(system, directory);
   return found !== undefined || directory === "/"
     ? found?.type
-    : getPackageType(getDirectory(directory));
+    : getPackageType(system, getDirectory(system, directory));
 };
 
 // Syntax that only an ES module has, which makes Node load a .js file of a package with no type as
@@ -419,13 +435,14 @@ export const createJavaScriptFile = (
   fileName: string,
   text: string,
   languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  system: ProgramSystem,
 ) => {
   const options = typeof languageVersion === "object" ? languageVersion : { languageVersion };
   const create = (impliedNodeFormat: ts.ResolutionMode) =>
     ts.createSourceFile(fileName, text, { ...options, impliedNodeFormat }, true);
   if (fileName.endsWith(".mjs")) return create(ts.ModuleKind.ESNext);
   if (fileName.endsWith(".cjs")) return create(ts.ModuleKind.CommonJS);
-  const type = getPackageType(getDirectory(fileName));
+  const type = getPackageType(system, getDirectory(system, fileName));
   if (type === "module") return create(ts.ModuleKind.ESNext);
   const file = create(ts.ModuleKind.CommonJS);
   return type === undefined && hasModuleSyntax(file) ? create(ts.ModuleKind.ESNext) : file;

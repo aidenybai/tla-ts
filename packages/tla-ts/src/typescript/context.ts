@@ -26,37 +26,6 @@ export const isModuleFile = (file: ts.SourceFile) =>
     ? file.impliedNodeFormat === ts.ModuleKind.ESNext
     : file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
-// A "use strict" directive is in the string literals that start the statements, and later it is
-// only an expression.
-const hasStrictDirective = (statements: readonly ts.Statement[]) => {
-  const isString = (statement: ts.Statement) =>
-    ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression);
-  const end = statements.findIndex((statement) => !isString(statement));
-  return statements
-    .slice(0, end === -1 ? statements.length : end)
-    .some(
-      (statement) =>
-        ts.isExpressionStatement(statement) &&
-        statement.expression.getText().slice(1, -1) === "use strict",
-    );
-};
-
-// Code that runs in strict mode wherever it runs: in a class, under a "use strict" directive, or in
-// a module.
-export const isStrictCode = (node: ts.Node): boolean =>
-  ts.findAncestor(
-    node,
-    (ancestor) =>
-      ts.isClassLike(ancestor) ||
-      (ts.isFunctionLike(ancestor) &&
-        "body" in ancestor &&
-        ancestor.body !== undefined &&
-        ts.isBlock(ancestor.body) &&
-        hasStrictDirective(ancestor.body.statements)) ||
-      (ts.isSourceFile(ancestor) &&
-        (hasStrictDirective(ancestor.statements) || isModuleFile(ancestor))),
-  ) !== undefined;
-
 export type FunctionNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
 export const skipCasts = (node: ts.Expression): ts.Expression =>

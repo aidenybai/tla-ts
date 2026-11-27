@@ -10,10 +10,11 @@ import { foldNames } from "./library";
 import { compileModelToJsTla } from "./model";
 import type { JsTlaRuntime } from "./prepare";
 
-// The steps of a script's spec as the API checks it: the spec declares no variable, as today's
-// compiler's does, so that a script that throws fails the check as it starts, with the message of
-// the error it threw, or the thrown value as a string, and one that leaves a promise rejected with
-// no handler fails with today's message for it.
+// The steps of a script's spec as the API checks it: the spec keeps one state, the script's end, as
+// the CLI's does, so that a check of a script that ends reports that state rather than none. A
+// script that throws fails the check as it starts, with the message of the error it threw, or the
+// thrown value as a string, and one that leaves a promise rejected with no handler fails with
+// today's message for it.
 const SCRIPT_STEPS =
   foldNames(String.raw`ScriptCharacter == [u \in {CharacterUnits[c] : c \in DOMAIN CharacterUnits} |-> CHOOSE c \in DOMAIN CharacterUnits : CharacterUnits[c] = u]
 RECURSIVE ScriptText(_)
@@ -26,13 +27,15 @@ ScriptThrownText(r) ==
       m == IF IsObject(v) THEN Get(r.s, v, SV("message")) ELSE Ok(r.s, Undefined)
       t == IF ~IsAbrupt(m) /\ IsString(Val(m)) THEN m ELSE ToStr(r.s, v)
   IN IF ~IsAbrupt(t) /\ IsString(Val(t)) THEN ScriptText(Val(t).value) ELSE "a value that isn't a string"
-vars == <<>>
+VARIABLE programDone
+vars == <<programDone>>
 Init ==
   LET r == ApplyTo(RunProgram, InitialState) IN
-  CASE r.c.type # "throw" -> TRUE
-    [] r.c.target # Empty /\ r.c.target.kind = "rejection" -> Assert(FALSE, "A promise rejected with no handler")
-    [] OTHER -> Assert(FALSE, ScriptThrownText(r))
-Next == FALSE
+  /\ CASE r.c.type # "throw" -> TRUE
+       [] r.c.target # Empty /\ r.c.target.kind = "rejection" -> Assert(FALSE, "A promise rejected with no handler")
+       [] OTHER -> Assert(FALSE, ScriptThrownText(r))
+  /\ programDone = TRUE
+Next == UNCHANGED programDone
 Spec == Init /\ [][Next]_vars`);
 
 // A declaration at the top level of the file, by where its text is, with the definitions of the
