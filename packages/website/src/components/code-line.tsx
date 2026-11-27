@@ -203,7 +203,7 @@ export const CodeFold = (props: CodeFoldProps) => (
     disabled={props.isDisabled}
     onClick={props.onToggle}
     className={cn(
-      "flex min-h-[1.7em] w-full cursor-pointer items-center text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground disabled:cursor-default",
+      "relative flex min-h-[1.7em] w-full cursor-pointer items-center rounded-sm pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5 text-left outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default",
       props.hasGutter ? "gap-x-4" : "gap-x-2",
       props.className,
     )}

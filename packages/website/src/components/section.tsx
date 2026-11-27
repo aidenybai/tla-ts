@@ -16,7 +16,10 @@ interface TitleProps {
 const SectionTitle = (props: TitleProps) => {
   const id = props.children.toLowerCase().replaceAll(" ", "-");
   return (
-    <h2 id={id} className="group relative scroll-mt-8 text-[17px] font-medium text-foreground">
+    <h2
+      id={id}
+      className="group relative scroll-mt-8 text-[17px] font-medium tracking-[-0.01em] text-balance text-foreground"
+    >
       <a
         href={`#${id}`}
         aria-label="Link to this section"

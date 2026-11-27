@@ -63,7 +63,7 @@ const ToggleGroupItem = (props: ToggleGroupItemProps) => {
       disabled={group.isDisabled}
       onClick={() => group.onValueChange(props.value)}
       className={cn(
-        "relative flex cursor-pointer items-center justify-center text-faint outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default aria-pressed:text-foreground",
+        "relative flex cursor-pointer items-center justify-center text-faint outline-none transition-colors duration-150 ease-out hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default aria-pressed:text-foreground pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2",
         props.className,
       )}
     >

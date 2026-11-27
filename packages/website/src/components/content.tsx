@@ -12,7 +12,11 @@ const Text = (props: TextProps) =>
     .split("`")
     .map((part, index) => ({ part, isCode: index % 2 === 1, offset: index }))
     .map((piece) =>
-      piece.isCode ? <InlineCode key={piece.offset}>{piece.part}</InlineCode> : piece.part,
+      piece.isCode ? (
+        <InlineCode key={piece.offset}>{piece.part}</InlineCode>
+      ) : (
+        piece.part.replaceAll(/(?<=\w)'(?=\w)/g, "’")
+      ),
     );
 
 interface BlockProps {
@@ -23,7 +27,7 @@ const Block = (props: BlockProps) => {
   const block = props.block;
   if (block.kind === "heading") {
     return (
-      <h3 className="mt-4 scroll-m-4 text-foreground">
+      <h3 className="mt-4 scroll-m-4 text-balance text-foreground">
         <Text text={block.text} />
       </h3>
     );

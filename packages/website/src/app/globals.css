@@ -59,7 +59,7 @@
   --accent: #f9f9f8;
   --accent-foreground: #21201c;
   --destructive: oklch(57.7% 0.245 27.325);
-  --border: #e9e8e6;
+  --border: rgb(33 32 28 / 0.094);
   --input: #dad9d6;
   --ring: #bcbbb5;
   --radius: 0.5rem;
@@ -90,7 +90,7 @@
   --accent: #191918;
   --accent-foreground: #eeeeec;
   --destructive: oklch(70.4% 0.191 22.216);
-  --border: #2a2a28;
+  --border: rgb(238 238 236 / 0.113);
   --input: #3b3a37;
   --ring: #62605b;
   --prose: #cdccc8;

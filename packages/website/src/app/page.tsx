@@ -17,7 +17,7 @@ import { install, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
-  <main className="mx-auto max-w-[692px] px-6 py-16 text-prose sm:py-28">
+  <main className="mx-auto max-w-[644px] px-6 py-16 text-prose sm:py-28">
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
@@ -28,12 +28,12 @@ const Page = () => (
         <div className="flex gap-2">
           <a
             href="https://github.com/aidenybai/tla-ts"
-            className={buttonVariants({ variant: "primary" })}
+            className={cn(buttonVariants({ variant: "primary" }), "pl-2")}
           >
             <GitHubIcon />
             GitHub
           </a>
-          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
+          <a href="/playground" className={cn(buttonVariants(), "pl-2 text-foreground")}>
             <Play weight="fill" className="size-3" />
             Playground
           </a>

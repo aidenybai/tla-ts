@@ -29,7 +29,7 @@ export const RunIcon = (props: RunIconProps) => {
         {props.isRunning ? (
           <Spinner />
         ) : props.isDone ? (
-          <ArrowCounterClockwise weight="bold" className="size-4" />
+          <ArrowCounterClockwise className="size-4" />
         ) : (
           <Play weight="fill" className="size-3.5" />
         )}

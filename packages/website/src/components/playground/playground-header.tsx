@@ -71,7 +71,7 @@ export const PlaygroundFiles = () => {
   const isHydrated = useIsHydrated();
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger className={cn(buttonVariants(), "min-w-0 shrink text-foreground")}>
+      <DropdownMenu.Trigger className={cn(buttonVariants(), "min-w-0 shrink pr-2 text-foreground")}>
         <span suppressHydrationWarning className="truncate">
           {playground.fileName}
         </span>
@@ -105,6 +105,7 @@ export const PlaygroundRun = () => {
         aria-disabled={playground.isRunning}
         variant={playground.isRunning ? "outline" : "success"}
         onClick={playground.run}
+        className="pl-2"
       >
         <RunIcon isRunning={playground.isRunning} isDone={false} />
         Run

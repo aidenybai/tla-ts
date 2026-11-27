@@ -20,7 +20,7 @@ export const buttonVariants = cva(
           RAISED_CLASS_NAME,
           "border-[oklch(48%_0.11_152)] from-[oklch(66%_0.13_152)] to-[oklch(57%_0.13_152)] dark:border-[oklch(40%_0.1_152)] dark:from-[oklch(58%_0.13_152)] dark:to-[oklch(49%_0.12_152)]",
         ),
-        link: cn(LINK_CLASS_NAME, "inline rounded-none aria-pressed:no-underline"),
+        link: cn(LINK_CLASS_NAME, "inline rounded-xs aria-pressed:no-underline"),
       },
       size: {
         default: "h-8 px-2.5",
