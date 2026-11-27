@@ -3,7 +3,7 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
-import { findUnnamedCommonJsExport, getCommonJsExports } from "../context";
+import { findUnnamedCommonJsExport, getCommonJsExports, getCommonJsFunctions } from "../context";
 import { getJsxText, parseFile, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
@@ -50,9 +50,20 @@ UnitsToString(units) ==
   ELSE CharacterOf[Head(units)] \o UnitsToString(Tail(units))
 \* The value that the module binds to name.
 BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ModelContext(s), name, TRUE)))
-\* A call of the function that the module binds to name, and the jobs and tasks it leaves.
+\* The function that a call of name calls: the one that the module binds to name, or, where name
+\* is module.exports. and a key, the one that module.exports holds at the key in the call's state,
+\* as a program that requires the module reads it there.
+CalledValue(s, name) ==
+  IF Len(name) <= 15 \/ SubSeq(name, 1, 15) # N("module.exports.") THEN BindingValue(s, name) ELSE
+  IF 1 \notin DOMAIN s.required THEN Assert(FALSE, "tla-ts can't call " \o UnitsToString(name) \o " in a file that Node runs as no CommonJS module") ELSE
+  LET exports == Get(s, s.required[1].module, SV("exports")) IN
+  IF IsAbrupt(exports) THEN exports ELSE
+  LET f == Get(exports.s, Val(exports), Str(SubSeq(name, 16, Len(name)))) IN
+  IF IsAbrupt(f) \/ IsCallable(f.s, Val(f)) THEN f
+  ELSE Assert(FALSE, "tla-ts can't call " \o UnitsToString(name) \o ", which holds no function as the call reads it")
+\* A call of the function that name names, and the jobs and tasks it leaves.
 ModelCall(s, name, args) ==
-  LET f == BindingValue(s, name) IN
+  LET f == CalledValue(s, name) IN
   IF IsAbrupt(f) THEN f ELSE
   LET r == Call(f.s, Val(f), Undefined, args) IN
   IF IsAbrupt(r) THEN r ELSE ModelSettle(r)
@@ -427,10 +438,12 @@ export const planModel = (
   // A CommonJS file whose exports name its functions, as exports.name = local does, runs as the
   // CommonJS module that Node loads, in Node's wrapper, whose scope its functions close over.
   const commonJsExports = getCommonJsExports(file);
+  const commonJsFunctions = getCommonJsFunctions(file);
   const isCommonJs =
-    commonJsExports.size > 0 && getModuleFormat(fileName, text, system) === "commonjs";
-  // The frame calls the functions that bindings name, which a function a CommonJS file exports
-  // without one has none of.
+    (commonJsExports.size > 0 || commonJsFunctions.length > 0) &&
+    getModuleFormat(fileName, text, system) === "commonjs";
+  // The frame calls the functions that bindings name, and the plain ones that module.exports holds
+  // without one, but no other.
   const unnamed =
     getModuleFormat(fileName, text, system) === "commonjs"
       ? findUnnamedCommonJsExport(file)
@@ -449,7 +462,9 @@ export const planModel = (
   const config = parseConfig(today.config);
   // The binding of the function that each of the spec's names calls.
   const bindings = today.bindings;
-  const getBinding = (name: string) => getUnits(bindings.get(name) ?? name);
+  // A function that no binding names a step calls through module.exports, at its key there.
+  const getBinding = (name: string) =>
+    getUnits(`${today.properties.has(name) ? "module.exports." : ""}${bindings.get(name) ?? name}`);
   const definitions = new Map<string, Definition>(
     module.definitions.map((definition) => [definition.name, definition]),
   );
@@ -545,10 +560,32 @@ export const planModel = (
       }
     }
   }
-  // The name that a CommonJS module exports one of its functions as.
-  const commonJsExported = [...commonJsExports].find((entry) => exported.has(entry[1]))?.[0] ?? "";
+  // The name that a CommonJS module exports one of its functions as, whose scope is the module's:
+  // a function that a binding names, or else one that no name of its own encloses.
+  const commonJsExported =
+    [...commonJsExports].find((entry) => exported.has(entry[1]))?.[0] ??
+    commonJsFunctions.find(
+      (commonJsFunction) =>
+        !ts.isFunctionExpression(commonJsFunction.node) || commonJsFunction.node.name === undefined,
+    )?.name ??
+    "";
+  today.properties.forEach((name) => {
+    const found = commonJsFunctions.find(
+      (commonJsFunction) => commonJsFunction.name === (bindings.get(name) ?? name),
+    );
+    if (found === undefined) {
+      throw new TlaTypeScriptError(`tla-ts can't find the exported function ${name}`);
+    }
+    exported.set(name, {
+      parameters: found.node.parameters.map((parameter) => parameter.name.getText()),
+      types: found.node.parameters.map((parameter) => parameter.type),
+      tags: getTags(found.tagged),
+      node: found.node,
+    });
+  });
   bindings.forEach((binding, name) => {
     if (today.variables.some((stateVariable) => stateVariable.name === name)) return;
+    if (today.properties.has(name)) return;
     const found = exported.get(binding);
     if (found === undefined) {
       throw new TlaTypeScriptError(`tla-ts can't find the exported function ${binding}`);
@@ -1726,7 +1763,7 @@ export const planModel = (
       isModule
         ? `ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, ${file}>>]).env)`
         : isCommonJs
-          ? `ModelContext(s) == ModuleContext(O(s, Val(Get(s, Val(Get(s, s.required[1].module, Str(${getUnits("exports")}))), Str(${getUnits(commonJsExported)})))).slots.env)`
+          ? `ModelContext(s) ==\n  LET f == Val(Get(s, Val(Get(s, s.required[1].module, Str(${getUnits("exports")}))), Str(${getUnits(commonJsExported)}))) IN\n  IF ~IsObject(f) \\/ O(s, f).class # "function" THEN Assert(FALSE, ${JSON.stringify(`tla-ts can't find the module's scope, where module.exports.${commonJsExported} holds no function of it`)})\n  ELSE ModuleContext(O(s, f).slots.env)`
           : "ModelContext(s) == ScriptContext(s)",
       MODEL_DEFINITIONS,
       `ModelStart(s) == ${start}`,

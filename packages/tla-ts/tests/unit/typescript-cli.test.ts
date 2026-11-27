@@ -758,50 +758,89 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
-  // The frame calls a CommonJS file's functions by the bindings that its exports name, and stops at
-  // a function that it exports without one, which it would otherwise leave unchecked.
-  describe("checks a CommonJS model by the bindings that its exports name", () => {
+  // The frame calls a CommonJS file's functions by the bindings that its exports name, and a
+  // function that it exports without one through module.exports, reading the key in the state
+  // where the call happens, as a program that requires the file calls it.
+  describe("checks a CommonJS model's exports as Node calls them", () => {
     const getModel = (limit: number, exported: string) =>
       `let count = 0;\nconst tick = () => {\n  count = count === 3 ? 0 : count + 1;\n};\nconst isBounded = () => count < ${limit};\n${exported}\n`;
-    // Whether Node, ticking the model's module up to three times, finds isBounded false.
-    const isViolatedInNode = (directory: string) =>
-      spawnSync(
+    // What Node gives, ticking the model's module up to three times: whether it finds isBounded
+    // false, or what a call throws.
+    const runNodeModel = (directory: string) => {
+      const result = spawnSync(
         process.execPath,
         [
           "-e",
           'const model = require("./model.cjs");\nconsole.log([1, 2, 3].some(() => (model.tick(), !model.isBounded())));',
         ],
         { cwd: directory, encoding: "utf8" },
-      ).stdout.trim() === "true";
+      );
+      return result.stdout.trim() === "" ? result.stderr : result.stdout.trim();
+    };
 
     it.each([
       ["exports.tick = tick;\nexports.isBounded = isBounded;"],
       ["module.exports = { tick, isBounded };"],
       ["module.exports = { tick: tick, isBounded: isBounded };"],
+      ["exports.tick = () => tick();\nexports.isBounded = isBounded;"],
+      ["module.exports = { tick() {\n  tick();\n}, isBounded };"],
+      ["module.exports = { tick: function () {\n  tick();\n}, isBounded: () => isBounded() };"],
+      // A later assignment replaces the function that an earlier one exported.
+      [
+        "exports.isBounded = () => true;\nexports.tick = tick;\nexports.isBounded = function () {\n  return isBounded();\n};",
+      ],
+      // A step replaces the function that the top level exported.
+      [
+        "exports.tick = () => {\n  tick();\n  exports.isBounded = isBounded;\n};\nexports.isBounded = () => true;",
+      ],
     ])("agrees with Node where %s", (exported) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
-      expect(isViolatedInNode(directory)).toBe(true);
+      expect(runNodeModel(directory)).toBe("true");
       expect(runCli(directory, ["model.cjs"]).stdout).toContain(
         "Error: Invariant isBounded is violated.",
       );
       writeFileSync(join(directory, "model.cjs"), getModel(4, exported));
-      expect(isViolatedInNode(directory)).toBe(false);
+      expect(runNodeModel(directory)).toBe("false");
       expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
     });
 
-    it.each([
-      ["exports.tick", "exports.tick = () => tick();\nexports.isBounded = isBounded;"],
-      ["module.exports", "module.exports = { tick() {\n  tick();\n}, isBounded };"],
-    ])("stops where %s sets a function that no binding names", (target, exported) => {
+    // Node's TypeError names the caller's own expression, which no model has.
+    it("stops where the key that a check calls holds no function", () => {
       const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
-      expect(isViolatedInNode(directory)).toBe(true);
+      writeFileSync(
+        join(directory, "model.cjs"),
+        getModel(
+          4,
+          "exports.tick = () => {\n  tick();\n  exports.isBounded = 1;\n};\nexports.isBounded = () => isBounded();",
+        ),
+      );
+      expect(runNodeModel(directory)).toContain("TypeError: model.isBounded is not a function");
       const result = runCli(directory, ["model.cjs"]);
       expect(result.stdout).not.toContain("No error has been found");
-      expect(result.stderr).toContain(
-        `tla-ts can't check a function that ${target} sets without a binding that names it`,
+      expect(result.stdout).toContain(
+        "tla-ts can't call module.exports.isBounded, which holds no function as the call reads it",
       );
+    });
+
+    it.each([
+      [
+        "a getter gives",
+        "module.exports = { get tick() {\n  return tick;\n}, isBounded };",
+        "tla-ts can't check a function that module.exports sets without a binding that names it",
+      ],
+      [
+        "its this is the caller's",
+        "exports.tick = function () {\n  this.tick = tick;\n  tick();\n};\nexports.isBounded = isBounded;",
+        "tla-ts can't call exports.tick as Node's callers do: its this is the object that each reads it from",
+      ],
+    ])("stops at a function that %s", (_, exported, message) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
+      expect(runNodeModel(directory)).toBe("true");
+      const result = runCli(directory, ["model.cjs"]);
+      expect(result.stdout).not.toContain("No error has been found");
+      expect(result.stderr).toContain(message);
     });
   });
 
