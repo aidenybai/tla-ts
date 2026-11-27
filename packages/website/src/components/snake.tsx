@@ -1,17 +1,20 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search, SearchState } from "@/lib/search";
+import { SearchTree } from "./search-tree";
 import { Button } from "@/components/ui/button";
 
 // The board of the example's code, and its two moves, with the mistake in `turn`.
 const SIZE = 7;
 const CELL = 10;
 const STEP_MS = 260;
-const REPLAY_MS = 60;
+const REPLAY_MS = 140;
 const HINT_STEPS = 40;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
+const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
+const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
 
 const DIRECTIONS = [
   { name: "up", icon: ArrowUp, key: "ArrowUp", move: [0, -1], opposite: "down", angle: 0 },
@@ -77,20 +80,50 @@ const getSnake = (state: SearchState): Snake => {
   };
 };
 
-const getCenter = (square: number) => ({
+interface Point {
+  x: number;
+  y: number;
+}
+
+const getCenter = (square: number): Point => ({
   x: (square % SIZE) * CELL + CELL / 2,
   y: Math.floor(square / SIZE) * CELL + CELL / 2,
 });
 
-// The line down the snake's back. It lifts where the snake leaves one edge and comes in at the
+const isBeside = (first: Point, second: Point) =>
+  Math.abs(first.x - second.x) + Math.abs(first.y - second.y) <= CELL;
+
+const getBetween = (from: Point, to: Point, progress: number): Point => ({
+  x: from.x + (to.x - from.x) * progress,
+  y: from.y + (to.y - from.y) * progress,
+});
+
+// The points down the snake's back, part of the way through a step: the head has left its old
+// square and the tail has not yet left its own. A snake that did not just step, or that came in
+// from the far edge, is drawn where it is.
+const getBack = (from: number[], to: number[], progress: number): Point[] => {
+  const last = to.map(getCenter);
+  const first = from.map(getCenter);
+  const isStep =
+    to.length >= from.length &&
+    from.every((square, index) => index === from.length - 1 || to[index + 1] === square) &&
+    isBeside(first[0], last[0]) &&
+    isBeside(first[first.length - 1], first[first.length - 2]);
+  if (!isStep || progress >= 1) return last;
+  const tail =
+    to.length === from.length
+      ? getBetween(first[first.length - 1], first[first.length - 2], progress)
+      : first[first.length - 1];
+  return [getBetween(first[0], last[0], progress), ...first.slice(0, -1), tail];
+};
+
+// The line through the points. It lifts where the snake leaves one edge and comes in at the
 // other, so that no stroke crosses the board.
-const getBackPath = (body: number[]) =>
-  body
-    .map((square, index) => {
-      const center = getCenter(square);
-      const last = index > 0 ? getCenter(body[index - 1]) : center;
-      const isJoined = Math.abs(center.x - last.x) + Math.abs(center.y - last.y) === CELL;
-      return `${isJoined ? "L" : "M"}${center.x} ${center.y}${isJoined ? "" : "h0"}`;
+const getBackPath = (points: Point[]) =>
+  points
+    .map((point, index) => {
+      const isJoined = index > 0 && isBeside(points[index - 1], point);
+      return `${isJoined ? "L" : "M"}${point.x} ${point.y}${isJoined ? "" : "h0"}`;
     })
     .join("");
 
@@ -117,17 +150,22 @@ export const SnakeGame = (props: SnakeGameProps) => {
     setReplay({ search: props.search, index: 0 });
     setIsMoving(false);
   }
-  const checked = useMemo(
-    () => props.search?.checkedStates.filter((state) => !state.isFailing).map(getSnake) ?? [],
-    [props.search],
-  );
-  const failing = useMemo(() => {
-    const state = props.search?.checkedStates.find((found) => found.isFailing);
-    return state && getSnake(state);
+  // The states the search tried, with the one that breaks the rule last.
+  const tried = useMemo(() => {
+    const states = props.search?.checkedStates ?? [];
+    return [
+      ...states.filter((state) => !state.isFailing),
+      ...states.filter((state) => state.isFailing),
+    ];
   }, [props.search]);
-  const isReplayShown = replay !== undefined && replay.index >= 0;
-  const isReplaying = isReplayShown && replay.index < checked.length;
-  const shown = isReplayShown ? (checked[replay.index] ?? failing ?? snake) : snake;
+  const [hoveredId, setHoveredId] = useState<string>();
+  const isReplayShown = replay !== undefined && replay.index >= 0 && tried.length > 0;
+  const isReplaying = isReplayShown && replay.index < tried.length - 1;
+  const active = isReplayShown
+    ? ((isReplaying ? undefined : tried.find((state) => state.id === hoveredId)) ??
+      tried[Math.min(replay.index, tried.length - 1)])
+    : undefined;
+  const shown = useMemo(() => (active ? getSnake(active) : snake), [active, snake]);
   const hasBitten = isBitten(shown);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
@@ -169,14 +207,37 @@ export const SnakeGame = (props: SnakeGameProps) => {
     addEventListener("keydown", handleKey);
     return () => removeEventListener("keydown", handleKey);
   });
+  const backId = useId();
+  const backRef = useRef<SVGPathElement>(null);
+  const headRef = useRef<SVGGElement>(null);
+  const lastBodyRef = useRef(shown.body);
+  // A step glides from one square to the next. Each frame is written to the drawing itself, so
+  // that sixty frames a second do not render the game sixty times.
+  useLayoutEffect(() => {
+    const from = lastBodyRef.current;
+    lastBodyRef.current = shown.body;
+    const draw = (progress: number) => {
+      const points = getBack(from, shown.body, progress);
+      backRef.current?.setAttribute("d", getBackPath(points));
+      headRef.current?.setAttribute("transform", `translate(${points[0].x} ${points[0].y})`);
+    };
+    if (isReplayShown || matchMedia("(prefers-reduced-motion: reduce)").matches) return draw(1);
+    const start = performance.now();
+    let frame = requestAnimationFrame(function glide(now) {
+      const progress = Math.min(1, Math.max(0, (now - start) / STEP_MS));
+      draw(progress);
+      if (progress < 1) frame = requestAnimationFrame(glide);
+    });
+    draw(0);
+    return () => cancelAnimationFrame(frame);
+  }, [shown.body, isReplayShown]);
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
-  const stateCount = props.search?.checkedStates.length ?? 0;
   return (
     <div className="my-2 flex flex-wrap items-start gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
       <div
         ref={boardRef}
         className={cn(
-          "w-full max-w-[266px] shrink-0 overflow-hidden rounded-lg",
+          "mb-1 w-full max-w-[266px] shrink-0 overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
@@ -200,44 +261,74 @@ export const SnakeGame = (props: SnakeGameProps) => {
               }
             />
           ))}
-          <g transform={`translate(${getCenter(shown.apple).x} ${getCenter(shown.apple).y})`}>
+          <defs>
             <path
-              d="M0 -2.4 Q0.4 -3.8 1.8 -4"
+              ref={backRef}
+              id={backId}
+              d={getBackPath(shown.body.map(getCenter))}
               fill="none"
-              strokeWidth={0.7}
               strokeLinecap="round"
-              className="stroke-[oklch(45%_0.08_60)]"
+              strokeLinejoin="round"
             />
-            <ellipse cx={1.6} cy={-3.1} rx={1.3} ry={0.7} className="fill-[oklch(65%_0.16_140)]" />
-            <circle r={3} className="fill-[oklch(62%_0.21_27)]" />
-            <circle cx={-1} cy={-1} r={0.8} className="fill-white/40" />
+          </defs>
+          <g transform={`translate(${getCenter(shown.apple).x} ${getCenter(shown.apple).y})`}>
+            <g
+              key={shown.apple}
+              className="origin-center [transform-box:fill-box] motion-safe:animate-chip-in"
+            >
+              <ellipse cy={3.3} rx={2.8} ry={1} className={SHADE_FILL} />
+              <path
+                d="M0 -2.4 Q0.4 -3.8 1.8 -4"
+                fill="none"
+                strokeWidth={0.7}
+                strokeLinecap="round"
+                className="stroke-[oklch(45%_0.08_60)]"
+              />
+              <ellipse
+                cx={1.6}
+                cy={-3.1}
+                rx={1.3}
+                ry={0.7}
+                className="fill-[oklch(65%_0.16_140)]"
+              />
+              <circle r={3} className="fill-[oklch(62%_0.21_27)]" />
+              <path
+                d="M-2.6 0.6 A3 3 0 0 0 2.6 0.6 A3.4 3 0 0 1 -2.6 0.6"
+                className="fill-[oklch(52%_0.2_27)]"
+              />
+              <circle cx={-1} cy={-1.1} r={0.8} className="fill-white/50" />
+            </g>
           </g>
-          <path
-            d={getBackPath(shown.body)}
-            fill="none"
+          <use href={`#${backId}`} y={1.3} strokeWidth={6.6} className={SHADE_STROKE} />
+          <use
+            href={`#${backId}`}
             strokeWidth={6.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
             className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
           />
+          <use href={`#${backId}`} y={-1.2} strokeWidth={1.8} className="stroke-white/25" />
           <g
-            transform={`translate(${getCenter(shown.body[0]).x} ${getCenter(shown.body[0]).y}) rotate(${shown.direction.angle})`}
+            ref={headRef}
+            transform={`translate(${getCenter(shown.body[0]).x} ${getCenter(shown.body[0]).y})`}
           >
+            <circle cy={1.3} r={4} className={SHADE_FILL} />
             <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
-            <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
-            <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
-            <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
-            <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+            <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
+            <g transform={`rotate(${shown.direction.angle})`}>
+              <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
+              <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
+              <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+              <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+            </g>
           </g>
         </svg>
       </div>
       <div className="flex min-w-48 flex-1 flex-col items-start gap-4">
         <p aria-live="polite" className="text-sm text-pretty text-muted-foreground tabular-nums">
           {isReplaying ? (
-            `TLA-ts is trying state ${replay.index + 1} of ${stateCount}.`
+            `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
           ) : isReplayShown ? (
             <>
-              TLA-ts tried {stateCount} states and made the snake bite itself in {steps.length}{" "}
+              TLA-ts tried {tried.length} states and made the snake bite itself in {steps.length}{" "}
               moves: <span className="font-mono text-xs text-foreground">{steps.join(", ")}</span>.
             </>
           ) : hasBitten ? (
@@ -248,6 +339,14 @@ export const SnakeGame = (props: SnakeGameProps) => {
             "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys, eat the apples, and make it bite anyway."
           )}
         </p>
+        {isReplayShown && (
+          <SearchTree
+            states={tried}
+            triedCount={replay.index + 1}
+            activeId={active?.id}
+            onHover={setHoveredId}
+          />
+        )}
         <div className="grid grid-cols-3 gap-1">
           {DIRECTIONS.map((item, index) => (
             <Button
