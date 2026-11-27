@@ -506,6 +506,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const generated: (Value | undefined)[][] = [];
   const reportInitialException = (error: unknown, state: Value[] | undefined) => {
     const failure = toEvaluationError(error);
+    // Simulator#simulate catches only Exception around the initial states, so TLC#process reports a StackOverflowError alone.
+    if (failure instanceof TlaStackOverflowError) {
+      reportMessage(MESSAGE_CODE.stackOverflow, failure.message);
+      return EXIT_STATUS.error;
+    }
     if (!state) {
       reportMessage(
         MESSAGE_CODE.general,
@@ -1080,6 +1085,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       try {
         return simulateTrace();
       } catch (error) {
+        // Deviation from TLC: SimulationWorker catches only Exception, so a StackOverflowError kills its thread and Simulator waits forever for its result.
         return toException(error, currentNode);
       }
     })();
