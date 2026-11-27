@@ -803,6 +803,7 @@ const searchStates = (
               addGenerated(successor.state, successor.action);
               return false;
             };
+            // Deviation from TLC: TableauLiveChecker#addNextState checks the constraints, _Track among them, on the successors it generates again, so _POSSIBLE counts a witness again.
             const isInModel = (successor: State) =>
               replay
                 ? search.isInReplayedModel(state, successor, replay)

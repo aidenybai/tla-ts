@@ -76,6 +76,18 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
+  it("counts a witness once where the behavior graph expands a state again, where TLC's TableauLiveChecker evaluates _Track again and prints [Idle |-> 5, Moves |-> 3, Never |-> 0]", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLES active, detected\nvars == <<active, detected>>\nInit == active = FALSE /\\ detected = FALSE\nDetect == ~active /\\ detected' = TRUE /\\ UNCHANGED active\nSpec == Init /\\ [][Detect]_vars\nQuiescence == [](~active => []~active)\nLive == ~active ~> detected\nIdle == ~active\nMoves == detected' # detected\nNever == active\n====",
+      config: "SPECIFICATION Spec\nPROPERTIES Quiescence Live\n_POSSIBLE Idle Moves Never",
+    });
+    expect([result.status, result.violation?.unwitnessed?.counts]).toEqual([
+      "liveness-violation",
+      "[Idle |-> 3, Moves |-> 1, Never |-> 0]",
+    ]);
+  });
+
   it("pretty-prints the counts _PrintCounts and _CheckName print, as TLC's PrintT does", async () => {
     const lines: string[] = [];
     const result = await check({
