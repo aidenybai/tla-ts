@@ -8,6 +8,9 @@
     <link rel="alternate" type="text/markdown" href="/index.md" />
     <meta name="description" content="Formally verify TypeScript code with TLA+." />
     <meta name="theme-color" content="#fdfdfc" />
+    <script type="speculationrules">
+      { "prefetch": [{ "where": { "href_matches": "/*" }, "eagerness": "moderate" }] }
+    </script>
     <script>
       if (
         document.documentElement.classList.toggle(
