@@ -24,10 +24,10 @@ import {
   createEnumeratedSet,
   createModelValue,
   formatValue,
+  isEqualLikeTlc,
   isTlcInteger,
   markNormalized,
   toFiniteSet,
-  valuesEqual,
   type Value,
 } from "./values";
 
@@ -135,7 +135,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
           const argument = args[index];
           return (
             !(typeof argument === "object" && argument.kind === "Operator") &&
-            valuesEqual(value, argument)
+            isEqualLikeTlc(value, argument)
           );
         });
       });

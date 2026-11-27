@@ -110,6 +110,12 @@ describe("operator constants match TLC", () => {
     },
   );
 
+  it("compares a table's arguments with the equality TLC's values check", async () => {
+    expect((await checkConstants("F({0}) = 1 G <- Add C = 1")).failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}Attempted to check equality of the set {0} with the value:\n0`,
+    );
+  });
+
   it("rejects configurations TLC rejects", async () => {
     const cases = [
       [
