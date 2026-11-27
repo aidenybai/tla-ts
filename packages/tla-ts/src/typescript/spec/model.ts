@@ -81,9 +81,9 @@ UnsettledText(name) ==
 SettledOf(s, name, args) ==
   IF Val(Completed(CheckCall(s, name, args))) = False THEN Assert(FALSE, UnsettledText(name)) ELSE TRUE
 \* What a call of name throws, as data rather than a failure of the check: <<>> where it returns,
-\* and the text of what it throws.
+\* and the call's result where it throws, whose text ThrownText gives.
 ThrownOf(s, name, args) ==
-  LET r == CheckCall(s, name, args) IN IF r.c.type = "throw" THEN <<ThrownText(r)>> ELSE <<>>
+  LET r == CheckCall(s, name, args) IN IF r.c.type = "throw" THEN <<r>> ELSE <<>>
 \* What a check shows of a value: TLA+'s values of today's compiler's model, where a number is an
 \* integer, a string a string, an array a sequence, a Set a set, a Map a function, and another
 \* object a record of its enumerable own data properties.
@@ -1508,7 +1508,7 @@ export const planModel = (
       define(
         "Thrown",
         (operatorName) =>
-          `${operatorName} ==\n  LET f == [v \\in ${domain} |-> ${call}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE f[CHOOSE v \\in t : TRUE]`,
+          `${operatorName} ==\n  LET f == [v \\in ${domain} |-> ${call}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE <<ThrownText(f[CHOOSE v \\in t : TRUE][1])>>`,
       );
     if (
       bounds.length > 0 &&
@@ -1534,7 +1534,11 @@ export const planModel = (
     }
     const check = defineCheck(name, "ThrownOf", bounds);
     if (bounds.length === 0) {
-      return define("Thrown", (operatorName) => `${operatorName} == ${check(started, [])}`);
+      return define(
+        "Thrown",
+        (operatorName) =>
+          `${operatorName} ==\n  LET o == ${check(started, [])}\n  IN IF o = <<>> THEN <<>> ELSE <<ThrownText(o[1])>>`,
+      );
     }
     const sets = bounds.map((bound) => `(${printExpression(rewriteGuards(bound.set))})`);
     return defineOutcome(

@@ -412,6 +412,20 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A check shows the message of the first value that throws, so the message of another, which
+  // TLA+ strings can't hold, stops nothing.
+  it("shows only the message of the first value that throws", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "shout.ts"),
+      'export const shout = (loud: boolean): number => {\n  throw new Error(loud ? "loud \\u00e9" : "quiet");\n};\n',
+    );
+    const result = runCli(directory, ["shout.ts"]);
+    expect(result.status).toBe(10);
+    expect(result.stdout).toContain('"shout throws: quiet"');
+    expect(result.stdout).not.toContain("can't show a string");
+  });
+
   // A type parameter without a constraint takes 0, 1, and 2, an iterable each array of its
   // elements up to 3 long, and a callback each table from its first argument's values to its
   // result's, as the note says. Node, calling count with each of those, finds no throw where the
