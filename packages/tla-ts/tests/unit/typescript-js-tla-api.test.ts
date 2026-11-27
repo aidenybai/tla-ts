@@ -605,20 +605,145 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
-  // TypeScript's program reads the model's own file, and not the types of the files it imports.
-  it("stops at a model's import of a file among those that the host passes", async () => {
-    const files = {
+  // TypeScript's program reads the types of the files that a model imports among those that the
+  // host passes, as a package's that Node loads.
+  describe("check a model whose file imports a package that the host passes", () => {
+    const SOURCE = `import { limit } from "limit";\n\nlet count = 0;\n\nexport const increment = () => {\n  if (count < limit) count += 1;\n};\n\nexport const reset = () => {\n  count = 0;\n};\n\nexport const bounded = () => count <= 2;\n`;
+    const getFiles = (limit: number) => ({
       "node_modules/limit/package.json": JSON.stringify({ name: "limit", exports: "./limit.js" }),
-      "node_modules/limit/limit.js": "export const limit = 3;\n",
-    };
-    const source = `import { limit } from "limit";\n\nlet count = 0;\n\nexport const increment = () => {\n  if (count < limit) count += 1;\n};\n\nexport const bounded = () => count <= 2;\n`;
-    expect(
-      (await getBrowserOutcome(source, "counter.ts", true, true, getHostFiles(files))).error,
-    ).toEqual({
-      name: "TlaTypeScriptError",
-      isTlaError: true,
-      message:
-        "counter.ts:1:23 tla-ts can't read the types of limit among the files that a host passes",
+      "node_modules/limit/limit.js": `export const limit = ${limit};\n`,
+    });
+    // The invariant after each increment that Node runs in turn from the module's start.
+    const replay = (limit: number, increments: number) =>
+      JSON.parse(
+        runNode(
+          {
+            ...getFiles(limit),
+            "counter.ts": SOURCE,
+            "replay.mts": `import * as model from "./counter.ts";\nconst held = [model.bounded()];\nfor (let index = 0; index < ${increments}; index += 1) {\n  model.increment();\n  held.push(model.bounded());\n}\nconsole.log(JSON.stringify(held));\n`,
+          },
+          "replay.mts",
+          {},
+        ).stdout,
+      );
+
+    it("agrees with Node", async () => {
+      const outcome = await getBrowserOutcome(
+        SOURCE,
+        "counter.ts",
+        true,
+        true,
+        getHostFiles(getFiles(3)),
+      );
+      expect(outcome).toMatchObject({
+        status: "invariant-violation",
+        name: "bounded",
+        trace: [{ count: "0" }, { count: "1" }, { count: "2" }, { count: "3" }],
+      });
+      expect(replay(3, (outcome.actions ?? []).length)).toEqual([true, true, true, false]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        await getBrowserOutcome(SOURCE, "counter.ts", true, true, getHostFiles(getFiles(2))),
+      ).toMatchObject({ status: "success" });
+      expect(replay(2, 3)).toEqual([true, true, true, true]);
+    });
+  });
+
+  // The project of a tsconfig.json among the files that the host passes compiles a file's JSX by
+  // its options, as TypeScript writes the JavaScript that Node runs.
+  describe("compile a file by the project that the host passes", () => {
+    const TSCONFIG = JSON.stringify({
+      compilerOptions: { jsx: "react", jsxFactory: "tag", lib: ["ESNext"] },
+    });
+    const getSource = (expected: string) =>
+      `const tag = (name: string) => name;\nconst element = <p />;\nif (element !== "${expected}") throw new Error(String(element));\nexport {};\n`;
+    const runTranspiled = (source: string) =>
+      runNode(
+        {
+          "element.mjs": ts.transpileModule(source, {
+            fileName: "element.tsx",
+            compilerOptions: ts.convertCompilerOptionsFromJson(
+              JSON.parse(TSCONFIG).compilerOptions,
+              "/",
+            ).options,
+          }).outputText,
+        },
+        "element.mjs",
+        {},
+      );
+
+    it("agrees with Node", async () => {
+      expect(runTranspiled(getSource("p")).status).toBe(0);
+      expect(
+        await getBrowserOutcome(
+          getSource("p"),
+          "element.tsx",
+          true,
+          true,
+          getHostFiles({ "tsconfig.json": TSCONFIG }),
+        ),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      expect(runTranspiled(getSource("q")).stderr).toContain("Error: p");
+      expect(
+        getFailure(
+          await getBrowserOutcome(
+            getSource("q"),
+            "element.tsx",
+            true,
+            true,
+            getHostFiles({ "tsconfig.json": TSCONFIG }),
+          ),
+        ),
+      ).toContain('"p"');
+    });
+  });
+
+  // A project's options name the declaration files that give the globals of its files, as Set,
+  // which the host passes the texts of, as the website bundles them: here lib.esnext.d.ts and those
+  // that it references, but not lib.es2022.full.d.ts, the default library of ES2022's target.
+  describe("read a project's declaration files from the texts that the host passes", () => {
+    const SOURCE = `const seen = new Set<number>();\n\nexport const add = () => {\n  if (seen.size < 3) seen.add(seen.size);\n};\n\nexport const reset = () => {\n  seen.clear();\n};\n\nexport const small = () => seen.size <= 2;\n`;
+    const getProjectFiles = (options: string) =>
+      getHostFiles({ "tsconfig.json": `{ "compilerOptions": ${options} }\n` });
+
+    it("agrees with Node where the host passes the project's declaration files", async () => {
+      const node = await getOutcome(SOURCE, "seen.ts");
+      expect(node).toMatchObject({ status: "invariant-violation", name: "small" });
+      const outcome = await getBrowserOutcome(
+        SOURCE,
+        "seen.ts",
+        true,
+        true,
+        getProjectFiles('{ "target": "ES2022", "lib": ["ESNext"] }'),
+      );
+      expect(outcome).toMatchObject({ status: "invariant-violation", name: "small" });
+      expect(outcome.trace).toEqual(node.trace);
+    });
+
+    // Without them, TypeScript's checker finds no Set, and the model's state would lose the Set that
+    // Node keeps.
+    it("stops where the host passes no text of a declaration file that the project names", async () => {
+      expect(
+        (
+          await getBrowserOutcome(
+            SOURCE,
+            "seen.ts",
+            true,
+            true,
+            getProjectFiles('{ "target": "ES2022" }'),
+          )
+        ).error,
+      ).toEqual({
+        name: "TlaTypeScriptError",
+        isTlaError: true,
+        message:
+          "tla-ts can't read the declaration file lib.es2022.full.d.ts, which the project's options name, as the host gives no text of it",
+      });
     });
   });
 });
