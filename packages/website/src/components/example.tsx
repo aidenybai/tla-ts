@@ -92,7 +92,7 @@ const ExampleRoot = (props: RootProps) => {
         // example, ahead of the run. A touch comes with the tap, too late to help.
         onPointerEnter={(event) => event.pointerType === "mouse" && startJsTlaWorker()}
         onFocus={startJsTlaWorker}
-        className="relative flex flex-col gap-3"
+        className="relative flex flex-col gap-3 motion-safe:*:nth-1:animate-rise motion-safe:*:nth-2:animate-rise *:nth-1:[--enter-delay:560ms] *:nth-2:[--enter-delay:640ms] motion-safe:*:last:animate-rise *:last:[--enter-delay:720ms]"
       >
         {props.children}
       </div>

@@ -40,15 +40,21 @@ const Page = () => (
         </div>
       </Hero.Body>
     </Hero.Root>
-    <div className="mt-20 flex flex-col gap-20 motion-safe:animate-rise [--enter-delay:240ms]">
+    <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
-        <Section.Title>How it works</Section.Title>
+        <Section.Title className="motion-safe:animate-rise [--enter-delay:240ms]">
+          How it works
+        </Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
-          <li>
+          <li className="motion-safe:animate-rise [--enter-delay:320ms]">
             Run <InlineCode>npx tla-ts [file].ts</InlineCode>
           </li>
-          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
-          <li>Get any violations, with the steps that caused them</li>
+          <li className="motion-safe:animate-rise [--enter-delay:400ms]">
+            TLA-ts converts it into TLA+ and formally checks every state
+          </li>
+          <li className="motion-safe:animate-rise [--enter-delay:480ms]">
+            Get any violations, with the steps that caused them
+          </li>
         </ol>
         <Example.Root>
           <Example.Description />
