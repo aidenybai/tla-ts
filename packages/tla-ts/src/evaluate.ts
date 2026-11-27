@@ -1337,8 +1337,13 @@ export const getDetachedContext = (
   };
 };
 
-const isUnassigned = (state: State | undefined) =>
-  state === undefined || state.every((value) => value === undefined);
+const isUnassigned = (state: State | undefined) => {
+  if (state === undefined) return true;
+  for (let index = 0; index < state.length; index++) {
+    if (state[index] !== undefined) return false;
+  }
+  return true;
+};
 
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
