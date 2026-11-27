@@ -1,4 +1,3 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -10,40 +9,23 @@ import { Button } from "@/components/ui/button";
 const SIZE = 7;
 const CELL = 10;
 const STEP_MS = 260;
-const REPLAY_MS = 140;
+const REPLAY_MS = 100;
 const HINT_STEPS = 40;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
 const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
 const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
 
+// The eight ways to move, clockwise from up, each an eighth of a turn from the last.
 const DIRECTIONS = [
-  { name: "up", icon: ArrowUp, key: "ArrowUp", move: [0, -1], opposite: "down", angle: 0 },
-  {
-    name: "left",
-    icon: ArrowLeft,
-    key: "ArrowLeft",
-    move: [-1, 0],
-    opposite: "right",
-    angle: -90,
-  },
-  {
-    name: "down",
-    icon: ArrowDown,
-    key: "ArrowDown",
-    move: [0, 1],
-    opposite: "up",
-    angle: 180,
-  },
-  {
-    name: "right",
-    icon: ArrowRight,
-    key: "ArrowRight",
-    move: [1, 0],
-    opposite: "left",
-    angle: 90,
-  },
+  { name: "up", move: [0, -1], key: "ArrowUp" },
+  { name: "upRight", move: [1, -1], key: undefined },
+  { name: "right", move: [1, 0], key: "ArrowRight" },
+  { name: "downRight", move: [1, 1], key: undefined },
+  { name: "down", move: [0, 1], key: "ArrowDown" },
+  { name: "downLeft", move: [-1, 1], key: undefined },
+  { name: "left", move: [-1, 0], key: "ArrowLeft" },
+  { name: "upLeft", move: [-1, -1], key: undefined },
 ] as const;
-const AREAS = ["[grid-area:1/2]", "[grid-area:2/1]", "[grid-area:2/2]", "[grid-area:2/3]"];
 
 type Direction = (typeof DIRECTIONS)[number];
 
@@ -54,10 +36,12 @@ interface Snake {
   direction: Direction;
 }
 
-const START: Snake = { body: [23, 22, 21], apple: 26, direction: DIRECTIONS[3] };
+const START: Snake = { body: [23, 22, 21], apple: 26, direction: DIRECTIONS[2] };
 
 const turn = (snake: Snake, next: Direction): Snake =>
-  next.name === snake.direction.opposite ? snake : { ...snake, direction: next };
+  next === DIRECTIONS[(DIRECTIONS.indexOf(snake.direction) + 4) % 8]
+    ? snake
+    : { ...snake, direction: next };
 
 const step = (snake: Snake): Snake => {
   const x = ((snake.body[0] % SIZE) + snake.direction.move[0] + SIZE) % SIZE;
@@ -91,7 +75,7 @@ const getCenter = (square: number): Point => ({
 });
 
 const isBeside = (first: Point, second: Point) =>
-  Math.abs(first.x - second.x) + Math.abs(first.y - second.y) <= CELL;
+  Math.max(Math.abs(first.x - second.x), Math.abs(first.y - second.y)) <= CELL;
 
 const getBetween = (from: Point, to: Point, progress: number): Point => ({
   x: from.x + (to.x - from.x) * progress,
@@ -236,14 +220,24 @@ export const SnakeGame = (props: SnakeGameProps) => {
     <div className="my-2 flex flex-wrap items-start gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
       <div
         ref={boardRef}
+        // A click heads the snake for the eighth of a turn nearest to it.
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          const head = getCenter(snake.body[0]);
+          const angle = Math.atan2(
+            ((event.clientX - box.left) / box.width) * SIZE * CELL - head.x,
+            head.y - ((event.clientY - box.top) / box.width) * SIZE * CELL,
+          );
+          steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
+        }}
         className={cn(
-          "mb-1 w-full max-w-[266px] shrink-0 overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[266px] shrink-0 cursor-pointer overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
         <svg
           role="img"
-          aria-label="A snake and an apple on a board. The arrow keys steer the snake."
+          aria-label="A snake and an apple on a board. The arrow keys steer the snake, and so does a click on the board."
           viewBox={`0 0 ${SIZE * CELL} ${SIZE * CELL}`}
           className="block w-full"
         >
@@ -313,7 +307,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
             <circle cy={1.3} r={4} className={SHADE_FILL} />
             <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
             <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
-            <g transform={`rotate(${shown.direction.angle})`}>
+            <g transform={`rotate(${DIRECTIONS.indexOf(shown.direction) * 45})`}>
               <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
               <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
               <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
@@ -336,7 +330,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           ) : stepCount >= HINT_STEPS ? (
             "Hint: turn twice before the snake moves."
           ) : (
-            "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys, eat the apples, and make it bite anyway."
+            "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys, or click where it should head. Make it bite anyway."
           )}
         </p>
         {isReplayShown && (
@@ -347,20 +341,6 @@ export const SnakeGame = (props: SnakeGameProps) => {
             onHover={setHoveredId}
           />
         )}
-        <div className="grid grid-cols-3 gap-1">
-          {DIRECTIONS.map((item, index) => (
-            <Button
-              key={item.name}
-              size="icon"
-              aria-label={`Turn ${item.name}`}
-              disabled={isReplaying || isBitten(snake)}
-              onClick={() => steer(item)}
-              className={AREAS[index]}
-            >
-              <item.icon />
-            </Button>
-          ))}
-        </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <Button variant="success" disabled={props.isRunning || isReplaying} onClick={props.onRun}>
             {props.isRunning ? "Trying every move" : "Let TLA-ts try"}
