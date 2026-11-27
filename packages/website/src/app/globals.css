@@ -42,6 +42,15 @@
 @import "../generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
+/* A page that opens at its top. One that opens scrolled, at a link to a section or on a reload,
+   shows its lines at once. */
+@custom-variant entering {
+  @media (prefers-reduced-motion: no-preference) {
+    html:not([data-still]) & {
+      @slot;
+    }
+  }
+}
 
 :root {
   --background: #fdfdfc;
