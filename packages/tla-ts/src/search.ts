@@ -1822,7 +1822,10 @@ export const createSearch = (
           constraint.scope,
         ),
       );
-      if (isInModel) addFingerprint();
+      if (isInModel) {
+        trackPossible(statePossible, runtime, getContext(tracing, state, undefined));
+        addFingerprint();
+      }
       for (const invariant of invariantPredicates) {
         const covered = coveredInvariantChecks.get(invariant.predicate);
         if (holdsIn(covered, invariant.predicate, invariant.scope)) continue;
@@ -1834,14 +1837,17 @@ export const createSearch = (
       if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint, isGoingOnAfter) => {
+      const isStateInModel = constraintPredicates.every((constraint) =>
+        holdsReplayed(
+          coveredConstraintChecks.get(constraint.predicate),
+          constraint.predicate,
+          getContext(tracing, next, undefined, constraint.scope),
+        ),
+      );
+      if (isStateInModel)
+        trackPossible(statePossible, runtime, getContext(tracing, next, undefined));
       const isInModel =
-        constraintPredicates.every((constraint) =>
-          holdsReplayed(
-            coveredConstraintChecks.get(constraint.predicate),
-            constraint.predicate,
-            getContext(tracing, next, undefined, constraint.scope),
-          ),
-        ) &&
+        isStateInModel &&
         actionConstraints.every((constraint, index) =>
           holdsReplayed(
             coveredActionConstraints[index],
@@ -1849,6 +1855,7 @@ export const createSearch = (
             getContext(tracing, state, next, constraint.scope),
           ),
         );
+      if (isInModel) trackPossible(actionPossible, runtime, getContext(tracing, state, next));
       // TLC checks the invariants of a successor it has not seen, even outside the model.
       const isUnseen = isInModel ? addFingerprint() : true;
       const invariant = isUnseen

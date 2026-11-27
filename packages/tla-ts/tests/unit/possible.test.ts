@@ -180,6 +180,25 @@ describe("_POSSIBLE matches TLC", () => {
     },
   );
 
+  it.each([
+    ["x = 0", 1, 0],
+    ["x = 1", 2, 1],
+    ["x' = 1", 2, 1],
+  ])(
+    "stops at a _POSSIBLE predicate that fails where %s, as TLC stops at the constraint that tracks it",
+    async (condition, generatedStates, distinctStates) => {
+      const result = await checkModule(
+        `Bad == ${condition} => CHOOSE v \\in {} : TRUE`,
+        "_POSSIBLE Bad",
+      );
+      expect([
+        result.failure?.exitCode,
+        [result.generatedStates, result.distinctStates, result.queuedStates],
+        result.outDegrees,
+      ]).toEqual([75, [generatedStates, distinctStates, 0], undefined]);
+    },
+  );
+
   it("rejects predicates TLC cannot track", async () => {
     const body = "AtOne == x = 1\nConstant == TRUE\nArgument(n) == x = n\nTemporal == <>(x = 1)";
     const cases = [
