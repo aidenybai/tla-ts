@@ -126,6 +126,8 @@ TypeScript's type checker gives the model's frame: which bindings are state, whi
 
 An exported function is a function declaration, or a variable whose value is an arrow function or a function expression. An async function or a generator isn't one.
 
+A function without parameters whose return type is `any`, `unknown`, or a union of a boolean and other types may be either an invariant or a check. The two differ only where it returns `false`, so tla-ts checks it as a check that also stops there with `tla-ts can't tell whether name is an invariant`. Give it the return type `boolean` to check that it holds, or another type to check that it returns. A function that reads a package without type declarations often returns `any` this way.
+
 A call that writes nothing that existed before it takes no step. TLC checks deadlocks as follows:
 
 - **A model with an action**: TLC reports a deadlock at a state where no call of any action writes, unless the model allows it with `@noDeadlock` or `@terminating`. A model whose actions never write deadlocks in its initial state, since no step can run.
