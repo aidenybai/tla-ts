@@ -1737,6 +1737,7 @@ const searchStates = (
       liveness?.addState(index, states[index], liveSuccessors);
       return undefined;
     } catch (error) {
+      if (isStackOverflow(error)) return undefined;
       if (!(error instanceof TlaEvaluationError)) throw error;
       // TLC fails to fingerprint an incomplete successor with an exception Worker#doNextCheckLiveness doesn't rerun for a call stack.
       if (error instanceof TlaIncompleteSuccessorError) return undefined;

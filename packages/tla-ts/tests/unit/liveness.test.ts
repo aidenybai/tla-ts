@@ -629,6 +629,46 @@ describe("liveness matches TLC", () => {
   );
 
   it.each([
+    [
+      "a failure of the next-state relation",
+      "Next == x' = 1 \\div x /\\ y' = y",
+      "",
+      255,
+      [
+        "The second argument of \\div is 0.",
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n",
+        "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 8, column 9 to line 8, column 31 in M\n1. Line 8, column 9 to line 8, column 21 in M\n2. Line 8, column 14 to line 8, column 21 in M\n\n",
+        "1 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+      ],
+    ],
+    [
+      "an incomplete successor",
+      "Next == x' = x + 1",
+      "\nCHECK_DEADLOCK FALSE",
+      75,
+      [
+        "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n",
+        "2: <Next line 8, col 9 to line 8, col 18 of module M>\n/\\ x = 1\n/\\ y = null\n",
+        "2 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+      ],
+    ],
+  ])(
+    "ignores a stack overflow in the behavior graph after %s like TLC",
+    async (_title, next, config, exitCode, printed) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nvars == <<x, y>>\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0 /\\ y = 0\n${next}\nSpec == Init /\\ [][Next]_vars\nProp == []<>(IF x = 0 THEN Spin(x) = 0 ELSE TRUE)\n====`,
+        config: `SPECIFICATION Spec\nPROPERTY Prop${config}`,
+      });
+      expect([result.failure?.exitCode, getPrintedResult(result)]).toEqual([exitCode, printed]);
+    },
+  );
+
+  it.each([
     ["[][x' >= x]_vars", 1],
     ['[][x\' >= x \\/ TLCGet("level") < 0]_vars', undefined],
   ])(
