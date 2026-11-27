@@ -176,24 +176,33 @@ const createModelValues = (value: ConfigValue) => {
   if (value.kind === "Set") value.elements.forEach(createModelValues);
 };
 
-export const createScopedOverrides = (
+// TLC's instance copy has an OpDefNode of its own, so it reads the [Mod] entries on the body but not a plain entry.
+const getCopyKey = (key: string) => `${key}${KEY_SEPARATOR}`;
+
+const getModuleEntryKeys = (
   config: ModelConfig,
   getSymbols: (module: string) => Symbols | undefined,
-  copySources: Map<string, CopySource>,
-) => {
-  const scopedKeys = new Set(
+) =>
+  new Set(
     [...config.constants, ...config.substitutions].flatMap((item) => {
       const symbol =
         item.module === undefined ? undefined : getSymbols(item.module)?.get(item.name);
       return symbol?.kind === "Definition" ? [symbol.key] : [];
     }),
   );
+
+export const createScopedOverrides = (
+  config: ModelConfig,
+  getSymbols: (module: string) => Symbols | undefined,
+  copySources: Map<string, CopySource>,
+) => {
+  const scopedKeys = getModuleEntryKeys(config, getSymbols);
   // Deviation from TLC: a copy passes an override its instance's arguments too, and the ArrayIndexOutOfBoundsException crashes TLC.
   const getOverride = (
     key: string,
     prefix: number,
   ): Pick<CopySource, "source" | "prefix"> | undefined => {
-    if (scopedKeys.has(key)) return { source: key, prefix };
+    if (scopedKeys.has(key)) return { source: getCopyKey(key), prefix };
     const copy = copySources.get(key);
     return copy && getOverride(copy.source, prefix + copy.prefix);
   };
@@ -223,8 +232,11 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   const getSubstitutedKeys = (item: ConfigName) => {
     if (item.module === undefined) return [getRootKey(item.name)];
     const symbol = getScopedSymbol(item);
+    if (!symbol) return [];
     // TLC sets a [Mod] entry on the definition's body, which its lookup reads only when no plain entry set the OpDefNode.
-    return symbol && !plainKeys.has(symbol.key) ? [symbol.key] : [];
+    return plainKeys.has(symbol.key)
+      ? [getCopyKey(symbol.key)]
+      : [symbol.key, getCopyKey(symbol.key)];
   };
   const getScopedKeys = (item: ConfigName) =>
     item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
@@ -365,6 +377,13 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       `In the configuration file, the module name ${unknownModule} is not a module in the specification.`,
     );
   }
+  const scopedKeys = getModuleEntryKeys(config, (module) => linked.moduleSymbols.get(module));
+  [...plainKeys, ...scopedKeys].forEach((key) => {
+    const builtin = linked.builtins.get(key);
+    if (builtin) linked.builtins.set(getCopyKey(key), builtin);
+    const definition = scopedKeys.has(key) ? linked.definitions.get(key) : undefined;
+    if (definition) linked.definitions.set(getCopyKey(key), definition);
+  });
   const constants = new Map<string, Value>();
   const bodyValues = new WeakMap<Expression, Value>();
   const setOperator = (key: string, operator: Builtin) => {
@@ -482,12 +501,8 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       .map((constant) => [constant.key, constant]),
   );
   // A root override replaces only the root's definition, not an instance's copy of a standard operator.
-  const getUnsubstitutedKey = (key: string) => {
-    const builtin = rootSubstituted.has(key) ? linked.builtins.get(key) : undefined;
-    if (!builtin) return key;
-    linked.builtins.set(`${key}${KEY_SEPARATOR}`, builtin);
-    return `${key}${KEY_SEPARATOR}`;
-  };
+  const getUnsubstitutedKey = (key: string) =>
+    plainKeys.has(key) && linked.builtins.has(getCopyKey(key)) ? getCopyKey(key) : key;
   linked.standardAliasBodies.forEach((body) => {
     if (body.kind === "Apply") body.operator = getUnsubstitutedKey(body.operator);
     else if (body.kind === "Identifier") body.name = getUnsubstitutedKey(body.name);
