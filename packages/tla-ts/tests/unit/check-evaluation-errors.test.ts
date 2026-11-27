@@ -1655,7 +1655,7 @@ describe("evaluation errors match TLC", () => {
         `Shown == PrintT(<<"s", x>>) /\\ Next\nFail == x = 1 /\\ x' = 1 /\\ 1\nStep == ${step}`,
         `INIT Init\nNEXT Step\n${config}`,
       );
-      expect([result.failure?.traceOutput, result.failure?.trailingOutput]).toEqual(expected);
+      expect([result.failure?.traceOutput, result.failure?.trailingOutput ?? []]).toEqual(expected);
     },
   );
 
@@ -3358,7 +3358,7 @@ describe("evaluation errors match TLC", () => {
     expect([
       result.failure?.trace.map((step) => [formatValue(step.state.x), step.output]),
       result.failure?.traceOutput ?? [],
-      result.failure?.trailingOutput,
+      result.failure?.trailingOutput ?? [],
     ]).toEqual([
       [
         ["0", []],

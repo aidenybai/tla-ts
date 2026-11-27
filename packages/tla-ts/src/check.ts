@@ -370,6 +370,9 @@ interface CounterExampleOptions {
   isConsole: boolean;
 }
 
+const withTrailingOutput = <Traced extends Behavior>(behavior: Traced, lines: OutputLine[]) =>
+  lines.length === 0 ? behavior : { ...behavior, trailingOutput: lines };
+
 const toUnexpectedError = (error: TlaEvaluationError) =>
   new TlaEvaluationError(
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
@@ -1039,24 +1042,26 @@ const searchStates = (
       isPrintedOnly: true,
     }).trace;
     const checked = checkFailedTrace(
-      {
-        trace: traceFailure
-          ? trace
-          : [
-              ...trace,
-              traces.getIncompleteStep(
-                error.state,
-                trace.length + 1,
-                {
-                  action: actionName,
-                  label: action && getActionLabel(action, options.version),
-                  output: found.lines,
-                },
-                action,
-              ),
-            ],
-        trailingOutput: live.lines,
-      },
+      withTrailingOutput(
+        {
+          trace: traceFailure
+            ? trace
+            : [
+                ...trace,
+                traces.getIncompleteStep(
+                  error.state,
+                  trace.length + 1,
+                  {
+                    action: actionName,
+                    label: action && getActionLabel(action, options.version),
+                    output: found.lines,
+                  },
+                  action,
+                ),
+              ],
+        },
+        live.lines,
+      ),
       { isConsole: true },
     );
     const failure = createFailureResult(
@@ -1354,7 +1359,7 @@ const searchStates = (
           : replayFailedNext(index, liveSuccessors);
         return createFailureResult(
           error,
-          { ...behavior, trailingOutput: replay.lines },
+          withTrailingOutput(behavior, replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
@@ -1519,11 +1524,11 @@ const searchStates = (
     let overflowState: Value[] | undefined;
     const reportInitialFailure = (error: unknown, state: Value[]) => {
       const replay = captureOutput(replayInit);
-      return createFailureResult(
-        error,
-        { trace: [], trailingOutput: replay.lines },
-        { initialState: state, ...replay.result, phase: "initial" },
-      );
+      return createFailureResult(error, withTrailingOutput({ trace: [] }, replay.lines), {
+        initialState: state,
+        ...replay.result,
+        phase: "initial",
+      });
     };
     try {
       const onInitialState = (state: Value[]) => {
@@ -1594,11 +1599,10 @@ const searchStates = (
         };
       }
       const replay = captureOutput(replayInit);
-      return createFailureResult(
-        error,
-        { trace: [], trailingOutput: replay.lines },
-        { ...replay.result, phase: "initial" },
-      );
+      return createFailureResult(error, withTrailingOutput({ trace: [] }, replay.lines), {
+        ...replay.result,
+        phase: "initial",
+      });
     }
   }
   if (outcome) return outcome;
@@ -1769,7 +1773,7 @@ const searchStates = (
     const replay = replayFailedNext(index, liveSuccessors);
     return createFailureResult(
       withNextStateExitCode(error),
-      { ...checked.behavior, trailingOutput: replay.lines },
+      withTrailingOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
       checked.postcondition,
     );
@@ -1841,7 +1845,7 @@ const searchStates = (
           const replay = captureOutput(() => replayNext(index));
           outcome = createFailureResult(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
-            { trace: [], trailingOutput: replay.lines },
+            withTrailingOutput({ trace: [] }, replay.lines),
             { phase: "next", ...replay.result },
           );
           return true;
@@ -1868,11 +1872,11 @@ const searchStates = (
         const replay = is174
           ? captureOutput(() => replayNext(index))
           : replayFailedNext(index, liveSuccessors);
-        outcome = createFailureResult(
-          error,
-          { ...behavior, trailingOutput: replay.lines },
-          { phase: "next", ...replay.result, traceFailure },
-        );
+        outcome = createFailureResult(error, withTrailingOutput(behavior, replay.lines), {
+          phase: "next",
+          ...replay.result,
+          traceFailure,
+        });
       }
       return outcome !== undefined;
     });
@@ -1882,7 +1886,7 @@ const searchStates = (
       const live = addReportedLiveState(index, liveSuccessors, source);
       return {
         ...result,
-        violation: { ...result.violation, trailingOutput: live.lines },
+        violation: withTrailingOutput(result.violation, live.lines),
         // TLC adds the state to the behavior graph before it reports the coverage.
         coverage: getCoverage(),
         ...(live.result.additional && { additionalViolation: live.result.additional }),
@@ -1898,7 +1902,7 @@ const searchStates = (
       const live = addReportedLiveState(index, liveSuccessors, source);
       const reported = {
         ...deadlock,
-        violation: deadlock.violation && { ...deadlock.violation, trailingOutput: live.lines },
+        violation: deadlock.violation && withTrailingOutput(deadlock.violation, live.lines),
         coverage: getCoverage(),
       };
       const counted = withOutDegrees(
@@ -1925,15 +1929,11 @@ const searchStates = (
       );
       const behavior = traces.getStateTrace(index, { isPrintedOnly: true });
       const replayed = captureOutput(() => replayNext(index));
-      return createFailureResult(
-        error,
-        { ...behavior, trailingOutput: replayed.lines },
-        {
-          outDegrees: getFailureOutDegrees(),
-          callStack: replay?.callStack.length ? replay.callStack : undefined,
-          phase: "liveness",
-        },
-      );
+      return createFailureResult(error, withTrailingOutput(behavior, replayed.lines), {
+        outDegrees: getFailureOutDegrees(),
+        callStack: replay?.callStack.length ? replay.callStack : undefined,
+        phase: "liveness",
+      });
     }
   };
   const getStutteringWarning = () => {

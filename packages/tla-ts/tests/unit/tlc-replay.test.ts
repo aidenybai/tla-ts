@@ -257,7 +257,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
       expect([
         result.failure?.code,
         result.failure?.exitCode,
-        result.failure?.trailingOutput?.flatMap((line) =>
+        (result.failure?.trailingOutput ?? []).flatMap((line) =>
           typeof line === "object" && line.kind === "violation"
             ? [
                 `${line.violation.name}: ${line.violation.trace.map((step) => formatValue(step.state.y)).join(" ")}`,
@@ -279,7 +279,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
     expect([
       result.failure?.message,
       result.failure?.trace.length,
-      result.failure?.trailingOutput,
+      result.failure?.trailingOutput ?? [],
       formatCallStack(result.failure?.callStack),
       result.failure?.exitCode,
     ]).toEqual(["The second argument of \\div is 0.", 2, [], ["6.8-6.21", "6.8-6.17"], 255]);
@@ -295,7 +295,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
     expect([
       result.failure?.message,
       result.failure?.trace.length,
-      result.failure?.trailingOutput,
+      result.failure?.trailingOutput ?? [],
       formatCallStack(result.failure?.callStack),
       result.failure?.exitCode,
     ]).toEqual([
