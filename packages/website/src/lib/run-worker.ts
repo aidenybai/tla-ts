@@ -63,7 +63,11 @@ const getTitle = (result: CheckResult) => {
   return {
     success: "No error found",
     error: result.failure?.message ?? "Error",
-    "assumption-violation": `Assumption ${name} is false`,
+    // An assumption whose evaluation failed, as TLC says, with the failure's message.
+    "assumption-violation":
+      result.violation?.message === undefined
+        ? `Assumption ${name} is false`
+        : `Evaluating assumption ${name} failed.\n${result.violation.message}`,
     "invariant-violation": `Invariant ${name} violated`,
     "property-violation": `Property ${name} violated`,
     "liveness-violation": `Property ${name} violated`,
