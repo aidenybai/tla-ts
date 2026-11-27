@@ -60,13 +60,38 @@ const DEFINITIONS = [
   // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
   `ThrowRejection(s, promise) ==
   ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
-  // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
-  // timers of no delay.
-  `RunTimers(s) ==
-  IF s.timers = <<>> THEN Ok(s, Undefined) ELSE
-  LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
+  // The tasks that a program queued, each run as a task of its own after the jobs before it ran:
+  // the timers it set, which Node runs of no delay on the Timeout that setTimeout gave a module,
+  // its immediates, which Node runs on their Immediates, each a record of the callback that it
+  // calls, on a receiver, of arguments, and the messages posted to a MessagePort, which Node
+  // delivers once the port listens. Node runs the tasks of a kind in the order the program queued
+  // them, a timer before an immediate where its clock says the timer is due, which its loop reads
+  // anew each time it runs its timers, a message as its poll finds it among the others, and the
+  // messages of two ports in an order of its own, so a run stops where two of those wait at once.
+  `RunTasks(s) ==
+  LET ready == SelectSeq(s.tasks, LAMBDA task : IsReadyTask(s, task)) IN
+  IF ready = <<>> THEN Ok(s, Undefined)
+  ELSE IF \\E i \\in DOMAIN ready : ready[i].kind # ready[1].kind
+  THEN IF \\E i \\in DOMAIN ready : ready[i].kind = "message"
+       THEN Assert(FALSE, "tla-ts can't tell when Node delivers a MessagePort's message among its timers and immediates")
+       ELSE Assert(FALSE, "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides")
+  ELSE IF \\E i \\in DOMAIN ready : ready[1].kind = "message" /\\ ready[i].port # ready[1].port
+  THEN Assert(FALSE, "tla-ts can't tell which of two MessagePorts Node delivers a message to first") ELSE
+  LET first == CHOOSE i \\in DOMAIN s.tasks : IsReadyTask(s, s.tasks[i]) /\\ \\A j \\in 1..(i - 1) : ~IsReadyTask(s, s.tasks[j])
+      task == s.tasks[first]
+      r == RunTask([s EXCEPT !.tasks = SubSeq(@, 1, first - 1) \\o SubSeq(@, first + 1, Len(@)), !.task = [kind |-> "timer"]], task)
+  IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
-  LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
+  LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTasks(u.s)`,
+  // Whether Node would run a task: any but a message to a MessagePort that doesn't listen yet.
+  `IsReadyTask(s, task) == task.kind # "message" \\/ PortField(s, task.port, SV("started")) = True`,
+  // A task's run: a call of a timer's or an immediate's callback, or of a port's onmessage on the
+  // port, of a MessageEvent of the message's data, as Node's EventTarget dispatches it.
+  `RunTask(s, task) ==
+  IF task.kind # "message" THEN Call(s, task.callback, task.this, task.args) ELSE
+  LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("MessageEvent")]))
+      event == StoppingProxy(target.s, target.v, N("MessageEvent"), <<[trap |-> SV("get"), method |-> "messageEventGet", data |-> task.data]>>)
+  IN Call(event.s, PortField(s, task.port, SV("onmessage")), task.port, <<Val(event)>>)`,
   // An error that JS.tla throws with V8's message, which, as V8's, is the error's own property.
   `ThrowMessage(s, kind, units) ==
   LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
@@ -512,14 +537,29 @@ const DEFINITIONS = [
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
-                 [] p.kind = "performance" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"]>>)
+                 [] p.kind \\in {"queueMicrotask", "setImmediate", "clearImmediate"} -> HostMethod(target.s, p.name, 1, TRUE, p.name, p.kind, Empty)
+                 [] p.kind = "MessageChannel" -> MessageChannelConstructor(target.s)
+                 [] p.kind = "performance" ->
+                      StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"],
+                                                                     [trap |-> SV("set"), method |-> "performanceSet"]>>)
                  [] OTHER -> ProxyCreate(target.s, Val(target), handler)
       getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
                 ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
-      d == IF p.isAccessor
+      d == IF p.kind = "performance" THEN ReplaceableAccessor(value.s, Intrinsic(s, p.owner), p.name, Val(value))
+           ELSE IF p.isAccessor
            THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, p.owner), Str(p.name), AccessorDesc(Val(getter), Val(stop), p.enumerable, p.configurable))
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
+  // An accessor of the host that a program may replace the value of, as Node's
+  // defineReplaceableLazyAttribute defines performance on the global object (lib/internal/util.js):
+  // its getter gives the host's value until its setter, which ignores its receiver, keeps another,
+  // which each later read gives. Both are functions of Node's code, whose names and lengths a
+  // program may read.
+  `ReplaceableAccessor(s, owner, name, value) ==
+  LET cell == Alloc(s, MakeObject(Null, "cell", [value |-> value]))
+      get == HostMethod(cell.s, N("get ") \\o name, 0, TRUE, name, "replaceableGet", cell.v)
+      set == HostMethod(get.s, N("set ") \\o name, 1, TRUE, name, "replaceableSet", cell.v)
+  IN DefinePropertyOrThrow(set.s, owner, Str(name), AccessorDesc(Val(get), Val(set), TRUE, TRUE))`,
   // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
   // filename, and url are where the host loaded m from, whose resolve, which the runtime leaves
   // out, stops, and whose main tells whether m is the entry, the module the host loaded first. Of a
@@ -551,12 +591,13 @@ const DEFINITIONS = [
              IF Head(names) = N("main") THEN DataDesc(Bool(isMain), TRUE, TRUE, TRUE) ELSE AccessorDesc(stop, stop, TRUE, TRUE))
   IN IF IsAbrupt(d) THEN d ELSE DefineMetaProperties(d.s, o, stop, Tail(names), isMain)`,
   // The steps of a constructor of the host that makes its object quietly, from the arguments it
-  // converts: TextEncoder's, which converts none, and TextDecoder's, as Node's runs them
+  // converts: TextEncoder's and AbortController's, which convert none, and TextDecoder's, as Node's
+  // runs them
   // (lib/internal/encoding.js), of a label of UTF-8, and of options that it reads fatal and ignoreBOM
   // of, then ignoreBOM and fatal again. A label of another encoding, which the host's table of labels
   // decides, stops.
   `QuietConstruct(s, name, args) ==
-  IF name = N("TextEncoder") THEN Ok(s, Empty) ELSE
+  IF name \\in {N("TextEncoder"), N("AbortController")} THEN Ok(s, Empty) ELSE
   LET label == IF Arg(args, 1) = Undefined THEN Ok(s, Str(N("utf-8"))) ELSE ToStr(s, Arg(args, 1))
       options == Arg(args, 2)
   IN IF IsAbrupt(label) THEN label
@@ -594,6 +635,64 @@ const DEFINITIONS = [
   /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
   /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
   /\\ O(s, O(s, v).slots.target).slots.data = name`,
+  // Whether a value is a proxy that stands for an object of the host of a name, such as a Timeout,
+  // which stops at every operation.
+  `IsHostObject(s, v, name) ==
+  /\\ IsObject(v) /\\ O(s, v).class = "proxy" /\\ IsObject(O(s, v).slots.target)
+  /\\ O(s, O(s, v).slots.target).slots = [hostName |-> name]`,
+  // Node's AbortController, of which a program reads only its signal, the same AbortSignal at each
+  // read, of which it reads only aborted, which is false until abort, which stops, aborts it, as
+  // React's caches read it.
+  `AbortControllerObject(s, instance) ==
+  LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("AbortSignal")]))
+      signal == StoppingProxy(target.s, target.v, N("AbortSignal"), <<[trap |-> SV("get"), method |-> "abortSignalGet"]>>)
+  IN StoppingProxy(signal.s, instance, N("AbortController"), <<[trap |-> SV("get"), method |-> "abortControllerGet", data |-> Val(signal)]>>)`,
+  // Node's MessageChannel, a constructor of no arguments that a program may only call with new,
+  // whose ports' postMessage and close are the same functions on each port, as Node's
+  // MessagePort.prototype has them.
+  `MessageChannelConstructor(s) ==
+  LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, N("MessageChannel"), TRUE, N("MessageChannel"), s.realmId))
+      post == HostMethod(f.s, N("postMessage"), 0, TRUE, N("MessagePort"), "portPostMessage", Empty)
+      close == HostMethod(post.s, N("close"), 1, TRUE, N("MessagePort"), "portClose", Empty)
+      methods == OrdinaryObjectCreate(close.s, Null)
+      withPost == CreateDataProperty(methods.s, Val(methods), SV("postMessage"), Val(post))
+      withClose == CreateDataProperty(withPost.s, Val(methods), SV("close"), Val(close))
+  IN StoppingProxy(withClose.s, f.v, N("MessageChannel"),
+                   <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> N("MessageChannel")],
+                     [trap |-> SV("construct"), method |-> "messageChannelConstruct", data |-> Val(methods)]>>)`,
+  // A MessageChannel, of which a program reads only port1 and port2, two ports that each post to
+  // the other. A port's target holds what Node's keeps: its onmessage, the port it posts to,
+  // whether it listens, which it does once a program sets its onmessage, and whether the channel
+  // closed.
+  `MessageChannelObject(s, methods) ==
+  LET t1 == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("MessagePort")]))
+      t2 == Alloc(t1.s, MakeObject(Null, "ordinary", [hostName |-> N("MessagePort")]))
+      traps == <<[trap |-> SV("get"), method |-> "messagePortGet", data |-> methods], [trap |-> SV("set"), method |-> "messagePortSet"]>>
+      p1 == StoppingProxy(t2.s, t1.v, N("MessagePort"), traps)
+      p2 == StoppingProxy(p1.s, t2.v, N("MessagePort"), traps)
+      ports == SetPortFields(SetPortFields(p2.s, t1.v, Val(p2)), t2.v, Val(p1))
+      c == Alloc(ports, MakeObject(Null, "ordinary", [hostName |-> N("MessageChannel")]))
+      withPort1 == CreateDataProperty(c.s, c.v, SV("port1"), Val(p1))
+      withPort2 == CreateDataProperty(withPort1.s, c.v, SV("port2"), Val(p2))
+  IN StoppingProxy(withPort2.s, c.v, N("MessageChannel"), <<[trap |-> SV("get"), method |-> "messageChannelGet"]>>)`,
+  `SetPortFields(s, target, peer) ==
+  LET a == CreateDataProperty(s, target, SV("onmessage"), Null)
+      b == CreateDataProperty(a.s, target, SV("peer"), peer)
+      c == CreateDataProperty(b.s, target, SV("started"), False)
+  IN CreateDataProperty(c.s, target, SV("closed"), False).s`,
+  // What a port's target holds of key, of the port.
+  `PortField(s, port, key) == OrdinaryGetOwnProperty(O(s, O(s, port).slots.target), key).value`,
+  `SetPortField(s, port, key, value) == CreateDataProperty(s, O(s, port).slots.target, key, value).s`,
+  // Whether a MessagePort of the heap listens and its channel is open, which keeps Node running.
+  `IsPortListening(s) ==
+  \\E i \\in 1..s.objs.size :
+    LET o == HeapGet(s.objs, i) IN
+    /\\ o.class = "ordinary" /\\ o.slots = [hostName |-> N("MessagePort")]
+    /\\ OrdinaryGetOwnProperty(o, SV("started")).value = True /\\ OrdinaryGetOwnProperty(o, SV("closed")).value = False`,
+  // Whether a receiver is the proxy of a target, which a getter of the host's object reads as the
+  // object, where another receiver's brand check would throw.
+  `IsHostView(s, receiver, target) ==
+  IsObject(receiver) /\\ O(s, receiver).class = "proxy" /\\ O(s, receiver).slots.target = target`,
   // Whether an object is a function of the host's code, which the runtime makes as a built-in of
   // its module.
   `IsHostCode(s, o) == O(s, o).class = "builtin" /\\ O(s, o).slots.id[1] = "Module"`,
@@ -672,15 +771,17 @@ const DEFINITIONS = [
   LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, length, name, isConstructor, stopName, s.realmId))
   IN StoppingProxy(f.s, f.v, stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
                                            [trap |-> SV("apply"), method |-> method, data |-> data]>>)`,
-  // Node's console, of which a program reads only the methods that write what they're given and
-  // createTask: each of the former writes nothing that the program reads, where the values it's
-  // given are primitives, which no code of the program runs to format.
+  // Node's console, of which a program reads only the methods that write what they're given, V8's
+  // timeStamp, which marks the inspector's timeline, the methods that group what the others write,
+  // and createTask: each but createTask writes nothing that the program reads, where the values
+  // it's given are primitives, which no code of the program runs to format.
   `ConsoleObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       run == HostMethod(o.s, N("run"), 0, TRUE, N("console task's run"), "taskRun", Empty)
       createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
       made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
-  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
+  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error"), N("timeStamp"),
+                                         N("group"), N("groupCollapsed"), N("groupEnd")>>), Val(o))`,
   `ConsoleMethods(s, o, names) ==
   IF names = <<>> THEN s ELSE
   LET f == CreateBuiltinFunction(s, <<"Module", "consoleWrite">>, 0, Head(names), Empty) IN
@@ -1264,7 +1365,7 @@ const HOST_PATCHES = [
   {
     name: "TimeOutWaiter",
     from: `  IN ResolveWaiters(`,
-    to: `  IN IF s.timers # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
+    to: `  IN IF s.tasks # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
      THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
      ELSE ResolveWaiters(`,
   },
@@ -1314,17 +1415,25 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
-  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran. In a
-  // module program, which runs in the host's own context, it gives a Timeout, as Node does, which
-  // stops at any use, and a script may only call it as a statement.
+  // setTimeout, of a callback and no delay, or a delay that Node runs as none, a Number from 0 to 1,
+  // which Node's timers make 1 without a warning (lib/internal/timers.js), whose callback RunTasks
+  // calls of the arguments after the delay once the jobs ran. In a module program, which runs in the host's own context, it gives a Timeout, as
+  // Node does, which stops at any use, and on which Node calls the callback, and a script may only
+  // call it as a statement.
   {
     name: "GlobalBuiltin",
     from: `    [] m = "gc" ->`,
     to: `    [] m = "setTimeout" ->
-         IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
-         ELSE IF s.hostHandler = Empty THEN Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
-         ELSE LET timeout == Alloc([s EXCEPT !.timers = Append(@, Arg(args, 1))], MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
-              IN ProxyCreate(timeout.s, timeout.v, s.hostHandler)
+         IF ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
+         ELSE IF ~(Arg(args, 2) = Undefined \\/ (IsNumber(Arg(args, 2)) /\\ Arg(args, 2) # HostTime /\\ ~NumIsNaN(Arg(args, 2).value)
+                                                /\\ ~NumLess(Arg(args, 2).value, NumFromInt(0)) /\\ ~NumLess(NumFromInt(1), Arg(args, 2).value)))
+         THEN Assert(FALSE, "tla-ts can't run a timer of a delay, which Node's clock times")
+         ELSE IF s.hostHandler = Empty
+         THEN Ok([s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Undefined, args |-> Rest(args, 3)])], Undefined)
+         ELSE LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
+                  timeout == ProxyCreate(target.s, target.v, s.hostHandler)
+              IN Ok([timeout.s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Val(timeout), args |-> Rest(args, 3)])],
+                    Val(timeout))
     [] m = "gc" ->`,
   },
   // An error's stack: V8's accessor, whose getter and setter are nameless functions shared by every
@@ -1416,6 +1525,14 @@ const HOST_PATCHES = [
   },
   // A job's task, below whose function V8 has no frames, but async ones of the promise a reaction
   // job settles.
+  // queueMicrotask's job, which calls its callback of no arguments and reports what it throws as
+  // an uncaught exception, as Node's runMicrotask does (lib/internal/process/task_queues.js).
+  {
+    name: "RunJob",
+    from: `  IF job.kind = "thenable" THEN`,
+    to: `  IF job.kind = "microtask" THEN Call([s EXCEPT !.task = [kind |-> "microtask"]], job.callback, Undefined, <<>>)
+  ELSE IF job.kind = "thenable" THEN`,
+  },
   {
     name: "RunJob",
     from: `        r == Call(fns.s, job.then, job.thenable, <<fns.resolve, fns.reject>>)
@@ -1557,14 +1674,78 @@ const HOST_PATCHES = [
     [] m = "hostGlobal" -> Ok(s, data)
     [] m = "performanceGet" ->
          IF Arg(args, 2) # SV("now") THEN HostStop(N("performance")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "performanceSet" ->
+         IF Arg(args, 2) # SV("now") \\/ ~IsObject(Arg(args, 4)) \\/ O(s, Arg(args, 4)).class # "proxy" \\/ O(s, Arg(args, 4)).slots.target # Arg(args, 1)
+         THEN HostStop(N("performance"))
+         ELSE ResultThen(True, CreateDataProperty(s, Arg(args, 1), SV("now"), Arg(args, 3)))
+    [] m = "queueMicrotask" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsCallable(list.s, Arg(Val(list), 1)) THEN HostStop(N("queueMicrotask"))
+         ELSE Ok(EnqueueJob(list.s, [kind |-> "microtask", callback |-> Arg(Val(list), 1)]), Undefined)
+    [] m = "setImmediate" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsCallable(list.s, Arg(Val(list), 1)) THEN HostStop(N("setImmediate")) ELSE
+         LET target == Alloc(list.s, MakeObject(Null, "ordinary", [hostName |-> N("Immediate")]))
+             immediate == ProxyCreate(target.s, target.v, s.hostHandler)
+         IN Ok([immediate.s EXCEPT !.tasks = Append(@, [kind |-> "immediate", callback |-> Arg(Val(list), 1), this |-> Val(immediate),
+                                                        args |-> Rest(Val(list), 2)])], Val(immediate))
+    [] m = "clearImmediate" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             immediate == Arg(Val(list), 1)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~ToBooleanValue(immediate) THEN Ok(list.s, Undefined)
+            ELSE IF ~IsHostObject(list.s, immediate, N("Immediate")) THEN HostStop(N("clearImmediate"))
+            ELSE Ok([list.s EXCEPT !.tasks = SelectSeq(@, LAMBDA task : task.this # immediate)], Undefined)
+    [] m = "replaceableGet" -> Ok(s, O(s, data).slots.value)
+    [] m = "replaceableSet" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list ELSE Ok(SetO(list.s, data, [O(list.s, data) EXCEPT !.slots.value = Arg(Val(list), 1)]), Undefined)
     [] m = "hostMethodGet" -> IF Arg(args, 2) \\notin {SV("name"), SV("length")} THEN HostStop(data) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "performanceNow" ->
          IF ~IsObject(Arg(args, 2)) \\/ O(s, Arg(args, 2)).class # "proxy" \\/ O(s, Arg(args, 2)).slots.target # data
          THEN HostStop(N("performance.now")) ELSE Ok(s, HostTime)
     [] m = "consoleGet" ->
-         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
+         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("timeStamp"),
+                                  SV("group"), SV("groupCollapsed"), SV("groupEnd"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
          ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "messageChannelConstruct" ->
+         IF ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("MessageChannel")) ELSE MessageChannelObject(s, data)
+    [] m = "messageChannelGet" ->
+         IF Arg(args, 2) \\notin {SV("port1"), SV("port2")} THEN HostStop(N("MessageChannel")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "messagePortGet" ->
+         CASE Arg(args, 2) = SV("onmessage") /\\ IsHostView(s, Arg(args, 3), Arg(args, 1)) -> Get(s, Arg(args, 1), SV("onmessage"))
+           [] Arg(args, 2) \\in {SV("postMessage"), SV("close")} -> Get(s, data, Arg(args, 2))
+           [] OTHER -> HostStop(N("MessagePort"))
+    [] m = "messagePortSet" ->
+         IF Arg(args, 2) # SV("onmessage") \\/ ~IsHostView(s, Arg(args, 4), Arg(args, 1)) \\/ ~IsCallable(s, Arg(args, 3))
+         THEN HostStop(N("MessagePort"))
+         ELSE Ok(SetPortField(SetPortField(s, Arg(args, 4), SV("onmessage"), Arg(args, 3)), Arg(args, 4), SV("started"), True), True)
+    [] m = "portPostMessage" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             port == Arg(args, 2)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsHostObject(list.s, port, N("MessagePort")) \\/ Len(Val(list)) # 1 \\/ IsObject(Arg(Val(list), 1))
+                    \\/ Arg(Val(list), 1).type = "symbol" \\/ PortField(list.s, port, SV("closed")) = True
+            THEN HostStop(N("MessagePort"))
+            ELSE Ok([list.s EXCEPT !.tasks = Append(@, [kind |-> "message", port |-> PortField(list.s, port, SV("peer")), data |-> Arg(Val(list), 1)])],
+                    Undefined)
+    [] m = "portClose" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             port == Arg(args, 2)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsHostObject(list.s, port, N("MessagePort")) \\/ Val(list) # <<>>
+                    \\/ \\E i \\in DOMAIN list.s.tasks : list.s.tasks[i].kind = "message" /\\ list.s.tasks[i].port \\in {port, PortField(list.s, port, SV("peer"))}
+            THEN HostStop(N("MessagePort"))
+            ELSE Ok(SetPortField(SetPortField(list.s, port, SV("closed"), True), PortField(list.s, port, SV("peer")), SV("closed"), True), Undefined)
+    [] m = "messageEventGet" ->
+         IF Arg(args, 2) # SV("data") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("MessageEvent")) ELSE Ok(s, data)
+    [] m = "abortControllerGet" ->
+         IF Arg(args, 2) # SV("signal") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("AbortController")) ELSE Ok(s, data)
+    [] m = "abortSignalGet" ->
+         IF Arg(args, 2) # SV("aborted") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("AbortSignal")) ELSE Ok(s, False)
     [] m = "textEncoderGet" ->
          CASE Arg(args, 2) = SV("encode") -> Ok(s, data)
            [] Arg(args, 2) = SV("encoding") -> Ok(s, SV("utf-8"))
@@ -1679,9 +1860,10 @@ const HOST_PATCHES = [
             LET name == O(s, target).slots.data
                 instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> name]))
                 encode == CreateBuiltinFunction(instance.s, <<"Module", "textEncode">>, 0, N("encode"), Empty)
-            IN IF name = N("TextEncoder")
-               THEN StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
-               ELSE ProxyCreate(instance.s, instance.v, s.hostHandler)
+            IN CASE name = N("TextEncoder") ->
+                      StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
+                 [] name = N("AbortController") -> AbortControllerObject(instance.s, instance.v)
+                 [] OTHER -> ProxyCreate(instance.s, instance.v, s.hostHandler)
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,

@@ -22,5 +22,10 @@
     "@shadcn/lint": "^0.2.5",
     "vite-plus": "1.4.0"
   },
-  "packageManager": "pnpm@10.12.1"
+  "packageManager": "pnpm@10.12.1",
+  "pnpm": {
+    "overrides": {
+      "react-reconciler>scheduler": "0.28.0"
+    }
+  }
 }

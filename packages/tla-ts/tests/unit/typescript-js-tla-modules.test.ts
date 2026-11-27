@@ -671,8 +671,8 @@ describe("gives a module the host's globals and properties that JS.tla lacks, wh
   });
 
   it("stops at a call of a global", async () => {
-    expect((await checkModules({ "main.js": "setImmediate(() => {});" })).message).toContain(
-      "tla-ts can't run the host's setImmediate",
+    expect((await checkModules({ "main.js": "structuredClone(1);" })).message).toContain(
+      "tla-ts can't run the host's structuredClone",
     );
   });
 
@@ -688,27 +688,38 @@ describe("gives a module the host's globals and properties that JS.tla lacks, wh
         `const log = [];
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
+        const controller = new AbortController(1);
         function encode(text) { return encoder.encode(text); }
-        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode);`,
+        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode, typeof controller);
+        log.push(typeof controller.signal, controller.signal === controller.signal, controller.signal.aborted);`,
         expected,
       ),
     });
 
     it("agrees with Node", async () => {
       expect(
-        (await checkModules(getQuiet("object,object,false,function"))).message,
+        (await checkModules(getQuiet("object,object,false,function,object,object,true,false")))
+          .message,
       ).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkModules(getQuiet("object,object,true,function"))).message).toContain(
-        THREW,
-      );
+      expect(
+        (await checkModules(getQuiet("object,object,true,function,object,object,true,false")))
+          .message,
+      ).toContain(THREW);
     });
 
-    it("stops at a use of the object", async () => {
-      expect((await checkModules({ "main.js": "new TextDecoder().decode();" })).message).toContain(
-        "tla-ts can't run the host's TextDecoder",
+    it.each([
+      ["new TextDecoder().decode()", "TextDecoder"],
+      ["new AbortController().abort()", "AbortController"],
+      ["new AbortController().signal.reason", "AbortSignal"],
+      ["Object.create(new AbortController()).signal", "AbortController"],
+      ["const { signal } = new AbortController(); Object.create(signal).aborted", "AbortSignal"],
+      ["class Controller extends AbortController {} new Controller()", "AbortController"],
+    ])("stops at %s", async (use, name) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        `tla-ts can't run the host's ${name}`,
       );
     });
 
@@ -829,6 +840,66 @@ describe("calls performance.now on performance, and stops at every other use", (
       "tla-ts can't run the host's performance.now",
     );
   });
+});
+
+// A program replaces the host's clock as Node lets it: performance is an accessor of the global
+// object whose setter keeps the program's value, performance.now and Date.now take the program's
+// functions, and a read of the host's own clock still stops where its time is used.
+describe("reads the clock that a program gives in place of the host's", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": getMain(
+      `const log = [];
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "performance");
+      log.push(descriptor.get.name, descriptor.get.length, descriptor.set.name, descriptor.set.length, descriptor.enumerable, descriptor.configurable);
+      const host = performance;
+      performance.now = () => 5;
+      log.push(performance.now(), host === performance);
+      globalThis.performance = { now: () => 7 };
+      log.push(performance.now(), typeof Object.getOwnPropertyDescriptor(globalThis, "performance").get, host.now());
+      Reflect.apply(descriptor.set, undefined, [3]);
+      log.push(performance, Reflect.apply(descriptor.get, 1, []));
+      Object.defineProperty(globalThis, "performance", { value: 9, writable: true, configurable: true });
+      log.push(performance, "get" in Object.getOwnPropertyDescriptor(globalThis, "performance"));
+      Date.now = () => 11;
+      log.push(Date.now());`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("get performance,0,set performance,1,true,true,5,true,7,function,5,3,3,9,false,11"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("get performance,0,set performance,1,true,true,5,true,7,function,7,3,3,9,false,11"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  it.each([
+    "const host = performance; globalThis.performance = { now: () => 0 }; host.now() > 0;",
+    "Date.now = () => 0; new Date().getTime() > 0;",
+  ])("stops where %s reads the host's clock", async (code) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(
+      "tla-ts can't read the host's clock",
+    );
+  });
+
+  it.each(["performance.mark", "performance.timeOrigin = 0", "Object.create(performance).now = 0"])(
+    "stops at %s",
+    async (use) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        "tla-ts can't run the host's performance",
+      );
+    },
+  );
 });
 
 // A global binding that holds the host's performance, which HasBinding and GetBindingValue read
@@ -953,6 +1024,85 @@ describe("calls process.getBuiltinModule as Node does, and stops at every other 
   });
 });
 
+// A MessageChannel's port delivers the messages posted to it once it listens, which it does once
+// a program sets its onmessage, in the order the program posted them, each a task of its own after
+// the jobs before it, as a call of onmessage on the port of a MessageEvent of the message's data,
+// as Node's EventTarget dispatches it. A program closes the port, so that Node ends.
+describe("delivers a MessagePort's messages in order, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      const channel = new MessageChannel();
+      const port = channel.port1;
+      log.push(typeof MessageChannel, MessageChannel.name, MessageChannel.length, port === channel.port1, port.onmessage, port.postMessage === channel.port2.postMessage, port.postMessage.name, port.postMessage.length, port.close.name, port.close.length);
+      channel.port2.postMessage(1);
+      queueMicrotask(() => log.push("micro"));
+      port.onmessage = function (event) {
+        log.push(\`m\${event.data}:\${this === port}:\${arguments.length}:\${typeof event}\`);
+        queueMicrotask(() => log.push(\`after\${event.data}\`));
+        if (event.data === 1) channel.port2.postMessage("two");
+        else {
+          port.close();
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        }
+      };
+      log.push(typeof port.onmessage);`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles(
+        "function,MessageChannel,0,true,,true,postMessage,0,close,1,function,micro,m1:true:1:object,after1,mtwo:true:1:object",
+      ),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles(
+        "function,MessageChannel,0,true,,true,postMessage,0,close,1,function,micro,m1:true:1:object,mtwo:true:1:object,after1",
+      ),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  // Node delivers a message as its poll finds it, among the timers and immediates, and the
+  // messages of two ports in an order of its own, and keeps running while a port listens.
+  it.each([
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => c.port1.close(); c.port2.postMessage(1); setImmediate(() => {});",
+      "tla-ts can't tell when Node delivers a MessagePort's message among its timers and immediates",
+    ],
+    [
+      "const a = new MessageChannel(); const b = new MessageChannel(); a.port1.onmessage = () => a.port1.close(); b.port1.onmessage = () => b.port1.close(); b.port2.postMessage(1); a.port2.postMessage(1);",
+      "tla-ts can't tell which of two MessagePorts Node delivers a message to first",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => {};",
+      "tla-ts can't end a program whose MessagePort listens, which keeps Node running",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.postMessage({});",
+      "tla-ts can't run the host's MessagePort",
+    ],
+    ["const c = new MessageChannel(); c.port1.start();", "tla-ts can't run the host's MessagePort"],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => {}; c.port2.postMessage(1); c.port1.close();",
+      "tla-ts can't run the host's MessagePort",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = (event) => { c.port1.close(); event.type; }; c.port2.postMessage(1);",
+      "tla-ts can't run the host's MessageEvent",
+    ],
+    ["MessageChannel()", "tla-ts can't run the host's MessageChannel"],
+  ])("stops at %s", async (code, message) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(message);
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];
@@ -974,6 +1124,178 @@ describe("gives a module a Timeout of setTimeout, which stops where its code use
       "tla-ts can't run the host's Timeout",
     );
   });
+
+  // Node runs a timer of a delay from 0 to 1 as one of no delay, which its timers make 1, and calls
+  // its callback of the arguments after the delay.
+  describe("runs a timer of a delay that Node runs as none", () => {
+    const getDelayFiles = (expected: string) => ({
+      "package.json": '{ "type": "module" }',
+      "main.js": `const log = [];
+        setTimeout(() => log.push("a"), 0);
+        setTimeout((x, y) => log.push(\`b:\${x}:\${y}\`), 1, "x", "y");
+        setTimeout(() => log.push("c"), -0);
+        setTimeout(() => log.push("d"), undefined);
+        setTimeout(() => log.push("e"), 0.5);
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(getDelayFiles("a,b:x:y,c,d,e"), "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(getDelayFiles("a,b:x:undefined,c,d,e"), "main.js");
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+
+    // Node times a longer delay on its clock, and warns of a negative one and of NaN, and converts
+    // a delay of another type.
+    it.each(["2", "1.5", "-1", "NaN", '"0"'])("stops at a delay of %s", async (delay) => {
+      expect(
+        (await checkModules({ "main.js": `setTimeout(() => {}, ${delay});` })).message,
+      ).toContain("tla-ts can't run a timer of a delay, which Node's clock times");
+    });
+  });
+
+  // Node calls a timer's callback on its Timeout (lib/internal/timers.js), of no arguments.
+  describe("calls the callback on its Timeout", () => {
+    const getReceiverFiles = (expected: string) => ({
+      "package.json": '{ "type": "module" }',
+      "main.js": `const log = [];
+        const handle = setTimeout(function () { log.push(typeof this, this === handle, arguments.length); });
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(getReceiverFiles("object,true,0"), "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(getReceiverFiles("undefined,false,0"), "main.js");
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+  });
+});
+
+// queueMicrotask's callback runs of no arguments and no receiver, in V8's one queue of jobs with
+// the promises' reactions, as Node runs it.
+describe("runs queueMicrotask's callback in the queue of jobs, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      log.push(queueMicrotask.name, queueMicrotask.length, typeof queueMicrotask);
+      queueMicrotask(function () {
+        log.push(\`a:\${this}:\${arguments.length}\`);
+        queueMicrotask(() => log.push("c"));
+        Promise.resolve().then(() => log.push("d"));
+      });
+      Promise.resolve().then(() => log.push("b"));
+      log.push(queueMicrotask(() => log.push("e")), "sync");
+      setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("queueMicrotask,1,function,,sync,a:undefined:0,b,e,c,d"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("queueMicrotask,1,function,,sync,a:undefined:0,e,b,c,d"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  it("throws what a callback throws, and runs no later job", async () => {
+    const result = await checkEntry(
+      {
+        "package.json": '{ "type": "module" }',
+        "main.js": `queueMicrotask(() => { throw new RangeError("first"); });
+          queueMicrotask(() => { throw new RangeError("second"); });`,
+      },
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining("first")]);
+  });
+
+  it.each(["queueMicrotask(1)", "new queueMicrotask(() => {})", "queueMicrotask.prototype"])(
+    "stops at %s",
+    async (use) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        "tla-ts can't run the host's queueMicrotask",
+      );
+    },
+  );
+});
+
+// setImmediate's callbacks run in the order the program queued them, each a task of its own after
+// the jobs before it, on its Immediate, of the arguments that setImmediate gave it, and one that a
+// callback queues after those queued before it, as Node runs them in its check phase
+// (lib/internal/timers.js). clearImmediate takes one from the queue, and does nothing of a falsy
+// value or an Immediate that ran.
+describe("runs setImmediate's callbacks in order, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      log.push(setImmediate.name, setImmediate.length, clearImmediate.name, clearImmediate.length);
+      const first = setImmediate(function (a, b) {
+        log.push(\`i1:\${typeof this}:\${this === first}:\${a}:\${b}:\${arguments.length}\`);
+        queueMicrotask(() => log.push("m1"));
+        setImmediate(() => {
+          log.push("i3");
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        });
+      }, "x", "y");
+      const second = setImmediate(() => log.push("never"));
+      setImmediate(() => log.push("i2"));
+      log.push(typeof first, first === second, clearImmediate(second), clearImmediate(undefined), clearImmediate(0));
+      setImmediate(() => { clearImmediate(first); log.push("end"); });`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("setImmediate,1,clearImmediate,1,object,false,,,,i1:object:true:x:y:2,m1,i2,end,i3"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("setImmediate,1,clearImmediate,1,object,false,,,,i1:object:true:x:y:2,i2,m1,end,i3"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  // Node runs a timer first where its clock says the timer is due as its loop starts or runs its
+  // timers again, and an immediate first otherwise.
+  it.each([
+    "setImmediate(() => {}); setTimeout(() => {});",
+    "setTimeout(() => setImmediate(() => {})); setTimeout(() => {});",
+    "setImmediate(() => { setImmediate(() => {}); setTimeout(() => {}); });",
+  ])("stops where %s leaves a timer and an immediate", async (code) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(
+      "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides",
+    );
+  });
+
+  it.each([
+    ["setImmediate(() => {}).ref()", "Immediate"],
+    ["setImmediate(1)", "setImmediate"],
+    ["clearImmediate({})", "clearImmediate"],
+    ["new setImmediate(() => {})", "setImmediate"],
+  ])("stops at %s", async (use, name) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      `tla-ts can't run the host's ${name}`,
+    );
+  });
 });
 
 describe("gives a module the part of Node's console that writes primitives and makes tasks", () => {
@@ -982,26 +1304,52 @@ describe("gives a module the part of Node's console that writes primitives and m
       `const log = [];
       const task = console.createTask("work");
       log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run, task.run.name, task.run.length);
-      console.error("warning", 1, true);`,
+      console.error("warning", 1, true);
+      log.push(...["timeStamp", "group", "groupCollapsed", "groupEnd"].map((name) => \`\${typeof console[name]}:\${console[name].name}:\${console[name].length}\`));
+      console.timeStamp("mark", 1);
+      console.group("group");
+      console.groupCollapsed();
+      console.groupEnd();`,
       expected,
     ),
   });
 
   it("agrees with Node", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true,run,0"))).message,
+      (
+        await checkModules(
+          getFiles(
+            "function,true,log,0,7,run,true,run,0,function:timeStamp:0,function:group:0,function:groupCollapsed:0,function:groupEnd:0",
+          ),
+        )
+      ).message,
     ).toBeUndefined();
   });
 
   it("rejects another result", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true,run,1"))).message,
+      (
+        await checkModules(
+          getFiles(
+            "function,true,log,0,7,run,true,run,1,function:timeStamp:0,function:group:0,function:groupCollapsed:0,function:groupEnd:0",
+          ),
+        )
+      ).message,
     ).toContain(THREW);
   });
 
-  it("stops at a write of an object, which Node formats", async () => {
-    expect((await checkModules({ "main.js": "console.log({});" })).message).toContain(
-      "tla-ts can't write an object to the host's console",
+  it.each(["console.log({});", "console.group({});"])(
+    "stops at a write of an object, which Node formats, in %s",
+    async (code) => {
+      expect((await checkModules({ "main.js": code })).message).toContain(
+        "tla-ts can't write an object to the host's console",
+      );
+    },
+  );
+
+  it("stops at another method", async () => {
+    expect((await checkModules({ "main.js": "console.table([]);" })).message).toContain(
+      "tla-ts can't use the host's console other than to write primitives and createTask",
     );
   });
 
