@@ -547,6 +547,21 @@ describe("liveness matches TLC", () => {
       );
     },
   );
+
+  it("warns of a tautology when the spec names a property a <- substitutes, as TLC tags the name the spec writes", async () => {
+    const warnings: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nLive == WF_x(Next)\nLive2 == WF_x(Next)\nSpec == Init /\\ [][Next]_x /\\ Live\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live\nCONSTANT Live <- Live2",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text);
+      },
+    });
+    expect(warnings).toEqual([
+      "Implied-temporal checking is a tautology.\nThe temporal formula Live at line 7, col 1 to line 7, col 19 of module M equals\nthe fairness constraints of the behavior specification Spec at line 8, col 1 to line 8, col 34 of module M.\nTherefore, checking whether Spec => Live using TLC will never result in a violation of Live.",
+    ]);
+  });
 });
 
 describe("_PERIODIC matches TLC", () => {

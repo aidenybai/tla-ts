@@ -321,7 +321,9 @@ export const getCoverageLabel = (
   actionHead?: SourceRange,
   actionBody?: SourceRange,
 ) => {
-  const key = name === undefined || actionHead ? undefined : getRootKey(name, environment);
+  const rootKey = name === undefined || actionHead ? undefined : getRootKey(name, environment);
+  const key =
+    rootKey === undefined ? undefined : (environment.substitutions.get(rootKey) ?? rootKey);
   const definition = key === undefined ? undefined : environment.definitions.get(key);
   const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);

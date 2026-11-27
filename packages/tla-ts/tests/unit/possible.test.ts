@@ -119,6 +119,20 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
+  it.each(["Poss <- Poss2", "Poss <- [M] Poss2"])(
+    "names the definition %s substitutes for an unwitnessed _POSSIBLE predicate, as TLC does for a plain <-",
+    async (override) => {
+      const result = await checkModule(
+        "Poss == x = 1\nPoss2 == x = 5",
+        `_POSSIBLE Poss\nCONSTANT ${override}`,
+      );
+      expect([result.violation?.message, result.violation?.counts]).toEqual([
+        `The _POSSIBLE predicate Poss2 at line 7, col 10 to line 7, col 14 of module M ${NEVER_WITNESSED}`,
+        "[Poss |-> 0]",
+      ]);
+    },
+  );
+
   it("checks a POSTCONDITION after a violation without changing its status", async () => {
     const result = await check({
       source:

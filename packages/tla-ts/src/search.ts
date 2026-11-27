@@ -1559,12 +1559,15 @@ export const createSearch = (
     const totals = getPossibleTotals(runtime);
     const unwitnessed = possible.find((item) => !totals.get(item.name));
     if (!unwitnessed) return undefined;
-    const range = getBodyRange(getRootKey(unwitnessed.name, environment), environment);
+    const key = getRootKey(unwitnessed.name, environment);
+    const range = getBodyRange(key, environment);
     const location = range ? ` at ${formatRange(range)}` : "";
+    // TLC names the definition a <- substitutes for the predicate, not the configured name.
+    const name = getDefinition(key, environment)?.name ?? unwitnessed.name;
     return {
       name: unwitnessed.name,
       code: MESSAGE_CODE.possibleUnwitnessed,
-      message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
+      message: `The _POSSIBLE predicate ${name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
       counts: prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile),
     };
   };
