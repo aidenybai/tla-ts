@@ -51,6 +51,11 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(definitions)).toBe(code);
   });
 
+  it("exits with 150 for a _POSSIBLE that lists a name twice", async () => {
+    const config = "INIT Init\nNEXT Next\n_POSSIBLE P P";
+    expect(await getFailureExitCode(`${STEP}\nP == x = 1`, config)).toBe(150);
+  });
+
   it("exits with 255 for a symmetry that isn't a set of permutations", async () => {
     const config = "INIT Init\nNEXT Next\nSYMMETRY P";
     expect(await getFailureExitCode(`${STEP}\nP == 1`, config)).toBe(255);

@@ -754,11 +754,8 @@ const getBodyRange = (name: string, environment: Environment) => {
     : definition.bodyRange;
 };
 
-const getPossiblePredicates = (names: string[], environment: Environment) =>
-  names.map((name, index) => {
-    if (names.indexOf(name) !== index) {
-      throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
-    }
+const getPossiblePredicates = (names: string[], environment: Environment) => {
+  const predicates = names.map((name) => {
     getConfigDefinition("possible", name, environment);
     const possible = createNamedIdentifier(name, environment);
     if (getSanyLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
@@ -768,6 +765,17 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
     }
     return possible;
   });
+  // TLC's generated _POSSIBLE module defines one operator per listed name, so SANY rejects a name listed twice.
+  if (new Set(names).size !== names.length) {
+    throw setExitCode(
+      new TlaConfigError(
+        "Parsing or semantic analysis failed._POSSIBLE: semantic analysis of generated module failed",
+      ),
+      EXIT_STATUS.specParseError,
+    );
+  }
+  return predicates;
+};
 
 const getMembership = (
   expression: Expression,
