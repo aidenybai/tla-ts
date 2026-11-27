@@ -1792,12 +1792,14 @@ const searchStates = (
       traces.getStateTrace(index, { isPrintedOnly: !counterExample }),
       counterExample,
     );
+  // Deviation from TLC: 1.7.4's Worker reports a StackOverflowError as an unexpected exception with a Java stack trace and no behavior, where tla-ts prints the stack overflow message and the behavior.
   const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) => {
     const checked = getNextFailureTrace(index, counterExample);
+    const replay = is174 ? captureOutput(() => replayNext(index)) : undefined;
     return createFailureResult(
       createStackOverflowError(),
-      checked.behavior,
-      { phase: "next" },
+      replay ? withTrailingOutput(checked.behavior, replay.lines) : checked.behavior,
+      { phase: "next", ...(replay && (replay.result ?? { outDegrees: getFailureOutDegrees() })) },
       checked.postcondition,
     );
   };
