@@ -11,7 +11,7 @@ import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { StateClones } from "./state-clones";
+import { Maze } from "./maze";
 import { Code } from "./code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
@@ -224,37 +224,14 @@ const ExampleSource = () => {
   );
 };
 
-interface ClonesFigureProps {
-  className: string;
-}
-
-const ClonesFigure = (props: ClonesFigureProps) => {
+const ExampleGame = () => {
   const state = exampleContext.useParts();
-  const search = state.result?.search;
-  if (!search) return null;
-  const count = search.checkedStates.length;
-  return (
-    <figure className={cn("flex flex-col gap-4", props.className)}>
-      <StateClones search={search} path={state.path} onHover={state.hoverState} />
-      <figcaption className="text-sm text-faint">
-        {count.toLocaleString("en-US")} {count === 1 ? "state" : "states"} checked
-        {state.result?.isPassed ? ", and none breaks a rule." : ", until one broke a rule."}
-      </figcaption>
-    </figure>
-  );
+  return <Maze search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />;
 };
-
-// The states sit beside the example where the page has room, and under it where it does not.
-const ExampleGraph = () => (
-  <>
-    <ClonesFigure className="absolute top-10 left-full ml-8 w-60 max-xl:hidden" />
-    <ClonesFigure className="mt-10 xl:hidden" />
-  </>
-);
 
 export const Example = {
   Root: ExampleRoot,
   Hint: ExampleHint,
   Source: ExampleSource,
-  Graph: ExampleGraph,
+  Game: ExampleGame,
 };

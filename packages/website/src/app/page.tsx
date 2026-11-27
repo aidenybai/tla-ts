@@ -4,7 +4,6 @@ import { GitHubIcon } from "@/components/github-icon";
 import { BenchmarkChart } from "@/components/benchmark-chart";
 import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
-import { LikeDemo } from "@/components/like-demo";
 import { Section } from "@/components/section";
 import { Prompt } from "@/components/prompt";
 import { Content } from "@/components/content";
@@ -45,23 +44,21 @@ const Page = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          Here is a like button with a bug in it. The rule it should keep: an empty heart means zero
-          likes. Try to break it.
-        </p>
-        <LikeDemo />
-        <p className="mt-4 text-pretty">
-          You are checking one order of calls at a time, by hand. A test does the same: it runs the
-          one order you thought to write. TLA-ts runs every order, and checks the rule after each
-          call.
-        </p>
-        <p className="text-pretty">
-          This is the code behind that button, with the rule on its last line. Press run and watch
-          TLA-ts try every order until one breaks it.
+          Here is a small game. The gold is walled off, so nobody should be able to reach it. The
+          code has a bug. Try to find it.
         </p>
         <Example.Root>
+          <Example.Game />
+          <p className="mt-4 text-pretty">
+            You try one path at a time. So does a test: it runs the one path you thought to write.
+            TLA-ts tries every path, and checks the rule after each move.
+          </p>
+          <p className="text-pretty">
+            This is the code behind the game, with the rule on its last line. You write the rule.
+            You never write the paths.
+          </p>
           <Example.Source />
           <Example.Hint />
-          <Example.Graph />
         </Example.Root>
       </Section.Root>
       <Section.Root>
