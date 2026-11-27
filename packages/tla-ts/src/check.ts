@@ -1737,6 +1737,7 @@ const searchStates = (
       liveness?.addState(index, states[index], liveSuccessors);
       return undefined;
     } catch (error) {
+      if (isStackOverflow(error)) return undefined;
       if (!(error instanceof TlaEvaluationError)) throw error;
       // TLC fails to fingerprint an incomplete successor with an exception Worker#doNextCheckLiveness doesn't rerun for a call stack.
       if (error instanceof TlaIncompleteSuccessorError) return undefined;
@@ -1853,6 +1854,9 @@ const searchStates = (
           callStack: undefined,
         };
       } catch (error) {
+        // TLC's ModelChecker#doNextFailed prints nothing for a StackOverflowError once an error state is set.
+        if (isStackOverflow(error))
+          return { additional: undefined, isFailed: true, callStack: undefined };
         if (!(error instanceof TlaEvaluationError)) throw error;
         return {
           additional: undefined,
@@ -1957,6 +1961,7 @@ const searchStates = (
     try {
       return addLiveState(index, liveSuccessors, source);
     } catch (error) {
+      if (isStackOverflow(error)) return reportNextStateOverflow(index);
       if (is174 && error instanceof TlaEvaluationError) {
         return createFailureResult(
           setExitCode(toUnexpectedError(error), EXIT_STATUS.error),
