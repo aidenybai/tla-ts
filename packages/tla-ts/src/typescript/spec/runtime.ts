@@ -573,12 +573,13 @@ const DEFINITIONS = [
              IF Head(names) = N("main") THEN DataDesc(Bool(isMain), TRUE, TRUE, TRUE) ELSE AccessorDesc(stop, stop, TRUE, TRUE))
   IN IF IsAbrupt(d) THEN d ELSE DefineMetaProperties(d.s, o, stop, Tail(names), isMain)`,
   // The steps of a constructor of the host that makes its object quietly, from the arguments it
-  // converts: TextEncoder's, which converts none, and TextDecoder's, as Node's runs them
+  // converts: TextEncoder's and AbortController's, which convert none, and TextDecoder's, as Node's
+  // runs them
   // (lib/internal/encoding.js), of a label of UTF-8, and of options that it reads fatal and ignoreBOM
   // of, then ignoreBOM and fatal again. A label of another encoding, which the host's table of labels
   // decides, stops.
   `QuietConstruct(s, name, args) ==
-  IF name = N("TextEncoder") THEN Ok(s, Empty) ELSE
+  IF name \\in {N("TextEncoder"), N("AbortController")} THEN Ok(s, Empty) ELSE
   LET label == IF Arg(args, 1) = Undefined THEN Ok(s, Str(N("utf-8"))) ELSE ToStr(s, Arg(args, 1))
       options == Arg(args, 2)
   IN IF IsAbrupt(label) THEN label

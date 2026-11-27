@@ -92,7 +92,7 @@ const MODELED_GLOBALS = new Set([
 
 // The host's constructors that make an object quietly, running nothing that a program sees but
 // what QuietConstruct converts of their arguments until it uses the object.
-const QUIET_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
+const QUIET_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder", "AbortController"]);
 
 // The services of Intl whose supportedLocalesOf HostLocale answers for.
 const LOCALE_SERVICES = [

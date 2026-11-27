@@ -688,27 +688,33 @@ describe("gives a module the host's globals and properties that JS.tla lacks, wh
         `const log = [];
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
+        const controller = new AbortController(1);
         function encode(text) { return encoder.encode(text); }
-        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode);`,
+        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode, typeof controller);`,
         expected,
       ),
     });
 
     it("agrees with Node", async () => {
       expect(
-        (await checkModules(getQuiet("object,object,false,function"))).message,
+        (await checkModules(getQuiet("object,object,false,function,object"))).message,
       ).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkModules(getQuiet("object,object,true,function"))).message).toContain(
-        THREW,
-      );
+      expect(
+        (await checkModules(getQuiet("object,object,true,function,object"))).message,
+      ).toContain(THREW);
     });
 
-    it("stops at a use of the object", async () => {
-      expect((await checkModules({ "main.js": "new TextDecoder().decode();" })).message).toContain(
-        "tla-ts can't run the host's TextDecoder",
+    it.each([
+      ["new TextDecoder().decode()", "TextDecoder"],
+      ["new AbortController().abort()", "AbortController"],
+      ["new AbortController().signal", "AbortController"],
+      ["class Controller extends AbortController {} new Controller()", "AbortController"],
+    ])("stops at %s", async (use, name) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        `tla-ts can't run the host's ${name}`,
       );
     });
 
