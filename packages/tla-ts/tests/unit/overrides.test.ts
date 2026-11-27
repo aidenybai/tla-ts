@@ -161,6 +161,40 @@ describe("Java module overrides match TLC", () => {
   );
 
   it.each([
+    ["", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Small = [Overrides] 42", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Twice = [Overrides] 9", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Twice(5) = [Overrides] 9", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Small = [Root] 42", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Twice = [Root] 9", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Twice(5) = [Root] 9", "<<3, -2, 3, -2>>"],
+    ["CONSTANT Small <- [Overrides] Other", "<<77, -2, 77, -2>>"],
+    ["CONSTANT Small <- Other", "<<77, -2, 3, -2>>"],
+    ["CONSTANT Small = 42", "<<42, -2, 3, -2>>"],
+    ["CONSTANT Twice = 9", "<<3, 9, 3, -2>>"],
+    ["CONSTANT Twice(5) = 9", "<<3, 9, 3, -2>>"],
+    ["CONSTANT Small = 42 Small = [Overrides] 50", "<<42, -2, 3, -2>>"],
+    ["CONSTANT Twice(5) = [Overrides] 9 Twice(5) = 8", "<<3, 8, 3, -2>>"],
+  ])(
+    "gives Small, Twice(5) and their copies in an instance what TLC does under %j, as a Java override replaces a [Mod] value or table",
+    async (constants, printed) => {
+      const prints: string[] = [];
+      await check({
+        source:
+          "---- MODULE Root ----\nEXTENDS Overrides, TLC\nVARIABLE x\nOther == 77\nI == INSTANCE Overrides\nASSUME PrintT(<<Small, Twice(5), I!Small, I!Twice(5)>>)\nInit == x = 0\nNext == x' = x\n====",
+        config: `${constants}\nINIT Init\nNEXT Next`,
+        loadModule: (name) =>
+          name === "Overrides"
+            ? "---- MODULE Overrides ----\nEXTENDS Integers\nSmall == 0\nTwice(n) == 2 * n\n===="
+            : undefined,
+        loadClass,
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([printed]);
+    },
+  );
+
+  it.each([
     [
       "unknown operator",
       "Flag == Undefined",
