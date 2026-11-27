@@ -616,6 +616,7 @@ const getSpecification = (
               isNamed: false,
               isUncached: false,
               isReleased: false,
+              code: undefined,
             },
             parent,
           },

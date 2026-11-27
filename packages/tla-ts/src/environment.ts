@@ -2297,6 +2297,7 @@ export const createEnvironment = (
     instanceParams,
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
+    operatorCodes: new WeakMap(),
     definitionEvaluators: new WeakMap(),
     levelBounds: new WeakMap(),
     initRunners: new WeakMap(),

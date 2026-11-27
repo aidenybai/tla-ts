@@ -1,11 +1,13 @@
 import {
   getChildren,
   getReferencedName,
+  isAssumeProve,
   isLocallyResolved,
   isRecursiveConstruction,
   type Expression,
 } from "./ast";
 import { isTlcEvalReached } from "./dependencies";
+import { getKeyName } from "./resolve";
 import {
   bindValue,
   expectBooleanBody,
@@ -39,6 +41,19 @@ import {
   getSortedFields,
   getUnchangedVariables,
   hasDuplicateFields,
+  readBinding,
+  createCompiledThunk,
+  getDetachedContext,
+  getOperatorCode,
+  getCalledBody,
+  createCaseConditionError,
+  createCaseExhaustedError,
+  warnExceptMissed,
+  isRuntimeBody,
+  createTailCallOverflow,
+  TAIL_CALL_LIMIT,
+  type ArgumentBinding,
+  type Closure,
   type Context,
   type Environment,
   type Evaluator,
@@ -60,6 +75,7 @@ import {
   isReducibleSet,
   isTlcInteger,
   toFiniteSet,
+  updateFunction,
   type Value,
 } from "./values";
 
@@ -69,6 +85,8 @@ interface Frame {
   next: string;
   isPrimed: boolean;
   locals: Map<string, string>;
+  bindings: Map<string, string>;
+  isDetached: boolean;
 }
 
 interface Generator {
@@ -77,6 +95,7 @@ interface Generator {
   helpers: string[];
   counter: number;
   hasEmptied: boolean;
+  isUnsupported: boolean;
 }
 
 const GENERATED_KINDS = new Set([
@@ -143,6 +162,27 @@ const createGeneratedHelpers = () => ({
   },
   prime: toNextContext,
   keepLazyContext: toKeepLazyContext,
+  read: readBinding,
+  thunk: createCompiledThunk,
+  detached: getDetachedContext,
+  valueBinding: (value: Value): ArgumentBinding => ({
+    kind: "Value",
+    value,
+    argument: undefined,
+    isSelf: false,
+  }),
+  caseCondition: (value: Value, condition: Expression) => {
+    if (typeof value !== "boolean") throw createCaseConditionError(condition, value);
+    return value;
+  },
+  caseExhausted: (expression: Expression): never => {
+    throw createCaseExhaustedError(expression);
+  },
+  update: updateFunction,
+  exceptMissed: warnExceptMissed,
+  overflow: (): never => {
+    throw createTailCallOverflow();
+  },
   extend: (context: Context, names: string[], values: Value[]): Context => ({
     environment: context.environment,
     scope: names.reduce(
@@ -182,7 +222,7 @@ const addReference = (generator: Generator, value: unknown) => {
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
 
 const getFreeNames = (expression: Expression, names = new Set<string>()) => {
-  const name = getReferencedName(expression);
+  const name = expression.kind === "ExceptAt" ? "@" : getReferencedName(expression);
   if (name !== undefined) names.add(name);
   if (expression.kind !== "Selection") {
     getChildren(expression).forEach((child) => getFreeNames(child, names));
@@ -191,13 +231,24 @@ const getFreeNames = (expression: Expression, names = new Set<string>()) => {
 };
 
 const getDelegateContext = (generator: Generator, expression: Expression, frame: Frame) => {
-  if (frame.locals.size === 0) return frame.context;
+  if (frame.locals.size === 0 && !frame.isDetached) return frame.context;
   // TLC caches a constant TLCEval only where no name is bound, so a delegate that reaches one sees every local.
   const isEveryLocalCaptured = isTlcEvalReached(expression, generator.environment);
   const freeNames = getFreeNames(expression);
-  const captured = [...frame.locals].filter(
-    (entry) => isEveryLocalCaptured || freeNames.has(entry[0]),
-  );
+  const isCaptured = (entry: [string, unknown]) => isEveryLocalCaptured || freeNames.has(entry[0]);
+  const captured = [...frame.locals].filter(isCaptured);
+  if (frame.isDetached) {
+    const bound = [...frame.bindings].filter(isCaptured);
+    const boundNames = addReference(
+      generator,
+      bound.map((entry) => entry[0]),
+    );
+    const valueNames = addReference(
+      generator,
+      captured.map((entry) => entry[0]),
+    );
+    return `detached(${frame.context}, ${boundNames}, [${bound.map((entry) => entry[1]).join(", ")}], ${valueNames}, [${captured.map((entry) => entry[1]).join(", ")}])`;
+  }
   if (captured.length === 0) return frame.context;
   const names = addReference(
     generator,
@@ -215,13 +266,15 @@ const generateHelper = (
   build: (bodyFrame: Frame) => string,
 ) => {
   const name = `helper${generator.counter++}`;
-  const outerLocals = [...frame.locals.values()];
+  const outerLocals = [...frame.locals.values(), ...frame.bindings.values()];
   const bodyFrame = {
     context: "context",
     state: "state",
     next: "next",
     isPrimed: false,
     locals: new Map(frame.locals),
+    bindings: new Map(frame.bindings),
+    isDetached: frame.isDetached,
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
   const hasOuterEmptied = generator.hasEmptied;
@@ -335,6 +388,65 @@ const getStringLiterals = (elements: Expression[]) =>
     ? elements.map((element) => (element.kind === "String" ? element.value : ""))
     : undefined;
 
+const isDirectCall = (
+  generator: Generator,
+  expression: Expression & { kind: "Apply" },
+  closure: Closure,
+) =>
+  !isAssumeProve(expression) &&
+  closure.scope === undefined &&
+  expression.args.length === closure.params.length &&
+  closure.params.every((param) => param.arity === 0) &&
+  getCalledBody(expression, closure.body, generator.environment) === undefined;
+
+const generateCompiledThunk = (generator: Generator, expression: Expression, frame: Frame) => {
+  const hasOuterEmptied = generator.hasEmptied;
+  generator.hasEmptied = false;
+  const code = generateExpression(generator, expression, {
+    context: "context",
+    state: "state",
+    next: "next",
+    isPrimed: false,
+    locals: frame.locals,
+    bindings: frame.bindings,
+    isDetached: true,
+  });
+  const declarations = generator.hasEmptied ? " let emptied;" : "";
+  generator.hasEmptied = hasOuterEmptied;
+  return `thunk(${addReference(generator, expression)}, (context) => { const state = context.state; const next = context.next; let primed;${declarations} let applied; return ${code}; }, ${frame.context})`;
+};
+
+const generateArgumentBinding = (generator: Generator, argument: Expression, frame: Frame) => {
+  if (argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value))) {
+    return addReference(generator, {
+      kind: "Value",
+      value: argument.value,
+      argument,
+      isSelf: false,
+    });
+  }
+  if (argument.kind === "Identifier" && !argument.resolution?.isSelf) {
+    const binding = frame.bindings.get(argument.name);
+    if (binding !== undefined && isLocallyResolved(argument)) return binding;
+    const local = frame.locals.get(argument.name);
+    if (local !== undefined) return `valueBinding(${local})`;
+    const substitute = generator.environment.boundSubstitutions.references.get(argument);
+    const global =
+      isLocallyResolved(argument) || substitute !== undefined
+        ? undefined
+        : findGlobalName(argument.name, generator.environment);
+    if (global?.kind === "Value") {
+      return addReference(generator, {
+        kind: "Value",
+        value: global.value,
+        argument: undefined,
+        isSelf: false,
+      });
+    }
+  }
+  return generateCompiledThunk(generator, argument, frame);
+};
+
 const generateApply = (
   generator: Generator,
   expression: Expression & { kind: "Apply" },
@@ -355,6 +467,15 @@ const generateApply = (
   }
   if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
   const builtin = resolveGlobalOperator(expression.operator, generator.environment);
+  if (
+    builtin?.kind === "Closure" &&
+    frame.isDetached &&
+    isDirectCall(generator, expression, builtin)
+  ) {
+    const code = addReference(generator, getOperatorCode(builtin, generator.environment));
+    const bindings = args.map((arg) => generateArgumentBinding(generator, arg, frame));
+    return `${code}.call(${[frame.context, ...bindings].join(", ")})`;
+  }
   if (builtin?.kind !== "Builtin") return generateDelegate(generator, expression, frame);
   if (builtin.name === "DOMAIN") {
     const domain = addReference(generator, getDomainOperator(expression));
@@ -443,7 +564,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "Identifier": {
       const local = frame.locals.get(expression.name);
       if (local) return local;
-      if (isLocallyResolved(expression)) return generateDelegate(generator, expression, frame);
+      const binding = frame.bindings.get(expression.name);
+      if (binding !== undefined && isLocallyResolved(expression)) {
+        return `read(${binding}, ${frame.context})`;
+      }
+      if (isLocallyResolved(expression)) {
+        generator.isUnsupported ||= frame.isDetached;
+        return generateDelegate(generator, expression, frame);
+      }
       const global = findGlobalName(expression.name, generator.environment);
       if (global?.kind === "Variable") {
         const name = JSON.stringify(expression.name);
@@ -451,6 +579,14 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         return `(${frame.state}?.[${global.index}] ?? unassigned(${name}, ${node}))`;
       }
       if (global?.kind === "Value") return addReference(generator, global.value);
+      if (
+        frame.isDetached &&
+        global?.kind === "Definition" &&
+        getCalledBody(expression, global.definition.body, generator.environment) === undefined &&
+        !isTlcEvalReached(expression, generator.environment)
+      ) {
+        return `${addReference(generator, getEvaluator(expression, generator.environment))}(${frame.context})`;
+      }
       return generateDelegate(generator, expression, frame);
     }
     case "Apply":
@@ -464,6 +600,54 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     }
     case "If":
       return `(condition(${generate(expression.condition)}, ${addReference(generator, expression)}) ? ${generate(expression.consequent)} : ${generate(expression.alternative)})`;
+    case "Case": {
+      if (!frame.isDetached) return generateDelegate(generator, expression, frame);
+      const other = expression.other
+        ? generate(expression.other)
+        : `caseExhausted(${addReference(generator, expression)})`;
+      return expression.arms.reduceRight(
+        (rest, arm) =>
+          `(caseCondition(${generate(arm.condition)}, ${addReference(generator, arm.condition)}) ? ${generate(arm.body)} : ${rest})`,
+        other,
+      );
+    }
+    case "Let":
+      if (!frame.isDetached || !isSupportedLet(expression, generator.environment)) {
+        return generateDelegate(generator, expression, frame);
+      }
+      return generateHelper(
+        generator,
+        frame,
+        (bodyFrame) =>
+          `${generateLetDeclarations(generator, expression, bodyFrame)} return ${generateExpression(generator, expression.body, bodyFrame)};`,
+      );
+    case "Except":
+      if (!frame.isDetached) return generateDelegate(generator, expression, frame);
+      if (isKeptLazy(expression)) keepLazy(expression.function);
+      return generateHelper(generator, frame, (bodyFrame) => {
+        const current = createLocal(generator);
+        const node = addReference(generator, expression);
+        const evaluatedFunction = generate(expression.function, bodyFrame);
+        const updates = expression.updates.map((update) => {
+          const keys = update.path.map((step) =>
+            step.kind === "Field"
+              ? JSON.stringify(step.name)
+              : step.args.length === 1
+                ? generate(step.args[0], bodyFrame)
+                : `tuple([${step.args.map((arg) => generate(arg, bodyFrame)).join(", ")}])`,
+          );
+          const previous = createLocal(generator);
+          const isFound = createLocal(generator);
+          const value = generate(update.value, {
+            ...bodyFrame,
+            locals: new Map(bodyFrame.locals).set("@", previous),
+          });
+          return `let ${isFound} = false; ${current} = update(${current}, [${keys.join(", ")}], 0, (${previous}) => { ${isFound} = true; return ${value}; }); if (!${isFound}) exceptMissed(${node}, ${bodyFrame.context});`;
+        });
+        return `let ${current} = ${evaluatedFunction}; ${updates.join(" ")} return ${current};`;
+      });
+    case "ExceptAt":
+      return frame.locals.get("@") ?? generateDelegate(generator, expression, frame);
     case "FunctionApplication": {
       keepLazy(expression.function);
       const keepLazyFrame = { ...frame, context: `keepLazyContext(${frame.context})` };
@@ -515,6 +699,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         next: "undefined",
         isPrimed: true,
         locals: frame.locals,
+        bindings: frame.bindings,
+        isDetached: frame.isDetached,
       });
     case "Unchanged": {
       const primed = generate({
@@ -529,6 +715,8 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         next: "undefined",
         isPrimed: false,
         locals: frame.locals,
+        bindings: frame.bindings,
+        isDetached: frame.isDetached,
       });
       const evaluated = `equal(${empty}, ${primed})`;
       const subscript = expression.expression;
@@ -607,6 +795,7 @@ export const generateEvaluator = (
     helpers: [],
     counter: 0,
     hasEmptied: false,
+    isUnsupported: false,
   };
   const frame: Frame = {
     context: "context",
@@ -614,6 +803,8 @@ export const generateEvaluator = (
     next: "next",
     isPrimed: false,
     locals: new Map(),
+    bindings: new Map(),
+    isDetached: false,
   };
   const body = generateExpression(generator, expression, frame);
   if (body === "reference0(context)") return getEvaluator(expression, environment);
@@ -625,6 +816,158 @@ export const generateEvaluator = (
   }
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; return ${body}; };`;
+  const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
+  return factory(...Object.values(generatedHelpers), ...generator.references);
+};
+
+const OPERATOR_KINDS = new Set([...GENERATED_KINDS, "Case", "Let", "Except"]);
+
+interface TailLoop {
+  closure: Closure;
+  isRuntime: boolean;
+  parameters: string[];
+}
+
+const isSupportedLet = (expression: Expression & { kind: "Let" }, environment: Environment) =>
+  !environment.boundSubstitutions.lets.has(expression) &&
+  expression.definitions.every(
+    (definition) =>
+      definition.kind === "Operator" && definition.params.length === 0 && !definition.isRecursive,
+  );
+
+const generateLetDeclarations = (
+  generator: Generator,
+  expression: Expression & { kind: "Let" },
+  bodyFrame: Frame,
+) =>
+  expression.definitions
+    .map((definition) => {
+      const local = createLocal(generator);
+      const body = definition.kind === "Operator" ? definition.body : expression.body;
+      const thunk = generateCompiledThunk(generator, body, bodyFrame);
+      bodyFrame.bindings.set(definition.name, local);
+      return `const ${local} = ${thunk};`;
+    })
+    .join(" ");
+
+const isSelfCall = (expression: Expression, loop: TailLoop, environment: Environment) => {
+  if (
+    expression.kind !== "Apply" ||
+    getKeyName(expression.operator) !== loop.closure.name ||
+    isLocallyResolved(expression) ||
+    expression.args.length !== loop.parameters.length
+  ) {
+    return false;
+  }
+  const callee = resolveGlobalOperator(expression.operator, environment);
+  return callee?.kind === "Closure" && callee.body === loop.closure.body;
+};
+
+const hasTailCall = (expression: Expression, loop: TailLoop, environment: Environment): boolean => {
+  if (expression.kind === "If") {
+    return (
+      hasTailCall(expression.consequent, loop, environment) ||
+      hasTailCall(expression.alternative, loop, environment)
+    );
+  }
+  if (expression.kind === "Case" && loop.isRuntime) {
+    return (
+      expression.arms.some((arm) => hasTailCall(arm.body, loop, environment)) ||
+      (expression.other !== undefined && hasTailCall(expression.other, loop, environment))
+    );
+  }
+  if (expression.kind === "Let") {
+    return (
+      !expression.definitions.some((definition) => definition.name === loop.closure.name) &&
+      hasTailCall(expression.body, loop, environment)
+    );
+  }
+  return isSelfCall(expression, loop, environment);
+};
+
+const generateTailStatement = (
+  generator: Generator,
+  expression: Expression,
+  frame: Frame,
+  loop: TailLoop,
+): string => {
+  if (!hasTailCall(expression, loop, generator.environment)) {
+    return `return ${generateExpression(generator, expression, frame)};`;
+  }
+  if (expression.kind === "If") {
+    return `if (condition(${generateExpression(generator, expression.condition, frame)}, ${addReference(generator, expression)})) { ${generateTailStatement(generator, expression.consequent, frame, loop)} } else { ${generateTailStatement(generator, expression.alternative, frame, loop)} }`;
+  }
+  if (expression.kind === "Case" && loop.isRuntime) {
+    const other = expression.other
+      ? generateTailStatement(generator, expression.other, frame, loop)
+      : `caseExhausted(${addReference(generator, expression)});`;
+    return expression.arms.reduceRight(
+      (rest, arm) =>
+        `if (caseCondition(${generateExpression(generator, arm.condition, frame)}, ${addReference(generator, arm.condition)})) { ${generateTailStatement(generator, arm.body, frame, loop)} } else { ${rest} }`,
+      other,
+    );
+  }
+  if (expression.kind === "Let") {
+    generator.isUnsupported ||= !isSupportedLet(expression, generator.environment);
+    const bodyFrame = { ...frame, bindings: new Map(frame.bindings) };
+    const declarations = generateLetDeclarations(generator, expression, bodyFrame);
+    return `{ ${declarations} ${generateTailStatement(generator, expression.body, bodyFrame, loop)} }`;
+  }
+  if (expression.kind !== "Apply") return "";
+  const bindings = expression.args.map((arg) =>
+    loop.isRuntime && arg.kind !== "Identifier" && arg.kind !== "String" && arg.kind !== "Number"
+      ? `valueBinding(${generateExpression(generator, arg, frame)})`
+      : generateArgumentBinding(generator, arg, frame),
+  );
+  const assignments = bindings.map((binding, index) => `${loop.parameters[index]} = ${binding};`);
+  const turn = loop.isRuntime ? "" : ` if (++turn === ${TAIL_CALL_LIMIT}) overflow();`;
+  return `${assignments.join(" ")}${turn} continue;`;
+};
+
+export const generateOperator = (
+  closure: Closure,
+  environment: Environment,
+): ((context: Context, ...bindings: ArgumentBinding[]) => Value) | undefined => {
+  if (!OPERATOR_KINDS.has(closure.body.kind)) return undefined;
+  isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
+  if (!isCodeGenerationAllowed) return undefined;
+  const generator: Generator = {
+    environment,
+    references: [],
+    helpers: [],
+    counter: 0,
+    hasEmptied: false,
+    isUnsupported: false,
+  };
+  const parameters = closure.params.map((_param, index) => `binding${index}`);
+  const frame: Frame = {
+    context: "context",
+    state: "state",
+    next: "next",
+    isPrimed: false,
+    locals: new Map(),
+    bindings: new Map(closure.params.map((param, index) => [param.name, parameters[index]])),
+    isDetached: true,
+  };
+  const loop = {
+    closure,
+    isRuntime: isRuntimeBody(closure.body, environment),
+    parameters: closure.params.map((_param, index) => `tail${index}`),
+  };
+  const isLooped = hasTailCall(closure.body, loop, environment);
+  const body = isLooped
+    ? `for (let turn = 0; ; ) { ${parameters.map((parameter, index) => `const ${parameter} = ${loop.parameters[index]};`).join(" ")} ${generateTailStatement(generator, closure.body, frame, loop)} }`
+    : `return ${generateExpression(generator, closure.body, frame)};`;
+  const signature = isLooped ? loop.parameters : parameters;
+  generatedHelpers ??= createGeneratedHelpers();
+  if (
+    generator.isUnsupported ||
+    Object.keys(generatedHelpers).length + generator.references.length > MAX_PARAMETERS
+  ) {
+    return undefined;
+  }
+  const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
+  const source = `${generator.helpers.join("\n")}\nreturn (context${signature.map((parameter) => `, ${parameter}`).join("")}) => { const state = context.state; const next = context.next; let primed;${generator.hasEmptied ? " let emptied;" : ""} let applied; ${body} };`;
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
 };

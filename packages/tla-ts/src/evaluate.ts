@@ -27,7 +27,7 @@ import {
   formatRange,
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { generateEvaluator } from "./codegen";
+import { generateEvaluator, generateOperator } from "./codegen";
 import {
   chargeContexts,
   chargeEquality,
@@ -52,7 +52,7 @@ import {
   type NextStateMode,
 } from "./coverage";
 import { isEvalException, MESSAGE_CODE } from "./tlc/messages";
-import type { InstanceLevels, LevelAnalyzer, SectionMember } from "./levels";
+import type { InstanceLevels, LevelAnalyzer, OperatorLevels, SectionMember } from "./levels";
 import { EMPTY_STATE, type CheckerRuntime } from "./runtime";
 import {
   isBodyVarying,
@@ -134,7 +134,6 @@ import {
   setTrace,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
-import type { OperatorLevels } from "./levels";
 
 export type State = (Value | undefined)[];
 
@@ -210,10 +209,11 @@ export interface Thunk {
   // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
   // its scope rather than read the cached value.
   isNamed: boolean;
+  code: ((context: Context) => Value) | undefined;
 }
 
 // Every binding of a kind has the same fields in the same order, so V8 sees one shape per kind.
-interface ValueBinding {
+export interface ValueBinding {
   kind: "Value";
   value: Value;
   argument: Expression | undefined;
@@ -221,6 +221,13 @@ interface ValueBinding {
 }
 
 type Binding = ValueBinding | Thunk | { kind: "Operator"; operator: Operator };
+
+export type ArgumentBinding = ValueBinding | Thunk;
+
+export interface OperatorCode {
+  call: (context: Context, ...bindings: ArgumentBinding[]) => Value;
+  isInterpreted: boolean;
+}
 
 export interface Scope {
   name: string;
@@ -253,6 +260,7 @@ export interface Environment {
   instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
   entryEvaluators: WeakMap<Expression, Evaluator>;
+  operatorCodes: WeakMap<Expression, OperatorCode>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
   // Tool.getLevelBound of each definition that a check has read it of (see getDefinitionBound).
   levelBounds: WeakMap<Definition, number>;
@@ -1272,6 +1280,63 @@ const evaluateCoveredThunk = (thunk: Thunk, context: Context, coverage: Coverage
       );
 };
 
+const evaluateThunkAfresh = (thunk: Thunk, context: Context) =>
+  thunk.code === undefined
+    ? evaluate(thunk.expression, withScope(context, thunk.scope))
+    : thunk.code(context);
+
+export const readBinding = (binding: ArgumentBinding, context: Context): Value => {
+  if (binding.kind === "Value") return binding.value;
+  return context.next === NULL_STATE && !binding.isReleased
+    ? evaluateThunkAfresh(binding, context)
+    : forceThunk(binding, context);
+};
+
+export const createCompiledThunk = (
+  expression: Expression,
+  code: (context: Context) => Value,
+  context: Context,
+): Thunk => ({
+  kind: "Thunk",
+  expression,
+  site: undefined,
+  scope: undefined,
+  state: context.state,
+  next: context.next,
+  control: "Clear",
+  cache: undefined,
+  isStreamed: false,
+  isRebuilt: false,
+  isNamed: false,
+  isUncached: false,
+  isReleased: false,
+  code,
+});
+
+export const getDetachedContext = (
+  context: Context,
+  names: string[],
+  bindings: ArgumentBinding[],
+  valueNames: string[],
+  values: Value[],
+): Context => {
+  let scope: Scope | undefined;
+  for (let index = 0; index < names.length; index++) {
+    scope = { name: names[index], binding: bindings[index], parent: scope };
+  }
+  for (let index = 0; index < valueNames.length; index++) {
+    scope = bindValue(scope, valueNames[index], values[index]);
+  }
+  return {
+    environment: context.environment,
+    scope,
+    state: context.state,
+    next: context.next,
+    isKeepLazy: context.isKeepLazy,
+    isPrimed: context.isPrimed,
+  };
+};
+
 const isUnassigned = (state: State | undefined) =>
   state === undefined || state.every((value) => value === undefined);
 
@@ -1300,15 +1365,17 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const node = coverage?.values.get(thunk);
   const site = thunk.site;
   const value =
-    coverage && node !== undefined
-      ? runAtCoverageNode(coverage, node, () =>
-          evaluate(thunk.expression, withScope(context, thunk.scope)),
-        )
-      : site && !coverage && !environment.callStack
-        ? (site.evaluator ??= getEntryEvaluator(site.expression, environment))(
-            withScope(context, thunk.scope),
+    thunk.code !== undefined
+      ? thunk.code(context)
+      : coverage && node !== undefined
+        ? runAtCoverageNode(coverage, node, () =>
+            evaluate(thunk.expression, withScope(context, thunk.scope)),
           )
-        : evaluate(thunk.expression, withScope(context, thunk.scope));
+        : site && !coverage && !environment.callStack
+          ? (site.evaluator ??= getEntryEvaluator(site.expression, environment))(
+              withScope(context, thunk.scope),
+            )
+          : evaluate(thunk.expression, withScope(context, thunk.scope));
   if (isUncached) return value;
   if (!thunk.isUncached && (!thunk.isStreamed || isSettledValue(value))) {
     thunk.cache = value;
@@ -1487,6 +1554,7 @@ const createThunk = (
   isNamed: context.isNaming === true,
   isUncached: false,
   isReleased: false,
+  code: undefined,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1541,11 +1609,19 @@ export const getCalledBody = (
   return isOwned ? (getCalledBody(expression, body.body, environment) ?? body.body) : undefined;
 };
 
-const compileArgumentBinder = (argument: Expression, environment: Environment): ArgumentBinder => {
+const compileArgumentBinder = (
+  argument: Expression,
+  environment: Environment,
+): ((context: Context) => ArgumentBinding) => {
   const isLiteral =
     argument.kind === "String" || (argument.kind === "Number" && isTlcInteger(argument.value));
   if (isLiteral) {
-    const binding: Binding = { kind: "Value", value: argument.value, argument, isSelf: false };
+    const binding: ArgumentBinding = {
+      kind: "Value",
+      value: argument.value,
+      argument,
+      isSelf: false,
+    };
     return () => binding;
   }
   const coverage = environment.coverage;
@@ -1565,7 +1641,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       ? undefined
       : findGlobalName(argument.name, environment);
     if (global?.kind === "Value") {
-      const binding: Binding = {
+      const binding: ArgumentBinding = {
         kind: "Value",
         value: global.value,
         argument: undefined,
@@ -1605,12 +1681,12 @@ export const bindOperatorArguments = (
   return scope;
 };
 
-const createCaseConditionError = (condition: Expression, value: Value) =>
+export const createCaseConditionError = (condition: Expression, value: Value) =>
   new TlaEvaluationError(
     `A non-boolean expression (${getKindString(value)}) was used as a condition of a CASE. ${describeNode(condition)}`,
   );
 
-const createCaseExhaustedError = (expression: Expression) =>
+export const createCaseExhaustedError = (expression: Expression) =>
   new TlaEvaluationError(
     `Attempted to evaluate a CASE with no conditions true.\n${describeRange(expression)}`,
   );
@@ -1648,7 +1724,7 @@ const bindArgumentValues = (
 // here as the next turn of a loop instead, so that a deep recursion, such as a loop that tla-ts
 // compiles from TypeScript, needn't fit on the stack. A recursion past this many turns overflows,
 // as it would in TLC.
-const TAIL_CALL_LIMIT = 1 << 20;
+export const TAIL_CALL_LIMIT = 1 << 20;
 
 // The IFs, LETs and calls of LET operators that lead from a body to the calls in its tail,
 // compiled once.
@@ -1847,7 +1923,7 @@ const compileTailCalls = (name: string, body: Expression, environment: Environme
 };
 
 // Whether a body is one of JS.tla's runtime operators, whose recursions are tla-ts's own.
-const isRuntimeBody = (body: Expression, environment: Environment) =>
+export const isRuntimeBody = (body: Expression, environment: Environment) =>
   environment.runtimeModules.has(body.location.range?.module ?? "");
 
 const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Context): Value => {
@@ -1895,8 +1971,10 @@ const evaluateTailCalls = (closure: Closure, body: TailStep, bodyContext: Contex
       return step.evaluator(context);
     }
   }
-  throw new RangeError("Maximum call stack size exceeded");
+  throw createTailCallOverflow();
 };
+
+export const createTailCallOverflow = () => new RangeError("Maximum call stack size exceeded");
 
 // A trace or coverage evaluates each call as a nested one, to see every expression it evaluates. A
 // LET operator's closure compiles its tail once at the LET that made it, and a global operator that
@@ -2055,6 +2133,7 @@ export const bindDefinitions = (
           isNamed: context.isNaming === true,
           isUncached: false,
           isReleased: false,
+          code: undefined,
         };
   }
   const coverage = context.environment.coverage;
@@ -2072,7 +2151,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   if (binding?.kind === "Thunk") {
     // Tool#evalAppl reads a LazyValue afresh, and stores nothing, where s1 is TLCState.Null, as under a prime.
     return context.next === NULL_STATE && !binding.isReleased
-      ? evaluate(binding.expression, withScope(context, binding.scope))
+      ? evaluateThunkAfresh(binding, context)
       : forceThunk(binding, context);
   }
   if (binding?.kind === "Operator") {
@@ -2668,6 +2747,107 @@ export const compileArgumentScope = (
   };
 };
 
+const getInterpretedCall = (closure: Closure, environment: Environment) => {
+  const tail = compileTailCalls(closure.name, closure.body, environment);
+  const body: Evaluator = tail
+    ? (bodyContext) => evaluateTailCalls(closure, tail, bodyContext)
+    : getEntryEvaluator(closure.body, environment);
+  return (context: Context, ...bindings: ArgumentBinding[]) => {
+    let scope = closure.scope;
+    for (let index = 0; index < bindings.length; index++) {
+      scope = { name: closure.params[index].name, binding: bindings[index], parent: scope };
+    }
+    return body({
+      environment,
+      scope,
+      state: context.state,
+      next: context.next,
+      isKeepLazy: context.isKeepLazy,
+      isPrimed: context.isPrimed,
+    });
+  };
+};
+
+const hasEnteredCall = (step: TailStep | undefined): boolean => {
+  if (step === undefined) return false;
+  if (step.kind === "If")
+    return hasEnteredCall(step.consequent) || hasEnteredCall(step.alternative);
+  if (step.kind === "Case") {
+    return step.arms.some((arm) => hasEnteredCall(arm.body)) || hasEnteredCall(step.other);
+  }
+  if (step.kind === "Let") return hasEnteredCall(step.body);
+  return step.kind === "Call" && step.entered !== undefined;
+};
+
+const isGeneratedOperator = (closure: Closure, environment: Environment) =>
+  !isNonconstant(closure.body, environment) &&
+  !environment.bodyValues.has(closure.body) &&
+  !environment.boundSubstitutions.lets.has(closure.body) &&
+  !hasEnteredCall(compileTailCalls(closure.name, closure.body, environment));
+
+export const getOperatorCode = (closure: Closure, environment: Environment): OperatorCode => {
+  const known = environment.operatorCodes.get(closure.body);
+  if (known !== undefined) return known;
+  const code: OperatorCode = {
+    call: (context, ...bindings) => {
+      const generated = isGeneratedOperator(closure, environment)
+        ? generateOperator(closure, environment)
+        : undefined;
+      code.isInterpreted = generated === undefined;
+      code.call = generated ?? getInterpretedCall(closure, environment);
+      return code.call(context, ...bindings);
+    },
+    isInterpreted: false,
+  };
+  environment.operatorCodes.set(closure.body, code);
+  return code;
+};
+
+const isGeneratedCall = (
+  closure: Closure,
+  args: Expression[],
+  environment: Environment,
+  called: Expression | undefined,
+) =>
+  called === undefined &&
+  !environment.callStack &&
+  !environment.coverage &&
+  closure.scope === undefined &&
+  args.length === closure.params.length &&
+  closure.params.every((param) => param.arity === 0);
+
+const compileGeneratedCall = (
+  code: OperatorCode,
+  args: Expression[],
+  environment: Environment,
+  call: Evaluator,
+): Evaluator => {
+  const binders = args.map((arg) => compileArgumentBinder(arg, environment));
+  if (binders.length === 1) {
+    const first = binders[0];
+    return (context) => (code.isInterpreted ? call(context) : code.call(context, first(context)));
+  }
+  if (binders.length === 2) {
+    const first = binders[0];
+    const second = binders[1];
+    return (context) =>
+      code.isInterpreted ? call(context) : code.call(context, first(context), second(context));
+  }
+  if (binders.length === 3) {
+    const first = binders[0];
+    const second = binders[1];
+    const third = binders[2];
+    return (context) =>
+      code.isInterpreted
+        ? call(context)
+        : code.call(context, first(context), second(context), third(context));
+  }
+  return (context) =>
+    code.isInterpreted
+      ? call(context)
+      : code.call(context, ...binders.map((binder) => binder(context)));
+};
+
 const compileClosureCall = (
   closure: Closure,
   args: Expression[],
@@ -2695,6 +2875,9 @@ const compileClosureCall = (
       isPrimed: context.isPrimed,
     });
   };
+  if (isGeneratedCall(closure, args, environment, called)) {
+    return compileGeneratedCall(getOperatorCode(closure, environment), args, environment, call);
+  }
   if (called === undefined) return call;
   let calledBody: Evaluator | undefined;
   return (context) => {
@@ -3226,16 +3409,17 @@ const compileExcept = (
         isFound = true;
         return item.value(withScope(context, bindValue(context.scope, EXCEPT_AT, previous)));
       });
-      if (!isFound) {
-        context.environment.runtime.warn(
-          MESSAGE_CODE.exceptAppliedToUnknownField,
-          `The EXCEPT was applied to non-existing fields of the value at\n${describeRange(expression.function)}`,
-        );
-      }
+      if (!isFound) warnExceptMissed(expression, context);
     }
     return current;
   };
 };
+
+export const warnExceptMissed = (expression: Expression & { kind: "Except" }, context: Context) =>
+  context.environment.runtime.warn(
+    MESSAGE_CODE.exceptAppliedToUnknownField,
+    `The EXCEPT was applied to non-existing fields of the value at\n${describeRange(expression.function)}`,
+  );
 
 export const getLazyFilter = (
   expression: Expression & { kind: "SetFilter" },
