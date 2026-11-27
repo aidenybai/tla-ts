@@ -338,7 +338,11 @@ const getConstant = (
 
 // Code that never runs, as a condition that only compares constants skips it, such as the branch
 // of a package's index for the other NODE_ENV, whose requires load nothing.
-const isDeadCode = (node: ts.Node, isProcessDeclared: boolean, system: ProgramSystem): boolean => {
+export const isDeadCode = (
+  node: ts.Node,
+  isProcessDeclared: boolean,
+  system: ProgramSystem,
+): boolean => {
   const parent = node.parent;
   if (parent === undefined) return false;
   const getTruth = (condition: ts.Expression) => {

@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { getNodeParses, rejectEarlyErrors } from "../early-errors";
+import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
@@ -37,7 +38,13 @@ import {
 import { getPatchedUnits, isTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
-import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
+import {
+  getNumber,
+  isHostProcess,
+  type ProgramFile,
+  type ProgramRegion,
+  specialize,
+} from "./specialize";
 import { stripTypes } from "./strip-types";
 import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
@@ -550,8 +557,12 @@ const isOnlyImportCalled = (sourceFile: ts.SourceFile, specifier: string) => {
 };
 
 // The specifier of each import and export of a module, or each require of a string of a CommonJS
-// module, with the literal that names it.
-const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => {
+// module but those that isSkipped skips, with the literal that names it.
+const getSpecifiers = (
+  sourceFile: ts.SourceFile,
+  kind: ProgramFile["kind"],
+  isSkipped = (_call: ts.CallExpression) => false,
+) => {
   const specifiers = new Map<string, ts.StringLiteralLike>();
   const visit = (node: ts.Node): void => {
     const literal =
@@ -563,7 +574,8 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
               kind === "commonjs" &&
               ts.isIdentifier(node.expression) &&
               node.expression.text === "require" &&
-              node.arguments.length === 1
+              node.arguments.length === 1 &&
+              !isSkipped(node)
             ? node.arguments[0]
             : undefined;
     if (literal !== undefined && ts.isStringLiteralLike(literal)) {
@@ -689,6 +701,7 @@ const loadFiles = (
   host: Pick<JsTlaSteps, "isTest262Host" | "candidates">,
   names: ParsedNames,
   system: ProgramSystem,
+  isPruned: boolean,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
@@ -874,8 +887,10 @@ const loadFiles = (
             : [];
         });
     const requested = new Map([...written, ...candidates]);
+    // A require that never runs, where the files are pruned, loads nothing.
+    const isDead = (call: ts.CallExpression) => isPruned && isDeadCode(call, false, system);
     const targets = new Map(
-      [...(isRejected ? [] : getSpecifiers(sourceFile, kind)), ...candidates].flatMap(
+      [...(isRejected ? [] : getSpecifiers(sourceFile, kind, isDead)), ...candidates].flatMap(
         ([specifier, parsed]) => {
           const literal = requested.get(specifier);
           const builtin =
@@ -1081,7 +1096,19 @@ export const compileToJsTla = (
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
   const { files, program } = atSourceLocations(fileName, system, (names) => {
-    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, names, system);
+    const load = (isPruned: boolean) =>
+      loadFiles(source.toWellFormed(), fileName, isModule, model, names, system, isPruned);
+    // The files that the program loads but those that only a require that never runs loads, where
+    // a condition on process.env skips it, as the branch of a package's index for the other
+    // NODE_ENV does, which holds where the program's process is Node's, whose env each file's code
+    // reads as a constant. Only a CommonJS file requires. A program that fails to load so loads
+    // them all, as it did before.
+    const pruned = getOutcome(() => load(true));
+    const loaded =
+      "value" in pruned &&
+      (isHostProcess(pruned.value) || !pruned.value.some((file) => file.kind === "commonjs"))
+        ? pruned.value
+        : load(false);
     return {
       files: loaded,
       program: specialize(

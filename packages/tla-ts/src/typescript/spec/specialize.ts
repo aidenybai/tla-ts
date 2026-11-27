@@ -959,6 +959,12 @@ const METHOD_PRODUCTIONS = {
   asyncGenerator: "AsyncGeneratorMethod",
 };
 
+// Whether the program's process is Node's, whose env a module's code reads as the constant that the
+// system's environment gives, where no file declares process and a module runs in Node's context,
+// whose global object has it.
+export const isHostProcess = (files: readonly ProgramFile[]) =>
+  files[0].kind !== "script" && !files.some((file) => isProcessDeclared(file.sourceFile));
+
 // Specializes JS.tla to a script. A function reached only by a name that the script never writes
 // elsewhere, and that JS.tla's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
@@ -980,10 +986,7 @@ export const specialize = (
     ts.forEachChild(node, countNames);
   };
   files.forEach((file) => countNames(file.sourceFile));
-  // Whether the program's process is Node's, whose env a module's code reads, where no file
-  // declares process and a module runs in Node's context, whose global object has it.
-  const isHostProcess =
-    files[0].kind !== "script" && !files.some((file) => isProcessDeclared(file.sourceFile));
+  const isProcessNode = isHostProcess(files);
   // Each file's number, from 1, and where its text starts in the program's texts, one after
   // another, which makes the sites of the program's nodes distinct.
   const fileNumbers = new Map(files.map((file, index) => [file.sourceFile, index + 1]));
@@ -2148,7 +2151,7 @@ export const specialize = (
     // A read of process.env.NAME, of Node's process, is the environment's value as the program's
     // system has it: the process's that compiles, or none of a host's files.
     if (
-      isHostProcess &&
+      isProcessNode &&
       ts.isPropertyAccessExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       node.expression.name.text === "env" &&

@@ -652,6 +652,50 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
+  // Node loads only the build that a package's index requires for the program's NODE_ENV, as
+  // React's index does, so a program runs where the other build requires a file that isn't there.
+  describe("load only the build that a package's index requires for NODE_ENV", () => {
+    const PACKAGE = {
+      "node_modules/build/package.json": JSON.stringify({ name: "build", exports: "./index.js" }),
+      "node_modules/build/index.js":
+        'if (process.env.NODE_ENV === "production") {\n  module.exports = require("./production.js");\n} else {\n  module.exports = require("./development.js");\n}\n',
+      "node_modules/build/production.js": 'module.exports = "production";\n',
+      "node_modules/build/development.js":
+        'require("./checks.js");\nmodule.exports = "development";\n',
+    };
+    const getSource = (expected: string) =>
+      `const build = require("build");\nif (build !== ${JSON.stringify(expected)}) throw new Error(build);\n`;
+    const ENVIRONMENT = { NODE_ENV: "production" };
+
+    it("agrees with Node", async () => {
+      const source = getSource("production");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("development");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).stderr).toContain(
+        "Error: production",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("production");
+    });
+
+    // A file that declares process reads its own, so the program's code reads process.env as it
+    // runs, and loads both builds.
+    it("stops where a file declares process", async () => {
+      const source = `const process = {};\n${getSource("production")}`;
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("tla-ts can't load the module ./checks.js");
+    });
+  });
+
   // Node reads a package without exports by its main field, which tla-ts doesn't port.
   it("stops at a package that Node reads by its main field", async () => {
     const files = {
