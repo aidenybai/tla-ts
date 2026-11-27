@@ -671,8 +671,8 @@ describe("gives a module the host's globals and properties that JS.tla lacks, wh
   });
 
   it("stops at a call of a global", async () => {
-    expect((await checkModules({ "main.js": "setImmediate(() => {});" })).message).toContain(
-      "tla-ts can't run the host's setImmediate",
+    expect((await checkModules({ "main.js": "structuredClone(1);" })).message).toContain(
+      "tla-ts can't run the host's structuredClone",
     );
   });
 
@@ -1109,6 +1109,70 @@ describe("runs queueMicrotask's callback in the queue of jobs, as Node does", ()
       );
     },
   );
+});
+
+// setImmediate's callbacks run in the order the program queued them, each a task of its own after
+// the jobs before it, on its Immediate, of the arguments that setImmediate gave it, and one that a
+// callback queues after those queued before it, as Node runs them in its check phase
+// (lib/internal/timers.js). clearImmediate takes one from the queue, and does nothing of a falsy
+// value or an Immediate that ran.
+describe("runs setImmediate's callbacks in order, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      log.push(setImmediate.name, setImmediate.length, clearImmediate.name, clearImmediate.length);
+      const first = setImmediate(function (a, b) {
+        log.push(\`i1:\${typeof this}:\${this === first}:\${a}:\${b}:\${arguments.length}\`);
+        queueMicrotask(() => log.push("m1"));
+        setImmediate(() => {
+          log.push("i3");
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        });
+      }, "x", "y");
+      const second = setImmediate(() => log.push("never"));
+      setImmediate(() => log.push("i2"));
+      log.push(typeof first, first === second, clearImmediate(second), clearImmediate(undefined), clearImmediate(0));
+      setImmediate(() => { clearImmediate(first); log.push("end"); });`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("setImmediate,1,clearImmediate,1,object,false,,,,i1:object:true:x:y:2,m1,i2,end,i3"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("setImmediate,1,clearImmediate,1,object,false,,,,i1:object:true:x:y:2,i2,m1,end,i3"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  // Node runs a timer first where its clock says the timer is due as its loop starts or runs its
+  // timers again, and an immediate first otherwise.
+  it.each([
+    "setImmediate(() => {}); setTimeout(() => {});",
+    "setTimeout(() => setImmediate(() => {})); setTimeout(() => {});",
+    "setImmediate(() => { setImmediate(() => {}); setTimeout(() => {}); });",
+  ])("stops where %s leaves a timer and an immediate", async (code) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(
+      "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides",
+    );
+  });
+
+  it.each([
+    ["setImmediate(() => {}).ref()", "Immediate"],
+    ["setImmediate(1)", "setImmediate"],
+    ["clearImmediate({})", "clearImmediate"],
+    ["new setImmediate(() => {})", "setImmediate"],
+  ])("stops at %s", async (use, name) => {
+    expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+      `tla-ts can't run the host's ${name}`,
+    );
+  });
 });
 
 describe("gives a module the part of Node's console that writes primitives and makes tasks", () => {

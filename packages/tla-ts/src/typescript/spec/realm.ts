@@ -81,7 +81,14 @@ const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
 
 // The host's globals that the runtime has the part of that a program may use, which DefineHost
 // defines by name.
-const MODELED_GLOBALS = new Set(["console", "process", "performance", "queueMicrotask"]);
+const MODELED_GLOBALS = new Set([
+  "console",
+  "process",
+  "performance",
+  "queueMicrotask",
+  "setImmediate",
+  "clearImmediate",
+]);
 
 // The host's constructors that make an object quietly, running nothing that a program sees but
 // what QuietConstruct converts of their arguments until it uses the object.

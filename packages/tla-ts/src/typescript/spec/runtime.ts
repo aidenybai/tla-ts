@@ -61,10 +61,15 @@ const DEFINITIONS = [
   `ThrowRejection(s, promise) ==
   ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
   // The tasks that a program queued, each a record of the callback that it calls, on a receiver,
-  // of arguments: the timers it set, each a task of its own after the jobs before it ran, as Node
-  // runs timers of no delay, on the Timeout that setTimeout gave a module.
+  // of arguments, each run as a task of its own after the jobs before it ran: the timers it set,
+  // which Node runs of no delay on the Timeout that setTimeout gave a module, and its immediates,
+  // which Node runs on their Immediates. Node runs the tasks of a kind in the order the program
+  // queued them, and a timer before an immediate where its clock says the timer is due, which its
+  // loop reads anew each time it runs its timers, so a run stops where both kinds wait at once.
   `RunTasks(s) ==
-  IF s.tasks = <<>> THEN Ok(s, Undefined) ELSE
+  IF s.tasks = <<>> THEN Ok(s, Undefined)
+  ELSE IF \\E i \\in DOMAIN s.tasks : s.tasks[i].kind # Head(s.tasks).kind
+  THEN Assert(FALSE, "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides") ELSE
   LET task == Head(s.tasks)
       r == Call([s EXCEPT !.tasks = Tail(@), !.task = [kind |-> "timer"]], task.callback, task.this, task.args)
   IN IF IsAbrupt(r) THEN r ELSE
@@ -515,7 +520,7 @@ const DEFINITIONS = [
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
-                 [] p.kind = "queueMicrotask" -> HostMethod(target.s, p.name, 1, TRUE, p.name, p.kind, Empty)
+                 [] p.kind \\in {"queueMicrotask", "setImmediate", "clearImmediate"} -> HostMethod(target.s, p.name, 1, TRUE, p.name, p.kind, Empty)
                  [] p.kind = "performance" ->
                       StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"],
                                                                      [trap |-> SV("set"), method |-> "performanceSet"]>>)
@@ -611,6 +616,11 @@ const DEFINITIONS = [
   /\\ IsObject(O(s, v).slots.target) /\\ "id" \\in DOMAIN O(s, O(s, v).slots.target).slots
   /\\ O(s, O(s, v).slots.target).slots.id = <<"Module", "hostQuietConstructor">>
   /\\ O(s, O(s, v).slots.target).slots.data = name`,
+  // Whether a value is a proxy that stands for an object of the host of a name, such as a Timeout,
+  // which stops at every operation.
+  `IsHostObject(s, v, name) ==
+  /\\ IsObject(v) /\\ O(s, v).class = "proxy" /\\ IsObject(O(s, v).slots.target)
+  /\\ O(s, O(s, v).slots.target).slots = [hostName |-> name]`,
   // Whether an object is a function of the host's code, which the runtime makes as a built-in of
   // its module.
   `IsHostCode(s, o) == O(s, o).class = "builtin" /\\ O(s, o).slots.id[1] = "Module"`,
@@ -1595,6 +1605,21 @@ const HOST_PATCHES = [
          IF IsAbrupt(list) THEN list
          ELSE IF ~IsCallable(list.s, Arg(Val(list), 1)) THEN HostStop(N("queueMicrotask"))
          ELSE Ok(EnqueueJob(list.s, [kind |-> "microtask", callback |-> Arg(Val(list), 1)]), Undefined)
+    [] m = "setImmediate" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsCallable(list.s, Arg(Val(list), 1)) THEN HostStop(N("setImmediate")) ELSE
+         LET target == Alloc(list.s, MakeObject(Null, "ordinary", [hostName |-> N("Immediate")]))
+             immediate == ProxyCreate(target.s, target.v, s.hostHandler)
+         IN Ok([immediate.s EXCEPT !.tasks = Append(@, [kind |-> "immediate", callback |-> Arg(Val(list), 1), this |-> Val(immediate),
+                                                        args |-> Rest(Val(list), 2)])], Val(immediate))
+    [] m = "clearImmediate" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             immediate == Arg(Val(list), 1)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~ToBooleanValue(immediate) THEN Ok(list.s, Undefined)
+            ELSE IF ~IsHostObject(list.s, immediate, N("Immediate")) THEN HostStop(N("clearImmediate"))
+            ELSE Ok([list.s EXCEPT !.tasks = SelectSeq(@, LAMBDA task : task.this # immediate)], Undefined)
     [] m = "replaceableGet" -> Ok(s, O(s, data).slots.value)
     [] m = "replaceableSet" ->
          LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN

@@ -1,6 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -199,6 +200,40 @@ const checkModel = (
   });
 
 const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
+
+// A driver that runs a model's file in Node and calls its steps in turn, each once Node's loop has
+// nothing left to run, which beforeExit tells, and prints the value of each of its checks in the
+// state that the module's top level leaves and after each step. An immediate that does nothing
+// keeps the loop running to the next beforeExit after a step that queues nothing.
+const DRIVER = `const [file, ...steps] = process.argv.slice(2);
+const module = await import(file);
+const checks = Object.keys(module).filter((name) => !steps.includes(name));
+const results = [];
+const record = () => results.push(Object.fromEntries(checks.map((name) => [name, module[name]()])));
+let index = 0;
+process.on("beforeExit", () => {
+  if (index >= steps.length) return;
+  record();
+  module[steps[index++]]();
+  setImmediate(() => {});
+});
+process.on("exit", () => {
+  record();
+  console.log(JSON.stringify(results));
+});
+`;
+
+// The values that a model's checks have in Node, in the state its top level leaves and after each
+// of the steps, as DRIVER runs them.
+const runStepsInNode = (path: string, steps: string[]): Record<string, boolean>[] => {
+  const driver = join(mkdtempSync(join(tmpdir(), "tla-ts-js-tla-driver-")), "driver.mjs");
+  writeFileSync(driver, DRIVER);
+  const run = spawnSync(process.execPath, [driver, pathToFileURL(path).href, ...steps], {
+    encoding: "utf8",
+  });
+  rmSync(dirname(driver), { recursive: true, force: true });
+  return JSON.parse(run.stdout);
+};
 
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
@@ -567,6 +602,50 @@ describe("checks a module's exported functions as a model on JS.tla", () => {
           )
         ).message,
       ).toContain('the second argument was:\n"1"');
+    });
+  });
+
+  // A step's call returns, then its jobs run, then its tasks, each followed by the jobs it queues,
+  // until none is left, before the next step, as Node runs its loop once a call that a driver
+  // makes on beforeExit returns.
+  describe("runs the jobs and tasks that a step queues before the next step, as Node does", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-loop-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const getPath = (expected: string) => {
+      const path = join(directory, `loop-${expected}.ts`);
+      writeFileSync(
+        path,
+        `let rounds = 0;\nlet order = "";\nexport const start = () => {\n  if (rounds >= 2) {\n    rounds = 2;\n    return;\n  }\n  rounds += 1;\n  setImmediate(() => {\n    order += "i";\n    queueMicrotask(() => {\n      order += "n";\n    });\n  });\n  setImmediate(() => {\n    order += "j";\n  });\n  queueMicrotask(() => {\n    order += "m";\n  });\n  Promise.resolve().then(() => {\n    order += "p";\n  });\n  order += "s";\n};\nexport const isOrdered = () => order === "${expected}".repeat(rounds);\n`,
+      );
+      return path;
+    };
+
+    it("agrees with Node", async () => {
+      const path = getPath("smpinj");
+      expect(runStepsInNode(path, ["start", "start", "start"])).toEqual(
+        Array.from({ length: 4 }, () => ({ isOrdered: true })),
+      );
+      expect(getCounts(await checkModel(readFileSync(path, "utf8"), path))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      const path = getPath("smpijn");
+      expect(runStepsInNode(path, ["start"])).toEqual([{ isOrdered: true }, { isOrdered: false }]);
+      const result = await checkModel(readFileSync(path, "utf8"), path);
+      expect([result.status, result.trace?.length]).toEqual(["invariant-violation", 2]);
+    });
+
+    it("stops where a step leaves a timer and an immediate, which Node runs as its clock decides", async () => {
+      const result = await checkModel(
+        "let count = 0;\nexport const start = () => {\n  count += 1;\n  setImmediate(() => {});\n  setTimeout(() => {});\n};\nexport const isSmall = () => count < 3;\n",
+      );
+      expect(result.message).toContain(
+        "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides",
+      );
     });
   });
 
