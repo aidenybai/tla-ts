@@ -573,11 +573,26 @@ export const frameModel = (
     }
     return ts.forEachChild(node, (child) => writesState(child, visited) || undefined) ?? false;
   };
-  // Whether a function reads a state variable, directly or through a declaration it reads.
+  // Whether a function reads a state variable, directly or through a declaration it reads, or a
+  // CommonJS module's exports or module, which hold what a step may change, as the functions that
+  // module.exports holds.
   const readsState = (node: ts.Node, visited: Set<ts.Node>): boolean => {
     if (ts.isIdentifier(node)) {
       const symbol = getSymbol(node);
       if (symbol !== undefined && stateSymbols.has(symbol)) return true;
+      if (
+        (node.text === "exports" || node.text === "module") &&
+        !(symbol?.declarations ?? []).some(
+          (declaration) =>
+            ts.isVariableDeclaration(declaration) ||
+            ts.isParameter(declaration) ||
+            ts.isBindingElement(declaration) ||
+            ts.isFunctionDeclaration(declaration) ||
+            ts.isClassDeclaration(declaration),
+        )
+      ) {
+        return true;
+      }
       const declaration = getTopLevelDeclaration(symbol);
       if (declaration !== undefined && !visited.has(declaration)) {
         visited.add(declaration);

@@ -805,6 +805,37 @@ describe("the CLI with TypeScript files", () => {
       expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
     });
 
+    // A check that reads module.exports reads what a step may change, as a check that reads a
+    // state variable does, so the model checks it in every state rather than once.
+    it.each([["exports"], ["module.exports"]])(
+      "checks in every state a check that reads %s",
+      (target) => {
+        const getChecked = (limit: number) =>
+          getModel(
+            3,
+            `exports.tick = tick;\nexports.get = () => count;\nexports.check = function () {\n  if (${target}.get() > ${limit}) throw new Error("big");\n  return 1;\n};`,
+          );
+        // What Node's check throws, ticking the model's module up to three times.
+        const getThrownInNode = (directory: string) =>
+          spawnSync(
+            process.execPath,
+            [
+              "-e",
+              'const model = require("./model.cjs");\ntry {\n  [1, 2, 3].forEach(() => (model.tick(), model.check()));\n  console.log("nothing");\n} catch (error) {\n  console.log(error.message);\n}',
+            ],
+            { cwd: directory, encoding: "utf8" },
+          ).stdout.trim();
+        const directory = copyFixtures("passing");
+        writeFileSync(join(directory, "model.cjs"), getChecked(2));
+        expect(getThrownInNode(directory)).toBe("big");
+        const result = runCli(directory, ["model.cjs"]);
+        expect(result.stdout).toContain('the second argument was:\n"big"');
+        writeFileSync(join(directory, "model.cjs"), getChecked(3));
+        expect(getThrownInNode(directory)).toBe("nothing");
+        expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
+      },
+    );
+
     // Node's TypeError names the caller's own expression, which no model has.
     it("stops where the key that a check calls holds no function", () => {
       const directory = copyFixtures("passing");
