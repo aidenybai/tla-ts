@@ -410,6 +410,62 @@ it("prints a deadlocked second initial state once, where TLC's DFIDWorker#printE
   ]);
 });
 
+const UNEXPECTED_OVERFLOW =
+  "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.StackOverflowError\njava.lang.StackOverflowError";
+
+it.each([
+  [
+    "the next-state relation",
+    "Next == x' = Spin(x)",
+    "INIT Init\nNEXT Next",
+    ["x = 0\n", UNEXPECTED_OVERFLOW, "0 nested expressions"],
+    "1 states generated, 1 distinct states found.",
+  ],
+  [
+    "an invariant",
+    "Next == x < 3 /\\ x' = x + 1\nInv == x = 0 \\/ Spin(x) = 0",
+    "INIT Init\nNEXT Next\nINVARIANT Inv",
+    ["x = 0\n", "x = 1\n", UNEXPECTED_OVERFLOW],
+    "3 states generated, 2 distinct states found.",
+  ],
+  [
+    "an action property",
+    "Next == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [][Spin(x) = 0]_x",
+    "SPECIFICATION Spec\nPROPERTY Prop",
+    ["x = 0\n", "x = 1\n", UNEXPECTED_OVERFLOW, "0 nested expressions"],
+    "3 states generated, 2 distinct states found.",
+  ],
+])(
+  "reports a stack overflow in %s again as an unexpected StackOverflowError under -continue, as TLC's DFIDWorker#run does",
+  (_name, definitions, config, behavior, counts) => {
+    const lines: string[] = [];
+    const exitCode = checkDepthFirst({
+      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}\n====`,
+      config: `${config}\nCHECK_DEADLOCK FALSE`,
+      maxDepth: 5,
+      isContinued: true,
+      onOutput: (output) => {
+        if (output.kind === "message") lines.push(output.message);
+        if (output.kind === "behavior") lines.push(...output.states);
+        if (output.kind === "nested-expressions") {
+          lines.push(`${output.callStack.length} nested expressions`);
+        }
+      },
+    });
+    expect([exitCode, lines]).toEqual([
+      255,
+      [
+        "Finished computing initial states: 1 states generated, with 1 of them distinct.",
+        "Starting level 2: 1 states generated, 1 distinct states found.",
+        "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
+        "The behavior up to this point is:",
+        ...behavior,
+        counts,
+      ],
+    ]);
+  },
+);
+
 it("checks the assumptions of a specification without variables and then completes with no initial state, as TLC's DFIDModelChecker does without an initial predicate", () => {
   const outputs: DepthFirstOutput[] = [];
   const printed: string[] = [];

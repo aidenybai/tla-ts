@@ -8,6 +8,7 @@ import {
   TlaEvaluationError,
   TlaStackOverflowError,
   TlaTooManyStatesError,
+  UNEXPECTED_STACK_OVERFLOW,
 } from "./errors";
 import { createTracingEnvironment, getUnassignedVariables, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
@@ -621,14 +622,18 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
       checker.stopCode = "error";
-      if (setErrorState(stack[stackLevel], true, MESSAGE_CODE.general)) {
-        const unexpected = getUnexpectedMessage("", error);
-        message(
-          MESSAGE_CODE.general,
-          `${unexpected}${error.message}`,
-          `${unexpected}${formatNestedMessage(error.message, true)}`,
-        );
+      if (!setErrorState(stack[stackLevel], true, MESSAGE_CODE.general)) return;
+      if (error instanceof TlaStackOverflowError) {
+        // Deviation from TLC: MP#ECGeneralMsg follows the StackOverflowError's name with its Java stack trace, which tla-ts leaves out.
+        message(MESSAGE_CODE.general, UNEXPECTED_STACK_OVERFLOW);
+        return;
       }
+      const unexpected = getUnexpectedMessage("", error);
+      message(
+        MESSAGE_CODE.general,
+        `${unexpected}${error.message}`,
+        `${unexpected}${formatNestedMessage(error.message, true)}`,
+      );
     }
   };
   const replayExpansion = (entry: StateEntry) => {
@@ -666,7 +671,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       });
       if (isPassed) return;
     } catch (error) {
-      if (!(error instanceof TlaEvaluationError) && !isStackOverflow(error)) throw error;
+      if (isStackOverflow(error)) {
+        output({ kind: "nested-expressions", callStack: [] });
+        return;
+      }
+      if (!(error instanceof TlaEvaluationError)) throw error;
     }
     output({ kind: "nested-expressions", callStack: tracing.callStack?.expressions ?? [] });
   };
