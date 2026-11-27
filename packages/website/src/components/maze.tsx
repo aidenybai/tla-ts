@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Coins } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { useInView } from "motion/react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search } from "@/lib/search";
 import { Logo } from "./logo";
@@ -51,6 +52,23 @@ export const Maze = (props: MazeProps) => {
   const move = (name: MoveName) => {
     if (!isRobbed) setSquares([...squares, getNext(square, name)]);
   };
+  const boardRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(boardRef, { amount: 0.5 });
+  // The arrow keys move the player while the board is on screen, from wherever the focus is,
+  // and scroll the page again once it is not.
+  useEffect(() => {
+    if (!isInView) return;
+    const handleKey = (event: KeyboardEvent) => {
+      const found = MOVES.find((item) => item.key === event.key);
+      if (!found || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
+        return;
+      event.preventDefault();
+      move(found.name);
+    };
+    addEventListener("keydown", handleKey);
+    return () => removeEventListener("keydown", handleKey);
+  });
   const checked = useMemo(
     () =>
       (props.search?.checkedStates ?? []).map((state) => ({
@@ -64,16 +82,10 @@ export const Maze = (props: MazeProps) => {
   return (
     <div className="my-2 flex flex-wrap items-start gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
       <div
-        role="application"
-        aria-label="Maze. Use the arrow keys to move."
-        tabIndex={0}
-        onKeyDown={(event) => {
-          const found = MOVES.find((item) => item.key === event.key);
-          if (!found) return;
-          event.preventDefault();
-          move(found.name);
-        }}
-        className="grid shrink-0 grid-cols-5 gap-1 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        ref={boardRef}
+        role="img"
+        aria-label="A maze. The arrow keys move the player."
+        className="grid shrink-0 grid-cols-5 gap-1"
       >
         {SQUARES.map((item) => {
           const order = checked.findIndex((found) => found.square === item);
@@ -130,7 +142,7 @@ export const Maze = (props: MazeProps) => {
           ) : isRobbed ? (
             `You reached the gold in ${squares.length - 1} moves.`
           ) : (
-            "Rule: nobody reaches the gold. Walls close it off. Try to get there anyway."
+            "Rule: nobody reaches the gold. Walls close it off. Use your arrow keys to get there anyway."
           )}
         </p>
         <div className="grid grid-cols-3 gap-1">
