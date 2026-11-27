@@ -6,7 +6,7 @@ import {
   isRecursiveConstruction,
   type Expression,
 } from "./ast";
-import { isTlcEvalReached } from "./dependencies";
+import { isNonconstant, isTlcEvalReached } from "./dependencies";
 import { getKeyName } from "./resolve";
 import {
   bindValue,
@@ -86,7 +86,13 @@ interface Frame {
   isPrimed: boolean;
   locals: Map<string, string>;
   bindings: Map<string, string>;
+  substitutions: Map<string, Substitution>;
   isDetached: boolean;
+}
+
+interface Substitution {
+  argument: Expression;
+  frame: Frame;
 }
 
 interface Generator {
@@ -96,6 +102,7 @@ interface Generator {
   counter: number;
   hasEmptied: boolean;
   isUnsupported: boolean;
+  inlined: Expression[];
 }
 
 const GENERATED_KINDS = new Set([
@@ -238,7 +245,15 @@ const getDelegateContext = (generator: Generator, expression: Expression, frame:
   const isCaptured = (entry: [string, unknown]) => isEveryLocalCaptured || freeNames.has(entry[0]);
   const captured = [...frame.locals].filter(isCaptured);
   if (frame.isDetached) {
-    const bound = [...frame.bindings].filter(isCaptured);
+    const bound = [
+      ...[...frame.bindings].filter(isCaptured),
+      ...[...frame.substitutions]
+        .filter(isCaptured)
+        .map((entry): [string, string] => [
+          entry[0],
+          generateArgumentBinding(generator, entry[1].argument, entry[1].frame),
+        ]),
+    ];
     const boundNames = addReference(
       generator,
       bound.map((entry) => entry[0]),
@@ -274,6 +289,7 @@ const generateHelper = (
     isPrimed: false,
     locals: new Map(frame.locals),
     bindings: new Map(frame.bindings),
+    substitutions: frame.substitutions,
     isDetached: frame.isDetached,
   };
   const parameters = outerLocals.map((local) => `, ${local}`).join("");
@@ -388,6 +404,44 @@ const getStringLiterals = (elements: Expression[]) =>
     ? elements.map((element) => (element.kind === "String" ? element.value : ""))
     : undefined;
 
+const INLINED_KINDS = new Set([
+  "Identifier",
+  "Number",
+  "String",
+  "Record",
+  "Tuple",
+  "SetEnumeration",
+  "FieldAccess",
+  "If",
+  "And",
+  "Or",
+  "Apply",
+]);
+
+const MAX_INLINED_SIZE = 40;
+
+const MAX_INLINED_DEPTH = 4;
+
+// TLC evaluates an argument's LazyValue at the body's one read of it, where its code can run in place.
+const getInlinedSize = (body: Expression, params: Set<string>, reads: Set<string>): number => {
+  if (!INLINED_KINDS.has(body.kind)) return Infinity;
+  if (body.kind === "Identifier" && isLocallyResolved(body)) {
+    if (!params.has(body.name) || reads.has(body.name)) return Infinity;
+    reads.add(body.name);
+  }
+  return getChildren(body).reduce((size, child) => size + getInlinedSize(child, params, reads), 1);
+};
+
+const isInlinedCall = (generator: Generator, closure: Closure, frame: Frame) =>
+  frame.context === "context" &&
+  !frame.isPrimed &&
+  generator.inlined.length < MAX_INLINED_DEPTH &&
+  !generator.inlined.includes(closure.body) &&
+  !isNonconstant(closure.body, generator.environment) &&
+  !generator.environment.bodyValues.has(closure.body) &&
+  getInlinedSize(closure.body, new Set(closure.params.map((param) => param.name)), new Set()) <=
+    MAX_INLINED_SIZE;
+
 const isDirectCall = (
   generator: Generator,
   expression: Expression & { kind: "Apply" },
@@ -409,6 +463,7 @@ const generateCompiledThunk = (generator: Generator, expression: Expression, fra
     isPrimed: false,
     locals: frame.locals,
     bindings: frame.bindings,
+    substitutions: frame.substitutions,
     isDetached: true,
   });
   const declarations = generator.hasEmptied ? " let emptied;" : "";
@@ -426,6 +481,10 @@ const generateArgumentBinding = (generator: Generator, argument: Expression, fra
     });
   }
   if (argument.kind === "Identifier" && !argument.resolution?.isSelf) {
+    const substitution = frame.substitutions.get(argument.name);
+    if (substitution !== undefined && isLocallyResolved(argument)) {
+      return generateArgumentBinding(generator, substitution.argument, substitution.frame);
+    }
     const binding = frame.bindings.get(argument.name);
     if (binding !== undefined && isLocallyResolved(argument)) return binding;
     const local = frame.locals.get(argument.name);
@@ -472,6 +531,23 @@ const generateApply = (
     frame.isDetached &&
     isDirectCall(generator, expression, builtin)
   ) {
+    if (isInlinedCall(generator, builtin, frame)) {
+      generator.inlined.push(builtin.body);
+      const body = generateExpression(generator, builtin.body, {
+        context: frame.context,
+        state: frame.state,
+        next: frame.next,
+        isPrimed: frame.isPrimed,
+        locals: new Map(),
+        bindings: new Map(),
+        substitutions: new Map(
+          builtin.params.map((param, index) => [param.name, { argument: args[index], frame }]),
+        ),
+        isDetached: true,
+      });
+      generator.inlined.pop();
+      return body;
+    }
     const code = addReference(generator, getOperatorCode(builtin, generator.environment));
     const bindings = args.map((arg) => generateArgumentBinding(generator, arg, frame));
     return `${code}.call(${[frame.context, ...bindings].join(", ")})`;
@@ -562,6 +638,10 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
     case "String":
       return JSON.stringify(expression.value);
     case "Identifier": {
+      const substitution = frame.substitutions.get(expression.name);
+      if (substitution !== undefined && isLocallyResolved(expression)) {
+        return generateExpression(generator, substitution.argument, substitution.frame);
+      }
       const local = frame.locals.get(expression.name);
       if (local) return local;
       const binding = frame.bindings.get(expression.name);
@@ -700,6 +780,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         isPrimed: true,
         locals: frame.locals,
         bindings: frame.bindings,
+        substitutions: frame.substitutions,
         isDetached: frame.isDetached,
       });
     case "Unchanged": {
@@ -716,6 +797,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         isPrimed: false,
         locals: frame.locals,
         bindings: frame.bindings,
+        substitutions: frame.substitutions,
         isDetached: frame.isDetached,
       });
       const evaluated = `equal(${empty}, ${primed})`;
@@ -796,6 +878,7 @@ export const generateEvaluator = (
     counter: 0,
     hasEmptied: false,
     isUnsupported: false,
+    inlined: [],
   };
   const frame: Frame = {
     context: "context",
@@ -804,6 +887,7 @@ export const generateEvaluator = (
     isPrimed: false,
     locals: new Map(),
     bindings: new Map(),
+    substitutions: new Map(),
     isDetached: false,
   };
   const body = generateExpression(generator, expression, frame);
@@ -938,6 +1022,7 @@ export const generateOperator = (
     counter: 0,
     hasEmptied: false,
     isUnsupported: false,
+    inlined: [],
   };
   const parameters = closure.params.map((_param, index) => `binding${index}`);
   const frame: Frame = {
@@ -947,6 +1032,7 @@ export const generateOperator = (
     isPrimed: false,
     locals: new Map(),
     bindings: new Map(closure.params.map((param, index) => [param.name, parameters[index]])),
+    substitutions: new Map(),
     isDetached: true,
   };
   const loop = {
