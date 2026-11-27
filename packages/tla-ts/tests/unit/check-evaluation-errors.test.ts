@@ -2346,6 +2346,160 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "a guard",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == y = 0 /\\ x' = 1 /\\ y' = 1\nNext == x' = 1 /\\ (ENABLED A)'",
+      "line 4, col 6 to line 4, col 6",
+      [
+        "Line 5, column 9 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 28 in M",
+        "Line 5, column 28 to line 5, column 28 in M",
+        "Line 4, column 6 to line 4, column 30 in M",
+        "Line 4, column 6 to line 4, column 20 in M",
+        "Line 4, column 6 to line 4, column 10 in M",
+        "Line 4, column 6 to line 4, column 6 in M",
+      ],
+    ],
+    [
+      "the bound of \\E",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == \\E v \\in {y} : x' = v /\\ y' = v\nNext == x' = 1 /\\ (ENABLED A)'",
+      "line 4, col 16 to line 4, col 16",
+      [
+        "Line 5, column 9 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 28 in M",
+        "Line 5, column 28 to line 5, column 28 in M",
+        "Line 4, column 6 to line 4, column 36 in M",
+        "Line 4, column 15 to line 4, column 17 in M",
+        "Line 4, column 16 to line 4, column 16 in M",
+      ],
+    ],
+    [
+      "UNCHANGED",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x' = 1 /\\ UNCHANGED y\nNext == x' = 1 /\\ (ENABLED A)'",
+      "line 4, col 26 to line 4, col 26",
+      [
+        "Line 5, column 9 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 28 in M",
+        "Line 5, column 28 to line 5, column 28 in M",
+        "Line 4, column 6 to line 4, column 26 in M",
+        "Line 4, column 6 to line 4, column 11 in M",
+        "Line 4, column 16 to line 4, column 26 in M",
+        "Line 4, column 26 to line 4, column 26 in M",
+      ],
+    ],
+    [
+      "UNCHANGED of a tuple",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == UNCHANGED <<x, y>>\nNext == x' = 1 /\\ (ENABLED A)'",
+      "line 4, col 21 to line 4, col 21",
+      [
+        "Line 5, column 9 to line 5, column 30 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 30 in M",
+        "Line 5, column 20 to line 5, column 28 in M",
+        "Line 5, column 28 to line 5, column 28 in M",
+        "Line 4, column 6 to line 4, column 23 in M",
+        "Line 4, column 16 to line 4, column 23 in M",
+        "Line 4, column 18 to line 4, column 18 in M",
+        "Line 4, column 21 to line 4, column 21 in M",
+      ],
+    ],
+    [
+      "UNCHANGED of an operator parameter",
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nA(v) == x' = 1 /\\ UNCHANGED v\nNext == x' = 1 /\\ (ENABLED A(y))'",
+      "line 5, col 30 to line 5, col 30",
+      [
+        "Line 5, column 9 to line 5, column 33 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 33 in M",
+        "Line 5, column 20 to line 5, column 31 in M",
+        "Line 5, column 28 to line 5, column 31 in M",
+        "Line 4, column 9 to line 4, column 29 in M",
+        "Line 4, column 9 to line 4, column 14 in M",
+        "Line 4, column 19 to line 4, column 29 in M",
+        "Line 4, column 29 to line 4, column 29 in M",
+        "Line 5, column 30 to line 5, column 30 in M",
+      ],
+    ],
+    [
+      "UNCHANGED of a definition",
+      "EXTENDS Naturals\nVARIABLES x, y\nOp == y\nInit == x = 0 /\\ y = 0\nA == UNCHANGED <<x, Op>>\nNext == x' = 1 /\\ (ENABLED A)'",
+      "line 4, col 7 to line 4, col 7",
+      [
+        "Line 7, column 9 to line 7, column 30 in M",
+        "Line 7, column 9 to line 7, column 14 in M",
+        "Line 7, column 19 to line 7, column 30 in M",
+        "Line 7, column 20 to line 7, column 28 in M",
+        "Line 7, column 28 to line 7, column 28 in M",
+        "Line 6, column 6 to line 6, column 24 in M",
+        "Line 6, column 16 to line 6, column 24 in M",
+        "Line 6, column 18 to line 6, column 18 in M",
+        "Line 6, column 21 to line 6, column 22 in M",
+        "Line 4, column 7 to line 4, column 7 in M",
+      ],
+    ],
+  ])(
+    "fails ENABLED on a successor without y where %s reads y, as TLC's Tool#enabled does",
+    async (_title, body, location, callStack) => {
+      const result = await check({
+        source: `---- MODULE M ----\n${body}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect([
+        result.failure?.message,
+        formatCallStackLines(result),
+        [result.generatedStates, result.distinctStates],
+        result.failure?.exitCode,
+      ]).toEqual([
+        `${UNEXPECTED_EXCEPTION}In evaluation, the identifier y is either undefined or not an operator.\n${location} of module M`,
+        callStack,
+        [1, 1],
+        75,
+      ]);
+    },
+  );
+
+  it("evaluates ENABLED on a successor without y where the action never reads y, as TLC's Tool#enabled does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x = 1 /\\ x' = 1 /\\ y' = 1\nNext == x' = 1 /\\ (ENABLED A)'\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.message,
+      result.failure?.trace.map((step) => [formatValue(step.state.x), formatValue(step.state.y)]),
+      [result.generatedStates, result.distinctStates],
+      result.failure?.exitCode,
+    ]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
+      [
+        ["0", "0"],
+        ["1", "null"],
+      ],
+      [2, 1],
+      75,
+    ]);
+  });
+
+  it("evaluates ENABLED in the initial predicate on the variables it has assigned, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ ENABLED (x' = x) /\\ y = 0\nNext == UNCHANGED <<x, y>>\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   const checkFairPrint = (action: string, config: string, version: TlcVersion) =>
     check({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,

@@ -102,7 +102,7 @@ interface Run {
   environment: Environment;
   isInit: boolean;
   isEnabled: boolean;
-  current: Value[] | undefined;
+  current: State | undefined;
   isStopped: boolean;
   generator: SuccessorGenerator | undefined;
   successors: number;
@@ -471,11 +471,14 @@ const compileConjunction = (
         if (!state) return;
         let unchanged: State | undefined;
         for (const variable of conjunct.variables) {
+          // Tool#enabledUnchanged evaluates the variable, which fails where ENABLED runs on a partial state.
+          const value =
+            state[variable.index] ?? evaluate(variable.expression, getContext(run, scope, current));
           const assigned = (unchanged ?? current)[variable.index];
           if (assigned === undefined) {
             unchanged ??= current.slice();
-            unchanged[variable.index] = state[variable.index];
-          } else if (!isEqualLikeTlc(state[variable.index], assigned)) {
+            unchanged[variable.index] = value;
+          } else if (!isEqualLikeTlc(value, assigned)) {
             warnChangedUnchanged(run.environment, variable.index, variable.expression);
             return;
           }
@@ -686,8 +689,9 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
   const runner: Runner = (run, scope, partial, action, isFixed, onComplete) => {
     const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
     if (index !== undefined) {
-      const value = run.current?.[index];
-      if (value === undefined) return;
+      const current = run.current;
+      if (current === undefined) return;
+      const value = current[index] ?? evaluate(expression, getContext(run, scope, partial));
       const assigned = partial[index];
       if (assigned === undefined) {
         onComplete(assign(partial, index, value), action);
@@ -1391,11 +1395,6 @@ export const isComplete = (partial: State): partial is Value[] => {
 
 export const isEnabled = (expression: Expression, context: Context): boolean => {
   const state = context.state;
-  if (!state || !isComplete(state)) {
-    throw new TlaEvaluationError(
-      `ENABLED needs a complete state at ${describeLocation(expression)}`,
-    );
-  }
   const environment = context.environment;
   const runtime = environment.runtime;
   const outerControl = runtime.evalControl;
