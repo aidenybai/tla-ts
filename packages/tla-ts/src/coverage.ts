@@ -727,9 +727,14 @@ export const buildCoverage = (
           : undefined;
         const walkApplication = () => {
           if (resolved && !expression.hasSubstitutedOperator) {
+            // CostModelCreator walks the definition the config substitutes with a CostModelCreator of its own, whose Context binds no operator argument.
+            const isConfigSubstitute =
+              !isLocallyResolved(expression) && environment.substitutions.has(expression.operator);
             walkDefinition(
               resolved,
-              expression.args.map((argument) => getOperatorBody(argument, locals)),
+              isConfigSubstitute
+                ? undefined
+                : expression.args.map((argument) => getOperatorBody(argument, locals)),
             );
           }
           expression.args.forEach((argument, index) => {
