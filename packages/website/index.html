@@ -20,11 +20,13 @@
         )
       )
         document.querySelector('meta[name="theme-color"]').content = "#111110";
+      const showAtOnce = () => (document.documentElement.dataset.still = "");
       if (
         location.hash !== "" ||
         performance.getEntriesByType("navigation")[0]?.type !== "navigate"
       )
-        document.documentElement.dataset.still = "";
+        showAtOnce();
+      addEventListener("scroll", showAtOnce, { once: true, passive: true });
     </script>
   </head>
   <body>
