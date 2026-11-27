@@ -2006,7 +2006,7 @@ ASSUME TLCFP(a) = -887695703
     const lazyTuple = await checkLazyTuple(
       "<<1, 2>> # [n \\in UNION {1..1, {3}} |-> PrintT(n) /\\ 1 \\div (n - 3) = 0]",
     );
-    expect([lazyTuple.printed, lazyTuple.result.failure?.traceOutput]).toEqual([
+    expect([lazyTuple.printed, lazyTuple.result.failure?.trailingOutput]).toEqual([
       ["1", "1", "3"],
       ["1", "1", "3"],
     ]);
@@ -5754,7 +5754,7 @@ ASSUME TLCFP(a) = -887695703
       source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 4 /\\ PrintT(<<"n", x>>)\n${property}\n====`,
       config,
     });
-    expect(result.failure?.traceOutput).toEqual(['<<"n", 1>>']);
+    expect(result.failure?.trailingOutput).toEqual(['<<"n", 1>>']);
     expect(
       await getCoverageCounts(`Init == x = 0\nNext == x' = (x + 1) % 4\n${property}`, config),
     ).toEqual(["2:2 2", "2:4 4"]);
@@ -5765,7 +5765,7 @@ ASSUME TLCFP(a) = -887695703
       source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == PrintT(<<"n", x>>) /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nInv == x < 1 \\/ CHOOSE e \\in {} : TRUE\nP == <>(x = 5)\n====`,
       config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY P",
     });
-    expect(result.failure?.traceOutput).toEqual(Array(4).fill('<<"n", 0>>'));
+    expect(result.failure?.trailingOutput).toEqual(Array(4).fill('<<"n", 0>>'));
   });
 
   it("counts the successors the behavior graph generates again for a deadlocked state, as TLC does", async () => {
@@ -8201,7 +8201,7 @@ ASSUME TLCFP(a) = -887695703
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => lines.push(text),
     });
-    return [lines, result.failure?.traceOutput];
+    return [lines, result.failure?.trailingOutput];
   };
 
   it("applies a lazy function an operator argument holds again at each reference when it replays a failure, as TLC's CallStackTool copies each FcnLambdaValue it evaluates", async () => {
@@ -8240,8 +8240,8 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])(
     "takes an EXCEPT of the lazy function %s holds on the record its conversion built, as TLC's FcnLambdaValue#takeExcept does",
-    async (_holder, init, next, printed, traceOutput) => {
-      expect(await checkConvertedLazy(init, next)).toEqual([printed, traceOutput]);
+    async (_holder, init, next, printed, trailingOutput) => {
+      expect(await checkConvertedLazy(init, next)).toEqual([printed, trailingOutput]);
     },
   );
 
@@ -8263,10 +8263,10 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])(
     "applies the record a conversion built of the lazy function %s holds as an action, as TLC's getNextStates does",
-    async (_holder, next, traceOutput) => {
+    async (_holder, next, trailingOutput) => {
       expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([
         ["{}", "{1}"],
-        traceOutput,
+        trailingOutput,
       ]);
     },
   );
@@ -8284,8 +8284,8 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])(
     "evaluates the function %s applies as an action once, as TLC's getNextStates does",
-    async (_step, next, traceOutput) => {
-      expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([['"e"'], traceOutput]);
+    async (_step, next, trailingOutput) => {
+      expect(await checkConvertedLazy("x = 0 /\\ f = 0", next)).toEqual([['"e"'], trailingOutput]);
     },
   );
 
@@ -13404,7 +13404,7 @@ ASSUME TLCFP(a) = -887695703
       config: "INIT Init\nNEXT Next",
       onPrint: (text) => prints.push(text),
     });
-    expect([prints, result.failure?.traceOutput]).toEqual([
+    expect([prints, result.failure?.trailingOutput]).toEqual([
       ["{}", "{1}", "{}", "{1}", "{}", "{1}", "{}", "{1}"],
       ["{}", "{1}", "{}", "{1}"],
     ]);

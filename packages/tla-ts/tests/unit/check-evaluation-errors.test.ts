@@ -1571,13 +1571,15 @@ describe("evaluation errors match TLC", () => {
       "checks the postconditions of a deadlocked failed state",
       'Init == x = 0 /\\ TLCSet(1, 0) /\\ PrintT(<<"i", TLCGet(1)>>)\nNext == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 1 THEN (x /\\ TRUE) ELSE x\nPost == PrintT(<<"post", TLCGet(1)>>)',
       "INIT Init\nNEXT Next\nPOSTCONDITION Post",
-      ['<<"i", 0>>', '<<"post", 0>>', '<<"n", 1>>'],
+      ['<<"i", 0>>', '<<"post", 0>>'],
+      ['<<"n", 1>>'],
       75,
     ],
     [
       "rebuilds the trace to a successor that fails a constraint",
       'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ x\' = x + b\nC == PrintT(<<"c", x, TLCGet(1)>>) /\\ IF x = 3 /\\ TLCGet(1) \\in {5, 6} THEN 1 \\in 2 ELSE TRUE',
       "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+      [],
       ['<<"c", 3, 6>>'],
       75,
     ],
@@ -1585,21 +1587,23 @@ describe("evaluation errors match TLC", () => {
       "rebuilds the trace to a successor that fails an invariant",
       'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", x, TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 8 THEN (x /\\ TRUE) ELSE x + b\nInv == IF x = 4 /\\ TLCGet(1) = 6 THEN 1 \\in 2 ELSE TRUE',
       "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      [],
       ['<<"n", 2, 5>>', '<<"n", 2, 6>>'],
       76,
     ],
   ])(
     "%s before TLC's ModelChecker replays the next state",
-    async (_title, definitions, config, traceOutput, exitCode) => {
+    async (_title, definitions, config, traceOutput, trailingOutput, exitCode) => {
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${definitions}\n====`,
         config,
         onPrint: () => {},
       });
-      expect([result.failure?.traceOutput, result.failure?.exitCode]).toEqual([
-        traceOutput,
-        exitCode,
-      ]);
+      expect([
+        result.failure?.traceOutput,
+        result.failure?.trailingOutput,
+        result.failure?.exitCode,
+      ]).toEqual([traceOutput, trailingOutput, exitCode]);
     },
   );
 
@@ -1612,7 +1616,7 @@ describe("evaluation errors match TLC", () => {
     });
     expect([
       result.failure?.trace.map((step) => step.output),
-      result.failure?.traceOutput,
+      result.failure?.trailingOutput,
       result.failure?.exitCode,
     ]).toEqual([[[], ['<<"n", 1, 3>>', '<<"n", 2, 4>>']], ['<<"n", 1, 5>>', '<<"n", 2, 6>>'], 75]);
   });
@@ -1623,7 +1627,7 @@ describe("evaluation errors match TLC", () => {
       "INIT Init\nNEXT Next\nCONSTRAINT C",
     );
     expect(result.failure?.trace.map((step) => formatValue(step.state.x))).toEqual(["0", "1", "2"]);
-    expect(result.failure?.traceOutput).toEqual(['<<"c", 2>>']);
+    expect(result.failure?.trailingOutput).toEqual(['<<"c", 2>>']);
   });
 
   it.each([
@@ -1634,13 +1638,16 @@ describe("evaluation errors match TLC", () => {
       `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x\n${check}`,
       `SPECIFICATION Spec\n${kind} P`,
     );
-    expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
+    expect([result.failure?.traceOutput, result.failure?.trailingOutput]).toEqual([
+      [],
+      ['<<"s", 1>>'],
+    ]);
   });
 
   it.each([
-    ["Fail \\/ Shown", "", ['<<"s", 0>>']],
-    ["Fail \\/ Shown", "CHECK_DEADLOCK FALSE", []],
-    ["Shown \\/ Fail", "", ['<<"s", 1>>']],
+    ["Fail \\/ Shown", "", [['<<"s", 0>>'], []]],
+    ["Fail \\/ Shown", "CHECK_DEADLOCK FALSE", [[], []]],
+    ["Shown \\/ Fail", "", [[], ['<<"s", 1>>']]],
   ])(
     "prints the output of the trace again after %s fails only as TLC finds the state deadlocked (%s)",
     async (step, config, expected) => {
@@ -1648,7 +1655,7 @@ describe("evaluation errors match TLC", () => {
         `Shown == PrintT(<<"s", x>>) /\\ Next\nFail == x = 1 /\\ x' = 1 /\\ 1\nStep == ${step}`,
         `INIT Init\nNEXT Step\n${config}`,
       );
-      expect(result.failure?.traceOutput).toEqual(expected);
+      expect([result.failure?.traceOutput, result.failure?.trailingOutput ?? []]).toEqual(expected);
     },
   );
 
@@ -1658,7 +1665,7 @@ describe("evaluation errors match TLC", () => {
       "SPECIFICATION Spec\nPROPERTY P\nPROPERTY L",
       "1.7.4",
     );
-    expect(result.failure?.traceOutput).toEqual(['<<"s", 1>>']);
+    expect(result.failure?.trailingOutput).toEqual(['<<"s", 1>>']);
   });
 
   it.each(["1.7.4" as const, undefined])(
@@ -2375,7 +2382,7 @@ describe("evaluation errors match TLC", () => {
         coverage: 1,
         onPrint: (text) => prints.push(text),
       });
-      expect([prints, result.failure?.traceOutput]).toEqual([['"a"'], ['"a"']]);
+      expect([prints, result.failure?.trailingOutput]).toEqual([['"a"'], ['"a"']]);
     },
   );
 
@@ -2419,20 +2426,25 @@ describe("evaluation errors match TLC", () => {
     "prints what adding a state whose next states fail to the behavior graph prints in TLC %s",
     async (version, count) => {
       const result = await checkFairPrint("(x' = 1 \\/ x' = 1 \\div 0)", "", version);
-      expect(result.failure?.traceOutput).toEqual(Array.from({ length: count }, () => "0"));
+      expect(result.failure?.trailingOutput).toEqual(Array.from({ length: count }, () => "0"));
     },
   );
 
   it.each([
-    ["an invariant violation", "master", "INVARIANT Inv", ["0", "0", "0", "0", "0", "0", "0", "0"]],
-    ["an invariant violation", "1.7.4", "INVARIANT Inv", []],
-    ["a deadlock", "master", "", ["0", "1", "2"]],
-    ["a deadlock", "1.7.4", "", ["2"]],
+    [
+      "an invariant violation",
+      "master",
+      "INVARIANT Inv",
+      [["0"], ["0", "0", "0", "0", "0", "0", "0"]],
+    ],
+    ["an invariant violation", "1.7.4", "INVARIANT Inv", [[], undefined]],
+    ["a deadlock", "master", "", [["0", "1"], ["2"]]],
+    ["a deadlock", "1.7.4", "", [[], ["2"]]],
   ] as const)(
     "prints what adding a state to the behavior graph prints after %s in TLC %s",
     async (_title, version, config, expected) => {
       const result = await checkFairPrint("x < 2 /\\ x' = x + 1", config, version);
-      expect(result.violation?.traceOutput).toEqual(expected);
+      expect([result.violation?.traceOutput, result.violation?.trailingOutput]).toEqual(expected);
     },
   );
 
@@ -3346,12 +3358,14 @@ describe("evaluation errors match TLC", () => {
     expect([
       result.failure?.trace.map((step) => [formatValue(step.state.x), step.output]),
       result.failure?.traceOutput ?? [],
+      result.failure?.trailingOutput ?? [],
     ]).toEqual([
       [
         ["0", []],
         ["1", ['<<"a", 0>>']],
         ["2", ['<<"a", 1>>']],
       ],
+      [],
       [],
     ]);
   });
@@ -5423,14 +5437,14 @@ describe("evaluation errors match TLC", () => {
     ],
   ])(
     "evaluates a filter under an operand of S \\cup T as TLC's enumerators do: %s",
-    async (next, printed, traceOutput) => {
+    async (next, printed, trailingOutput) => {
       const lines: string[] = [];
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
         onPrint: (text) => lines.push(text),
       });
-      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+      expect([lines, result.failure?.trailingOutput]).toEqual([printed, trailingOutput]);
     },
   );
 
@@ -5501,14 +5515,14 @@ describe("evaluation errors match TLC", () => {
     ],
   ])(
     "evaluates a filter under a component S \\cup T, S \\cap T, S \\ T or UNION S of [S -> T] as TLC's enumerators reset it: %s",
-    async (next, printed, traceOutput) => {
+    async (next, printed, trailingOutput) => {
       const lines: string[] = [];
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
         onPrint: (text) => lines.push(text),
       });
-      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+      expect([lines, result.failure?.trailingOutput]).toEqual([printed, trailingOutput]);
     },
   );
 
@@ -5592,14 +5606,14 @@ describe("evaluation errors match TLC", () => {
     ],
   ])(
     "sorts a set literal that holds a filter only when TLC normalizes it, and converts the filter again where TLC's toSetEnum keeps nothing: %s",
-    async (next, printed, traceOutput) => {
+    async (next, printed, trailingOutput) => {
       const lines: string[] = [];
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
         onPrint: (text) => lines.push(text),
       });
-      expect([lines, result.failure?.traceOutput]).toEqual([printed, traceOutput]);
+      expect([lines, result.failure?.trailingOutput]).toEqual([printed, trailingOutput]);
     },
   );
 
@@ -6259,7 +6273,7 @@ describe("evaluation errors match TLC", () => {
     );
     expect(result.failure?.message).toBe(getRuntimeException(UNEXPANDED_FILTER_REASON));
     expect(result.failure?.fingerprint?.reason).toBe(UNEXPANDED_FILTER_REASON);
-    expect([printed, result.failure?.traceOutput]).toEqual([['<<"b", {}>>'], ['<<"b", {}>>']]);
+    expect([printed, result.failure?.trailingOutput]).toEqual([['<<"b", {}>>'], ['<<"b", {}>>']]);
   });
 
   it("keeps the call stack frozen at a failure an error message swallows, as TLC's CallStackTool does", async () => {

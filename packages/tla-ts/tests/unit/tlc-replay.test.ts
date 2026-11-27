@@ -257,7 +257,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
       expect([
         result.failure?.code,
         result.failure?.exitCode,
-        result.failure?.traceOutput?.flatMap((line) =>
+        (result.failure?.trailingOutput ?? []).flatMap((line) =>
           typeof line === "object" && line.kind === "violation"
             ? [
                 `${line.violation.name}: ${line.violation.trace.map((step) => formatValue(step.state.y)).join(" ")}`,
@@ -279,7 +279,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
     expect([
       result.failure?.message,
       result.failure?.trace.length,
-      result.failure?.traceOutput,
+      result.failure?.trailingOutput ?? [],
       formatCallStack(result.failure?.callStack),
       result.failure?.exitCode,
     ]).toEqual(["The second argument of \\div is 0.", 2, [], ["6.8-6.21", "6.8-6.17"], 255]);
@@ -295,7 +295,7 @@ describe("the call stack of a replayed failure matches TLC", () => {
     expect([
       result.failure?.message,
       result.failure?.trace.length,
-      result.failure?.traceOutput,
+      result.failure?.trailingOutput ?? [],
       formatCallStack(result.failure?.callStack),
       result.failure?.exitCode,
     ]).toEqual([
@@ -463,7 +463,7 @@ describe("the replay of a failed initial state matches TLC", () => {
       `Init == ${init}\nNext == x' = x\nInv == ${inv}`,
       "INIT Init\nNEXT Next\nINVARIANT Inv",
     );
-    return [result.generatedStates, result.failure?.traceOutput];
+    return [result.generatedStates, result.failure?.trailingOutput];
   };
 
   const getProgress = (count: number) => ({ kind: "initial-states-progress", count });
@@ -497,7 +497,7 @@ describe("the replay of a failed initial state matches TLC", () => {
     });
     expect([
       result.generatedStates,
-      result.failure?.traceOutput?.map((line) =>
+      result.failure?.trailingOutput?.map((line) =>
         typeof line !== "string" && line.kind === "initial-state-violation"
           ? `${line.name} ${formatValue(line.state.x)}`
           : line,

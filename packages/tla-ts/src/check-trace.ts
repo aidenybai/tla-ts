@@ -20,6 +20,7 @@ import {
 export interface Behavior {
   trace: TraceStep[];
   traceOutput?: OutputLine[];
+  trailingOutput?: OutputLine[];
   traceFailure?: TraceFailure;
 }
 
