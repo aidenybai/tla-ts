@@ -17,15 +17,15 @@ import { install, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
-  <main className="mx-auto max-w-[692px] px-6 py-16 text-prose sm:py-28">
+  <main className="mx-auto max-w-[644px] px-6 py-16 text-prose sm:py-28">
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
-        <p>
+        <p className="motion-safe:animate-enter [--enter-delay:80ms]">
           Formally verify TypeScript code with{" "}
           <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link>.
         </p>
-        <div className="flex gap-2">
+        <div className="flex gap-2 motion-safe:animate-enter [--enter-delay:160ms]">
           <a
             href="https://github.com/aidenybai/tla-ts"
             className={cn(buttonVariants({ variant: "primary" }), "pl-2")}
@@ -40,7 +40,7 @@ const Page = () => (
         </div>
       </Hero.Body>
     </Hero.Root>
-    <div className="mt-20 flex flex-col gap-20">
+    <div className="mt-20 flex flex-col gap-20 motion-safe:animate-rise [--enter-delay:240ms]">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
