@@ -281,11 +281,10 @@ const ExampleGraph = () => {
 const ExampleTree = () => {
   const state = exampleContext.useParts();
   const search = state.result?.search;
-  if (!search)
-    return <p className="text-sm text-faint">Run the example to see every state TLA-ts checks.</p>;
+  if (!search) return null;
   const count = search.checkedStates.length;
   return (
-    <figure className="flex flex-col gap-4">
+    <figure className="mt-10 flex flex-col gap-4">
       <StateTree search={search} path={state.path} onHover={state.hoverState} />
       <figcaption className="text-sm text-faint">
         {count.toLocaleString("en-US")} {count === 1 ? "state" : "states"} checked

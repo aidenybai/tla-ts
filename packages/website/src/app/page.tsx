@@ -2,6 +2,7 @@ import { Play } from "@phosphor-icons/react";
 import { Code } from "@/components/code";
 import { GitHubIcon } from "@/components/github-icon";
 import { BenchmarkChart } from "@/components/benchmark-chart";
+import { CoverageDiagram } from "@/components/coverage-diagram";
 import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
 import { Section } from "@/components/section";
@@ -43,22 +44,21 @@ const Page = () => (
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
-          <li>
-            Run <InlineCode>npx tla-ts [file].ts</InlineCode>
-          </li>
-          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
-          <li>Get any violations, with the steps that caused them</li>
-        </ol>
+        <p className="text-pretty">
+          A test runs the few orders of calls you thought to write. A model checker runs every order
+          your code allows, one state at a time, and stops at the first that breaks a rule you
+          wrote.
+        </p>
+        <CoverageDiagram />
+        <p className="text-pretty">
+          TLA-ts does this for TypeScript. It turns your file into TLA+, a language for describing
+          every state a program can be in, and checks each one.
+        </p>
         <Example.Root>
           <Example.Description />
           <Example.Source />
           <Example.Graph />
           <Example.Hint />
-          <p className="mt-10 text-pretty">
-            A test checks the calls you thought to write. TLA-ts tries every call, in every order,
-            so it reaches the one that breaks.
-          </p>
           <Example.Tree />
         </Example.Root>
       </Section.Root>
