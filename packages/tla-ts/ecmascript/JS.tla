@@ -1501,6 +1501,7 @@ RECURSIVE SetToSeqFrom(_, _)
 RECURSIVE SortDistinctUnits(_)
 RECURSIVE MergeCodeUnits(_, _, _)
 RECURSIVE IsSymbolLikeNamespaceKey(_, _, _)
+RECURSIVE IsExportName(_, _)
 RECURSIVE NamespaceExports(_, _)
 RECURSIVE NamespaceHasProperty(_, _, _)
 RECURSIVE NamespaceDelete(_, _, _)
@@ -17249,18 +17250,19 @@ MergeCodeUnits(a, b, done) ==
 \* namespace evaluates its module before it reads the exports, except for a symbol-like key: a
 \* symbol, or "then" (IsSymbolLikeNamespaceKey and GetModuleExportsList of import-defer).
 IsSymbolLikeNamespaceKey(s, v, k) == IsSymbol(k) \/ (Slots(s, v).deferred /\ k.value = N("then"))
+IsExportName(names, name) == \E i \in DOMAIN names : names[i] = name
 NamespaceExports(s, v) ==
-  IF ~Slots(s, v).deferred THEN Ok(s, Range(Slots(s, v).exports)) ELSE
+  IF ~Slots(s, v).deferred THEN Ok(s, Slots(s, v).exports) ELSE
   LET evaluated == EvaluateModuleSync(s, Slots(s, v).module) IN
-  IF IsAbrupt(evaluated) THEN evaluated ELSE Ok(evaluated.s, Range(Slots(s, v).exports))
+  IF IsAbrupt(evaluated) THEN evaluated ELSE Ok(evaluated.s, Slots(s, v).exports)
 NamespaceHasProperty(s, v, k) ==
-  LET exports == NamespaceExports(s, v) IN IF IsAbrupt(exports) THEN exports ELSE Ok(exports.s, Bool(k.value \in Val(exports)))
+  LET exports == NamespaceExports(s, v) IN IF IsAbrupt(exports) THEN exports ELSE Ok(exports.s, Bool(IsExportName(Val(exports), k.value)))
 NamespaceDelete(s, v, k) ==
-  LET exports == NamespaceExports(s, v) IN IF IsAbrupt(exports) THEN exports ELSE Ok(exports.s, Bool(k.value \notin Val(exports)))
+  LET exports == NamespaceExports(s, v) IN IF IsAbrupt(exports) THEN exports ELSE Ok(exports.s, Bool(~IsExportName(Val(exports), k.value)))
 NamespaceGet(s, v, k) ==
   LET exports == NamespaceExports(s, v) IN
   IF IsAbrupt(exports) THEN exports
-  ELSE IF k.value \notin Val(exports) THEN Ok(exports.s, Undefined) ELSE
+  ELSE IF ~IsExportName(Val(exports), k.value) THEN Ok(exports.s, Undefined) ELSE
   LET binding == ResolveExport(exports.s, Slots(s, v).module, k.value, {}).result IN
   IF binding.namespace THEN GetModuleNamespace(exports.s, binding.module, binding.deferred)
   ELSE IF binding.source THEN GetModuleSource(exports.s, binding.module)
@@ -17270,7 +17272,7 @@ NamespaceGetOwnProperty(s, v, k) ==
   IF IsSymbolLikeNamespaceKey(s, v, k) THEN Ok(s, OrdinaryGetOwnProperty(O(s, v), k)) ELSE
   LET exports == NamespaceExports(s, v) IN
   IF IsAbrupt(exports) THEN exports
-  ELSE IF k.value \notin Val(exports) THEN Ok(exports.s, Absent)
+  ELSE IF ~IsExportName(Val(exports), k.value) THEN Ok(exports.s, Absent)
   ELSE LET value == NamespaceGet(exports.s, v, k) IN
        IF IsAbrupt(value) THEN value ELSE Ok(value.s, DataDesc(Val(value), TRUE, TRUE, FALSE))
 NamespaceDefineOwnProperty(s, v, k, d) ==
