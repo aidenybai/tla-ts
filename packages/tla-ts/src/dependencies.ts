@@ -309,9 +309,11 @@ const collectLocalFacts = (
       return;
     }
     if (node.kind !== "Let" || !lets) {
-      getChildren(node).forEach((child) =>
-        visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
-      );
+      const children = getChildren(node);
+      const isChildArgument = isOperatorArgument || kind === "Lambda";
+      for (let index = 0; index < children.length; index++) {
+        visit(children[index], isInnerLevelCounted, isChildArgument, substitutes);
+      }
       return;
     }
     const outer = owner;

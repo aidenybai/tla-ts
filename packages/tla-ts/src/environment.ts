@@ -368,18 +368,17 @@ const getProofInstances = (proof: Proof | undefined): Instance[] =>
       ])
     : [];
 
-const rejectLiterals = (expressions: Expression[]): void =>
-  expressions.forEach((expression) => {
+const rejectLiterals = (expressions: Expression[]): void => {
+  for (let index = 0; index < expressions.length; index++) {
+    const expression = expressions[index];
     if (expression.kind === "Decimal") throw createRealNumberError(expression);
     if (expression.kind === "Number" && !isTlcInteger(expression.value)) {
       throw createBigNumberError(expression);
     }
-    rejectLiterals(
-      expression.kind === "Let"
-        ? [...getChildren(expression), ...getSubstitutions(expression.instances ?? [])]
-        : getChildren(expression),
-    );
-  });
+    rejectLiterals(getChildren(expression));
+    if (expression.kind === "Let") rejectLiterals(getSubstitutions(expression.instances ?? []));
+  }
+};
 
 export const createEnvironment = (
   config: ModelConfig,
