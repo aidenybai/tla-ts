@@ -491,24 +491,23 @@ const closeRows = (
         lowLink[caller] = Math.min(lowLink[caller], lowLink[node]);
       }
       if (lowLink[node] !== index[node]) continue;
-      const members: number[] = [];
-      for (;;) {
-        const member = stack.pop() ?? node;
-        component[member] = componentCount;
-        members.push(member);
-        if (member === node) break;
+      let bottom = stack.length - 1;
+      while (stack[bottom] !== node) bottom--;
+      const top = stack.length - 1;
+      const first = stack[top];
+      for (let position = top; position >= bottom; position--) {
+        component[stack[position]] = componentCount;
       }
       componentCount++;
-      const first = members[0];
-      members.forEach((member) => {
+      for (let position = top; position >= bottom; position--) {
+        const member = stack[position];
         if (member !== first) orRow(first, member);
         for (let edge = starts[member]; edge < starts[member + 1]; edge++) {
           if (component[targets[edge]] !== component[first]) orRow(first, targets[edge]);
         }
-      });
-      members.forEach((member) => {
-        if (member !== first) orRow(member, first);
-      });
+      }
+      for (let position = top - 1; position >= bottom; position--) orRow(stack[position], first);
+      stack.length = bottom;
     }
   }
   return closed;
