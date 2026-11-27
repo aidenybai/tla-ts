@@ -1,12 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { exploreInNode } from "./compile-worker";
+import { runStepsInNode } from "./node-steps";
 
 interface ModelResult {
   status: string;
@@ -200,40 +200,6 @@ const checkModel = (
   });
 
 const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
-
-// A driver that runs a model's file in Node and calls its steps in turn, each once Node's loop has
-// nothing left to run, which beforeExit tells, and prints the value of each of its checks in the
-// state that the module's top level leaves and after each step. An immediate that does nothing
-// keeps the loop running to the next beforeExit after a step that queues nothing.
-const DRIVER = `const [file, ...steps] = process.argv.slice(2);
-const module = await import(file);
-const checks = Object.keys(module).filter((name) => !steps.includes(name));
-const results = [];
-const record = () => results.push(Object.fromEntries(checks.map((name) => [name, module[name]()])));
-let index = 0;
-process.on("beforeExit", () => {
-  if (index >= steps.length) return;
-  record();
-  module[steps[index++]]();
-  setImmediate(() => {});
-});
-process.on("exit", () => {
-  record();
-  console.log(JSON.stringify(results));
-});
-`;
-
-// The values that a model's checks have in Node, in the state its top level leaves and after each
-// of the steps, as DRIVER runs them.
-const runStepsInNode = (path: string, steps: string[]): Record<string, boolean>[] => {
-  const driver = join(mkdtempSync(join(tmpdir(), "tla-ts-js-tla-driver-")), "driver.mjs");
-  writeFileSync(driver, DRIVER);
-  const run = spawnSync(process.execPath, [driver, pathToFileURL(path).href, ...steps], {
-    encoding: "utf8",
-  });
-  rmSync(dirname(driver), { recursive: true, force: true });
-  return JSON.parse(run.stdout);
-};
 
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
