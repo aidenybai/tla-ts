@@ -21,10 +21,11 @@ const FONTS = [
     family: "Allo",
     fileName: "allo.woff2",
     source: "node_modules/allo-font/fonts/webfonts/AlloVariableFriendly.woff2",
-    // Latin letters, punctuation, and a few arrows and signs, from the regular weight up.
+    // English letters, punctuation, and a few arrows and signs, from the regular weight up.
     text: getText([
       [0x20, 0x7e],
-      [0xa0, 0x17f],
+      [0xa0, 0xa0],
+      [0xd7, 0xd7],
       [0x2010, 0x2027],
       [0x2030, 0x203a],
       [0x20ac, 0x20ac],
