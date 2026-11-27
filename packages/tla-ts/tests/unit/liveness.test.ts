@@ -550,6 +550,84 @@ describe("liveness matches TLC", () => {
     },
   );
 
+  const getSpinSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}\n====`;
+
+  it.each([
+    [
+      "a property",
+      "Next == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == []<>(Spin(x) = 0)",
+      "",
+      2,
+    ],
+    [
+      "the fairness",
+      "Next == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next /\\ Spin(x') = 0)\nProp == <>[](x \\in 0..2)",
+      "",
+      2,
+    ],
+    [
+      "a property at a state without successors",
+      "Next == x < 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x\nProp == []<>(Spin(x) = 0)",
+      "\nCHECK_DEADLOCK FALSE",
+      1,
+    ],
+  ])(
+    "reports a stack overflow in %s as it adds a state to the behavior graph like TLC",
+    async (_title, definitions, config, states) => {
+      const result = await check({
+        source: getSpinSource(definitions),
+        config: `SPECIFICATION Spec\nPROPERTY Prop${config}`,
+      });
+      expect([
+        result.status,
+        result.failure?.message,
+        result.failure?.exitCode,
+        result.failure?.trace.map((step) => step.state.x),
+        result.outDegrees,
+        result.generatedStates,
+        result.distinctStates,
+      ]).toEqual(["error", STACK_OVERFLOW_MESSAGE, 255, [0], undefined, states, states]);
+    },
+  );
+
+  it.each([
+    [
+      "an invariant violation",
+      "Next == x' = x + 1\nSpec == Init /\\ [][Next]_x\nInv == x < 1\nProp == []<>(IF x = 0 THEN Spin(x) = 0 ELSE TRUE)",
+      "\nINVARIANT Inv",
+      "invariant-violation",
+      [0, 1],
+    ],
+    [
+      "an invariant violation with fairness",
+      "Next == x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next /\\ Spin(x') = 0)\nInv == x < 1\nProp == <>[](x \\in Nat)",
+      "\nINVARIANT Inv",
+      "invariant-violation",
+      [0, 1],
+    ],
+    [
+      "a deadlock",
+      "Next == x < 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x\nProp == []<>(Spin(x) = 0)",
+      "",
+      "deadlock",
+      [0],
+    ],
+  ])(
+    "ignores a stack overflow in the behavior graph after %s like TLC",
+    async (_title, definitions, config, status, trace) => {
+      const result = await check({
+        source: getSpinSource(definitions),
+        config: `SPECIFICATION Spec\nPROPERTY Prop${config}`,
+      });
+      expect([
+        result.status,
+        result.violation?.trace.map((step) => step.state.x),
+        result.liveCallStack,
+      ]).toEqual([status, trace, undefined]);
+    },
+  );
+
   it.each([
     ["[][x' >= x]_vars", 1],
     ['[][x\' >= x \\/ TLCGet("level") < 0]_vars', undefined],
