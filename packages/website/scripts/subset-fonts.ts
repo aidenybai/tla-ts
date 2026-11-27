@@ -37,6 +37,17 @@ const FONTS = [
     ]),
     weight: "400 900",
     variationAxes: { wght: { min: 400, max: 900 } },
+    isInline: false,
+  },
+  {
+    family: "Departure Mono",
+    fileName: "departure-mono.woff2",
+    source: "fonts/departure-mono/DepartureMono-Regular.woff2",
+    text: "TLA-ts",
+    weight: "400",
+    variationAxes: undefined,
+    // The title is in the first paint, and its six letters are under 2 kB.
+    isInline: true,
   },
   {
     family: "Caveat",
@@ -45,27 +56,30 @@ const FONTS = [
     text: "Click me!",
     weight: "600",
     variationAxes: undefined,
+    isInline: false,
   },
 ];
 
 mkdirSync(GENERATED_DIRECTORY, { recursive: true });
-for (const font of FONTS) {
-  writeFileSync(
-    join(GENERATED_DIRECTORY, font.fileName),
-    await subsetFont(readFileSync(join(PACKAGE_DIRECTORY, font.source)), font.text, {
+const subsets = await Promise.all(
+  FONTS.map((font) =>
+    subsetFont(readFileSync(join(PACKAGE_DIRECTORY, font.source)), font.text, {
       targetFormat: "woff2",
       // Browsers draw the glyphs a touch lighter when the font has lost their names.
       glyphNames: true,
       variationAxes: font.variationAxes,
     }),
-  );
-}
+  ),
+);
+FONTS.forEach((font, index) => {
+  if (!font.isInline) writeFileSync(join(GENERATED_DIRECTORY, font.fileName), subsets[index]);
+});
 writeFileSync(
   join(GENERATED_DIRECTORY, "fonts.css"),
   FONTS.map(
-    (font) => `@font-face {
+    (font, index) => `@font-face {
   font-family: "${font.family}";
-  src: url("./${font.fileName}") format("woff2");
+  src: url("${font.isInline ? `data:font/woff2;base64,${subsets[index].toString("base64")}` : `./${font.fileName}`}") format("woff2");
   font-weight: ${font.weight};
   font-style: normal;
   font-display: swap;
