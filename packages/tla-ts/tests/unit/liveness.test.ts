@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { check, TlaError, type CheckResult } from "../../src";
+import { check, formatValue, TlaError, type CheckResult } from "../../src";
 import { printResult } from "../../src/cli/tlc-output";
 import { getErrorExitCode, getUnexpectedException, STACK_OVERFLOW_MESSAGE } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
@@ -289,6 +289,45 @@ describe("liveness matches TLC", () => {
         distinct,
         [graphStates],
       ]);
+    },
+  );
+
+  it.each([
+    ["a VIEW", undefined, VIEW_MERGE, "VIEW View", "0", 2, 1, 1],
+    ["SYMMETRY", undefined, SYMMETRY_MERGE, SYMMETRY_CONFIG, "a", 4, 2, 2],
+    ["SYMMETRY", 1_000_000, SYMMETRY_MERGE, SYMMETRY_CONFIG, "a", 4, 2, 2],
+  ])(
+    "finds the violation at a state that %s merges from that state's own checks, not the stored state's, as TLC does, with maxSetSize %s",
+    async (
+      _reduction,
+      maxSetSize,
+      source,
+      reduction,
+      initial,
+      generated,
+      distinct,
+      graphStates,
+    ) => {
+      const counts: number[] = [];
+      const result = await check({
+        source,
+        config: `SPECIFICATION Unfair\nPROPERTY Settles\n${reduction}\nCHECK_DEADLOCK FALSE`,
+        maxSetSize,
+        onProgress: (progress) => {
+          if (progress.kind === "liveness-started") counts.push(progress.states);
+        },
+      });
+      expect([
+        result.status,
+        result.violation?.trace.map((step) => [
+          formatValue(step.state.p),
+          formatValue(step.state.q),
+        ]),
+        result.violation?.loopStart,
+        result.generatedStates,
+        result.distinctStates,
+        counts,
+      ]).toEqual(["liveness-violation", [[initial, "0"]], 0, generated, distinct, [graphStates]]);
     },
   );
 

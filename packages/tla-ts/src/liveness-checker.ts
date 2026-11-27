@@ -145,7 +145,9 @@ interface BehaviorGraph<State> {
   edgeCounts: number[];
   edgeTargets: Pool<Int32Array>;
   edgeActions: Pool<Uint8Array>;
-  stateResults: Pool<Uint8Array>;
+  // TLC keeps state checks per (fingerprint, tableau node), as states a VIEW or SYMMETRY merges can disagree on them.
+  nodeResults: Pool<Int32Array>;
+  stateResults: Int32Array;
   initial: number[];
   firstNodes: Pool<Int32Array>;
   lastNodes: Pool<Int32Array>;
@@ -192,6 +194,15 @@ const createPool = <Data extends Int32Array | Uint8Array>(
   create: (length: number) => Data,
 ): Pool<Data> => ({ data: create(1024), length: 0, create });
 
+const reservePool = <Data extends Int32Array | Uint8Array>(pool: Pool<Data>, end: number) => {
+  if (end > pool.data.length) {
+    const data = pool.create(Math.max(2 * pool.data.length, end));
+    data.set(pool.data);
+    pool.data = data;
+  }
+  pool.length = Math.max(pool.length, end);
+};
+
 const writeToPool = <Data extends Int32Array | Uint8Array>(
   pool: Pool<Data>,
   offset: number,
@@ -199,16 +210,10 @@ const writeToPool = <Data extends Int32Array | Uint8Array>(
   start = 0,
   length = values.length - start,
 ) => {
-  const end = offset + length;
-  if (end > pool.data.length) {
-    const data = pool.create(Math.max(2 * pool.data.length, end));
-    data.set(pool.data);
-    pool.data = data;
-  }
+  reservePool(pool, offset + length);
   for (let position = 0; position < length; position++) {
     pool.data[offset + position] = values[start + position];
   }
-  pool.length = Math.max(pool.length, end);
 };
 
 const NO_NODE = -1;
@@ -245,9 +250,12 @@ const getNodeSuccessors = <State>(behavior: BehaviorGraph<State>, node: number) 
 };
 
 const getStateResult = <State>(behavior: BehaviorGraph<State>, node: number, position: number) =>
-  behavior.stateResults.data[
-    behavior.nodeStates[node] * behavior.solution.stateChecks.length + position
-  ] === 1;
+  (behavior.nodeResults.data[node * behavior.stateResults.length + (position >> 5)] &
+    (1 << (position & 31))) !==
+  0;
+
+const setStateResults = <State>(behavior: BehaviorGraph<State>, node: number) =>
+  behavior.nodeResults.data.set(behavior.stateResults, node * behavior.stateResults.length);
 
 const pushNode = <State>(behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
   behavior.nodeStates.push(state);
@@ -255,6 +263,7 @@ const pushNode = <State>(behavior: BehaviorGraph<State>, state: number, tableauN
   behavior.edgeStarts.push(UNWRITTEN);
   behavior.edgeCounts.push(0);
   behavior.nextSiblings.push(NO_NODE);
+  reservePool(behavior.nodeResults, behavior.nodeStates.length * behavior.stateResults.length);
   return behavior.nodeStates.length - 1;
 };
 
@@ -602,7 +611,8 @@ export const createLiveGraph = <State>(
     edgeCounts: [],
     edgeTargets: createPool((length) => new Int32Array(length)),
     edgeActions: createPool((length) => new Uint8Array(length)),
-    stateResults: createPool((length) => new Uint8Array(length)),
+    nodeResults: createPool((length) => new Int32Array(length)),
+    stateResults: new Int32Array((solution.stateChecks.length + 31) >> 5),
     initial: [],
     firstNodes: createPool(createNodes),
     lastNodes: createPool(createNodes),
@@ -696,14 +706,17 @@ export const createLiveGraph = <State>(
     state: State,
     row: Int8Array,
     offset: number,
+    results: Int32Array,
+    resultOffset: number,
   ) =>
     evaluateFrom(source, () => {
       const checks = behavior.checks.states;
-      const results = new Uint8Array(checks.length);
-      checks.forEach((check, position) => {
-        results[position] = runCheck(check, state, row, offset) ? 1 : 0;
-      });
-      return results;
+      results.fill(0, resultOffset, resultOffset + behavior.stateResults.length);
+      for (let position = 0; position < checks.length; position++) {
+        if (runCheck(checks[position], state, row, offset)) {
+          results[resultOffset + (position >> 5)] |= 1 << (position & 31);
+        }
+      }
     });
   // Writes the result of each action check of the step to successor at resultOffset in results.
   const checkAction = (
@@ -828,7 +841,6 @@ export const createLiveGraph = <State>(
     targets: number[],
     actionResults: Uint8Array,
     actions: number[],
-    stateResults: Uint8Array,
   ) => {
     const start = behavior.edgeTargets.length;
     const actionCount = behavior.solution.actionChecks.length;
@@ -841,11 +853,6 @@ export const createLiveGraph = <State>(
         position * actionCount,
         actionCount,
       ),
-    );
-    writeToPool(
-      behavior.stateResults,
-      behavior.nodeStates[node] * stateResults.length,
-      stateResults,
     );
     behavior.edgeStarts[node] = start;
     behavior.edgeCounts[node] = targets.length;
@@ -904,7 +911,15 @@ export const createLiveGraph = <State>(
     offset: number,
   ) => {
     const mark = lateWrites.length;
-    const stateResults = checkState(behavior, index, state, row, offset);
+    checkState(
+      behavior,
+      index,
+      state,
+      row,
+      offset,
+      behavior.nodeResults.data,
+      node * behavior.stateResults.length,
+    );
     const tableauNode = tableau.nodes[behavior.nodeTableaux[node]];
     const actionCount = behavior.checks.actions.length;
     const actions: number[] = [];
@@ -1011,7 +1026,7 @@ export const createLiveGraph = <State>(
           true,
         );
       }
-      writeNode(behavior, node, successors, actionResults, actions, stateResults);
+      writeNode(behavior, node, successors, actionResults, actions);
     }
   };
 
@@ -1021,7 +1036,6 @@ export const createLiveGraph = <State>(
     set: LiveSuccessor<State>[],
     rows: Int8Array,
     actionResults: Uint8Array,
-    stateResults: Uint8Array,
     index: number,
     state: State,
   ) => {
@@ -1041,6 +1055,7 @@ export const createLiveGraph = <State>(
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(behavior, index)) {
+      setStateResults(behavior, node);
       const mark = lateWrites.length;
       const successors: number[] = [];
       const actions: number[] = [];
@@ -1080,7 +1095,7 @@ export const createLiveGraph = <State>(
           false,
         );
       }
-      writeNode(behavior, node, successors, actionResults, actions, stateResults);
+      writeNode(behavior, node, successors, actionResults, actions);
     }
     return behavior.errorNode === undefined
       ? undefined
@@ -1091,10 +1106,10 @@ export const createLiveGraph = <State>(
     behavior: BehaviorGraph<State>,
     set: LiveSuccessor<State>[],
     actionResults: Uint8Array,
-    stateResults: Uint8Array,
     index: number,
   ) => {
     while (behavior.nodeStates.length <= index) pushNode(behavior, behavior.nodeStates.length, -1);
+    setStateResults(behavior, index);
     const successors: number[] = [];
     const actions: number[] = [];
     set.forEach((successor, position) => {
@@ -1103,7 +1118,7 @@ export const createLiveGraph = <State>(
       actions.push(position);
     });
     if (!isWritten(behavior, index)) behavior.stateCount++;
-    writeNode(behavior, index, successors, actionResults, actions, stateResults);
+    writeNode(behavior, index, successors, actionResults, actions);
   };
 
   const getPath = (behavior: BehaviorGraph<State>, target: number) => {
@@ -1416,7 +1431,7 @@ export const createLiveGraph = <State>(
             position * actionCount,
           ),
         );
-        const stateResults = checkState(behavior, index, state, rows, offset);
+        checkState(behavior, index, state, rows, offset, behavior.stateResults, 0);
         const tableau = behavior.solution.tableau;
         // TLC's rerun for a call stack fails an assertion, without a call stack, on a branch that has every edge of the state.
         if (
@@ -1445,19 +1460,10 @@ export const createLiveGraph = <State>(
               );
             }
           }
-          addPlainState(behavior, set, actionResults, stateResults, index);
+          addPlainState(behavior, set, actionResults, index);
           continue;
         }
-        const accepted = addTableauState(
-          behavior,
-          tableau,
-          set,
-          rows,
-          actionResults,
-          stateResults,
-          index,
-          state,
-        );
+        const accepted = addTableauState(behavior, tableau, set, rows, actionResults, index, state);
         if (accepted) return accepted;
       }
       return undefined;
