@@ -65,11 +65,37 @@ ThrownText(r) ==
 Completed(r) == IF r.c.type = "throw" THEN Assert(FALSE, ThrownText(r)) ELSE r
 \* A step's state, which starts counting the writes to what exists.
 StepStart(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> s.objs.size, environments |-> s.envs.size]]
+\* Whether the records of heap h up to mark are those of before, or Kept of them.
+HeapKept(before, h, mark, Kept(_, _)) ==
+  /\ h.size >= mark
+  /\ \A p \in 1..((mark + HeapPageSize - 1) \div HeapPageSize) :
+       h.pages[p] = before.pages[p]
+       \/ \A i \in 1..(IF p * HeapPageSize > mark THEN mark - (p - 1) * HeapPageSize ELSE HeapPageSize) : Kept(before.pages[p][i], h.pages[p][i])
+\* Whether a check's call left the object o, which existed before it, as it was, or only added
+\* entries to a WeakMap or a WeakSet under keys that it made, objects above mark.
+WeakKept(o, after, mark) ==
+  \/ o = after
+  \/ /\ o.class = "weakMap"
+     /\ [after EXCEPT !.slots.weakMapData = o.slots.weakMapData] = o
+     /\ \A k \in DOMAIN o.slots.weakMapData : k \in DOMAIN after.slots.weakMapData /\ after.slots.weakMapData[k] = o.slots.weakMapData[k]
+     /\ \A k \in DOMAIN after.slots.weakMapData \ DOMAIN o.slots.weakMapData : IsObject(k) /\ k.id > mark
+  \/ /\ o.class = "weakSet"
+     /\ [after EXCEPT !.slots.weakSetData = o.slots.weakSetData] = o
+     /\ o.slots.weakSetData \subseteq after.slots.weakSetData
+     /\ \A k \in after.slots.weakSetData \ o.slots.weakSetData : IsObject(k) /\ k.id > mark
+\* Whether a check's call, from s to t, left every object, environment and other part of the state
+\* that existed as it started as it was, but for the entries WeakKept allows: what it made is then
+\* reachable from nothing that existed, so no check or later call can read what it wrote.
+CheckKept(s, t) ==
+  /\ [t EXCEPT !.objs = s.objs, !.envs = s.envs, !.envsHeld = s.envsHeld, !.written = s.written, !.out = s.out] = s
+  /\ HeapKept(s.envs, t.envs, s.writeMark.environments, LAMBDA e, after : e = after)
+  /\ HeapKept(s.objs, t.objs, s.writeMark.objects, LAMBDA o, after : WeakKept(o, after, s.writeMark.objects))
 \* A call of name that a check makes, which stops where it changes what existed as the check
-\* started, as only a step may: the frame reads a function as a check where it sees no change.
+\* started and CheckKept can't show that nothing reads the change, as only a step may change the
+\* state: the frame reads a function as a check where it sees no change.
 CheckCall(s, name, args) ==
   LET r == ModelCall(s, name, args) IN
-  IF r.s.written THEN Assert(FALSE, "tla-ts can't check " \o UnitsToString(name) \o " as a function that changes nothing: its call changes the program's state") ELSE r
+  IF r.s.written /\ ~CheckKept(s, r.s) THEN Assert(FALSE, "tla-ts can't check " \o UnitsToString(name) \o " as a function that changes nothing: its call changes the program's state") ELSE r
 \* Whether a call of name returns true.
 HoldsOf(s, name, args) == Val(Completed(CheckCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
