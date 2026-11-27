@@ -1187,26 +1187,52 @@ describe("gives a module the part of Node's console that writes primitives and m
       `const log = [];
       const task = console.createTask("work");
       log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run, task.run.name, task.run.length);
-      console.error("warning", 1, true);`,
+      console.error("warning", 1, true);
+      log.push(...["timeStamp", "group", "groupCollapsed", "groupEnd"].map((name) => \`\${typeof console[name]}:\${console[name].name}:\${console[name].length}\`));
+      console.timeStamp("mark", 1);
+      console.group("group");
+      console.groupCollapsed();
+      console.groupEnd();`,
       expected,
     ),
   });
 
   it("agrees with Node", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true,run,0"))).message,
+      (
+        await checkModules(
+          getFiles(
+            "function,true,log,0,7,run,true,run,0,function:timeStamp:0,function:group:0,function:groupCollapsed:0,function:groupEnd:0",
+          ),
+        )
+      ).message,
     ).toBeUndefined();
   });
 
   it("rejects another result", async () => {
     expect(
-      (await checkModules(getFiles("function,true,log,0,7,run,true,run,1"))).message,
+      (
+        await checkModules(
+          getFiles(
+            "function,true,log,0,7,run,true,run,1,function:timeStamp:0,function:group:0,function:groupCollapsed:0,function:groupEnd:0",
+          ),
+        )
+      ).message,
     ).toContain(THREW);
   });
 
-  it("stops at a write of an object, which Node formats", async () => {
-    expect((await checkModules({ "main.js": "console.log({});" })).message).toContain(
-      "tla-ts can't write an object to the host's console",
+  it.each(["console.log({});", "console.group({});"])(
+    "stops at a write of an object, which Node formats, in %s",
+    async (code) => {
+      expect((await checkModules({ "main.js": code })).message).toContain(
+        "tla-ts can't write an object to the host's console",
+      );
+    },
+  );
+
+  it("stops at another method", async () => {
+    expect((await checkModules({ "main.js": "console.table([]);" })).message).toContain(
+      "tla-ts can't use the host's console other than to write primitives and createTask",
     );
   });
 

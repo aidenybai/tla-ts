@@ -700,15 +700,17 @@ const DEFINITIONS = [
   LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, length, name, isConstructor, stopName, s.realmId))
   IN StoppingProxy(f.s, f.v, stopName, <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> stopName],
                                            [trap |-> SV("apply"), method |-> method, data |-> data]>>)`,
-  // Node's console, of which a program reads only the methods that write what they're given and
-  // createTask: each of the former writes nothing that the program reads, where the values it's
-  // given are primitives, which no code of the program runs to format.
+  // Node's console, of which a program reads only the methods that write what they're given, V8's
+  // timeStamp, which marks the inspector's timeline, the methods that group what the others write,
+  // and createTask: each but createTask writes nothing that the program reads, where the values
+  // it's given are primitives, which no code of the program runs to format.
   `ConsoleObject(s) ==
   LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       run == HostMethod(o.s, N("run"), 0, TRUE, N("console task's run"), "taskRun", Empty)
       createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
       made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
-  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
+  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error"), N("timeStamp"),
+                                         N("group"), N("groupCollapsed"), N("groupEnd")>>), Val(o))`,
   `ConsoleMethods(s, o, names) ==
   IF names = <<>> THEN s ELSE
   LET f == CreateBuiltinFunction(s, <<"Module", "consoleWrite">>, 0, Head(names), Empty) IN
@@ -1630,7 +1632,8 @@ const HOST_PATCHES = [
          IF ~IsObject(Arg(args, 2)) \\/ O(s, Arg(args, 2)).class # "proxy" \\/ O(s, Arg(args, 2)).slots.target # data
          THEN HostStop(N("performance.now")) ELSE Ok(s, HostTime)
     [] m = "consoleGet" ->
-         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
+         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("timeStamp"),
+                                  SV("group"), SV("groupCollapsed"), SV("groupEnd"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
          ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "textEncoderGet" ->
