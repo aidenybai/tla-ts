@@ -8276,6 +8276,66 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "a recursive function",
+      "LET t == LET f[n \\in 0..2] == IF n = 0 THEN x ELSE f[n - 1] + 1 IN f[2] IN t >= 0",
+      [
+        "line 6, col 75 to line 6, col 78 of module M: 3",
+        "|line 6, col 75 to line 6, col 75 of module M: 3",
+        "||line 6, col 21 to line 6, col 70 of module M: 3",
+        "|||line 6, col 38 to line 6, col 70 of module M: 9",
+        "||||line 6, col 41 to line 6, col 45 of module M: 9",
+        "||||line 6, col 52 to line 6, col 52 of module M: 3",
+        "||||line 6, col 59 to line 6, col 70 of module M: 6",
+        "|||line 6, col 29 to line 6, col 32 of module M: 3",
+        "line 6, col 83 to line 6, col 88 of module M: 3",
+      ],
+    ],
+    [
+      "a function",
+      "LET t == LET f[n \\in 0..2] == x + n IN f[2] IN t >= 0",
+      [
+        "line 6, col 47 to line 6, col 50 of module M: 3",
+        "line 6, col 55 to line 6, col 60 of module M: 3",
+      ],
+    ],
+    [
+      "an operator",
+      "LET t == LET u == x + 1 IN u + 1 IN t >= 0",
+      [
+        "line 6, col 35 to line 6, col 39 of module M: 3",
+        "line 6, col 44 to line 6, col 49 of module M: 3",
+      ],
+    ],
+    [
+      "a recursive function applied twice",
+      "LET t == LET f[n \\in 0..2] == IF n = 0 THEN x ELSE f[n - 1] + 1 IN f[2] + f[1] IN t >= 0",
+      [
+        "line 6, col 75 to line 6, col 85 of module M: 3",
+        "|line 6, col 75 to line 6, col 78 of module M: 3",
+        "|line 6, col 82 to line 6, col 85 of module M: 3",
+        "||line 6, col 82 to line 6, col 82 of module M: 3",
+        "|||line 6, col 21 to line 6, col 70 of module M: 3",
+        "||||line 6, col 38 to line 6, col 70 of module M: 15",
+        "|||||line 6, col 41 to line 6, col 45 of module M: 15",
+        "|||||line 6, col 52 to line 6, col 52 of module M: 6",
+        "|||||line 6, col 59 to line 6, col 70 of module M: 9",
+        "||||line 6, col 29 to line 6, col 32 of module M: 3",
+        "line 6, col 90 to line 6, col 95 of module M: 3",
+      ],
+    ],
+  ])(
+    "counts %s that the LET in a LET definition's body defines under that LET's body, as TLC's LazyValue takes the CostModel ActionWrapper#get gives a LetInNode",
+    async (_name, definition, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == ${definition}\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.[2]).toEqual(expected);
+    },
+  );
+
   it("counts a definition a LET of the next-state relation makes at each reference, as TLC's getNextStates conses no LazyValue", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == LET v == {n * x : n \\in 0..1}\n        IN /\\ x < 2\n           /\\ x' = x + 1\n           /\\ x = 0 => v # {}\n           /\\ v = v\n====",

@@ -1,5 +1,6 @@
 import {
   getFunctionConstruction,
+  getOpDefBody,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -673,7 +674,9 @@ export const buildCoverage = (
       case "Let": {
         const inner = bindLocalDefinitions(expression.definitions, locals);
         expression.definitions.forEach((definition) => {
-          if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
+          if (definition.kind === "Operator" || definition.kind === "Function") {
+            letBodies.set(getOpDefBody(definition), expression.body);
+          }
         });
         if (!environment.boundSubstitutions.lets.has(expression)) {
           const instanced: number[] = [];
@@ -930,8 +933,16 @@ export const getCoverageNode = (coverage: Coverage, node: number, expression: Ex
   const inner = recursive === -1 ? -1 : findChild(coverage, recursive, expression);
   if (inner !== -1) return inner;
   // Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on this fallback, a lookup bug it asks users to report.
-  return coverage.lets[node]?.find((item) => coverage.expressions[item] === expression) ?? node;
+  return coverage.lets[node]?.findLast((item) => coverage.expressions[item] === expression) ?? node;
 };
+
+// LazyValue takes the CostModel its body gets, and ActionWrapper#get gives a LetInNode the child for the LET's body.
+export const getLazyValueNode = (coverage: Coverage, node: number, expression: Expression) =>
+  getCoverageNode(
+    coverage,
+    node,
+    expression.kind === "Let" && coverage.roots[node] === node ? expression.body : expression,
+  );
 
 export const countCoverage = (coverage: Coverage, node: number) => {
   for (let item = node; item !== -1; item = coverage.prefixes[item]) coverage.primary[item]++;
