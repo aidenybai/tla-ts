@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check, TlaConfigError, TlaEvaluationError } from "../../src";
-import { getUnexpectedException, TlaStackOverflowError } from "../../src/errors";
+import {
+  getUnexpectedException,
+  STACK_OVERFLOW_MESSAGE,
+  TlaStackOverflowError,
+} from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
+import { MESSAGE_CODE } from "../../src/tlc/messages";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatCallStackLines } from "./check-harness";
 
@@ -412,6 +417,25 @@ describe("check matches TLC 1.7.4", () => {
         version,
       });
       await expect(result).rejects.toThrow(new TlaEvaluationError(message));
+    },
+  );
+
+  it.each([
+    ["the next-state relation", "Next == x' = Spin(x)\nProp == []<>(x = 0)"],
+    ["a temporal property", "Next == x' = (x + 1) % 3\nProp == []<>(Spin(x) = 0)"],
+  ])(
+    "reports a stack overflow in %s with the behavior, where TLC 1.7.4 prints a Java stack trace",
+    async (_title, definitions) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}\nSpec == Init /\\ [][Next]_x\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+        version: "1.7.4",
+      });
+      expect([
+        result.failure?.code,
+        result.failure?.message,
+        result.failure?.trace.map((step) => step.state.x),
+      ]).toEqual([MESSAGE_CODE.stackOverflow, STACK_OVERFLOW_MESSAGE, [0]]);
     },
   );
 });
