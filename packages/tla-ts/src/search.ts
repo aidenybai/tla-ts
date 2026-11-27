@@ -38,6 +38,7 @@ import {
 } from "./dependencies";
 import {
   createEnvironment,
+  type InstanceAction,
   type ResolvedModuleOperator,
   type RuntimeInvariant,
 } from "./environment";
@@ -633,17 +634,19 @@ const getProperties = (
     if (getSanyLevel(body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
+    const bodyFrames = substitutionFrames.get(body) ?? [];
     expandTemporal(body, undefined, environment, true).forEach((item) => {
       const conjunct = item.expression;
       if (item.theorem) throw createTheoremError(item.theorem, "property");
       if (isConstantTrue(item, environment, "property")) return;
       // Deviation from TLC: SpecProcessor#processConfigProps looks an instance's constant up without its substitute and rejects it as "cannot be used as a property", where tla-ts checks the substitute.
       const partName = item.name ?? name;
+      const frames = [...bodyFrames, ...item.frames.filter((frame) => !bodyFrames.includes(frame))];
       const withFrames = (check: Expression) =>
         withExpandedSubstitutions(
           item.substitutions,
           check,
-          item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
+          frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
           environment,
         );
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
@@ -1189,6 +1192,7 @@ export const prepareSearch = (options: CheckOptions) => {
     options.onProgress,
     specification.moduleOperators,
     specification.runtimeInvariants,
+    specification.instanceActions,
   );
   const getCoverage = () =>
     coverage && getCoverageReport(coverage, environment, search.getTlcOrder());
@@ -1314,9 +1318,10 @@ export const createSearch = (
   config: ModelConfig,
   environment: Environment,
   getVariableOrder: () => string[],
-  onProgress?: CheckOptions["onProgress"],
-  moduleOperators: ResolvedModuleOperator[] = [],
-  runtimeInvariants: RuntimeInvariant[] = [],
+  onProgress: CheckOptions["onProgress"],
+  moduleOperators: ResolvedModuleOperator[],
+  runtimeInvariants: RuntimeInvariant[],
+  instanceActions: ReadonlyMap<string, InstanceAction>,
 ): Search => {
   const getModuleOperators = (kind: ResolvedModuleOperator["kind"]) =>
     moduleOperators
@@ -1397,7 +1402,21 @@ export const createSearch = (
     items.flatMap((item): CoveredCheck[] => {
       if (!coverage) return [];
       const expression = isDefined ? getPredicate(item.expression, environment) : item.expression;
-      const label = getCoverageLabel(isDefined ? item.name : undefined, expression, environment);
+      const rootKey = isDefined ? getRootKey(item.name, environment) : undefined;
+      // Action#getDeclaration locates a name an unnamed INSTANCE brings in at the INSTANCE, where SANY builds the root module's OpDefNode.
+      const instanceAction =
+        rootKey === undefined
+          ? undefined
+          : instanceActions.get(environment.substitutions.get(rootKey) ?? rootKey);
+      const label = instanceAction
+        ? getCoverageLabel(
+            instanceAction.name,
+            expression,
+            environment,
+            instanceAction.head,
+            instanceAction.body,
+          )
+        : getCoverageLabel(isDefined ? item.name : undefined, expression, environment);
       const node = addCoverageRelation(coverage, kind, label, expression, item.scope);
       return [{ expression, scope: item.scope, node }];
     });

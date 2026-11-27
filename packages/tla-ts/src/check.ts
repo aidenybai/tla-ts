@@ -536,6 +536,7 @@ const searchStates = (
     options.onProgress,
     specification.moduleOperators,
     specification.runtimeInvariants,
+    specification.instanceActions,
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);

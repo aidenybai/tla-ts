@@ -208,6 +208,7 @@ const checkWithWorkers = async (
     report,
     [],
     specification.runtimeInvariants,
+    specification.instanceActions,
   );
   // Tool's constructor describes the specification before TLC creates the checker.
   getSpecDescription(config, environment, specification.instanceActions);
