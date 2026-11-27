@@ -115,7 +115,7 @@ interface Replay {
   coverage: Coverage | undefined;
   isInit: boolean;
   isEnabled: boolean;
-  current: Value[] | undefined;
+  current: State | undefined;
   onState: (state: Value[]) => void;
   onIncomplete: ((state: State) => boolean) | undefined;
   generator: SuccessorGenerator | undefined;
@@ -407,11 +407,12 @@ export const createUnassignedConjunctError = (
 export const findChangedVariable = (
   variables: UnchangedVariable[],
   partial: State,
-  current: Value[],
+  current: State,
 ) =>
   variables.find((variable) => {
     const assigned = partial[variable.index];
-    return assigned !== undefined && !isEqualLikeTlc(current[variable.index], assigned);
+    const value = current[variable.index];
+    return assigned !== undefined && value !== undefined && !isEqualLikeTlc(value, assigned);
   });
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
@@ -1352,7 +1353,7 @@ const visitUnchanged = (
 const createReplay = (
   environment: Environment,
   kind: "init" | "next" | "enabled",
-  current: Value[] | undefined,
+  current: State | undefined,
   onState: (state: Value[]) => void,
   onIncomplete?: (state: State) => boolean,
   generator?: SuccessorGenerator,
@@ -1376,7 +1377,7 @@ const ENABLED_FOUND = new Error("The replay found a successor");
 export const replayEnabled = (
   expression: Expression,
   scope: Scope | undefined,
-  state: Value[],
+  state: State | undefined,
   environment: Environment,
 ) => {
   const found = () => {
