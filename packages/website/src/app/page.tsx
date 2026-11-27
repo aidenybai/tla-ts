@@ -14,7 +14,7 @@ import { InlineCode } from "@/components/ui/inline-code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { Link } from "@/components/ui/link";
 import { cn } from "cn";
-import { install, prompt, reference } from "virtual:site-data";
+import { install, likesRule, likesTest, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
@@ -45,21 +45,38 @@ const Page = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          A test runs the few orders of calls you thought to write. A model checker runs every order
-          your code allows, one state at a time, and stops at the first that breaks a rule you
-          wrote.
+          In TypeScript, you check code by writing tests. Each test is one order of calls that you
+          thought of:
+        </p>
+        <Code.Root source={likesTest}>
+          <Code.Content />
+        </Code.Root>
+        <p className="text-pretty">
+          This test passes. Nothing calls <InlineCode>unlike</InlineCode> first, so it never sees{" "}
+          <InlineCode>likes</InlineCode> drop below zero.
+        </p>
+        <p className="mt-6 text-pretty">
+          A model checker does not need you to think of the order. You write the rule once, as a
+          function that must always return true:
+        </p>
+        <Code.Root source={likesRule}>
+          <Code.Content />
+        </Code.Root>
+        <p className="text-pretty">
+          Then it calls your functions in every order, one state at a time, and stops at the first
+          state that breaks the rule.
         </p>
         <CoverageDiagram />
         <p className="text-pretty">
-          TLA-ts does this for TypeScript. It turns your file into TLA+, a language for describing
-          every state a program can be in, and checks each one.
+          TLA-ts drops this into the TypeScript you already have. It turns your file into TLA+, a
+          language for describing every state a program can be in, and checks each one. You do not
+          write a second language.
         </p>
         <Example.Root>
           <Example.Description />
           <Example.Source />
-          <Example.Graph />
           <Example.Hint />
-          <Example.Tree />
+          <Example.Graph />
         </Example.Root>
       </Section.Root>
       <Section.Root>

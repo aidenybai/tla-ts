@@ -11,8 +11,7 @@ import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { StateGraph } from "./state-graph";
-import { StateTree } from "./state-tree";
+import { StateClones } from "./state-clones";
 import { Code } from "./code";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
@@ -262,30 +261,18 @@ const ExampleSource = () => {
   );
 };
 
-const ExampleGraph = () => {
-  const state = exampleContext.useParts();
-  return (
-    state.result?.search && (
-      <div className="absolute top-10 left-full ml-8 w-60 transition-[opacity,translate] duration-200 ease-out max-xl:hidden starting:opacity-0 motion-safe:starting:-translate-x-2">
-        <StateGraph.Root
-          search={state.result.search}
-          limit={12}
-          path={state.path}
-          onHover={state.hoverState}
-        />
-      </div>
-    )
-  );
-};
+interface ClonesFigureProps {
+  className: string;
+}
 
-const ExampleTree = () => {
+const ClonesFigure = (props: ClonesFigureProps) => {
   const state = exampleContext.useParts();
   const search = state.result?.search;
   if (!search) return null;
   const count = search.checkedStates.length;
   return (
-    <figure className="mt-10 flex flex-col gap-4">
-      <StateTree search={search} path={state.path} onHover={state.hoverState} />
+    <figure className={cn("flex flex-col gap-4", props.className)}>
+      <StateClones search={search} path={state.path} onHover={state.hoverState} />
       <figcaption className="text-sm text-faint">
         {count.toLocaleString("en-US")} {count === 1 ? "state" : "states"} checked
         {state.result?.isPassed ? ", and none breaks a rule." : ", until one broke a rule."}
@@ -294,11 +281,18 @@ const ExampleTree = () => {
   );
 };
 
+// The states sit beside the example where the page has room, and under it where it does not.
+const ExampleGraph = () => (
+  <>
+    <ClonesFigure className="absolute top-10 left-full ml-8 w-60 max-xl:hidden" />
+    <ClonesFigure className="mt-10 xl:hidden" />
+  </>
+);
+
 export const Example = {
   Root: ExampleRoot,
   Description: ExampleDescription,
   Hint: ExampleHint,
   Source: ExampleSource,
   Graph: ExampleGraph,
-  Tree: ExampleTree,
 };

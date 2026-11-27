@@ -146,6 +146,7 @@
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
+  --animate-shake: shake 400ms ease-in-out;
   --animate-logo-body: logo-body 1800ms steps(1) infinite;
   --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
   --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
@@ -325,6 +326,17 @@
     41.667%,
     58.333% {
       translate: 0 1px;
+    }
+  }
+
+  @keyframes shake {
+    20%,
+    60% {
+      translate: -3px 0;
+    }
+    40%,
+    80% {
+      translate: 3px 0;
     }
   }
 

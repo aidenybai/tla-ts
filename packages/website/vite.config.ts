@@ -23,6 +23,12 @@ import type {
 } from "./src/lib/site-data";
 
 const SITE_DATA = "virtual:site-data";
+const LIKES_TEST = `test("like, then unlike", () => {
+  like();
+  unlike();
+  expect(likes).toBe(0);
+});`;
+const LIKES_RULE = "export const neverNegative = () => likes >= 0;";
 const README_URL = new URL("../../README.md", import.meta.url);
 const EXAMPLE_PATHS = [
   "./src/examples/likes.ts",
@@ -189,6 +195,8 @@ const siteData = (): Plugin => ({
       `export const benchmarks = ${JSON.stringify(getBenchmarks())};`,
       `export const prompt = ${JSON.stringify(PROMPT.exec(readFileSync(README_URL, "utf8"))?.groups?.prompt)};`,
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
+      `export const likesTest = ${JSON.stringify(highlight(LIKES_TEST, "typescript"))};`,
+      `export const likesRule = ${JSON.stringify(highlight(LIKES_RULE, "typescript"))};`,
       `export const reference = ${JSON.stringify(getReference(highlight))};`,
     ].join("\n");
   },
