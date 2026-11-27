@@ -431,7 +431,12 @@ const getInlinedSize = (body: Expression, params: Set<string>, reads: Set<string
     if (!params.has(body.name) || reads.has(body.name)) return Infinity;
     reads.add(body.name);
   }
-  return getChildren(body).reduce((size, child) => size + getInlinedSize(child, params, reads), 1);
+  const children = getChildren(body);
+  let size = 1;
+  for (let index = 0; index < children.length && size <= MAX_INLINED_SIZE; index++) {
+    size += getInlinedSize(children[index], params, reads);
+  }
+  return size;
 };
 
 const isInlinedCall = (generator: Generator, closure: Closure, frame: Frame) =>
@@ -439,10 +444,10 @@ const isInlinedCall = (generator: Generator, closure: Closure, frame: Frame) =>
   !frame.isPrimed &&
   generator.inlined.length < MAX_INLINED_DEPTH &&
   !generator.inlined.includes(closure.body) &&
-  !isNonconstant(closure.body, generator.environment) &&
   !generator.environment.bodyValues.has(closure.body) &&
   getInlinedSize(closure.body, new Set(closure.params.map((param) => param.name)), new Set()) <=
-    MAX_INLINED_SIZE;
+    MAX_INLINED_SIZE &&
+  !isNonconstant(closure.body, generator.environment);
 
 const isDirectCall = (
   generator: Generator,
