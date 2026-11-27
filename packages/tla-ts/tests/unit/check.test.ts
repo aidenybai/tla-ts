@@ -6005,6 +6005,30 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(["2:2 2", "0:0 2 0"]);
   });
 
+  it("counts the coverage of an action whose action constraint fails as the behavior graph expands a state again, as TLC does", async () => {
+    expect(
+      await getCoverageLines(
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLES active, detected\nvars == <<active, detected>>\nInit == active = FALSE /\\ detected = FALSE\nDetect == ~active /\\ detected' = TRUE /\\ UNCHANGED active\nSpec == Init /\\ [][Detect]_vars\nQuiescence == [](~active => []~active)\nLive == ~active ~> detected\nConstraint == ~active' => CHOOSE x \\in {} : TRUE\n====",
+        "SPECIFICATION Spec\nPROPERTIES Quiescence Live\nACTION_CONSTRAINT Constraint",
+      ),
+    ).toEqual([
+      ["line 5, col 9 to line 5, col 42 of module M: 1"],
+      [
+        "line 6, col 11 to line 6, col 17 of module M: 7",
+        "|line 6, col 12 to line 6, col 17 of module M: 4",
+        "line 6, col 22 to line 6, col 37 of module M: 3",
+        "|line 6, col 34 to line 6, col 37 of module M: 4",
+        "line 6, col 42 to line 6, col 57 of module M: 3",
+      ],
+      [
+        "line 10, col 15 to line 10, col 48 of module M: 3",
+        "|line 10, col 15 to line 10, col 22 of module M: 3",
+        "|line 10, col 27 to line 10, col 48 of module M: 3",
+        "||line 10, col 40 to line 10, col 41 of module M: 3:3",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "as TLC prints the trace",
