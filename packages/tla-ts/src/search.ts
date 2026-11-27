@@ -354,9 +354,10 @@ export const reportStartup = (
         levels.params.size === 0
           ? ""
           : "\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.";
+      // TLC names the definition a <- substitutes for the invariant, not the configured name.
       throw setExitCode(
         new TlaConfigError(
-          `The invariant ${name} is not a state predicate (one with no primes or temporal operators).${note}`,
+          `The invariant ${definition.name} is not a state predicate (one with no primes or temporal operators).${note}`,
         ),
         EXIT_STATUS.safetyEvaluationFailure,
       );
