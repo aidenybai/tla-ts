@@ -242,10 +242,10 @@ RenameObjectsIn(h, ids, number, r) ==
 RECURSIVE RenameEnvironmentsIn(_, _, _, _)
 RenameEnvironmentsIn(h, ids, number, r) ==
   IF ids = <<>> THEN h ELSE RenameEnvironmentsIn(HeapSet(h, Head(ids), RenameEnvironmentRecord(HeapGet(h, Head(ids)), number, r)), Tail(ids), number, r)
-\* The canonical form of the state s that a step ends in, whose jobs, timers, and calls all ended,
+\* The canonical form of the state s that a step ends in, whose jobs, tasks, and calls all ended,
 \* of a realm whose start is the state initial.
 CanonicalStateOf(s, initial) ==
-  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
+  IF s.jobs # <<>> \/ s.tasks # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
   THEN ModelStop("pending work")
   ELSE IF \E k \in DOMAIN s.required : ~s.required[k].loaded THEN ModelStop("a module that require is loading")
   ELSE

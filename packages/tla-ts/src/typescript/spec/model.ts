@@ -50,7 +50,7 @@ UnitsToString(units) ==
   ELSE CharacterOf[Head(units)] \o UnitsToString(Tail(units))
 \* The value that the module binds to name.
 BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ModelContext(s), name, TRUE)))
-\* A call of the function that the module binds to name, and the jobs and timers it leaves.
+\* A call of the function that the module binds to name, and the jobs and tasks it leaves.
 ModelCall(s, name, args) ==
   LET f == BindingValue(s, name) IN
   IF IsAbrupt(f) THEN f ELSE
@@ -1548,7 +1548,7 @@ export const planModel = (
     lowered: getConverter(choice.domain).lowered,
     set: printExpression(rewriteGuards(choice.domain)),
   }));
-  // As compileToJsTla runs a script's jobs and timers, a step runs the ones a call leaves.
+  // As compileToJsTla runs a script's jobs and tasks, a step runs the ones a call leaves.
   const settle =
     "ModelSettle(r) == LET t == SettleJobs(r.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]";
   // The module's top level reads each state variable that starts at every value of its type, at

@@ -811,7 +811,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
   const isEmptyList = (field: string) => getList(get(state, field)).length === 0;
   if (
     !isEmptyList("jobs") ||
-    !isEmptyList("timers") ||
+    !isEmptyList("tasks") ||
     !valuesEqual(get(state, "callers"), NULL) ||
     getList(get(state, "realms")).length > 1 ||
     !isEmptyList("waiters") ||

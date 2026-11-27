@@ -1034,6 +1034,26 @@ describe("gives a module a Timeout of setTimeout, which stops where its code use
       "tla-ts can't run the host's Timeout",
     );
   });
+
+  // Node calls a timer's callback on its Timeout (lib/internal/timers.js), of no arguments.
+  describe("calls the callback on its Timeout", () => {
+    const getReceiverFiles = (expected: string) => ({
+      "package.json": '{ "type": "module" }',
+      "main.js": `const log = [];
+        const handle = setTimeout(function () { log.push(typeof this, this === handle, arguments.length); });
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+    });
+
+    it("agrees with Node", async () => {
+      const result = await checkEntry(getReceiverFiles("object,true,0"), "main.js");
+      expect([result.node, result.message]).toEqual([0, undefined]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkEntry(getReceiverFiles("undefined,false,0"), "main.js");
+      expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+    });
+  });
 });
 
 // queueMicrotask's callback runs of no arguments and no receiver, in V8's one queue of jobs with

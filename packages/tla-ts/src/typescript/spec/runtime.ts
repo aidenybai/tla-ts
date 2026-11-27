@@ -60,13 +60,16 @@ const DEFINITIONS = [
   // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
   `ThrowRejection(s, promise) ==
   ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
-  // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
-  // timers of no delay.
-  `RunTimers(s) ==
-  IF s.timers = <<>> THEN Ok(s, Undefined) ELSE
-  LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
+  // The tasks that a program queued, each a record of the callback that it calls, on a receiver,
+  // of arguments: the timers it set, each a task of its own after the jobs before it ran, as Node
+  // runs timers of no delay, on the Timeout that setTimeout gave a module.
+  `RunTasks(s) ==
+  IF s.tasks = <<>> THEN Ok(s, Undefined) ELSE
+  LET task == Head(s.tasks)
+      r == Call([s EXCEPT !.tasks = Tail(@), !.task = [kind |-> "timer"]], task.callback, task.this, task.args)
+  IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
-  LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
+  LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTasks(u.s)`,
   // An error that JS.tla throws with V8's message, which, as V8's, is the error's own property.
   `ThrowMessage(s, kind, units) ==
   LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
@@ -1278,7 +1281,7 @@ const HOST_PATCHES = [
   {
     name: "TimeOutWaiter",
     from: `  IN ResolveWaiters(`,
-    to: `  IN IF s.timers # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
+    to: `  IN IF s.tasks # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
      THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
      ELSE ResolveWaiters(`,
   },
@@ -1328,17 +1331,21 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
-  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran. In a
+  // setTimeout, of a callback and no delay, whose callback RunTasks calls once the jobs ran. In a
   // module program, which runs in the host's own context, it gives a Timeout, as Node does, which
-  // stops at any use, and a script may only call it as a statement.
+  // stops at any use, and on which Node calls the callback, and a script may only call it as a
+  // statement.
   {
     name: "GlobalBuiltin",
     from: `    [] m = "gc" ->`,
     to: `    [] m = "setTimeout" ->
          IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
-         ELSE IF s.hostHandler = Empty THEN Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
-         ELSE LET timeout == Alloc([s EXCEPT !.timers = Append(@, Arg(args, 1))], MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
-              IN ProxyCreate(timeout.s, timeout.v, s.hostHandler)
+         ELSE IF s.hostHandler = Empty
+         THEN Ok([s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Undefined, args |-> <<>>])], Undefined)
+         ELSE LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
+                  timeout == ProxyCreate(target.s, target.v, s.hostHandler)
+              IN Ok([timeout.s EXCEPT !.tasks = Append(@, [kind |-> "timer", callback |-> Arg(args, 1), this |-> Val(timeout), args |-> <<>>])],
+                    Val(timeout))
     [] m = "gc" ->`,
   },
   // An error's stack: V8's accessor, whose getter and setter are nameless functions shared by every

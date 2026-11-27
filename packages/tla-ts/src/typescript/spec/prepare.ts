@@ -189,7 +189,7 @@ const getBaseOverrides = (library: Library, realm: HostRealm) => [
       .replace(
         "jobs |-> <<>>,",
         // The task that runs, below whose frames a stack trace ends (STACK_DEFINITIONS).
-        'jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty, frame |-> <<>>, task |-> [kind |-> "main"],',
+        'jobs |-> <<>>, tasks |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty, frame |-> <<>>, task |-> [kind |-> "main"],',
       ),
   },
   {
