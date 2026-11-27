@@ -477,6 +477,22 @@ it("reports the distance of two fingerprints that share a negative low word, whi
   ]);
 });
 
+it("reports the distance of two fingerprints with different negative low words, which TLC's MemFPIntSet#checkFPs measures by their low words alone as 2.2E-8", () => {
+  expect(
+    searchTwoInitialStates(
+      "---- MODULE M ----\nVARIABLES x, y\nInit == \\/ x = 0 /\\ y = 1\n        \\/ x = 0 /\\ y = 4\nNext == UNCHANGED <<x, y>>\n====",
+    ),
+  ).toEqual([
+    0,
+    [
+      "2208 Finished computing initial states: 2 states generated, with 2 of them distinct.",
+      "2205 Starting level 2: 2 states generated, 2 distinct states found.",
+      "success 2.2E-19 1.1E-19",
+      "2204 4 states generated, 2 distinct states found.",
+    ],
+  ]);
+});
+
 it("reports a positive probability for two fingerprints in a bucket that differ by 2^63, where TLC's MemFPIntSet#checkFPs takes Math.abs(Long.MIN_VALUE)", () => {
   expect(
     searchTwoInitialStates(
