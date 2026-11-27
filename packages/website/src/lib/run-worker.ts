@@ -6,7 +6,7 @@ import {
   TlaStackOverflowError,
 } from "../../../tla-ts/src/errors";
 import type { JsTlaHost } from "../../../tla-ts/src/typescript/spec/prepare";
-import type { CompileResponse, JsTlaRequest, JsTlaResponse } from "./js-tla-worker";
+import type { CompileRequest, CompileResponse, JsTlaRequest, JsTlaResponse } from "./js-tla-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -16,7 +16,7 @@ export interface RunRequest {
   modules?: Record<string, string>;
   isSearchShown?: boolean;
   // The TypeScript file that the spec was compiled from, which the worker checks instead.
-  typescript?: { source: string; fileName: string };
+  typescript?: CompileRequest;
 }
 
 export interface LineNote {
@@ -121,7 +121,7 @@ const getRun = async (request: RunRequest) => {
     };
   }
   const spec = loaded.compile(
-    { ...request.typescript, files: loaded.files },
+    { ...request.typescript, files: request.typescript.files ?? loaded.files },
     loaded.runtime,
     loaded.library,
   );
@@ -226,20 +226,21 @@ const getErrorMessage = (error: unknown, isTypeScript: boolean) =>
       ? error.message
       : `tla-ts failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
 
-const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
+const getCompiled = async (request: CompileRequest): Promise<CompileResponse> => {
+  const response = { source: request.source, fileName: request.fileName };
   try {
     const loaded = await jsTla;
     const compilation = loaded.getCompilation(
-      source,
-      fileName,
+      request.source,
+      request.fileName,
       loaded.runtime,
-      loaded.files,
+      request.files ?? loaded.files,
       loaded.library,
     );
     checkCodeLength(compilation.tla);
-    return { source, fileName, compilation };
+    return { ...response, compilation };
   } catch (error) {
-    return { source, fileName, error: getErrorMessage(error, true) };
+    return { ...response, error: getErrorMessage(error, true) };
   }
 };
 
@@ -247,7 +248,7 @@ self.onmessage = async (event: MessageEvent<JsTlaRequest>) => {
   const request = event.data;
   if ("compile" in request) {
     self.postMessage({
-      compiled: await getCompiled(request.compile.source, request.compile.fileName),
+      compiled: await getCompiled(request.compile),
     });
     return;
   }
