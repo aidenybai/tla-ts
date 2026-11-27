@@ -5,7 +5,7 @@ import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
 import { createModuleResolver, getModuleFormat } from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
-import type { PreparedModule } from "../../tlc/order";
+import type { ModuleTexts, PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type JsTlaRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import type { HostRealm } from "./realm";
@@ -18,7 +18,7 @@ import {
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
-import type { Expression } from "../../ast";
+import type { Expression, Module } from "../../ast";
 import {
   apply,
   type CodeDefinition,
@@ -1079,6 +1079,24 @@ const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostR
 // promise of its evaluation, and the proxies that stand for what of the host JS.tla lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
 
+// A scope of its own, so that V8's closure context for getText doesn't hold compileToJsTla's files.
+const getProgramCode = (module: Module, texts: ModuleTexts, getText: () => string) => {
+  const programCode: PreparedModule = {
+    name: "ProgramCode",
+    get text() {
+      return getText();
+    },
+    tokens: [],
+    module,
+    levels: undefined,
+    texts,
+  };
+  return {
+    programCode,
+    loadModule: (name: string) => (name === "ProgramCode" ? getText() : undefined),
+  };
+};
+
 // Compiles a TypeScript script or module to a spec whose Init runs it as JS.tla runs a script or a
 // host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
 // fails Init's assertion. The spec's module ProgramCode holds the program's code and the spec's
@@ -1423,16 +1441,7 @@ export const compileToJsTla = (
     "",
   ];
   const laidOut = layOutModule("ProgramCode", parts);
-  const programCode: PreparedModule = {
-    name: "ProgramCode",
-    get text() {
-      return laidOut.getText();
-    },
-    tokens: [],
-    module: laidOut.module,
-    levels: undefined,
-    texts: laidOut.texts,
-  };
+  const code = getProgramCode(laidOut.module, laidOut.texts, laidOut.getText);
   return {
     name: "Program",
     source: ROOT,
@@ -1440,7 +1449,7 @@ export const compileToJsTla = (
       "\n",
     ),
     regions: program.regions,
-    loadModule: (name) => (name === "ProgramCode" ? laidOut.getText() : undefined),
-    preparedModules: [...runtime.modules, view, programCode],
+    loadModule: code.loadModule,
+    preparedModules: [...runtime.modules, view, code.programCode],
   };
 };
