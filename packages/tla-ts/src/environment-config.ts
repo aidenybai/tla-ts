@@ -463,6 +463,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
     if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
   });
+  // Deviation from TLC: TLC's Java override of a builtin replaces a = [Mod] value or table on the same body.
   values.forEach((assignment) => {
     if (!isConstant(assignment)) {
       setValue(assignment, assignment.value, getScopedKeys(assignment));
