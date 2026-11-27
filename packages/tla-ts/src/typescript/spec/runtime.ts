@@ -512,6 +512,7 @@ const DEFINITIONS = [
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
+                 [] p.kind = "queueMicrotask" -> HostMethod(target.s, p.name, 1, TRUE, p.name, p.kind, Empty)
                  [] p.kind = "performance" ->
                       StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"],
                                                                      [trap |-> SV("set"), method |-> "performanceSet"]>>)
@@ -1429,6 +1430,14 @@ const HOST_PATCHES = [
   },
   // A job's task, below whose function V8 has no frames, but async ones of the promise a reaction
   // job settles.
+  // queueMicrotask's job, which calls its callback of no arguments and reports what it throws as
+  // an uncaught exception, as Node's runMicrotask does (lib/internal/process/task_queues.js).
+  {
+    name: "RunJob",
+    from: `  IF job.kind = "thenable" THEN`,
+    to: `  IF job.kind = "microtask" THEN Call([s EXCEPT !.task = [kind |-> "microtask"]], job.callback, Undefined, <<>>)
+  ELSE IF job.kind = "thenable" THEN`,
+  },
   {
     name: "RunJob",
     from: `        r == Call(fns.s, job.then, job.thenable, <<fns.resolve, fns.reject>>)
@@ -1574,6 +1583,11 @@ const HOST_PATCHES = [
          IF Arg(args, 2) # SV("now") \\/ ~IsObject(Arg(args, 4)) \\/ O(s, Arg(args, 4)).class # "proxy" \\/ O(s, Arg(args, 4)).slots.target # Arg(args, 1)
          THEN HostStop(N("performance"))
          ELSE ResultThen(True, CreateDataProperty(s, Arg(args, 1), SV("now"), Arg(args, 3)))
+    [] m = "queueMicrotask" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list
+         ELSE IF ~IsCallable(list.s, Arg(Val(list), 1)) THEN HostStop(N("queueMicrotask"))
+         ELSE Ok(EnqueueJob(list.s, [kind |-> "microtask", callback |-> Arg(Val(list), 1)]), Undefined)
     [] m = "replaceableGet" -> Ok(s, O(s, data).slots.value)
     [] m = "replaceableSet" ->
          LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN

@@ -1036,6 +1036,61 @@ describe("gives a module a Timeout of setTimeout, which stops where its code use
   });
 });
 
+// queueMicrotask's callback runs of no arguments and no receiver, in V8's one queue of jobs with
+// the promises' reactions, as Node runs it.
+describe("runs queueMicrotask's callback in the queue of jobs, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      log.push(queueMicrotask.name, queueMicrotask.length, typeof queueMicrotask);
+      queueMicrotask(function () {
+        log.push(\`a:\${this}:\${arguments.length}\`);
+        queueMicrotask(() => log.push("c"));
+        Promise.resolve().then(() => log.push("d"));
+      });
+      Promise.resolve().then(() => log.push("b"));
+      log.push(queueMicrotask(() => log.push("e")), "sync");
+      setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles("queueMicrotask,1,function,,sync,a:undefined:0,b,e,c,d"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles("queueMicrotask,1,function,,sync,a:undefined:0,e,b,c,d"),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  it("throws what a callback throws, and runs no later job", async () => {
+    const result = await checkEntry(
+      {
+        "package.json": '{ "type": "module" }',
+        "main.js": `queueMicrotask(() => { throw new RangeError("first"); });
+          queueMicrotask(() => { throw new RangeError("second"); });`,
+      },
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining("first")]);
+  });
+
+  it.each(["queueMicrotask(1)", "new queueMicrotask(() => {})", "queueMicrotask.prototype"])(
+    "stops at %s",
+    async (use) => {
+      expect((await checkModules({ "main.js": `${use};` })).message).toContain(
+        "tla-ts can't run the host's queueMicrotask",
+      );
+    },
+  );
+});
+
 describe("gives a module the part of Node's console that writes primitives and makes tasks", () => {
   const getFiles = (expected: string) => ({
     "main.js": getMain(

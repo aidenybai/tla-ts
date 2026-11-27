@@ -79,6 +79,10 @@ const RECORDED_LOCALE_TAGS = [
 // The host's timers, which a host adds to a script's context to run its jobs later.
 const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
 
+// The host's globals that the runtime has the part of that a program may use, which DefineHost
+// defines by name.
+const MODELED_GLOBALS = new Set(["console", "process", "performance", "queueMicrotask"]);
+
 // The host's constructors that make an object quietly, running nothing that a program sees but
 // what QuietConstruct converts of their arguments until it uses the object.
 const QUIET_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
@@ -111,8 +115,8 @@ const isConstructor = (value: unknown) => {
 };
 
 // A property of the host's global object or of one of its built-ins, as the record that DefineHost
-// defines it by: its kind, as typeof gives its value, or value for a primitive, or console, which
-// the runtime has part of, or accessor for a built-in's accessor, and its attributes. A global's
+// defines it by: its kind, as typeof gives its value, or value for a primitive, or the name of a
+// global of MODELED_GLOBALS, or accessor for a built-in's accessor, and its attributes. A global's
 // getter gives its value, and a property whose value is a symbol or a BigInt is left out.
 const getHostProperty = (
   owner: string,
@@ -142,7 +146,7 @@ const getHostProperty = (
               ? `Str(N(${JSON.stringify(value)}))`
               : undefined;
   const kind =
-    (name === "console" || name === "process" || name === "performance") && host !== undefined
+    MODELED_GLOBALS.has(name) && host !== undefined
       ? name
       : isAccessor && host === undefined
         ? "accessor"
