@@ -1,8 +1,8 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { EXAMPLES } from "@/lib/examples";
+import { examples } from "virtual:site-data";
 import { getHighlightColors } from "@/lib/highlight-colors";
 import { startJsTlaWorker } from "@/lib/js-tla-worker";
 import { getLineMarks } from "@/lib/line-marks";
@@ -13,15 +13,13 @@ import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { StateClones } from "./state-clones";
 import { Code } from "./code";
-import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
 interface ExampleState {
-  example: (typeof EXAMPLES)[number];
-  select: (example: (typeof EXAMPLES)[number]) => void;
+  example: (typeof examples)[number];
   isCompiled: boolean;
   setIsCompiled: (isCompiled: boolean) => void;
   isRunning: boolean;
@@ -40,7 +38,7 @@ interface RootProps {
 
 const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
-  const [example, setExample] = useState(EXAMPLES[0]);
+  const example = examples[0];
   const [isCompiled, setIsCompiled] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const isRunning = runner.isRunning;
@@ -72,11 +70,6 @@ const ExampleRoot = (props: RootProps) => {
     <exampleContext.PartsContext
       value={{
         example,
-        select: (nextExample) => {
-          setExample(nextExample);
-          setIsCompiled(false);
-          runner.reset();
-        },
         isCompiled,
         setIsCompiled,
         isRunning,
@@ -97,33 +90,6 @@ const ExampleRoot = (props: RootProps) => {
         {props.children}
       </div>
     </exampleContext.PartsContext>
-  );
-};
-
-const ExampleDescription = () => {
-  const state = exampleContext.useParts();
-  return (
-    <p className="text-pretty">
-      Here, TLA-ts checks{" "}
-      {EXAMPLES.map((example, index) => (
-        <Fragment key={example.fileName}>
-          {index === EXAMPLES.length - 1 && "or "}
-          {example.article}{" "}
-          <span className="whitespace-nowrap">
-            <Button
-              variant="link"
-              size="inline"
-              aria-pressed={example === state.example}
-              disabled={state.isRunning}
-              onClick={() => state.select(example)}
-            >
-              {example.label}
-            </Button>
-            {index === EXAMPLES.length - 1 ? "." : ","}
-          </span>{" "}
-        </Fragment>
-      ))}
-    </p>
   );
 };
 
@@ -212,8 +178,7 @@ const ExampleSource = () => {
       path={state.path}
       onHoverState={state.hoverState}
     >
-      {/* A new example is other code, not this code in another language, so it does not morph. */}
-      <Code.Content key={example.fileName} />
+      <Code.Content />
       <Code.More />
       <Code.Actions>
         <Tooltip.Root>
@@ -233,9 +198,7 @@ const ExampleSource = () => {
       </Code.Actions>
       <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
-          {/* A new example starts on its TypeScript, which the toggle shows without sliding there. */}
           <ToggleGroup.Root
-            key={state.example.fileName}
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
             isDisabled={state.isRunning}
@@ -291,7 +254,6 @@ const ExampleGraph = () => (
 
 export const Example = {
   Root: ExampleRoot,
-  Description: ExampleDescription,
   Hint: ExampleHint,
   Source: ExampleSource,
   Graph: ExampleGraph,

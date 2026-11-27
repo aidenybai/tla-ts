@@ -4,7 +4,7 @@ import { GitHubIcon } from "@/components/github-icon";
 import { BenchmarkChart } from "@/components/benchmark-chart";
 import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
-import { OrderComparison } from "@/components/order-comparison";
+import { LikeDemo } from "@/components/like-demo";
 import { Section } from "@/components/section";
 import { Prompt } from "@/components/prompt";
 import { Content } from "@/components/content";
@@ -14,7 +14,7 @@ import { InlineCode } from "@/components/ui/inline-code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { Link } from "@/components/ui/link";
 import { cn } from "cn";
-import { install, likesRule, prompt, reference } from "virtual:site-data";
+import { install, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
@@ -45,23 +45,20 @@ const Page = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          Tests try the orders of calls you write. TLA-ts tries all of them. Take a like button with
-          two functions, <InlineCode>like</InlineCode> and <InlineCode>unlike</InlineCode>:
+          Here is a like button with a bug in it. The rule it should keep: an empty heart means zero
+          likes. Try to break it.
         </p>
-        <OrderComparison />
+        <LikeDemo />
         <p className="mt-4 text-pretty">
-          You do not write those orders. You write one rule that must always be true, in the same
-          file:
+          You are checking one order of calls at a time, by hand. A test does the same: it runs the
+          one order you thought to write. TLA-ts runs every order, and checks the rule after each
+          call.
         </p>
-        <Code.Root source={likesRule}>
-          <Code.Content />
-        </Code.Root>
         <p className="text-pretty">
-          TLA-ts turns the file into TLA+, a language for checking every state a program can be in,
-          and runs it. You never write TLA+ yourself.
+          This is the code behind that button, with the rule on its last line. Press run and watch
+          TLA-ts try every order until one breaks it.
         </p>
         <Example.Root>
-          <Example.Description />
           <Example.Source />
           <Example.Hint />
           <Example.Graph />
