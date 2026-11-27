@@ -6,12 +6,12 @@ interface PartProps {
 }
 
 const HeroRoot = (props: PartProps) => (
-  <header className="flex flex-col gap-4">{props.children}</header>
+  <header className="flex flex-col gap-6">{props.children}</header>
 );
 
 const HeroTitle = (props: PartProps) => (
-  <h1 className="group/logo flex items-center gap-2 font-pixel text-[22px]/8 text-foreground">
-    <Logo />
+  <h1 className="group/logo flex items-center gap-4 font-pixel text-[44px]/[1] text-primary uppercase">
+    <Logo className="size-9" />
     {props.children}
   </h1>
 );

@@ -133,7 +133,7 @@ const ExampleHint = () => {
     <span
       aria-hidden
       className={cn(
-        "pointer-events-none absolute top-full right-4 flex -rotate-3 items-start gap-1 font-hand text-2xl text-muted-foreground transition-opacity duration-200 ease-out",
+        "pointer-events-none absolute top-full right-4 flex items-start gap-1 font-pixel text-[11px] text-primary uppercase transition-opacity duration-200 ease-out",
         state.hasRun && "opacity-0",
       )}
     >
@@ -154,7 +154,7 @@ const ExampleHint = () => {
   );
 };
 
-const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
+const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 font-pixel text-[11px] uppercase";
 const PREVIEW_LINES = 28;
 
 const ExampleSource = () => {

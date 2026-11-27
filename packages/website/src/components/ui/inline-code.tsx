@@ -5,7 +5,7 @@ interface InlineCodeProps {
 }
 
 export const InlineCode = (props: InlineCodeProps) => (
-  <code className="rounded-md border bg-card px-1 py-0.5 text-[13px] whitespace-nowrap text-foreground">
+  <code className="rounded-sm border bg-card px-1 py-0.5 text-[13px] whitespace-nowrap text-foreground">
     {props.children}
   </code>
 );

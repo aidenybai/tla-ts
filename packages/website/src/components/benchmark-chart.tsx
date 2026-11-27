@@ -40,7 +40,7 @@ export const BenchmarkChart = () => {
                 scale: `${isInView ? benchmark.tlaTsSeconds / benchmark.tlcSeconds : 0} 1`,
                 transitionDuration: `${(benchmark.tlaTsSeconds / benchmark.tlcSeconds) * RACE_MS}ms`,
               }}
-              className="absolute inset-0 origin-left bg-muted-foreground transition-[scale] ease-linear motion-reduce:transition-none"
+              className="absolute inset-0 origin-left bg-primary transition-[scale] ease-linear motion-reduce:transition-none"
             />
           </div>
           <span
@@ -60,7 +60,7 @@ export const BenchmarkChart = () => {
             key={tick.share}
             style={{ left: `${tick.share * 100}%` }}
             className={cn(
-              "absolute top-0 flex flex-col gap-1 text-xs font-medium whitespace-nowrap text-faint",
+              "absolute top-0 flex flex-col gap-1 font-pixel text-[11px] whitespace-nowrap text-faint uppercase",
               tick.share === 0.5 && "-translate-x-1/2 items-center max-[22rem]:hidden",
               tick.share === 1 && "-translate-x-full items-end",
             )}

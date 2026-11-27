@@ -5,7 +5,11 @@ import { LOGO_PARTS } from "@/lib/logo";
 // The mark is a small character. Hovering its `group/logo` ancestor makes it dance: twice its arms
 // seesaw while it hops and taps its toe, then it flips. Clicking makes it crouch, leap into a
 // full flip with its arms up, land, and bounce. Every move is a whole pixel or a quarter turn.
-export const Logo = () => {
+interface LogoProps {
+  className?: string;
+}
+
+export const Logo = (props: LogoProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [isFlipping, setIsFlipping] = useState(false);
   useEffect(() => {
@@ -21,7 +25,7 @@ export const Logo = () => {
       viewBox="0 0 9 9"
       fill="currentColor"
       shapeRendering="crispEdges"
-      className="size-[18px] overflow-visible"
+      className={cn("size-[18px] overflow-visible", props.className)}
     >
       <g
         onAnimationEnd={() => setIsFlipping(false)}

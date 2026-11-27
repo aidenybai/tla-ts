@@ -18,10 +18,11 @@ const getText = (ranges: number[][]) =>
 // smaller one, so any other character or weight still loads it.
 const FONTS = [
   {
-    family: "Allo",
-    fileName: "allo.woff2",
-    source: "node_modules/allo-font/fonts/webfonts/AlloVariableFriendly.woff2",
-    // English letters, punctuation, and a few arrows and signs, from the regular weight up.
+    family: "EB Garamond",
+    fileName: "eb-garamond.woff2",
+    source:
+      "node_modules/@fontsource-variable/eb-garamond/files/eb-garamond-latin-wght-normal.woff2",
+    // English letters, punctuation, and a few arrows and signs.
     text: getText([
       [0x20, 0x7e],
       [0xa0, 0xa0],
@@ -35,26 +36,20 @@ const FONTS = [
       [0x2212, 0x2212],
       [0x2318, 0x2318],
     ]),
-    weight: "400 900",
-    variationAxes: { wght: { min: 400, max: 900 } },
+    weight: "400 800",
+    variationAxes: undefined,
     isInline: false,
   },
   {
     family: "Departure Mono",
     fileName: "departure-mono.woff2",
     source: "fonts/departure-mono/DepartureMono-Regular.woff2",
-    text: "TLA-ts",
+    text: getText([
+      [0x20, 0x7e],
+      [0xd7, 0xd7],
+      [0x2190, 0x2193],
+    ]),
     weight: "400",
-    variationAxes: undefined,
-    // The title is in the first paint, and its six letters are under 2 kB.
-    isInline: true,
-  },
-  {
-    family: "Caveat",
-    fileName: "caveat.woff2",
-    source: "node_modules/@fontsource/caveat/files/caveat-latin-600-normal.woff2",
-    text: "Click me!",
-    weight: "600",
     variationAxes: undefined,
     isInline: false,
   },

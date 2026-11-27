@@ -27,7 +27,7 @@ const Block = (props: BlockProps) => {
   const block = props.block;
   if (block.kind === "heading") {
     return (
-      <h3 className="mt-4 scroll-m-4 text-balance text-foreground">
+      <h3 className="mt-4 scroll-m-4 font-medium text-balance text-foreground">
         <Text text={block.text} />
       </h3>
     );
@@ -53,7 +53,7 @@ const Block = (props: BlockProps) => {
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-left text-sm">
         <thead>
-          <tr className="border-b text-faint max-sm:hidden">
+          <tr className="border-b font-pixel text-[11px] text-faint uppercase max-sm:hidden">
             {block.header.map((cell) => (
               <th key={cell} className="py-2 pr-4 font-normal">
                 {cell}

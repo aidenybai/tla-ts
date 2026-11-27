@@ -24,7 +24,7 @@ const TooltipContent = (props: ContentProps) => {
           data-slot="tooltip-content"
           {...popupProps}
           className={cn(
-            "origin-(--transform-origin) rounded-md bg-foreground px-2 py-1 text-xs text-background transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-95 data-ending-style:opacity-0 data-instant:transition-none data-starting-style:scale-95 data-starting-style:opacity-0",
+            "origin-(--transform-origin) rounded-sm bg-foreground px-2 py-1 font-pixel text-[11px] text-background uppercase transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-95 data-ending-style:opacity-0 data-instant:transition-none data-starting-style:scale-95 data-starting-style:opacity-0",
             className,
           )}
         />

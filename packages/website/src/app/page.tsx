@@ -17,7 +17,7 @@ import { install, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
-  <main className="mx-auto max-w-[644px] px-6 py-16 text-prose sm:py-28">
+  <main className="mx-auto max-w-[644px] px-6 py-16 text-[17px] text-prose sm:py-28">
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
