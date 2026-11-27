@@ -4988,6 +4988,35 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["Nat", "Nat <- [Naturals] ModSub Nat = {1, 2, 3, 4}", "{1, 2, 3, 4}", 5],
+    ["Nat", "Nat = {1, 2, 3, 4} Nat <- [Naturals] ModSub", "{1, 2, 3, 4}", 5],
+    ["Nat", "Nat = {1, 2, 3, 4} Nat = [Naturals] {1, 2}", "{1, 2, 3, 4}", 5],
+    ["Nat", "Nat <- PlainSub Nat <- [Naturals] ModSub", "{1, 2, 3}", 4],
+    ["ExtSet", "ExtSet <- [Ext] ModSub ExtSet = {1, 2, 3, 4}", "{1, 2, 3, 4}", 5],
+    ["ExtSet", "ExtSet = {1, 2, 3, 4} ExtSet <- [Ext] ModSub", "{1, 2, 3, 4}", 5],
+    ["ExtSet", "ExtSet = {1, 2, 3, 4} ExtSet = [Ext] {1, 2}", "{1, 2, 3, 4}", 5],
+    ["ExtSet", "ExtSet <- PlainSub ExtSet <- [Ext] ModSub", "{1, 2, 3}", 4],
+  ])(
+    "gives %s the plain entry over the [Mod] entry in CONSTANT %s, as TLC reads the definition's entry before its body's",
+    async (name, constants, value, states) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Ext\nVARIABLE x\nPlainSub == {1, 2, 3}\nModSub == {1}\nASSUME PrintT(<<"${name}", ${name}>>)\nInit == x = 0\nNext == x + 1 \\in ${name} /\\ x < 4 /\\ x' = x + 1\n====`,
+        config: `CONSTANT ${constants}\nINIT Init\nNEXT Next`,
+        onPrint: (text) => printed.push(text),
+        loadModule: (module) =>
+          module === "Ext" ? "---- MODULE Ext ----\nExtSet == {1, 2, 3, 4, 5}\n====" : undefined,
+      });
+      expect([printed, result.status, result.generatedStates, result.distinctStates]).toEqual([
+        [`<<"${name}", ${value}>>`],
+        "deadlock",
+        states,
+        states,
+      ]);
+    },
+  );
+
+  it.each([
     [
       "{(a :> b)[b]}",
       `${UNEXPECTED_EXCEPTION}Attempted to apply function:\n(a :> b)\nto argument b, which is not in the domain of the function.`,

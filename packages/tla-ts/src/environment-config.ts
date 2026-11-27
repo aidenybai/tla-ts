@@ -211,14 +211,20 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const symbol = linked.moduleSymbols.get(item.module ?? "")?.get(item.name);
     return symbol?.kind === "Definition" ? symbol : undefined;
   };
-  const getSubstitutedKeys = (item: ConfigName) => {
-    if (item.module === undefined) return [getRootKey(item.name)];
-    const symbol = getScopedSymbol(item);
-    return symbol ? [symbol.key] : [];
-  };
   const isDefined = (name: string) => {
     const key = getRootKey(name);
     return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
+  };
+  const plainKeys = new Set(
+    [...config.constants, ...config.substitutions]
+      .filter((item) => item.module === undefined && isDefined(item.name))
+      .map((item) => getRootKey(item.name)),
+  );
+  const getSubstitutedKeys = (item: ConfigName) => {
+    if (item.module === undefined) return [getRootKey(item.name)];
+    const symbol = getScopedSymbol(item);
+    // TLC sets a [Mod] entry on the definition's body, which its lookup reads only when no plain entry set the OpDefNode.
+    return symbol && !plainKeys.has(symbol.key) ? [symbol.key] : [];
   };
   const getScopedKeys = (item: ConfigName) =>
     item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
