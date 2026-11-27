@@ -1386,8 +1386,18 @@ export const createLiveGraph = <State>(
     addState: (index, state, successors, isRerun) => {
       const set = getSuccessorSet(index, state, successors);
       const rows = createRows(set.length);
-      // The set holds the state itself, as a successor of the same index.
-      const offset = set.findIndex((successor) => successor.index === index) * stateAtoms.size;
+      // The set holds the state itself, as a successor of the same index, next to the states a VIEW or SYMMETRY merges with it.
+      let offset = 0;
+      for (let position = 0; position < set.length; position++) {
+        const successor = set[position];
+        if (
+          successor.index === index &&
+          (successor.state === state || evaluation.isSame(successor.state, state))
+        ) {
+          offset = position * stateAtoms.size;
+          break;
+        }
+      }
       const edges = createEdgeRows(set.length);
       for (const behavior of behaviors) {
         const actionCount = behavior.checks.actions.length;

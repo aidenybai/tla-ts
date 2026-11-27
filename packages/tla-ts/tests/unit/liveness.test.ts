@@ -14,6 +14,14 @@ const SOURCE = readFileSync(join(DIRECTORY, "Liveness.tla"), "utf8");
 const CHAIN =
   '---- MODULE Chain ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 40 /\\ PrintT(x) /\\ x\' = x + 1\nSpec == Init /\\ [][Next]_x\nLive == <>(x >= 0)\nFalse == FALSE\nNumber == 42\nDivided == 1 \\div 0\nState == x > 0\nPrinted == PrintT(<<"periodic", TLCGet("distinct")>>)\nTruth == TRUE\nLeveled == TLCGet("level") = 1\n====';
 
+const VIEW_MERGE =
+  "---- MODULE ViewMerge ----\nVARIABLES p, q\nvars == <<p, q>>\nInit == p = 0 /\\ q = 0\nReq == p = 0 /\\ p' = 1 /\\ UNCHANGED q\nGo == p = 1 /\\ p' = 0 /\\ q' = 1\nFair == Init /\\ [][Req \\/ Go]_vars /\\ WF_vars(Go)\nUnfair == Init /\\ [][Req \\/ Go]_vars\nServed == (p = 1) ~> (q = 1)\nSettles == <>[](p = 0) \\/ Served\nView == q\n====";
+
+const SYMMETRY_MERGE =
+  "---- MODULE SymmetryMerge ----\nEXTENDS TLC\nCONSTANTS Procs\nVARIABLES p, q\nvars == <<p, q>>\nFirst == CHOOSE proc \\in Procs : TRUE\nInit == p = First /\\ q = 0\nReq == p' \\in Procs \\ {p} /\\ UNCHANGED q\nGo == p # First /\\ p' = First /\\ q' = 1\nSkip == q = 0 /\\ q' = 1 /\\ UNCHANGED p\nFair == Init /\\ [][Req \\/ Go \\/ Skip]_vars /\\ SF_vars(Go)\nUnfair == Init /\\ [][Req \\/ Go \\/ Skip]_vars\nServed == (p # First) ~> (q = 1)\nSettles == <>[](p = First) \\/ Served\nPerms == Permutations(Procs)\n====";
+
+const SYMMETRY_CONFIG = "CONSTANTS Procs = {a, b}\nSYMMETRY Perms";
+
 const getPrintedResult = (result: CheckResult) => {
   const printed: string[] = [];
   printResult(
@@ -257,6 +265,30 @@ describe("liveness matches TLC", () => {
       expect(result.status).toBe("success");
       expect([result.generatedStates, result.distinctStates]).toEqual([5, 4]);
       expect(counts).toEqual([5]);
+    },
+  );
+
+  it.each([
+    ["a VIEW", undefined, VIEW_MERGE, "VIEW View", 2, 1, 1],
+    ["SYMMETRY", 1_000_000, SYMMETRY_MERGE, SYMMETRY_CONFIG, 4, 2, 2],
+  ])(
+    "checks fairness at a state that %s merges with that state's own checks, not the stored state's, as TLC does, with maxSetSize %s",
+    async (_reduction, maxSetSize, source, reduction, generated, distinct, graphStates) => {
+      const counts: number[] = [];
+      const result = await check({
+        source,
+        config: `SPECIFICATION Fair\nPROPERTY Served\n${reduction}\nCHECK_DEADLOCK FALSE`,
+        maxSetSize,
+        onProgress: (progress) => {
+          if (progress.kind === "liveness-started") counts.push(progress.states);
+        },
+      });
+      expect([result.status, result.generatedStates, result.distinctStates, counts]).toEqual([
+        "success",
+        generated,
+        distinct,
+        [graphStates],
+      ]);
     },
   );
 
