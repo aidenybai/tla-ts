@@ -690,27 +690,32 @@ describe("gives a module the host's globals and properties that JS.tla lacks, wh
         const decoder = new TextDecoder();
         const controller = new AbortController(1);
         function encode(text) { return encoder.encode(text); }
-        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode, typeof controller);`,
+        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode, typeof controller);
+        log.push(typeof controller.signal, controller.signal === controller.signal, controller.signal.aborted);`,
         expected,
       ),
     });
 
     it("agrees with Node", async () => {
       expect(
-        (await checkModules(getQuiet("object,object,false,function,object"))).message,
+        (await checkModules(getQuiet("object,object,false,function,object,object,true,false")))
+          .message,
       ).toBeUndefined();
     });
 
     it("rejects another result", async () => {
       expect(
-        (await checkModules(getQuiet("object,object,true,function,object"))).message,
+        (await checkModules(getQuiet("object,object,true,function,object,object,true,false")))
+          .message,
       ).toContain(THREW);
     });
 
     it.each([
       ["new TextDecoder().decode()", "TextDecoder"],
       ["new AbortController().abort()", "AbortController"],
-      ["new AbortController().signal", "AbortController"],
+      ["new AbortController().signal.reason", "AbortSignal"],
+      ["Object.create(new AbortController()).signal", "AbortController"],
+      ["const { signal } = new AbortController(); Object.create(signal).aborted", "AbortSignal"],
       ["class Controller extends AbortController {} new Controller()", "AbortController"],
     ])("stops at %s", async (use, name) => {
       expect((await checkModules({ "main.js": `${use};` })).message).toContain(

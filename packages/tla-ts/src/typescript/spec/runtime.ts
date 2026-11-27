@@ -622,6 +622,17 @@ const DEFINITIONS = [
   `IsHostObject(s, v, name) ==
   /\\ IsObject(v) /\\ O(s, v).class = "proxy" /\\ IsObject(O(s, v).slots.target)
   /\\ O(s, O(s, v).slots.target).slots = [hostName |-> name]`,
+  // Node's AbortController, of which a program reads only its signal, the same AbortSignal at each
+  // read, of which it reads only aborted, which is false until abort, which stops, aborts it, as
+  // React's caches read it.
+  `AbortControllerObject(s, instance) ==
+  LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("AbortSignal")]))
+      signal == StoppingProxy(target.s, target.v, N("AbortSignal"), <<[trap |-> SV("get"), method |-> "abortSignalGet"]>>)
+  IN StoppingProxy(signal.s, instance, N("AbortController"), <<[trap |-> SV("get"), method |-> "abortControllerGet", data |-> Val(signal)]>>)`,
+  // Whether a receiver is the proxy of a target, which a getter of the host's object reads as the
+  // object, where another receiver's brand check would throw.
+  `IsHostView(s, receiver, target) ==
+  IsObject(receiver) /\\ O(s, receiver).class = "proxy" /\\ O(s, receiver).slots.target = target`,
   // Whether an object is a function of the host's code, which the runtime makes as a built-in of
   // its module.
   `IsHostCode(s, o) == O(s, o).class = "builtin" /\\ O(s, o).slots.id[1] = "Module"`,
@@ -1636,6 +1647,10 @@ const HOST_PATCHES = [
                                   SV("group"), SV("groupCollapsed"), SV("groupEnd"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
          ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "abortControllerGet" ->
+         IF Arg(args, 2) # SV("signal") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("AbortController")) ELSE Ok(s, data)
+    [] m = "abortSignalGet" ->
+         IF Arg(args, 2) # SV("aborted") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("AbortSignal")) ELSE Ok(s, False)
     [] m = "textEncoderGet" ->
          CASE Arg(args, 2) = SV("encode") -> Ok(s, data)
            [] Arg(args, 2) = SV("encoding") -> Ok(s, SV("utf-8"))
@@ -1750,9 +1765,10 @@ const HOST_PATCHES = [
             LET name == O(s, target).slots.data
                 instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> name]))
                 encode == CreateBuiltinFunction(instance.s, <<"Module", "textEncode">>, 0, N("encode"), Empty)
-            IN IF name = N("TextEncoder")
-               THEN StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
-               ELSE ProxyCreate(instance.s, instance.v, s.hostHandler)
+            IN CASE name = N("TextEncoder") ->
+                      StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
+                 [] name = N("AbortController") -> AbortControllerObject(instance.s, instance.v)
+                 [] OTHER -> ProxyCreate(instance.s, instance.v, s.hostHandler)
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,

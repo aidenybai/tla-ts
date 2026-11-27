@@ -509,8 +509,9 @@ const VIEW_CLASSES = new Set(["typedArray", "dataView"]);
 // The built-in functions whose data is a value: the cell of a promise's resolving functions or
 // capability, and the host's: console.createTask's function that runs a task, the getter of a
 // global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
-// a TextEncoder, of the value each one reads, the call of performance.now, of performance, and the
-// calls of a replaceable accessor's getter and setter, of the cell that holds its value.
+// a TextEncoder, of the value each one reads, the call of performance.now, of performance, the
+// calls of a replaceable accessor's getter and setter, of the cell that holds its value, and the
+// read of an AbortController's signal, of the signal.
 const OBJECT_DATA_BUILTINS = new Set([
   "Promise resolveFunction",
   "Promise rejectFunction",
@@ -523,6 +524,7 @@ const OBJECT_DATA_BUILTINS = new Set([
   "Module performanceNow",
   "Module replaceableGet",
   "Module replaceableSet",
+  "Module abortControllerGet",
 ]);
 
 const BUILTIN_SLOTS = ["constructor", "data", "id", "initialName", "realm"];
