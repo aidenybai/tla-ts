@@ -12,6 +12,7 @@ import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { StateGraph } from "./state-graph";
+import { StateTree } from "./state-tree";
 import { Code } from "./code";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
@@ -277,10 +278,28 @@ const ExampleGraph = () => {
   );
 };
 
+const ExampleTree = () => {
+  const state = exampleContext.useParts();
+  const search = state.result?.search;
+  if (!search)
+    return <p className="text-sm text-faint">Run the example to see every state TLA-ts checks.</p>;
+  const count = search.checkedStates.length;
+  return (
+    <figure className="flex flex-col gap-4">
+      <StateTree search={search} path={state.path} onHover={state.hoverState} />
+      <figcaption className="text-sm text-faint">
+        {count.toLocaleString("en-US")} {count === 1 ? "state" : "states"} checked
+        {state.result?.isPassed ? ", and none breaks a rule." : ", until one broke a rule."}
+      </figcaption>
+    </figure>
+  );
+};
+
 export const Example = {
   Root: ExampleRoot,
   Description: ExampleDescription,
   Hint: ExampleHint,
   Source: ExampleSource,
   Graph: ExampleGraph,
+  Tree: ExampleTree,
 };

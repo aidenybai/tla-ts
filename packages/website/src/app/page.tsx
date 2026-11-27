@@ -2,7 +2,6 @@ import { Play } from "@phosphor-icons/react";
 import { Code } from "@/components/code";
 import { GitHubIcon } from "@/components/github-icon";
 import { BenchmarkChart } from "@/components/benchmark-chart";
-import { CoverageDiagram } from "@/components/coverage-diagram";
 import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
 import { Section } from "@/components/section";
@@ -56,12 +55,12 @@ const Page = () => (
           <Example.Source />
           <Example.Graph />
           <Example.Hint />
+          <p className="mt-10 text-pretty">
+            A test checks the calls you thought to write. TLA-ts tries every call, in every order,
+            so it reaches the one that breaks.
+          </p>
+          <Example.Tree />
         </Example.Root>
-        <p className="mt-10 text-pretty">
-          A test checks the calls you thought to write. TLA-ts tries every call, in every order, so
-          it reaches the one that breaks.
-        </p>
-        <CoverageDiagram />
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>
