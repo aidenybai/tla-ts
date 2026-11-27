@@ -1625,3 +1625,72 @@ it.each(POSTCONDITION_FAILURES)(
     ]);
   },
 );
+
+const getOverflowLines = (definitions: string, config: string) => {
+  const lines: string[] = [];
+  const status = simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\n${definitions}\n====`,
+    config,
+    seed: 4n,
+    traceDepth: 12,
+    traceCount: 20n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return [status, lines.filter((line) => !line.startsWith("Finished computing"))];
+};
+
+const STACK_OVERFLOW =
+  "Error: This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
+
+it.each([
+  ["the initial predicate", "Init == x = Spin(0)\nNext == x' = x", "INIT Init\nNEXT Next", []],
+  [
+    "an invariant of an initial state",
+    "Init == x = 0\nNext == x' = x\nInv == Spin(x) = 0",
+    "INIT Init\nNEXT Next\nINVARIANT Inv",
+    ["Computed 1 initial states..."],
+  ],
+  [
+    "a constraint on an initial state",
+    "Init == x = 0\nNext == x' = x\nCon == Spin(x) = 0",
+    "INIT Init\nNEXT Next\nCONSTRAINT Con",
+    ["Computed 1 initial states..."],
+  ],
+] satisfies [string, string, string, string[]][])(
+  "reports a stack overflow in %s alone, as TLC#process does once it escapes Simulator#simulate",
+  (_title, definitions, config, computed) => {
+    expect(getOverflowLines(definitions, config)).toEqual([255, [...computed, STACK_OVERFLOW]]);
+  },
+);
+
+it("reports a stack overflow in the next-state relation with the behavior, where TLC's SimulationWorker dies and Simulator hangs", () => {
+  expect(
+    getOverflowLines(
+      "Init == x = 0\nNext == x' = Spin(x)\nSpec == Init /\\ [][Next]_x",
+      "SPECIFICATION Spec",
+    ),
+  ).toEqual([
+    255,
+    [
+      "Computed 1 initial states...",
+      STACK_OVERFLOW,
+      "Error: The behavior up to this point is:",
+      "State 1: <Init line 6, col 9 to line 6, col 13 of module M>\nx = 0\n",
+      "Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)",
+    ],
+  ]);
+});
