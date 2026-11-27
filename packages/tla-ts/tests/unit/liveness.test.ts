@@ -668,6 +668,53 @@ describe("liveness matches TLC", () => {
     },
   );
 
+  const checkContinuedDeadlock = async (fault: string) => {
+    const violations: unknown[] = [];
+    const result = await check({
+      source: getSpinSource(
+        `Next == x < 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x\nProp == []<>(${fault})`,
+      ),
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      isContinued: true,
+      onProgress: (progress) => {
+        if (progress.kind === "violation") {
+          violations.push([progress.status, progress.violation.trace.map((step) => step.state.x)]);
+        }
+      },
+    });
+    return [violations, result.failure?.exitCode, getPrintedResult(result)];
+  };
+
+  it("reports a stack overflow in the behavior graph after a deadlock under -continue like TLC", async () => {
+    expect(await checkContinuedDeadlock("Spin(x) = 0")).toEqual([
+      [["deadlock", [0]]],
+      255,
+      [
+        STACK_OVERFLOW_MESSAGE,
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\nx = 0\n",
+        "1 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+      ],
+    ]);
+  });
+
+  it("reports a failure in the behavior graph after a deadlock once under -continue, where TLC's replay reports the deadlock again and exits with 11", async () => {
+    expect(await checkContinuedDeadlock("(CHOOSE e \\in {x} : e > 5) = 0")).toEqual([
+      [["deadlock", [0]]],
+      255,
+      [
+        "The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 9, column 14 to line 9, column 43 in M\n1. Line 9, column 15 to line 9, column 38 in M\n\n",
+        `${getUnexpectedException("java.lang.RuntimeException")}Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 9, col 15 to line 9, col 38 of module M`,
+        "The behavior up to this point is:",
+        "1: <Initial predicate>\nx = 0\n",
+        "1 states generated, 1 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 1.",
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+      ],
+    ]);
+  });
+
   it.each([
     ["[][x' >= x]_vars", 1],
     ['[][x\' >= x \\/ TLCGet("level") < 0]_vars', undefined],
