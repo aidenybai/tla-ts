@@ -52,6 +52,7 @@ const runWorker = (start: StartMessage, parent: Port) => {
     undefined,
     [],
     specification.runtimeInvariants,
+    specification.instanceActions,
   );
   const nextAction = search.spec.next;
   if (nextAction === undefined)

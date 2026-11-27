@@ -61,6 +61,25 @@ const getInstanceCoverage = (instance: string, next: string, invariant: string) 
     loadModule: (name) => (name === "Inner" ? INSTANCED_MODULE : undefined),
   });
 
+const CHECKED_MODULE =
+  "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE x\nSpec == x = 0 /\\ [][x < 2 /\\ x' = x + 1]_x\nInv == x < 5\nCons == x < 9\nACons == x' > x\nProp == [][x' > x]_x\nPInv == [](x < 5)\nPropErr == [][x' > x \\div (x - 1)]_x\n====";
+
+const checkThroughInstance = (
+  variable: string,
+  instance: string,
+  options: Pick<CheckOptions, "config" | "coverage">,
+) =>
+  check({
+    ...options,
+    source: `---- MODULE Outer ----\nVARIABLE ${variable}\n${instance}\n====`,
+    loadModule: (name) =>
+      name === "Inner"
+        ? CHECKED_MODULE
+        : name === "Mid"
+          ? "---- MODULE Mid ----\nVARIABLE x\nINSTANCE Inner\n===="
+          : undefined,
+  });
+
 const COUNTER_MODULE =
   "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE v\nStart == v = 0\nStartIn == v \\in {0, 1}\nInc == v' = (v + 1) % 3\nIncIn == v' \\in {(v + 1) % 3}\nStay == UNCHANGED v\nStayAll == UNCHANGED <<v>>\n====";
 
@@ -17327,6 +17346,106 @@ ASSUME TLCFP(a) = -887695703
         "Init line 6, col 1 to line 6, col 4 of module E",
         `${label} of module E`,
         "Inv line 8, col 1 to line 8, col 3 of module E",
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "INSTANCE Inner",
+      "x",
+      "line 3, col 1 to line 3, col 14",
+      "line 3, col 1 to line 3, col 14",
+      ["line 3, col 1 to line 3, col 14 of module Outer"],
+    ],
+    [
+      "LOCAL INSTANCE Inner",
+      "x",
+      "line 3, col 7 to line 3, col 20",
+      "line 3, col 1 to line 3, col 20",
+      ["line 3, col 1 to line 3, col 20 of module Outer"],
+    ],
+    [
+      "INSTANCE Inner WITH x <- y",
+      "y",
+      "line 3, col 1 to line 3, col 26",
+      "line 3, col 1 to line 3, col 26",
+      ["line 3, col 26 to line 3, col 26 of module Outer"],
+    ],
+    [
+      "INSTANCE Mid",
+      "x",
+      "line 3, col 1 to line 3, col 12",
+      "line 3, col 1 to line 3, col 12",
+      [
+        "line 3, col 1 to line 3, col 12 of module Outer",
+        "line 3, col 1 to line 3, col 14 of module Mid",
+      ],
+    ],
+  ])(
+    "locates the checks a configuration names through %s at the INSTANCE, as TLC's CostModelCreator does",
+    async (instance, variable, declaration, substitution, substitutes) => {
+      const result = await checkThroughInstance(variable, instance, {
+        config:
+          "SPECIFICATION Spec\nINVARIANT Inv\nCONSTRAINT Cons\nACTION_CONSTRAINT ACons\nPROPERTIES Prop PInv\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      const lines = formatCoverage(result);
+      expect([
+        result.coverage?.relations.map((relation) => relation.label),
+        lines?.[3],
+        lines?.[6],
+      ]).toEqual([
+        [
+          `Action ${substitution} of module Outer`,
+          `Action ${substitution} of module Outer`,
+          `Inv ${declaration} of module Outer`,
+          `Action ${substitution} of module Outer`,
+          `ACons ${declaration} of module Outer`,
+          `Cons ${declaration} of module Outer`,
+          `Action ${substitution} of module Outer`,
+        ],
+        [
+          ...substitutes.map((line) => `${line}: 3`),
+          "line 9, col 12 to line 9, col 16 of module Inner: 3",
+        ],
+        [
+          ...substitutes.map((line) => `${line}: 4`),
+          "line 8, col 11 to line 8, col 20 of module Inner: 2",
+        ],
+      ]);
+    },
+  );
+
+  it("locates an invariant a configuration substitutes with an INSTANCE's definition at the INSTANCE, as TLC does", async () => {
+    const result = await checkThroughInstance("x", "INSTANCE Inner\nMyInv == TRUE", {
+      config: "SPECIFICATION Spec\nINVARIANT MyInv\nCONSTANT MyInv <- Inv\nCHECK_DEADLOCK FALSE",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Action line 3, col 1 to line 3, col 14 of module Outer",
+      "Action line 3, col 1 to line 3, col 14 of module Outer",
+      "Inv line 3, col 1 to line 3, col 14 of module Outer",
+    ]);
+  });
+
+  it.each([
+    ["INSTANCE Inner", "x", "Line 3, column 1 to line 3, column 14 in Outer"],
+    ["INSTANCE Inner WITH x <- y", "y", "Line 3, column 1 to line 3, column 26 in Outer"],
+  ])(
+    "reports an action property that %s brings in from the INSTANCE down, as TLC does",
+    async (instance, variable, frame) => {
+      const result = await checkThroughInstance(variable, instance, {
+        config: "SPECIFICATION Spec\nPROPERTY PropErr\nCHECK_DEADLOCK FALSE",
+      });
+      expect([result.failure?.exitCode, formatCallStackLines(result)]).toEqual([
+        255,
+        [
+          frame,
+          "Line 10, column 14 to line 10, column 36 in Inner",
+          "Line 10, column 15 to line 10, column 33 in Inner",
+          "Line 10, column 20 to line 10, column 33 in Inner",
+        ],
       ]);
     },
   );
