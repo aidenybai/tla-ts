@@ -645,6 +645,49 @@ describe("checks a module's exported functions as a model on JS.tla", () => {
     });
   });
 
+  // A function without parameters whose return type is any, as one that reads an untyped package's
+  // result has, may be an invariant or a check. They disagree only where it returns false, which
+  // it does once text gains a z.
+  describe("stops where a function whose return type may be a boolean returns false", () => {
+    const getSource = (returned: string, isZ = true) => `
+      let text = "abc";
+      export const append = () => {
+        if (text.length < 4) text += "${isZ ? "z" : "y"}";
+      };
+      export const hasNoZ = ()${returned === "" ? "" : `: ${returned}`} => !text.includes("z");
+    `;
+    const STOP =
+      "tla-ts can't tell whether hasNoZ is an invariant: it returns false, and its return type may be a boolean but needn't be";
+
+    it("stops for any, unknown and a union with a boolean", async () => {
+      for (const returned of ["any", "unknown", "boolean | undefined"]) {
+        const result = await checkModel(getSource(returned));
+        expect(result.status).not.toBe("success");
+        expect(result.message).toContain(STOP);
+      }
+    });
+
+    it("checks the rest of the states where it never returns false, as Node finds", async () => {
+      const explored = await exploreInNode(getSource("boolean", false), "spec.ts");
+      expect(explored.status).toBe("deadlock");
+      expect(getCounts(await checkModel(getSource("any", false)))).toEqual([
+        explored.status,
+        explored.distinctStates,
+        explored.generatedStates,
+      ]);
+    });
+
+    it("finds Node's violation where the function returns a boolean", async () => {
+      const explored = await exploreInNode(getSource("boolean"), "spec.ts");
+      expect(explored.status).toBe("invariant-violation");
+      expect(getCounts(await checkModel(getSource("")))).toEqual([
+        explored.status,
+        explored.distinctStates,
+        explored.generatedStates,
+      ]);
+    });
+  });
+
   // A CommonJS module's require, which a function of it closes over, is in the state, as in Solid's
   // CommonJS build, which refers to nothing but the module's file.
   describe("keeps a CommonJS module's require in the state", () => {
