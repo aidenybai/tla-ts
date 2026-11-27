@@ -15,6 +15,9 @@ const BOARD = SIZE * CELL;
 const STEP_MS = 190;
 const REPLAY_MS = 100;
 const HINT_STEPS = 45;
+const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
+const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
+const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
 
 // The board drawn again on each side of itself, so a snake that leaves by one edge is already
 // coming in at the other.
@@ -180,11 +183,6 @@ export const SnakeGame = (props: SnakeGameProps) => {
 
   const snakeId = useId();
   const backId = useId();
-  const softId = useId();
-  const grassId = useId();
-  const lightId = useId();
-  const appleId = useId();
-  const headId = useId();
   const backRef = useRef<SVGPathElement>(null);
   const headRef = useRef<SVGGElement>(null);
   // The step on the board: the squares the snake is leaving, the ones it is taking, and when
@@ -299,7 +297,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(66%_0.11_138)] select-none dark:shadow-[0_4px_0_oklch(24%_0.05_140)]",
+          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
@@ -309,44 +307,21 @@ export const SnakeGame = (props: SnakeGameProps) => {
           viewBox={`0 0 ${BOARD} ${BOARD}`}
           className="block w-full"
         >
+          {Array.from({ length: SIZE * SIZE }, (_square, index) => (
+            <rect
+              key={index}
+              x={(index % SIZE) * CELL}
+              y={Math.floor(index / SIZE) * CELL}
+              width={CELL}
+              height={CELL}
+              className={
+                index % 2 === 0
+                  ? "fill-[oklch(93%_0.05_140)] dark:fill-[oklch(31%_0.04_140)]"
+                  : "fill-[oklch(90%_0.06_140)] dark:fill-[oklch(28%_0.04_140)]"
+              }
+            />
+          ))}
           <defs>
-            <filter id={softId} x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="0.9" />
-            </filter>
-            <filter id={grassId} x="0" y="0" width="100%" height="100%">
-              <feTurbulence type="fractalNoise" baseFrequency="1.4" numOctaves="2" seed="7" />
-              <feColorMatrix values="0 0 0 0 0.1  0 0 0 0 0.3  0 0 0 0 0.05  0 0 0 0.5 -0.12" />
-            </filter>
-            <radialGradient id={lightId} cx="30%" cy="22%" r="85%">
-              <stop offset="0" className="[stop-color:white]" stopOpacity={0.22} />
-              <stop offset="0.6" className="[stop-color:white]" stopOpacity={0} />
-              <stop offset="1" className="[stop-color:black]" stopOpacity={0.16} />
-            </radialGradient>
-            <radialGradient id={appleId} cx="36%" cy="30%" r="75%">
-              <stop offset="0" className="[stop-color:oklch(72%_0.2_30)]" />
-              <stop offset="0.55" className="[stop-color:oklch(58%_0.22_27)]" />
-              <stop offset="1" className="[stop-color:oklch(40%_0.17_22)]" />
-            </radialGradient>
-            <radialGradient id={headId} cx="38%" cy="30%" r="80%">
-              <stop
-                offset="0"
-                className={
-                  hasBitten ? "[stop-color:oklch(70%_0.2_27)]" : "[stop-color:oklch(74%_0.14_62)]"
-                }
-              />
-              <stop
-                offset="0.6"
-                className={
-                  hasBitten ? "[stop-color:oklch(57%_0.23_27)]" : "[stop-color:oklch(60%_0.15_50)]"
-                }
-              />
-              <stop
-                offset="1"
-                className={
-                  hasBitten ? "[stop-color:oklch(42%_0.17_25)]" : "[stop-color:oklch(44%_0.12_42)]"
-                }
-              />
-            </radialGradient>
             {/* The game writes the snake's line and its head's place itself, frame by frame. */}
             <path
               ref={backRef}
@@ -357,163 +332,51 @@ export const SnakeGame = (props: SnakeGameProps) => {
               strokeLinejoin="round"
             />
           </defs>
-          {Array.from({ length: SIZE * SIZE }, (_square, index) => (
-            <rect
-              key={index}
-              x={(index % SIZE) * CELL}
-              y={Math.floor(index / SIZE) * CELL}
-              width={CELL}
-              height={CELL}
-              className={
-                index % 2 === 0
-                  ? "fill-[oklch(84%_0.1_138)] dark:fill-[oklch(36%_0.07_140)]"
-                  : "fill-[oklch(81%_0.11_138)] dark:fill-[oklch(33%_0.07_140)]"
-              }
-            />
-          ))}
-          <rect width={BOARD} height={BOARD} filter={`url(#${grassId})`} />
-          <rect width={BOARD} height={BOARD} fill={`url(#${lightId})`} />
           <g transform={`translate(${shownApple.x} ${shownApple.y})`}>
             <g
               key={`${shownApple.x} ${shownApple.y}`}
               className="origin-center [transform-box:fill-box] motion-safe:animate-chip-in"
             >
-              <ellipse
-                cx={0.8}
-                cy={3.1}
-                rx={3}
-                ry={1.1}
-                filter={`url(#${softId})`}
-                className="fill-black/35"
-              />
-              <circle r={3.1} fill={`url(#${appleId})`} />
+              <ellipse cy={3.3} rx={2.8} ry={1} className={SHADE_FILL} />
               <path
-                d="M-1.5 -2.6 Q0 -1.9 1.5 -2.6"
+                d="M0 -2.4 Q0.4 -3.8 1.8 -4"
                 fill="none"
-                strokeWidth={0.5}
+                strokeWidth={0.7}
                 strokeLinecap="round"
-                className="stroke-black/20"
-              />
-              <path
-                d="M0 -2.2 Q0.2 -3.6 1 -4.2"
-                fill="none"
-                strokeWidth={0.6}
-                strokeLinecap="round"
-                className="stroke-[oklch(38%_0.07_60)]"
-              />
-              <path
-                d="M0.9 -3.6 Q2.4 -4.9 3.6 -3.6 Q2.2 -2.9 0.9 -3.6"
-                className="fill-[oklch(58%_0.16_140)]"
+                className="stroke-[oklch(45%_0.08_60)]"
               />
               <ellipse
-                cx={-1.2}
-                cy={-1.3}
-                rx={0.9}
-                ry={0.6}
-                transform="rotate(-35 -1.2 -1.3)"
-                className="fill-white/55"
+                cx={1.6}
+                cy={-3.1}
+                rx={1.3}
+                ry={0.7}
+                className="fill-[oklch(65%_0.16_140)]"
               />
+              <circle r={3} className="fill-[oklch(62%_0.21_27)]" />
+              <path
+                d="M-2.6 0.6 A3 3 0 0 0 2.6 0.6 A3.4 3 0 0 1 -2.6 0.6"
+                className="fill-[oklch(52%_0.2_27)]"
+              />
+              <circle cx={-1} cy={-1.1} r={0.8} className="fill-white/50" />
             </g>
           </g>
           <g id={snakeId}>
-            <use
-              href={`#${backId}`}
-              x={0.9}
-              y={1.6}
-              strokeWidth={6.4}
-              filter={`url(#${softId})`}
-              className="stroke-black/35"
-            />
+            <use href={`#${backId}`} y={1.3} strokeWidth={6.6} className={SHADE_STROKE} />
             <use
               href={`#${backId}`}
               strokeWidth={6.6}
-              className={hasBitten ? "stroke-[oklch(42%_0.17_25)]" : "stroke-[oklch(44%_0.12_42)]"}
+              className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
             />
-            <use
-              href={`#${backId}`}
-              x={-0.25}
-              y={-0.35}
-              strokeWidth={5.4}
-              className={hasBitten ? "stroke-[oklch(57%_0.23_27)]" : "stroke-[oklch(60%_0.15_50)]"}
-            />
-            <use
-              href={`#${backId}`}
-              x={-0.6}
-              y={-0.9}
-              strokeWidth={3}
-              className={hasBitten ? "stroke-[oklch(66%_0.2_27)]" : "stroke-[oklch(70%_0.14_60)]"}
-            />
-            {/* Saddle marks down the back. They start from the head, so they ride with the body. */}
-            <use
-              href={`#${backId}`}
-              x={-0.3}
-              y={-0.45}
-              strokeWidth={2.6}
-              strokeDasharray="0.01 3.4"
-              strokeDashoffset={-2.2}
-              className={
-                hasBitten ? "stroke-[oklch(40%_0.16_25)]/70" : "stroke-[oklch(40%_0.11_35)]/75"
-              }
-            />
-            <use
-              href={`#${backId}`}
-              x={-0.9}
-              y={-1.4}
-              strokeWidth={1}
-              className="stroke-white/30"
-            />
+            <use href={`#${backId}`} y={-1.2} strokeWidth={1.8} className="stroke-white/25" />
             <g ref={headRef} transform={`translate(${START_BACK[0].x} ${START_BACK[0].y})`}>
-              <ellipse
-                cx={0.9}
-                cy={1.6}
-                rx={4.2}
-                ry={4.2}
-                filter={`url(#${softId})`}
-                className="fill-black/35"
-              />
+              <circle cy={1.3} r={4} className={SHADE_FILL} />
+              <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
+              <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
               <g transform={`rotate(${DIRECTIONS.indexOf(shown.direction) * 45})`}>
-                {!hasBitten && (
-                  <path
-                    d="M0 -4.6 L0 -6.6 M0 -6.6 L-0.9 -7.7 M0 -6.6 L0.9 -7.7"
-                    fill="none"
-                    strokeWidth={0.5}
-                    strokeLinecap="round"
-                    className="origin-bottom scale-y-0 stroke-[oklch(55%_0.22_20)] [transform-box:fill-box] motion-safe:animate-tongue"
-                  />
-                )}
-                <ellipse rx={3.9} ry={4.7} cy={-0.5} fill={`url(#${headId})`} />
-                <circle cx={-1} cy={-4.1} r={0.3} className="fill-black/45" />
-                <circle cx={1} cy={-4.1} r={0.3} className="fill-black/45" />
-                <ellipse
-                  cx={-2.4}
-                  cy={-1.5}
-                  rx={1.25}
-                  ry={1.45}
-                  className="fill-[oklch(95%_0.05_95)]"
-                />
-                <ellipse
-                  cx={2.4}
-                  cy={-1.5}
-                  rx={1.25}
-                  ry={1.45}
-                  className="fill-[oklch(95%_0.05_95)]"
-                />
-                <ellipse
-                  cx={-2.4}
-                  cy={-1.8}
-                  rx={0.45}
-                  ry={0.95}
-                  className="fill-[oklch(18%_0.03_60)]"
-                />
-                <ellipse
-                  cx={2.4}
-                  cy={-1.8}
-                  rx={0.45}
-                  ry={0.95}
-                  className="fill-[oklch(18%_0.03_60)]"
-                />
-                <circle cx={-2.7} cy={-2.3} r={0.3} className="fill-white/90" />
-                <circle cx={2.1} cy={-2.3} r={0.3} className="fill-white/90" />
+                <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
+                <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
+                <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+                <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
               </g>
             </g>
           </g>
