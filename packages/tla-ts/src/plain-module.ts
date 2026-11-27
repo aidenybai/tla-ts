@@ -115,9 +115,12 @@ export const checkPlainModule = (
   // The name of each bit.
   const names: string[] = [];
   const getBit = (name: string) => {
-    const bit = bits.get(name) ?? bits.size;
-    if (bit === bits.size) names[bit] = name;
-    bits.set(name, bit);
+    const found = bits.get(name);
+    const bit = found ?? bits.size;
+    if (found === undefined) {
+      names[bit] = name;
+      bits.set(name, bit);
+    }
     return bit < MAX_PARAMS ? bit : undefined;
   };
   const own = new Map<string, OperatorLevels>();
