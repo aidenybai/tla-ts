@@ -566,6 +566,52 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
+  // Node reads a subpath's own key of a package's exports before any pattern, as Solid's exports
+  // give the package's index beside patterns of its files.
+  describe("load the file of a package's export beside its patterns", () => {
+    const PACKAGE = {
+      "node_modules/patterned/package.json": JSON.stringify({
+        name: "patterned",
+        exports: { ".": "./index.js", "./dist/*": "./dist/*" },
+      }),
+      "node_modules/patterned/index.js": 'export const kind = "index";\n',
+      "node_modules/patterned/dist/part.js": 'export const kind = "part";\n',
+    };
+    const getSource = (specifier: string, expected: string) =>
+      `import { kind } from "${specifier}";\nif (kind !== "${expected}") throw new Error(kind);\n`;
+
+    it("agrees with Node", async () => {
+      const source = getSource("patterned", "index");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
+      expect(
+        await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("patterned", "part");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).stderr).toContain(
+        "Error: index",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("index");
+    });
+
+    it("stops at a subpath that only a pattern matches", async () => {
+      const source = getSource("patterned/dist/part.js", "part");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
+      expect(
+        (await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))).error,
+      ).toEqual({
+        name: "TlaTypeScriptError",
+        isTlaError: true,
+        message:
+          "main.mjs:1:22 tla-ts can't resolve patterned/dist/part.js without Node, as /node_modules/patterned/package.json exports patterns, which Node matches the subpath against",
+      });
+    });
+  });
+
   // The program's process.env holds NODE_ENV=production alone, as a bundler gives a program that
   // it builds for a browser, though the process that compiles it has NODE_ENV=test, which vitest
   // sets, and HOME. A package's index then requires its production build, as React's does.
