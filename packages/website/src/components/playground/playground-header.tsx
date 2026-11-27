@@ -29,7 +29,7 @@ export const PlaygroundHeader = (props: HeaderProps) => (
       className="group/logo -m-2 flex shrink-0 items-center gap-2 p-2 font-medium text-foreground"
     >
       <Logo />
-      <span className="max-sm:sr-only">TLA-ts</span>
+      <span className="font-pixel text-[22px]/8 font-normal max-sm:sr-only">TLA-ts</span>
     </a>
     <span className="text-faint max-sm:hidden">Playground</span>
     <div className="ml-auto flex min-w-0 items-center gap-2">{props.children}</div>
