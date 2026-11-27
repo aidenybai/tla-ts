@@ -11,12 +11,19 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 // The board of the example's code, and its two moves, with the mistake in `turn`.
 const SIZE = 7;
 const CELL = 10;
-const STEP_MS = 260;
+const BOARD = SIZE * CELL;
+const STEP_MS = 190;
 const REPLAY_MS = 100;
-const HINT_STEPS = 40;
+const HINT_STEPS = 45;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
 const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
 const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
+
+// The board drawn again on each side of itself, so a snake that leaves by one edge is already
+// coming in at the other.
+const TILES = [-BOARD, 0, BOARD]
+  .flatMap((x) => [-BOARD, 0, BOARD].map((y) => ({ x, y })))
+  .filter((tile) => tile.x !== 0 || tile.y !== 0);
 
 // The eight ways to move, clockwise from up, each an eighth of a turn from the last.
 const DIRECTIONS = [
@@ -55,7 +62,7 @@ const step = (snake: Snake): Snake => {
     : { ...snake, body: [head, ...snake.body.slice(0, -1)] };
 };
 
-const isBitten = (snake: Snake) => snake.body.slice(1).includes(snake.body[0]);
+const isBitten = (body: number[]) => body.slice(1).includes(body[0]);
 
 const getSnake = (state: SearchState): Snake => {
   const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
@@ -77,42 +84,51 @@ const getCenter = (square: number): Point => ({
   y: Math.floor(square / SIZE) * CELL + CELL / 2,
 });
 
-const isBeside = (first: Point, second: Point) =>
-  Math.max(Math.abs(first.x - second.x), Math.abs(first.y - second.y)) <= CELL;
+// The short way from one square to a square beside it, which is over the edge where the
+// second lies on the far side of the board.
+const getShortWay = (from: number, to: number) => (((to - from + SIZE + 3) % SIZE) - 3) * CELL;
 
 const getBetween = (from: Point, to: Point, progress: number): Point => ({
   x: from.x + (to.x - from.x) * progress,
   y: from.y + (to.y - from.y) * progress,
 });
 
-// The points down the snake's back, part of the way through a step: the head has left its old
-// square and the tail has not yet left its own. A snake that did not just step, or that came in
-// from the far edge, is drawn where it is.
-const getBack = (from: number[], to: number[], progress: number): Point[] => {
-  const last = to.map(getCenter);
-  const first = from.map(getCenter);
-  const isStep =
-    to.length >= from.length &&
-    from.every((square, index) => index === from.length - 1 || to[index + 1] === square) &&
-    isBeside(first[0], last[0]) &&
-    isBeside(first[first.length - 1], first[first.length - 2]);
-  if (!isStep || progress >= 1) return last;
+// The points down the snake's back, from its head. Each follows the last the short way, so
+// the line runs off the board where the snake crosses an edge and never back across it.
+const getBack = (body: number[]) =>
+  body.reduce<Point[]>((points, square, index) => {
+    const last = points.at(-1);
+    points.push(
+      last === undefined
+        ? getCenter(square)
+        : {
+            x: last.x + getShortWay(body[index - 1] % SIZE, square % SIZE),
+            y: last.y + getShortWay(Math.floor(body[index - 1] / SIZE), Math.floor(square / SIZE)),
+          },
+    );
+    return points;
+  }, []);
+
+// The same points part of the way through a step: the head has left its old square and the
+// tail has not yet left its own. A snake that did not just step is drawn where it is.
+const getPose = (from: number[] | undefined, to: number[], progress: number) => {
+  if (from === undefined || to[1] !== from[0] || progress >= 1) return getBack(to);
+  const back = getBack(from);
+  const head = {
+    x: back[0].x + getShortWay(from[0] % SIZE, to[0] % SIZE),
+    y: back[0].y + getShortWay(Math.floor(from[0] / SIZE), Math.floor(to[0] / SIZE)),
+  };
   const tail =
     to.length === from.length
-      ? getBetween(first[first.length - 1], first[first.length - 2], progress)
-      : first[first.length - 1];
-  return [getBetween(first[0], last[0], progress), ...first.slice(0, -1), tail];
+      ? getBetween(back[back.length - 1], back[back.length - 2], progress)
+      : back[back.length - 1];
+  return [getBetween(back[0], head, progress), ...back.slice(0, -1), tail];
 };
 
-// The line through the points. It lifts where the snake leaves one edge and comes in at the
-// other, so that no stroke crosses the board.
-const getBackPath = (points: Point[]) =>
-  points
-    .map((point, index) => {
-      const isJoined = index > 0 && isBeside(points[index - 1], point);
-      return `${isJoined ? "L" : "M"}${point.x} ${point.y}${isJoined ? "" : "h0"}`;
-    })
-    .join("");
+const getPath = (points: Point[]) =>
+  points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join("");
+
+const START_BACK = getBack(START.body);
 
 interface Replay {
   search: Search;
@@ -130,13 +146,19 @@ interface SnakeGameProps {
 
 export const SnakeGame = (props: SnakeGameProps) => {
   const [snake, setSnake] = useState(START);
+  // The apple on the board, which stays until the head has reached it.
+  const [apple, setApple] = useState(START.apple);
   const [stepCount, setStepCount] = useState(0);
-  const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
-  const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const [isMoving, setIsMoving] = useState(false);
+  const [isOver, setIsOver] = useState(false);
+  const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
+  const [hoveredId, setHoveredId] = useState<string>();
   const [replay, setReplay] = useState<Replay>();
+  const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
+  const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   if (props.search && replay?.search !== props.search) {
-    setReplay({ search: props.search, index: 0 });
+    // A reader who asked for less motion sees where the search ended, not each state it tried.
+    setReplay({ search: props.search, index: isReduced ? Infinity : 0 });
     setIsMoving(false);
   }
   // The states the search tried, with the one that breaks the rule last.
@@ -147,7 +169,6 @@ export const SnakeGame = (props: SnakeGameProps) => {
       ...states.filter((state) => state.isFailing),
     ];
   }, [props.search]);
-  const [hoveredId, setHoveredId] = useState<string>();
   const isReplayShown = replay !== undefined && replay.index >= 0 && tried.length > 0;
   const isReplaying = isReplayShown && replay.index < tried.length - 1;
   const active = isReplayShown
@@ -155,16 +176,65 @@ export const SnakeGame = (props: SnakeGameProps) => {
       tried[Math.min(replay.index, tried.length - 1)])
     : undefined;
   const shown = useMemo(() => (active ? getSnake(active) : snake), [active, snake]);
-  const hasBitten = isBitten(shown);
+  const hasBitten = isReplayShown ? isBitten(shown.body) : isOver;
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
-  const steer = (next: Direction) => {
-    if (isReplaying || isBitten(snake)) return;
-    setReplay(replay && { ...replay, index: -1 });
-    setSnake(turn(isReplayShown ? START : snake, next));
-    if (isReplayShown) setStepCount(0);
-    setIsMoving(true);
+  const isGliding = isMoving && isInView && !isOver && !isReplayShown;
+
+  const snakeId = useId();
+  const backId = useId();
+  const backRef = useRef<SVGPathElement>(null);
+  const headRef = useRef<SVGGElement>(null);
+  // The step on the board: the squares the snake is leaving, the ones it is taking, and when
+  // it set off. Each frame is drawn from these, so sixty frames a second render nothing.
+  const glideRef = useRef({
+    from: undefined as number[] | undefined,
+    to: START,
+    startedAt: 0,
+    nextStartAt: 0,
+    isStepDue: false,
+  });
+  const draw = (points: Point[]) => {
+    backRef.current?.setAttribute("d", getPath(points));
+    headRef.current?.setAttribute("transform", `translate(${points[0].x} ${points[0].y})`);
   };
+  useLayoutEffect(() => {
+    const glide = glideRef.current;
+    const last = glide.to.body;
+    glide.to = shown;
+    if (!isGliding) {
+      glide.from = undefined;
+      return draw(getBack(shown.body));
+    }
+    // A turn changes where the snake is heading and not where it is, so the step under way
+    // carries on.
+    if (last === shown.body) return;
+    glide.from = last;
+    glide.startedAt = glide.nextStartAt;
+    glide.isStepDue = false;
+  }, [shown, isGliding]);
+  // One clock moves the snake and draws it. A step starts where the last one ended, whatever
+  // the reader pressed in between, so the snake keeps one pace.
+  useEffect(() => {
+    if (!isGliding) return;
+    const glide = glideRef.current;
+    glide.from = undefined;
+    glide.startedAt = performance.now() - STEP_MS;
+    let frame = requestAnimationFrame(function tick(now) {
+      frame = requestAnimationFrame(tick);
+      const elapsed = now - glide.startedAt;
+      draw(getPose(glide.from, glide.to.body, isReduced ? 1 : Math.max(0, elapsed / STEP_MS)));
+      if (elapsed < STEP_MS || glide.isStepDue) return;
+      glide.isStepDue = true;
+      // A frame that came late starts the next step now, so the snake does not leap to catch up.
+      glide.nextStartAt = elapsed > STEP_MS * 2 ? now : glide.startedAt + STEP_MS;
+      setApple(glide.to.apple);
+      if (isBitten(glide.to.body)) return setIsOver(true);
+      setSnake(step);
+      setStepCount((count) => count + 1);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isGliding, isReduced]);
   useEffect(() => {
     if (!isReplaying) return;
     const timer = setInterval(
@@ -173,14 +243,20 @@ export const SnakeGame = (props: SnakeGameProps) => {
     );
     return () => clearInterval(timer);
   }, [isReplaying]);
-  useEffect(() => {
-    if (!isMoving || !isInView || isBitten(snake)) return;
-    const timer = setInterval(() => {
-      setSnake(step);
-      setStepCount((count) => count + 1);
-    }, STEP_MS);
-    return () => clearInterval(timer);
-  }, [isMoving, isInView, snake]);
+
+  const steer = (next: Direction) => {
+    if (isReplaying) return;
+    // A turn after the end, or after TLA-ts has had the board, starts a new game.
+    const isFresh = isReplayShown || isOver;
+    setReplay(replay && { ...replay, index: -1 });
+    setSnake(turn(isFresh ? START : snake, next));
+    if (isFresh) {
+      setApple(START.apple);
+      setStepCount(0);
+      setIsOver(false);
+    }
+    setIsMoving(true);
+  };
   // The arrow keys steer the snake while the board is on screen, from wherever the focus is,
   // and scroll the page again once it is not.
   useEffect(() => {
@@ -191,6 +267,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
         return;
       event.preventDefault();
+      if (event.repeat) return;
       setHeldKeys((held) => new Set(held).add(event.key));
       steer(found);
     };
@@ -203,31 +280,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
       removeEventListener("keyup", handleKeyUp);
     };
   });
-  const backId = useId();
-  const backRef = useRef<SVGPathElement>(null);
-  const headRef = useRef<SVGGElement>(null);
-  const lastBodyRef = useRef(shown.body);
-  // A step glides from one square to the next. Each frame is written to the drawing itself, so
-  // that sixty frames a second do not render the game sixty times.
-  useLayoutEffect(() => {
-    const from = lastBodyRef.current;
-    lastBodyRef.current = shown.body;
-    const draw = (progress: number) => {
-      const points = getBack(from, shown.body, progress);
-      backRef.current?.setAttribute("d", getBackPath(points));
-      headRef.current?.setAttribute("transform", `translate(${points[0].x} ${points[0].y})`);
-    };
-    if (isReplayShown || matchMedia("(prefers-reduced-motion: reduce)").matches) return draw(1);
-    const start = performance.now();
-    let frame = requestAnimationFrame(function glide(now) {
-      const progress = Math.min(1, Math.max(0, (now - start) / STEP_MS));
-      draw(progress);
-      if (progress < 1) frame = requestAnimationFrame(glide);
-    });
-    draw(0);
-    return () => cancelAnimationFrame(frame);
-  }, [shown.body, isReplayShown]);
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
+  const shownApple = getCenter(isReplayShown ? shown.apple : apple);
   return (
     <div className="my-4 flex flex-wrap gap-x-10 gap-y-6 rounded-[22px] bg-card p-5 shadow-raised sm:-mx-6 sm:p-7 lg:-mx-10">
       <div
@@ -237,20 +291,20 @@ export const SnakeGame = (props: SnakeGameProps) => {
           const box = event.currentTarget.getBoundingClientRect();
           const head = getCenter(snake.body[0]);
           const angle = Math.atan2(
-            ((event.clientX - box.left) / box.width) * SIZE * CELL - head.x,
-            head.y - ((event.clientY - box.top) / box.width) * SIZE * CELL,
+            ((event.clientX - box.left) / box.width) * BOARD - head.x,
+            head.y - ((event.clientY - box.top) / box.width) * BOARD,
           );
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
         <svg
           role="img"
           aria-label="A snake and an apple on a board. The arrow keys steer the snake, and so does a click on the board."
-          viewBox={`0 0 ${SIZE * CELL} ${SIZE * CELL}`}
+          viewBox={`0 0 ${BOARD} ${BOARD}`}
           className="block w-full"
         >
           {Array.from({ length: SIZE * SIZE }, (_square, index) => (
@@ -268,18 +322,19 @@ export const SnakeGame = (props: SnakeGameProps) => {
             />
           ))}
           <defs>
+            {/* The game writes the snake's line and its head's place itself, frame by frame. */}
             <path
               ref={backRef}
               id={backId}
-              d={getBackPath(shown.body.map(getCenter))}
+              d={getPath(START_BACK)}
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </defs>
-          <g transform={`translate(${getCenter(shown.apple).x} ${getCenter(shown.apple).y})`}>
+          <g transform={`translate(${shownApple.x} ${shownApple.y})`}>
             <g
-              key={shown.apple}
+              key={`${shownApple.x} ${shownApple.y}`}
               className="origin-center [transform-box:fill-box] motion-safe:animate-chip-in"
             >
               <ellipse cy={3.3} rx={2.8} ry={1} className={SHADE_FILL} />
@@ -305,27 +360,29 @@ export const SnakeGame = (props: SnakeGameProps) => {
               <circle cx={-1} cy={-1.1} r={0.8} className="fill-white/50" />
             </g>
           </g>
-          <use href={`#${backId}`} y={1.3} strokeWidth={6.6} className={SHADE_STROKE} />
-          <use
-            href={`#${backId}`}
-            strokeWidth={6.6}
-            className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
-          />
-          <use href={`#${backId}`} y={-1.2} strokeWidth={1.8} className="stroke-white/25" />
-          <g
-            ref={headRef}
-            transform={`translate(${getCenter(shown.body[0]).x} ${getCenter(shown.body[0]).y})`}
-          >
-            <circle cy={1.3} r={4} className={SHADE_FILL} />
-            <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
-            <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
-            <g transform={`rotate(${DIRECTIONS.indexOf(shown.direction) * 45})`}>
-              <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
-              <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
-              <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
-              <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+          <g id={snakeId}>
+            <use href={`#${backId}`} y={1.3} strokeWidth={6.6} className={SHADE_STROKE} />
+            <use
+              href={`#${backId}`}
+              strokeWidth={6.6}
+              className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
+            />
+            <use href={`#${backId}`} y={-1.2} strokeWidth={1.8} className="stroke-white/25" />
+            <g ref={headRef} transform={`translate(${START_BACK[0].x} ${START_BACK[0].y})`}>
+              <circle cy={1.3} r={4} className={SHADE_FILL} />
+              <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
+              <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
+              <g transform={`rotate(${DIRECTIONS.indexOf(shown.direction) * 45})`}>
+                <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
+                <circle cx={1.9} cy={-1.6} r={1.5} className="fill-white" />
+                <circle cx={-1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+                <circle cx={1.9} cy={-2.1} r={0.75} className="fill-[oklch(25%_0.05_295)]" />
+              </g>
             </g>
           </g>
+          {TILES.map((tile) => (
+            <use key={`${tile.x} ${tile.y}`} href={`#${snakeId}`} x={tile.x} y={tile.y} />
+          ))}
         </svg>
       </div>
       {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
@@ -333,7 +390,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
       <div className="flex min-h-44 min-w-56 flex-1 flex-col items-start gap-4 self-stretch">
         {hasBitten && !isReplayShown && (
           <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
-            <Bug weight="fill" className="size-3.5" />
+            <Bug weight="fill" className="size-3.5 shrink-0" />
             Bug found · It turned twice at once
           </p>
         )}
@@ -377,7 +434,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               </>
             )
           ) : (
-            "It can\u2019t reverse, so it should never bite itself. Make it."
+            "It can’t reverse, so it should never bite itself. Make it."
           )}
         </p>
         {isReplayShown && (
@@ -408,8 +465,10 @@ export const SnakeGame = (props: SnakeGameProps) => {
               size="inline"
               onClick={() => {
                 setSnake(START);
+                setApple(START.apple);
                 setStepCount(0);
                 setIsMoving(false);
+                setIsOver(false);
                 setReplay(replay && { ...replay, index: -1 });
               }}
             >
