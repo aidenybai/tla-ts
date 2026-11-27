@@ -11,7 +11,7 @@ import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { Maze } from "./maze";
+import { SnakeGame } from "./snake";
 import { Code } from "./code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
@@ -226,7 +226,7 @@ const ExampleSource = () => {
 
 const ExampleGame = () => {
   const state = exampleContext.useParts();
-  return <Maze search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />;
+  return <SnakeGame search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />;
 };
 
 export const Example = {

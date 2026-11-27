@@ -44,18 +44,18 @@ const Page = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          Here is a small game. The gold is walled off, so nobody should be able to reach it. The
-          code has a bug. Try to find it.
+          Here is a snake. It cannot turn straight back on itself, so it should never bite itself.
+          The code has a bug. Try to find it.
         </p>
         <Example.Root>
           <Example.Game />
           <p className="mt-4 text-pretty">
-            You try one path at a time. So does a test: it runs the one path you thought to write.
-            TLA-ts tries every path, and checks the rule after each move.
+            You try one run of moves at a time. So does a test: it plays the one run you thought to
+            write. TLA-ts plays every run, and checks the rule after each move.
           </p>
           <p className="text-pretty">
             This is the code behind the game, with the rule on its last line. You write the rule.
-            You never write the paths.
+            You never write the moves.
           </p>
           <Example.Source />
           <Example.Hint />
