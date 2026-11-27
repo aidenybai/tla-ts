@@ -64,6 +64,7 @@ interface LinkedSpecification {
   exportedCopies: Set<string>;
   standardAliasBodies: Set<Expression>;
   operatorConstants: Map<string, Value>;
+  javaValues: Map<Expression, Value>;
   order: TlcOrder;
 }
 
@@ -238,8 +239,15 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       ? [getCopyKey(symbol.key)]
       : [symbol.key, getCopyKey(symbol.key)];
   };
-  const getScopedKeys = (item: ConfigName) =>
-    item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
+  const isJavaOverridden = (key: string) => {
+    const definition = linked.definitions.get(key);
+    return definition?.kind === "Operator" && linked.javaValues.has(definition.body);
+  };
+  const getScopedKeys = (item: ConfigName) => {
+    if (item.module === undefined) return isDefined(item.name) ? [getRootKey(item.name)] : [];
+    // TLC sets a Java override on the body after a [Mod] value or table, which it replaces.
+    return getSubstitutedKeys(item).filter((key) => !isJavaOverridden(key));
+  };
   const getKeyArity = (key: string) => {
     const definition = linked.definitions.get(key);
     return definition?.kind === "Operator"
@@ -385,7 +393,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     if (definition) linked.definitions.set(getCopyKey(key), definition);
   });
   const constants = new Map<string, Value>();
-  const bodyValues = new WeakMap<Expression, Value>();
+  const bodyValues = new WeakMap(linked.javaValues);
   const setOperator = (key: string, operator: Builtin) => {
     linked.builtins.set(key, operator);
     linked.definitions.delete(key);

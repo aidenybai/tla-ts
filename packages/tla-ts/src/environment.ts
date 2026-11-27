@@ -2085,11 +2085,11 @@ export const createEnvironment = (
         ),
       ),
     ),
+    javaValues,
     order,
   });
   const constants = applied.constants;
   const bodyValues = applied.bodyValues;
-  javaValues.forEach((value, body) => bodyValues.set(body, value));
   const substitutions = applied.substitutions;
 
   if (traceFile !== undefined) {
