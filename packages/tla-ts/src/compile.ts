@@ -10,8 +10,8 @@ export interface CompileOptions {
   // disk to read them from, so it passes them here.
   libraries?: ReadonlyMap<string, string>;
   // The files that the program runs on in place of the host's, by absolute path, as Node runs it
-  // from / in an empty environment. A browser has no disk, so it passes the packages a program
-  // imports here.
+  // from / in an environment of NODE_ENV=production alone, as a bundler builds a program for a
+  // browser. A browser has no disk, so it passes the packages a program imports here.
   files?: ReadonlyMap<string, string>;
 }
 

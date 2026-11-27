@@ -88,6 +88,36 @@ const createLibraryHost = (libraries: ReadonlyMap<string, string>): ts.CompilerH
   readFile: (fileName) => libraries.get(fileName),
 });
 
+// The declaration files that options name, as their lib does or as their target's default library
+// does, and those that they reference.
+const getNamedLibraries = (
+  options: ts.CompilerOptions,
+  libraries: ReadonlyMap<string, string>,
+): string[] => {
+  const named = new Set<string>();
+  const add = (fileName: string) => {
+    if (named.has(fileName)) return;
+    named.add(fileName);
+    for (const match of (libraries.get(fileName) ?? "").matchAll(/<reference lib="([^"]+)"/g)) {
+      add(`lib.${match[1]}.d.ts`);
+    }
+  };
+  if (options.noLib !== true) (options.lib ?? [ts.getDefaultLibFileName(options)]).forEach(add);
+  return [...named];
+};
+
+// A host that gives the texts of TypeScript's declaration files gives those that the program's
+// options name, without which TypeScript's checker would find none of the globals they declare,
+// as a project's target's default library declares Set.
+const checkLibraries = (options: ts.CompilerOptions, libraries: ReadonlyMap<string, string>) => {
+  const missing = getNamedLibraries(options, libraries).find((name) => !libraries.has(name));
+  if (missing !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read the declaration file ${missing}, which the project's options name, as the host gives no text of it`,
+    );
+  }
+};
+
 // TypeScript's declaration files of its default library, by name, which every program shares, and,
 // for a host without a file system, the texts that its files read from.
 export interface Library {
@@ -137,14 +167,15 @@ const DEFAULT_LIBRARY: Library =
     : parseLibrary(ts.createCompilerHost(COMPILER_OPTIONS), undefined);
 
 // A file of the program, which TypeScript parses as JavaScript where its extension is one, with the
-// format that Node loads it in.
+// format that Node loads it in among the system's files.
 const createFile = (
   fileName: string,
   text: string,
   languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  system: ProgramSystem,
 ) =>
   isJavaScriptFile(fileName)
-    ? createJavaScriptFile(fileName, text, languageVersion)
+    ? createJavaScriptFile(fileName, text, languageVersion, system)
     : ts.createSourceFile(fileName, text, languageVersion, true);
 
 // The module that a file's literal names, for a file whose imports load as Node loads them where
@@ -160,6 +191,7 @@ const resolveLiteral = (
   options: ts.CompilerOptions,
   host: ts.CompilerHost,
   redirectedReference: ts.ResolvedProjectReference | undefined,
+  system: ProgramSystem,
 ): { module: ts.ResolvedModuleWithFailedLookupLocations; isDeclared: boolean } => {
   const resolved =
     isJavaScriptFile(containingFile) && isValue
@@ -185,7 +217,7 @@ const resolveLiteral = (
   ) {
     return { module: resolved, isDeclared: false };
   }
-  const found = resolveModule(literal, containingFile);
+  const found = resolveModule(literal, containingFile, system);
   const extension = found === undefined ? undefined : getExtension(found);
   if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
     return { module: resolved ?? { resolvedModule: undefined }, isDeclared: false };
@@ -198,24 +230,19 @@ const resolveLiteral = (
   };
 };
 
-// The project of the nearest tsconfig.json, where it holds the file, as an editor finds it. A
-// tsconfig.json among the files that a host passes stops, as its files are TypeScript's to list.
+// The project of the nearest tsconfig.json among the system's files, where it holds the file, as an
+// editor finds it.
 const getProject = (path: string, system: ProgramSystem) => {
   if (!system.fileExists(path)) return undefined;
   const file = system.resolvePath(path).replaceAll("\\", "/");
   const configPath = ts.findConfigFile(file.slice(0, file.lastIndexOf("/")), system.fileExists);
-  if (configPath !== undefined && !system.isHost) {
-    throw new TlaTypeScriptError(
-      `tla-ts can't read ${configPath} among the files that a host passes`,
-    );
-  }
   const project =
     configPath === undefined
       ? undefined
       : ts.getParsedCommandLineOfConfigFile(
           configPath,
           {},
-          { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} },
+          { ...system, onUnRecoverableConfigFileDiagnostic: () => {} },
         );
   return project?.fileNames.includes(file) ? project : undefined;
 };
@@ -357,9 +384,9 @@ const getAugmentedRoots = (
 // TypeScript's program of root files and the files they import, by the options of their project,
 // whose checker gives the types of their code, and the names of the files that each file imports.
 // A root's file is named as its path names it, though another file imports it, and source, where
-// given, holds the text of a root's file in place of the file system's. Of the files that a host
-// passes in place of its own, the program reads the root's alone, so a root that imports or
-// references another file stops where the host passes others.
+// given, holds the text of a root's file in place of the file system's. The program reads the
+// system's files, and TypeScript's declaration files from the host's file system or from the texts
+// that a host without one passes.
 const createRootsProgram = (
   roots: readonly string[],
   project: ts.ParsedCommandLine | undefined,
@@ -374,14 +401,35 @@ const createRootsProgram = (
       "tla-ts can't read TypeScript's declaration files without a file system, so a host without one passes their texts",
     );
   }
-  const host =
+  if (libraries !== undefined) checkLibraries(options, libraries);
+  const libraryHost =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
+  // A file of TypeScript's declaration files, which the library's host reads.
+  const isLibraryFile = (fileName: string) =>
+    libraries === undefined
+      ? fileName.startsWith(`${libraryHost.getDefaultLibLocation?.()}/`)
+      : libraries.has(fileName);
+  const host: ts.CompilerHost = system.isHost
+    ? libraryHost
+    : {
+        ...libraryHost,
+        getSourceFile: (fileName, languageVersion) => {
+          if (isLibraryFile(fileName)) return libraryHost.getSourceFile(fileName, languageVersion);
+          const text = system.readFile(fileName);
+          return text === undefined
+            ? undefined
+            : ts.createSourceFile(fileName, text, languageVersion);
+        },
+        fileExists: (fileName) =>
+          isLibraryFile(fileName) ? libraryHost.fileExists(fileName) : system.fileExists(fileName),
+        readFile: (fileName) =>
+          isLibraryFile(fileName) ? libraryHost.readFile(fileName) : system.readFile(fileName),
+        directoryExists: system.directoryExists,
+        getDirectories: system.getDirectories,
+        realpath: system.realpath,
+        getCurrentDirectory: system.getCurrentDirectory,
+      };
   const rootNames = new Map(roots.map((root) => [system.resolvePath(root), root]));
-  // A root that references another file, whose types a host's files would give.
-  const getReference = (file: ts.SourceFile) =>
-    system.isHost || system.isEntryAlone
-      ? undefined
-      : [...file.referencedFiles, ...file.typeReferenceDirectives].at(0);
   const getSourceFile = (
     fileName: string,
     languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
@@ -389,32 +437,15 @@ const createRootsProgram = (
     if (fileName === JSON_DECLARATIONS.path) {
       return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
     }
-    if (fileName === source?.path) {
-      const file = createFile(fileName, source.text, languageVersion);
-      const reference = getReference(file);
-      if (reference !== undefined) {
-        throw new TlaTypeScriptError(
-          `tla-ts can't read the types of ${reference.fileName} among the files that a host passes`,
-          file,
-          reference.pos,
-        );
-      }
-      return file;
-    }
+    if (fileName === source?.path)
+      return createFile(fileName, source.text, languageVersion, system);
     const declared = library.files.get(fileName);
-    if (!system.isHost) return declared;
     if (declared !== undefined || /\.d\.(?:[^/]*\.)?[cm]?ts$/.test(fileName)) {
       return declared ?? host.getSourceFile(fileName, languageVersion);
     }
     const text = host.readFile(fileName);
-    return text === undefined ? undefined : createFile(fileName, text, languageVersion);
+    return text === undefined ? undefined : createFile(fileName, text, languageVersion, system);
   };
-  // The files that the program reads besides its root's: the host's, or else TypeScript's
-  // declaration files alone.
-  const fileExists = (fileName: string) =>
-    system.isHost ? host.fileExists(fileName) : library.files.has(fileName);
-  const readFile = (fileName: string) =>
-    system.isHost ? host.readFile(fileName) : library.texts?.get(fileName);
   const optionsKey = JSON.stringify(options);
   const imports = new Map<ts.SourceFile, string[]>();
   const programHost: ts.CompilerHost & SourceRedirectingHost = {
@@ -432,22 +463,10 @@ const createRootsProgram = (
       if (file !== undefined) runFiles?.set(key, file);
       return file;
     },
-    fileExists: (fileName) => fileName === source?.path || fileExists(fileName),
-    readFile: (fileName) => (fileName === source?.path ? source.text : readFile(fileName)),
-    directoryExists: system.isHost ? host.directoryExists : () => false,
-    getDirectories: system.isHost ? host.getDirectories : () => [],
-    resolveModuleNameLiterals: !system.isHost
-      ? (literals) =>
-          literals.map((literal) => {
-            if (!system.isEntryAlone) {
-              throw new TlaTypeScriptError(
-                `tla-ts can't read the types of ${literal.text} among the files that a host passes`,
-                literal,
-              );
-            }
-            return { resolvedModule: undefined };
-          })
-      : libraries === undefined
+    fileExists: (fileName) => fileName === source?.path || host.fileExists(fileName),
+    readFile: (fileName) => (fileName === source?.path ? source.text : host.readFile(fileName)),
+    resolveModuleNameLiterals:
+      libraries === undefined || !system.isHost
         ? (
             literals,
             containingFile,
@@ -464,6 +483,7 @@ const createRootsProgram = (
                 resolutionOptions,
                 host,
                 redirectedReference,
+                system,
               ).module;
               const module = found.resolvedModule;
               const root =
@@ -567,7 +587,7 @@ export const createProgram = (
       ? run.program
       : createRootsProgram(
           [path],
-          library.texts === undefined ? getProject(path, system) : undefined,
+          library.texts === undefined || !system.isHost ? getProject(path, system) : undefined,
           library,
           system,
           { path, text: source },

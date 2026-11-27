@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,9 +18,11 @@ import { createLibrary, readJsTlaFiles } from "../../src/typescript/spec/library
 import { recordHostRealm } from "../../src/typescript/spec/realm";
 
 // What a compile and a check of a file give: the check's status, the violated name, the trace's
-// states and actions, and a failure's message, or the named error that either throws.
+// states and actions, a failure's message, and how many states the check found, or the named error
+// that either throws.
 interface Outcome {
   status?: string;
+  distinctStates?: number;
   name?: string;
   trace?: Record<string, string>[];
   actions?: string[];
@@ -21,16 +31,13 @@ interface Outcome {
   error?: { name: string; isTlaError: boolean; message: string };
 }
 
-// The texts of TypeScript's declaration files that a file's, by name, references, with its own, as
-// the website bundles them.
-const getLibraries = (fileName: string, libraries: Map<string, string>) => {
-  if (libraries.has(fileName)) return libraries;
-  const text = readFileSync(join(dirname(ts.getDefaultLibFilePath({})), fileName), "utf8");
-  libraries.set(fileName, text);
-  for (const match of text.matchAll(/<reference lib="([^"]+)"/g)) {
-    getLibraries(`lib.${match[1]}.d.ts`, libraries);
-  }
-  return libraries;
+// The texts of TypeScript's declaration files, by name, every one of them, as the website bundles
+// them.
+const getLibraries = () => {
+  const directory = dirname(ts.getDefaultLibFilePath({}));
+  return readdirSync(directory)
+    .filter((fileName) => /^lib\..*\.d\.ts$/.test(fileName))
+    .map((fileName) => [fileName, readFileSync(join(directory, fileName), "utf8")] as const);
 };
 
 // JS.tla's evaluation nests deeper than a test's stack, so the API runs on a worker with a 256 MB
@@ -104,6 +111,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
           ),
           actions: result.violation?.trace.slice(1).map((step) => step.label?.split(" ")[0]),
           message: result.failure?.message,
+          distinctStates: result.distinctStates,
           regions: spec.regions,
         },
       });
@@ -122,7 +130,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
         directory: join(import.meta.dirname, "../../ecmascript"),
         isBrowser,
-        libraries: isBrowser ? [...getLibraries("lib.esnext.d.ts", new Map())] : [],
+        libraries: isBrowser ? getLibraries() : [],
       },
       resourceLimits: { stackSizeMb },
     },
@@ -205,7 +213,7 @@ describe("compile and check a script as Node runs it", () => {
         "Error: 2,4,6",
       );
       const outcome = await getOutcome(getSource("2,4,7"), "sorted.ts");
-      expect(outcome.error?.isTlaError).toBe(true);
+      expect(outcome).toMatchObject({ status: "error", distinctStates: 0 });
       expect(getFailure(outcome)).toContain('"2,4,6"');
     });
 
@@ -430,7 +438,7 @@ describe("compile a program on a browser's worker, which has no files", () => {
 });
 
 // A browser has no file system, so it passes the files of the packages that a program imports, on
-// which the program runs as Node runs it from / in an empty environment.
+// which the program runs as Node runs it from / in an environment of NODE_ENV=production alone.
 describe("run a program on the files that a host passes, as Node runs it on them", () => {
   // The files of a package in a node_modules directory, by their path from the root.
   const getPackageFiles = (name: string, directory: string) =>
@@ -459,7 +467,8 @@ describe("run a program on the files that a host passes, as Node runs it on them
     const getSource = (shown: string) =>
       `type Query = "t" | "tl";\nlet query: Query | "" = "";\nlet results: Query | "" = "";\nconst sent = new Set<Query>();\nexport const SearchBox = () => (\n  <label>\n    Search <input value={query} onChange={(event) => type(event.target.value as Query)} />\n    <output>{results}</output>\n  </label>\n);\nexport const type = (text: Query) => {\n  query = text;\n  sent.add(text);\n};\nexport const respond = (text: Query) => {\n  if (!sent.has(text)) return;\n  sent.delete(text);\n  ${shown}\n};\nexport const showsLatest = () => sent.size > 0 || results === query;\n/** @view */\nexport const shown = () => [query, results, [...sent]];\n`;
     // The invariant after each action that Node runs in turn, on the JavaScript that TypeScript
-    // writes for the file's JSX, in an empty environment, which loads React's development build.
+    // writes for the file's JSX, in the environment that a page gives, which loads React's
+    // production build.
     const replay = (source: string, actions: string[]) =>
       JSON.parse(
         runNode(
@@ -472,11 +481,10 @@ describe("run a program on the files that a host passes, as Node runs it on them
             "replay.mjs": `import * as model from "./search-box.mjs";\nconst held = [model.showsLatest()];\nfor (const action of ${JSON.stringify(actions)}) {\n  const call = /^(\\w+)\\((.*)\\)$/.exec(action);\n  model[call[1]](...JSON.parse("[" + call[2] + "]"));\n  held.push(model.showsLatest());\n}\nconsole.log(JSON.stringify(held));\n`,
           },
           "replay.mjs",
-          {},
+          { NODE_ENV: "production" },
         ).stdout,
       );
 
-    // Both checks load React's development build, which compiles to 840,000 characters of TLA+.
     it("agrees with Node", async () => {
       const source = getSource("results = text;");
       const outcome = await getBrowserOutcome(
@@ -558,29 +566,89 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
-  // The program's process.env is an empty environment's, though the process that compiles it has
-  // NODE_ENV, which vitest sets.
-  describe("read process.env as Node does in an empty environment", () => {
-    const getSource = (expected: string) =>
-      `if (process.env.NODE_ENV !== ${expected}) throw new Error(String(process.env.NODE_ENV));\nexport {};\n`;
+  // Node reads a subpath's own key of a package's exports before any pattern, as Solid's exports
+  // give the package's index beside patterns of its files.
+  describe("load the file of a package's export beside its patterns", () => {
+    const PACKAGE = {
+      "node_modules/patterned/package.json": JSON.stringify({
+        name: "patterned",
+        exports: { ".": "./index.js", "./dist/*": "./dist/*" },
+      }),
+      "node_modules/patterned/index.js": 'export const kind = "index";\n',
+      "node_modules/patterned/dist/part.js": 'export const kind = "part";\n',
+    };
+    const getSource = (specifier: string, expected: string) =>
+      `import { kind } from "${specifier}";\nif (kind !== "${expected}") throw new Error(kind);\n`;
 
     it("agrees with Node", async () => {
-      expect(runNode({ "env.mjs": getSource("undefined") }, "env.mjs", {}).status).toBe(0);
-      expect(await getOutcome(getSource("undefined"), "env.mjs", false, true, {})).toMatchObject({
-        status: "success",
-      });
-      expect(await getBrowserOutcome(getSource("undefined"), "env.mjs", true)).toMatchObject({
-        status: "success",
-      });
+      const source = getSource("patterned", "index");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
+      expect(
+        await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
     });
 
     it("rejects another result", async () => {
-      const source = getSource('"test"');
-      expect(runNode({ "env.mjs": source }, "env.mjs", {}).stderr).toContain("Error: undefined");
-      expect(getFailure(await getOutcome(source, "env.mjs", false, true, {}))).toContain(
-        "undefined",
+      const source = getSource("patterned", "part");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).stderr).toContain(
+        "Error: index",
       );
-      expect(getFailure(await getBrowserOutcome(source, "env.mjs", true))).toContain("undefined");
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("index");
+    });
+
+    it("stops at a subpath that only a pattern matches", async () => {
+      const source = getSource("patterned/dist/part.js", "part");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
+      expect(
+        (await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))).error,
+      ).toEqual({
+        name: "TlaTypeScriptError",
+        isTlaError: true,
+        message:
+          "main.mjs:1:22 tla-ts can't resolve patterned/dist/part.js without Node, as /node_modules/patterned/package.json exports patterns, which Node matches the subpath against",
+      });
+    });
+  });
+
+  // The program's process.env holds NODE_ENV=production alone, as a bundler gives a program that
+  // it builds for a browser, though the process that compiles it has NODE_ENV=test, which vitest
+  // sets, and HOME. A package's index then requires its production build, as React's does.
+  describe("read process.env as Node does in a bundler's environment", () => {
+    const PACKAGE = {
+      "node_modules/build/package.json": JSON.stringify({ name: "build", exports: "./index.js" }),
+      "node_modules/build/index.js":
+        'module.exports = process.env.NODE_ENV === "production" ? require("./production.js") : require("./development.js");\n',
+      "node_modules/build/production.js": 'module.exports = "production";\n',
+      "node_modules/build/development.js": 'module.exports = "development";\n',
+    };
+    const getSource = (expected: string) =>
+      `import build from "build";\nconst seen = [process.env.NODE_ENV, process.env.HOME, build].join();\nif (seen !== ${JSON.stringify(expected)}) throw new Error(seen);\n`;
+    const ENVIRONMENT = { NODE_ENV: "production" };
+
+    it("agrees with Node", async () => {
+      const source = getSource("production,,production");
+      expect(runNode({ ...PACKAGE, "env.mjs": source }, "env.mjs", ENVIRONMENT).status).toBe(0);
+      expect(await getOutcome(source, "env.mjs", false, true, getHostFiles(PACKAGE))).toMatchObject(
+        { status: "success" },
+      );
+      expect(
+        await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource(",,development");
+      expect(runNode({ ...PACKAGE, "env.mjs": source }, "env.mjs", ENVIRONMENT).stderr).toContain(
+        "Error: production,,production",
+      );
+      expect(
+        getFailure(await getOutcome(source, "env.mjs", false, true, getHostFiles(PACKAGE))),
+      ).toContain("production,,production");
+      expect(
+        getFailure(await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("production,,production");
     });
   });
 
@@ -602,20 +670,126 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
-  // TypeScript's program reads the model's own file, and not the types of the files it imports.
-  it("stops at a model's import of a file among those that the host passes", async () => {
-    const files = {
+  // TypeScript's program reads the types of the files that a model imports among those that the
+  // host passes, as a package's that Node loads.
+  describe("check a model whose file imports a package that the host passes", () => {
+    const SOURCE = `import { limit } from "limit";\n\nlet count = 0;\n\nexport const increment = () => {\n  if (count < limit) count += 1;\n};\n\nexport const reset = () => {\n  count = 0;\n};\n\nexport const bounded = () => count <= 2;\n`;
+    const getFiles = (limit: number) => ({
       "node_modules/limit/package.json": JSON.stringify({ name: "limit", exports: "./limit.js" }),
-      "node_modules/limit/limit.js": "export const limit = 3;\n",
-    };
-    const source = `import { limit } from "limit";\n\nlet count = 0;\n\nexport const increment = () => {\n  if (count < limit) count += 1;\n};\n\nexport const bounded = () => count <= 2;\n`;
-    expect(
-      (await getBrowserOutcome(source, "counter.ts", true, true, getHostFiles(files))).error,
-    ).toEqual({
-      name: "TlaTypeScriptError",
-      isTlaError: true,
-      message:
-        "counter.ts:1:23 tla-ts can't read the types of limit among the files that a host passes",
+      "node_modules/limit/limit.js": `export const limit = ${limit};\n`,
+    });
+    // The invariant after each increment that Node runs in turn from the module's start.
+    const replay = (limit: number, increments: number) =>
+      JSON.parse(
+        runNode(
+          {
+            ...getFiles(limit),
+            "counter.ts": SOURCE,
+            "replay.mts": `import * as model from "./counter.ts";\nconst held = [model.bounded()];\nfor (let index = 0; index < ${increments}; index += 1) {\n  model.increment();\n  held.push(model.bounded());\n}\nconsole.log(JSON.stringify(held));\n`,
+          },
+          "replay.mts",
+          {},
+        ).stdout,
+      );
+
+    it("agrees with Node", async () => {
+      const outcome = await getBrowserOutcome(
+        SOURCE,
+        "counter.ts",
+        true,
+        true,
+        getHostFiles(getFiles(3)),
+      );
+      expect(outcome).toMatchObject({
+        status: "invariant-violation",
+        name: "bounded",
+        trace: [{ count: "0" }, { count: "1" }, { count: "2" }, { count: "3" }],
+      });
+      expect(replay(3, (outcome.actions ?? []).length)).toEqual([true, true, true, false]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        await getBrowserOutcome(SOURCE, "counter.ts", true, true, getHostFiles(getFiles(2))),
+      ).toMatchObject({ status: "success" });
+      expect(replay(2, 3)).toEqual([true, true, true, true]);
+    });
+  });
+
+  // The project of a tsconfig.json among the files that the host passes compiles a file's JSX by
+  // its options, as TypeScript writes the JavaScript that Node runs.
+  describe("compile a file by the project that the host passes", () => {
+    const TSCONFIG = JSON.stringify({
+      compilerOptions: { jsx: "react", jsxFactory: "tag", lib: ["ESNext"] },
+    });
+    const getSource = (expected: string) =>
+      `const tag = (name: string) => name;\nconst element = <p />;\nif (element !== "${expected}") throw new Error(String(element));\nexport {};\n`;
+    const runTranspiled = (source: string) =>
+      runNode(
+        {
+          "element.mjs": ts.transpileModule(source, {
+            fileName: "element.tsx",
+            compilerOptions: ts.convertCompilerOptionsFromJson(
+              JSON.parse(TSCONFIG).compilerOptions,
+              "/",
+            ).options,
+          }).outputText,
+        },
+        "element.mjs",
+        {},
+      );
+
+    it("agrees with Node", async () => {
+      expect(runTranspiled(getSource("p")).status).toBe(0);
+      expect(
+        await getBrowserOutcome(
+          getSource("p"),
+          "element.tsx",
+          true,
+          true,
+          getHostFiles({ "tsconfig.json": TSCONFIG }),
+        ),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      expect(runTranspiled(getSource("q")).stderr).toContain("Error: p");
+      expect(
+        getFailure(
+          await getBrowserOutcome(
+            getSource("q"),
+            "element.tsx",
+            true,
+            true,
+            getHostFiles({ "tsconfig.json": TSCONFIG }),
+          ),
+        ),
+      ).toContain('"p"');
+    });
+  });
+
+  // A project's options name the declaration files that give the globals of its files, as Set,
+  // which the host passes the texts of, as the website bundles every one of them (see
+  // typescript-libraries.test.ts for a host that passes too few).
+  describe("read a project's declaration files from the texts that the host passes", () => {
+    const SOURCE = `const seen = new Set<number>();\n\nexport const add = () => {\n  if (seen.size < 3) seen.add(seen.size);\n};\n\nexport const reset = () => {\n  seen.clear();\n};\n\nexport const small = () => seen.size <= 2;\n`;
+    const getTsconfig = (options: string) => `{ "compilerOptions": ${options} }\n`;
+
+    it.each([
+      ["the default library of its target", '{ "target": "ES2022" }'],
+      ["the libraries that it names", '{ "target": "ES2022", "lib": ["ESNext"] }'],
+    ])("agrees with Node on %s", async (_, options) => {
+      const node = await getOutcome(SOURCE, "seen.ts");
+      expect(node).toMatchObject({ status: "invariant-violation", name: "small" });
+      const outcome = await getBrowserOutcome(
+        SOURCE,
+        "seen.ts",
+        true,
+        true,
+        getHostFiles({ "tsconfig.json": getTsconfig(options) }),
+      );
+      expect(outcome).toMatchObject({ status: "invariant-violation", name: "small" });
+      expect(outcome.trace).toEqual(node.trace);
     });
   });
 });
@@ -694,9 +868,31 @@ describe("compile on JS.tla from a recorded realm as from Node's", () => {
     });
   });
 
-  // Without a Node to parse a file, as in a browser, TypeScript's checks find its early errors,
-  // whose inference of a long chain of JSDoc types, as a large program's code makes, can run out
-  // of stack, where only V8 could tell.
+  // A script's spec keeps the state that the script ends in, as the CLI's does, so a check finds
+  // one state rather than none.
+  describe("count the state that a script ends in, as the CLI does", () => {
+    const getSource = (expected: number) =>
+      `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with the CLI's compile", async () => {
+      const outcome = await getOutcome(getSource(0), "ends.js", true);
+      expect(outcome).toMatchObject({ status: "success", distinctStates: 1 });
+      expect(outcome.distinctStates).toBe(
+        (await getOutcome(getSource(0), "ends.js")).distinctStates,
+      );
+    });
+
+    it("finds no state in a script that throws", async () => {
+      expect(runNode({ "ends.js": getSource(1) }, "ends.js").stderr).toContain(
+        "RangeError: kind 0",
+      );
+      expect(await getOutcome(getSource(1), "ends.js", true)).toMatchObject({ distinctStates: 0 });
+    });
+  });
+
+  // Without a Node to parse a file, as in a browser, tla-ts's port of V8's parser finds its early
+  // errors, where TypeScript's checker, which tla-ts ran before, inferred a long chain of JSDoc
+  // types past any stack.
   describe("check a file's early errors without a Node to parse it", () => {
     const getSource = (expected: number) =>
       `const kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
@@ -715,12 +911,24 @@ describe("compile on JS.tla from a recorded realm as from Node's", () => {
       expect(getFailure(await getOutcome(getSource(1), "kinds.js", true))).toContain('"kind 0"');
     });
 
-    // On the CLI's stack, TypeScript's checker runs out of stack on a chain of ten thousand types.
-    it("stops where TypeScript's checks run out of stack", async () => {
-      const source = `${Array.from({ length: 10000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {10000} Kind10000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\n`;
-      expect(getFailure(await getCliStackOutcome(source, "kinds.js", true))).toContain(
-        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+    it("rejects an early error with V8's message", async () => {
+      const source = "let kind = 0;\nlet kind = 1;\n";
+      expect(runNode({ "kinds.js": source }, "kinds.js").stderr).toContain(
+        "SyntaxError: Identifier 'kind' has already been declared",
       );
+      expect(getFailure(await getOutcome(source, "kinds.js", true))).toContain(
+        "kinds.js:2:1 SyntaxError: Identifier 'kind' has already been declared",
+      );
+    });
+
+    // On the CLI's stack, TypeScript's checker ran out of stack on a chain of ten thousand types,
+    // which V8's parse reads as comments.
+    it("agrees with Node on a chain of ten thousand JSDoc types", async () => {
+      const source = `${Array.from({ length: 10000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {10000} Kind10000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\n`;
+      expect(runNode({ "kinds.js": source }, "kinds.js").status).toBe(0);
+      expect(await getCliStackOutcome(source, "kinds.js", true)).toMatchObject({
+        status: "success",
+      });
     }, 120_000);
   });
 

@@ -5,6 +5,9 @@ import type { RunRequest, RunResult } from "./run-worker";
 export interface CompileRequest {
   source: string;
   fileName: string;
+  // The files that the program runs on, by absolute path, which a page that has them passes in
+  // place of the packages that the site bundles (see CompileOptions.files).
+  files?: ReadonlyMap<string, string>;
 }
 
 export interface CompileResponse {

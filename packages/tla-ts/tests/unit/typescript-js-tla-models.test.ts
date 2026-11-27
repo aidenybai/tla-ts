@@ -6,6 +6,7 @@ import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { exploreInNode } from "./compile-worker";
+import { runStepsInNode } from "./node-steps";
 
 interface ModelResult {
   status: string;
@@ -570,6 +571,50 @@ describe("checks a module's exported functions as a model on JS.tla", () => {
     });
   });
 
+  // A step's call returns, then its jobs run, then its tasks, each followed by the jobs it queues,
+  // until none is left, before the next step, as Node runs its loop once a call that a driver
+  // makes on beforeExit returns.
+  describe("runs the jobs and tasks that a step queues before the next step, as Node does", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-js-tla-loop-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    const getPath = (expected: string) => {
+      const path = join(directory, `loop-${expected}.ts`);
+      writeFileSync(
+        path,
+        `let rounds = 0;\nlet order = "";\nexport const start = () => {\n  if (rounds >= 2) {\n    rounds = 2;\n    return;\n  }\n  rounds += 1;\n  setImmediate(() => {\n    order += "i";\n    queueMicrotask(() => {\n      order += "n";\n    });\n  });\n  setImmediate(() => {\n    order += "j";\n  });\n  queueMicrotask(() => {\n    order += "m";\n  });\n  Promise.resolve().then(() => {\n    order += "p";\n  });\n  order += "s";\n};\nexport const isOrdered = () => order === "${expected}".repeat(rounds);\n`,
+      );
+      return path;
+    };
+
+    it("agrees with Node", async () => {
+      const path = getPath("smpinj");
+      expect(runStepsInNode(path, ["start", "start", "start"])).toEqual(
+        Array.from({ length: 4 }, () => ({ isOrdered: true })),
+      );
+      expect(getCounts(await checkModel(readFileSync(path, "utf8"), path))).toEqual([
+        "success",
+        3,
+        4,
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      const path = getPath("smpijn");
+      expect(runStepsInNode(path, ["start"])).toEqual([{ isOrdered: true }, { isOrdered: false }]);
+      const result = await checkModel(readFileSync(path, "utf8"), path);
+      expect([result.status, result.trace?.length]).toEqual(["invariant-violation", 2]);
+    });
+
+    it("stops where a step leaves a timer and an immediate, which Node runs as its clock decides", async () => {
+      const result = await checkModel(
+        "let count = 0;\nexport const start = () => {\n  count += 1;\n  setImmediate(() => {});\n  setTimeout(() => {});\n};\nexport const isSmall = () => count < 3;\n",
+      );
+      expect(result.message).toContain(
+        "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides",
+      );
+    });
+  });
+
   // An ES module that reads a host's global that a script's realm lacks, as Solid's build reads
   // queueMicrotask and console, runs as the module it is, where the host's globals are.
   describe("checks an ES module that reads the host's console", () => {
@@ -642,6 +687,49 @@ describe("checks a module's exported functions as a model on JS.tla", () => {
       expect(result.message).toContain(
         "tla-ts can't check a model whose states never end: an action counts count on at each step",
       );
+    });
+  });
+
+  // A function without parameters whose return type is any, as one that reads an untyped package's
+  // result has, may be an invariant or a check. They disagree only where it returns false, which
+  // it does once text gains a z.
+  describe("stops where a function whose return type may be a boolean returns false", () => {
+    const getSource = (returned: string, isZ = true) => `
+      let text = "abc";
+      export const append = () => {
+        if (text.length < 4) text += "${isZ ? "z" : "y"}";
+      };
+      export const hasNoZ = ()${returned === "" ? "" : `: ${returned}`} => !text.includes("z");
+    `;
+    const STOP =
+      "tla-ts can't tell whether hasNoZ is an invariant: it returns false, and its return type may be a boolean but needn't be";
+
+    it("stops for any, unknown and a union with a boolean", async () => {
+      for (const returned of ["any", "unknown", "boolean | undefined"]) {
+        const result = await checkModel(getSource(returned));
+        expect(result.status).not.toBe("success");
+        expect(result.message).toContain(STOP);
+      }
+    });
+
+    it("checks the rest of the states where it never returns false, as Node finds", async () => {
+      const explored = await exploreInNode(getSource("boolean", false), "spec.ts");
+      expect(explored.status).toBe("deadlock");
+      expect(getCounts(await checkModel(getSource("any", false)))).toEqual([
+        explored.status,
+        explored.distinctStates,
+        explored.generatedStates,
+      ]);
+    });
+
+    it("finds Node's violation where the function returns a boolean", async () => {
+      const explored = await exploreInNode(getSource("boolean"), "spec.ts");
+      expect(explored.status).toBe("invariant-violation");
+      expect(getCounts(await checkModel(getSource("")))).toEqual([
+        explored.status,
+        explored.distinctStates,
+        explored.generatedStates,
+      ]);
     });
   });
 

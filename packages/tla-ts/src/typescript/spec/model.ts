@@ -50,7 +50,7 @@ UnitsToString(units) ==
   ELSE CharacterOf[Head(units)] \o UnitsToString(Tail(units))
 \* The value that the module binds to name.
 BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ModelContext(s), name, TRUE)))
-\* A call of the function that the module binds to name, and the jobs and timers it leaves.
+\* A call of the function that the module binds to name, and the jobs and tasks it leaves.
 ModelCall(s, name, args) ==
   LET f == BindingValue(s, name) IN
   IF IsAbrupt(f) THEN f ELSE
@@ -74,6 +74,12 @@ CheckCall(s, name, args) ==
 HoldsOf(s, name, args) == Val(Completed(CheckCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
 ReturnsOf(s, name, args) == Completed(CheckCall(s, name, args)).c.type = "normal"
+UnsettledText(name) ==
+  "tla-ts can't tell whether " \o UnitsToString(name) \o " is an invariant: it returns false, and its return type may be a boolean but needn't be. Give it the return type boolean to check that it holds, or another type to check that it returns"
+\* Whether a call of name returns, for a check whose return type may be a boolean but needn't be,
+\* which stops where it returns false, as there it fails as an invariant and holds as a check.
+SettledOf(s, name, args) ==
+  IF Val(Completed(CheckCall(s, name, args))) = False THEN Assert(FALSE, UnsettledText(name)) ELSE TRUE
 \* What a call of name throws, as data rather than a failure of the check: <<>> where it returns,
 \* and the text of what it throws.
 ThrownOf(s, name, args) ==
@@ -1351,7 +1357,7 @@ export const planModel = (
   // A check of a function's result at a state: whether it holds, or only that it returns.
   const defineCheck = (
     name: string,
-    kind: "HoldsOf" | "ReturnsOf" | "ThrownOf",
+    kind: "HoldsOf" | "ReturnsOf" | "SettledOf" | "ThrownOf",
     bounds: Bound[],
   ) => {
     entries.add(bindings.get(name) ?? name);
@@ -1372,7 +1378,7 @@ export const planModel = (
         : define(
             "NativeCheck",
             (operatorName) =>
-              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : kind === "ThrownOf" ? "<<>>" : "TRUE"}`,
+              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : kind === "ThrownOf" ? "<<>>" : kind === "SettledOf" ? `IF n.v = False THEN Assert(FALSE, UnsettledText(${getBinding(name)})) ELSE TRUE` : "TRUE"}`,
           );
     return (state: string, values: string[]) =>
       `ApplyTo(${checked}, <<${[state, ...values].join(", ")}>>)`;
@@ -1417,7 +1423,11 @@ export const planModel = (
     const definition = definitions.get(name);
     const body = definition?.kind === "Operator" ? definition.body : undefined;
     const bounds = getBounds(name, body);
-    const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
+    const check = defineCheck(
+      name,
+      isCallCheck(body) ? (today.unsettled.has(name) ? "SettledOf" : "ReturnsOf") : "HoldsOf",
+      bounds,
+    );
     const holds = quantify(bounds, check(current, boundNames(bounds)));
     // An @assume that reads state holds in the initial states, as today's invariant checks it.
     steps.push(
@@ -1440,7 +1450,11 @@ export const planModel = (
       const bounds = getBounds(name, body);
       defined.add(name);
       if (!isCallCheck(body) || bounds.some((bound) => bound.pattern.kind !== "Name")) {
-        const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
+        const check = defineCheck(
+          name,
+          isCallCheck(body) ? (today.unsettled.has(name) ? "SettledOf" : "ReturnsOf") : "HoldsOf",
+          bounds,
+        );
         steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
         return;
       }
@@ -1548,7 +1562,7 @@ export const planModel = (
     lowered: getConverter(choice.domain).lowered,
     set: printExpression(rewriteGuards(choice.domain)),
   }));
-  // As compileToJsTla runs a script's jobs and timers, a step runs the ones a call leaves.
+  // As compileToJsTla runs a script's jobs and tasks, a step runs the ones a call leaves.
   const settle =
     "ModelSettle(r) == LET t == SettleJobs(r.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]";
   // The module's top level reads each state variable that starts at every value of its type, at

@@ -35,11 +35,16 @@ ViewClasses == {"typedArray", "dataView"}
 \* The built-in functions whose data is a value: the cell of a promise's resolving functions or
 \* capability, and the host's: console.createTask's function that runs a task, the getter of a
 \* global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
-\* a TextEncoder, of the value each one reads, and the call of performance.now, of performance.
+\* a TextEncoder, of the value each one reads, the call of performance.now, of performance, the
+\* calls of a replaceable accessor's getter and setter, of the cell that holds its value, the read
+\* of an AbortController's signal, of the signal, and the construct of a MessageChannel and the
+\* reads of its ports, of the object of its ports' methods.
 ObjectDataBuiltins ==
   {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
    <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
-   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>, <<"Module", "performanceNow">>}
+   <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>, <<"Module", "performanceNow">>,
+   <<"Module", "replaceableGet">>, <<"Module", "replaceableSet">>, <<"Module", "abortControllerGet">>,
+   <<"Module", "messageChannelConstruct">>, <<"Module", "messagePortGet">>}
 \* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
 AsyncResourceBuiltin == <<"Module", "asyncResource">>
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
@@ -72,6 +77,7 @@ SlotRefs(o, r) ==
          IF o.slots.state = "pending" THEN ModelStop("a pending promise") ELSE MaybeRef(o.slots.result, r)
     [] o.class = "cell" /\ DOMAIN o.slots = {"promise"} -> MaybeRef(o.slots.promise, r)
     [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
+    [] o.class = "cell" /\ DOMAIN o.slots = {"value"} -> MaybeRef(o.slots.value, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in ObjectDataBuiltins -> ObjectRef(o.slots.data, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id = AsyncResourceBuiltin ->
          ObjectRef(o.slots.data.run, r) \o ObjectRef(o.slots.data.destroy, r)
@@ -200,8 +206,9 @@ RenameSlots(o, number, r) ==
     [] o.class = "proxy" -> [o.slots EXCEPT !.target = RenameMaybe(@, number, r), !.handler = RenameMaybe(@, number, r)]
     [] o.class = "promise" -> [o.slots EXCEPT !.result = RenameMaybe(@, number, r)]
     [] o.class = "cell" ->
-         IF DOMAIN o.slots = {"promise"} THEN [o.slots EXCEPT !.promise = RenameMaybe(@, number, r)]
-         ELSE [o.slots EXCEPT !.resolve = RenameMaybe(@, number, r), !.reject = RenameMaybe(@, number, r)]
+         CASE DOMAIN o.slots = {"promise"} -> [o.slots EXCEPT !.promise = RenameMaybe(@, number, r)]
+           [] DOMAIN o.slots = {"value"} -> [o.slots EXCEPT !.value = RenameMaybe(@, number, r)]
+           [] OTHER -> [o.slots EXCEPT !.resolve = RenameMaybe(@, number, r), !.reject = RenameMaybe(@, number, r)]
     [] o.class = "builtin" /\ o.slots.id = <<"Class", "default">> /\ "fields" \in DOMAIN o.slots ->
          [o.slots EXCEPT !.fields = RenameElements(@, number, r), !.privateMethods = RenameElements(@, number, r),
                          !.initializers = IF @ = Empty THEN @ ELSE RenameValues(@, number, r)]
@@ -238,10 +245,10 @@ RenameObjectsIn(h, ids, number, r) ==
 RECURSIVE RenameEnvironmentsIn(_, _, _, _)
 RenameEnvironmentsIn(h, ids, number, r) ==
   IF ids = <<>> THEN h ELSE RenameEnvironmentsIn(HeapSet(h, Head(ids), RenameEnvironmentRecord(HeapGet(h, Head(ids)), number, r)), Tail(ids), number, r)
-\* The canonical form of the state s that a step ends in, whose jobs, timers, and calls all ended,
+\* The canonical form of the state s that a step ends in, whose jobs, tasks, and calls all ended,
 \* of a realm whose start is the state initial.
 CanonicalStateOf(s, initial) ==
-  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
+  IF s.jobs # <<>> \/ s.tasks # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
   THEN ModelStop("pending work")
   ELSE IF \E k \in DOMAIN s.required : ~s.required[k].loaded THEN ModelStop("a module that require is loading")
   ELSE

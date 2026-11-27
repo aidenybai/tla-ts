@@ -6,7 +6,7 @@ import {
   TlaStackOverflowError,
 } from "../../../tla-ts/src/errors";
 import type { JsTlaHost } from "../../../tla-ts/src/typescript/spec/prepare";
-import type { CompileResponse, JsTlaRequest, JsTlaResponse } from "./js-tla-worker";
+import type { CompileRequest, CompileResponse, JsTlaRequest, JsTlaResponse } from "./js-tla-worker";
 import { getErrorResult } from "./run-error";
 import { getSearch, type Search } from "./search";
 
@@ -16,7 +16,7 @@ export interface RunRequest {
   modules?: Record<string, string>;
   isSearchShown?: boolean;
   // The TypeScript file that the spec was compiled from, which the worker checks instead.
-  typescript?: { source: string; fileName: string };
+  typescript?: CompileRequest;
 }
 
 export interface LineNote {
@@ -33,7 +33,13 @@ export interface RunResult {
   search?: Search;
   // The most states of a search that the run kept no graph of, as it passed them.
   graphOmittedPast?: number;
+  // Whether the program's files name process.env, which a page gives NODE_ENV=production alone, as
+  // a bundler gives a program that it builds for a browser.
+  isEnvironmentNamed?: boolean;
 }
+
+// A name of process.env in a file's text.
+const ENVIRONMENT_NAME = /\bprocess\s*\.\s*env\b/;
 
 // The most states whose graph a run keeps. The graph holds the text of every state it reaches, which
 // for a model of a large heap runs to megabytes a state: Solid's solid.js reached 600 states and
@@ -63,7 +69,11 @@ const getTitle = (result: CheckResult) => {
   return {
     success: "No error found",
     error: result.failure?.message ?? "Error",
-    "assumption-violation": `Assumption ${name} is false`,
+    // An assumption whose evaluation failed, as TLC says, with the failure's message.
+    "assumption-violation":
+      result.violation?.message === undefined
+        ? `Assumption ${name} is false`
+        : `Evaluating assumption ${name} failed.\n${result.violation.message}`,
     "invariant-violation": `Invariant ${name} violated`,
     "property-violation": `Property ${name} violated`,
     "liveness-violation": `Property ${name} violated`,
@@ -118,16 +128,20 @@ const getRun = async (request: RunRequest) => {
         loadModule: (name: string) => request.modules?.[name],
       },
       shown: request.source,
+      isEnvironmentNamed: false,
     };
   }
-  const spec = loaded.compile(
-    { ...request.typescript, files: loaded.files },
-    loaded.runtime,
-    loaded.library,
-  );
+  const files = request.typescript.files ?? loaded.files;
+  const spec = loaded.compile({ ...request.typescript, files }, loaded.runtime, loaded.library);
   const shown = spec.loadModule("ProgramCode") ?? "";
   checkCodeLength(shown);
-  return { spec, shown };
+  return {
+    spec,
+    shown,
+    isEnvironmentNamed: [request.typescript.source, ...files.values()].some((text) =>
+      ENVIRONMENT_NAME.test(text),
+    ),
+  };
 };
 
 // A check of the spec, with the graph of its search where it's shown, which the check stops keeping
@@ -195,6 +209,7 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
           )
         : undefined,
     graphOmittedPast: checked.isGraphOmitted ? MOST_GRAPH_STATES : undefined,
+    isEnvironmentNamed: run.isEnvironmentNamed,
     notes: [
       ...(lastStep === undefined ||
       variableLine === undefined ||
@@ -226,20 +241,21 @@ const getErrorMessage = (error: unknown, isTypeScript: boolean) =>
       ? error.message
       : `tla-ts failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
 
-const getCompiled = async (source: string, fileName: string): Promise<CompileResponse> => {
+const getCompiled = async (request: CompileRequest): Promise<CompileResponse> => {
+  const response = { source: request.source, fileName: request.fileName };
   try {
     const loaded = await jsTla;
     const compilation = loaded.getCompilation(
-      source,
-      fileName,
+      request.source,
+      request.fileName,
       loaded.runtime,
-      loaded.files,
+      request.files ?? loaded.files,
       loaded.library,
     );
     checkCodeLength(compilation.tla);
-    return { source, fileName, compilation };
+    return { ...response, compilation };
   } catch (error) {
-    return { source, fileName, error: getErrorMessage(error, true) };
+    return { ...response, error: getErrorMessage(error, true) };
   }
 };
 
@@ -247,7 +263,7 @@ self.onmessage = async (event: MessageEvent<JsTlaRequest>) => {
   const request = event.data;
   if ("compile" in request) {
     self.postMessage({
-      compiled: await getCompiled(request.compile.source, request.compile.fileName),
+      compiled: await getCompiled(request.compile),
     });
     return;
   }

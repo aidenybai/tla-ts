@@ -1925,6 +1925,9 @@ export const frameModel = (
       );
     }
   };
+  // The checks without parameters whose return type may be a boolean but needn't be, such as any,
+  // which may be invariants instead.
+  const unsettled = new Set<string>();
   // An exported function is a property if a tag says so, an action if it changes state, and an
   // invariant if it returns a boolean.
   called.forEach((definition) => {
@@ -1933,6 +1936,16 @@ export const frameModel = (
     if (tag !== undefined) return translateProperty(definition, tag);
     if (isStepExport(definition)) return translateStep(definition);
     const returnType = getReturnType(definition);
+    if (
+      definition.node.parameters.length === 0 &&
+      returnType !== undefined &&
+      (returnType.flags & ts.TypeFlags.BooleanLike) === 0 &&
+      ((returnType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+        (returnType.isUnion() &&
+          returnType.types.some((inner) => (inner.flags & ts.TypeFlags.BooleanLike) !== 0)))
+    ) {
+      unsettled.add(definition.name);
+    }
     if (
       definition.node.parameters.length > 0 ||
       returnType === undefined ||
@@ -2025,6 +2038,7 @@ export const frameModel = (
       ),
     ),
     symmetric,
+    unsettled,
     // The state variable that the model's actions count on without end, whose search checks the
     // states within ENDLESS_STEPS steps and then stops.
     endlessCount: endless?.getText(),
