@@ -2,9 +2,9 @@ import { Play } from "@phosphor-icons/react";
 import { Code } from "@/components/code";
 import { GitHubIcon } from "@/components/github-icon";
 import { BenchmarkChart } from "@/components/benchmark-chart";
-import { CoverageDiagram } from "@/components/coverage-diagram";
 import { Example } from "@/components/example";
 import { Hero } from "@/components/hero";
+import { OrderComparison } from "@/components/order-comparison";
 import { Section } from "@/components/section";
 import { Prompt } from "@/components/prompt";
 import { Content } from "@/components/content";
@@ -14,7 +14,7 @@ import { InlineCode } from "@/components/ui/inline-code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { Link } from "@/components/ui/link";
 import { cn } from "cn";
-import { install, likesRule, likesTest, prompt, reference } from "virtual:site-data";
+import { install, likesRule, prompt, reference } from "virtual:site-data";
 import { getTest262Percent, TEST262_RUNS } from "@/lib/test262";
 
 const Page = () => (
@@ -45,32 +45,20 @@ const Page = () => (
       <Section.Root>
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
-          In TypeScript, you check code by writing tests. Each test is one order of calls that you
-          thought of:
+          Tests try the orders of calls you write. TLA-ts tries all of them. Take a like button with
+          two functions, <InlineCode>like</InlineCode> and <InlineCode>unlike</InlineCode>:
         </p>
-        <Code.Root source={likesTest}>
-          <Code.Content />
-        </Code.Root>
-        <p className="text-pretty">
-          This test passes. Nothing calls <InlineCode>unlike</InlineCode> first, so it never sees{" "}
-          <InlineCode>likes</InlineCode> drop below zero.
-        </p>
-        <p className="mt-6 text-pretty">
-          A model checker does not need you to think of the order. You write the rule once, as a
-          function that must always return true:
+        <OrderComparison />
+        <p className="mt-4 text-pretty">
+          You do not write those orders. You write one rule that must always be true, in the same
+          file:
         </p>
         <Code.Root source={likesRule}>
           <Code.Content />
         </Code.Root>
         <p className="text-pretty">
-          Then it calls your functions in every order, one state at a time, and stops at the first
-          state that breaks the rule.
-        </p>
-        <CoverageDiagram />
-        <p className="text-pretty">
-          TLA-ts drops this into the TypeScript you already have. It turns your file into TLA+, a
-          language for describing every state a program can be in, and checks each one. You do not
-          write a second language.
+          TLA-ts turns the file into TLA+, a language for checking every state a program can be in,
+          and runs it. You never write TLA+ yourself.
         </p>
         <Example.Root>
           <Example.Description />

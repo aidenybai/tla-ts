@@ -3,7 +3,6 @@ declare module "virtual:site-data" {
   export const benchmarks: import("@/lib/site-data").Benchmark[];
   export const prompt: string;
   export const install: import("@/lib/site-data").Source;
-  export const likesTest: import("@/lib/site-data").Source;
   export const likesRule: import("@/lib/site-data").Source;
   export const reference: import("@/lib/site-data").ContentSection[];
 }
