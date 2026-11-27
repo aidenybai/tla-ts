@@ -17,6 +17,7 @@ import {
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
+  reportPostconditionViolation,
   type TraceSpecOutput,
 } from "./search";
 import { createLivenessDump, createStateWriter } from "./state-graph";
@@ -307,6 +308,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       errorState = state;
       levels.set(state, 1);
       const isInModel = search.satisfiesConstraints(state);
+      if (isInModel) search.trackStatePossible(state);
       const fingerprint = isInModel ? runtime.getFingerprint(state) : 0n;
       const status = isInModel ? setStatus(fingerprint, 0) : 0;
       if (status !== 0) continue;
@@ -490,9 +492,10 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         for (const successor of next.successors) {
           processedSuccessor = successor;
           levels.set(successor, depth + 2);
-          const isInModel =
-            search.satisfiesConstraints(successor, state) &&
-            search.satisfiesActionConstraints(state, successor);
+          const isStateInModel = search.satisfiesConstraints(successor, state);
+          if (isStateInModel) search.trackStatePossible(successor);
+          const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor);
+          if (isInModel) search.trackActionPossible(state, successor);
           const fingerprint = isInModel ? runtime.getFingerprint(successor) : 0n;
           const status = isInModel ? setStatus(fingerprint, 0) : 0;
           if (isInModel) {
@@ -730,13 +733,14 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   // TLC replays an error on its main thread, whose generator for random values goes on from the initial states.
   const mainRandom = runtime.getRandom();
   let isTerminated = false;
+  let isSucceeded = false;
   let levelCode: number = MESSAGE_CODE.general;
   for (let level = 2; level <= options.maxDepth; level++) {
     if (isTerminated) {
       const errorEntry = checker.errorEntry;
       if (!errorEntry && checker.continuedCode === NO_ERROR) {
         levelCode = NO_ERROR;
-        reportSuccess();
+        isSucceeded = true;
       }
       if (errorEntry && checker.isKeepingCallStack) {
         runtime.getRandom = () => mainRandom;
@@ -761,5 +765,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     if (levelCode !== NO_ERROR) return finish(levelCode);
     isTerminated = checker.stopCode === "error" || !checker.isMoreLevel;
   }
+  // Deviation from TLC: DFIDModelChecker checks no postconditions, and _Track throws a NullPointerException at a DFIDWorker it hasn't created, so TLC reports no POSTCONDITION or _POSSIBLE under -dfid.
+  const postcondition = checker.errorEntry
+    ? undefined
+    : reportPostconditionViolation(search, options.onPrint ?? console.log, message);
+  if (postcondition) return finish(postcondition.code);
+  if (isSucceeded) reportSuccess();
   return finish(levelCode);
 };

@@ -1286,6 +1286,22 @@ export const reportAssumptionViolation = (
   return EXIT_STATUS.assumptionViolation;
 };
 
+export const reportPostconditionViolation = (
+  search: Search,
+  print: (text: string) => void,
+  message: (code: number, text: string, toolText: string) => void,
+) => {
+  const postcondition = search.findPostconditionViolation();
+  if (!postcondition) return undefined;
+  if (postcondition.counts !== undefined) print(postcondition.counts);
+  message(
+    postcondition.code,
+    postcondition.message,
+    formatInnerMessage(postcondition.code, postcondition.message, true),
+  );
+  return postcondition;
+};
+
 export const createMissingOperatorError = (operator: ModuleOperator) =>
   setExitCode(
     new TlaEvaluationError(

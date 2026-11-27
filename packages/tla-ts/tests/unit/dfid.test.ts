@@ -492,3 +492,82 @@ it("reports a positive probability for two fingerprints in a bucket that differ 
     ],
   ]);
 });
+
+const checkPostcondition = (config: string, maxDepth: number) => {
+  const prints: string[] = [];
+  const messages: string[] = [];
+  const exitCode = checkDepthFirst({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nNever == x = 7\nPost == TLCGet("level") < 0\nStats == PrintT(<<TLCGet("level"), TLCGet("diameter"), TLCGet("stats").generated, TLCGet("stats").distinct, TLCGet("stats").queue>>)\nBad == x = 1 => CHOOSE v \\in {} : TRUE\n====',
+    config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n${config}`,
+    maxDepth,
+    onPrint: (text) => prints.push(text),
+    onOutput: (output) => {
+      if (output.kind === "message") messages.push(output.message);
+      if (output.kind === "success") messages.push("success");
+    },
+  });
+  return [exitCode, prints, messages];
+};
+
+const NEVER_WITNESSED =
+  "The _POSSIBLE predicate Never at line 6, col 10 to line 6, col 14 of module M was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.";
+
+const POST_FALSE = "Postcondition Post at line 7, col 9 to line 7, col 27 of module M is false.";
+
+const LEVELS = [
+  "Finished computing initial states: 1 states generated, with 1 of them distinct.",
+  "Starting level 2: 1 states generated, 1 distinct states found.",
+  "Starting level 3: 2 states generated, 2 distinct states found.",
+];
+
+const LEVEL_4 = "Starting level 4: 4 states generated, 3 distinct states found.";
+
+it.each([
+  [
+    "_POSSIBLE Never",
+    3,
+    ["[Never |-> 0]"],
+    [NEVER_WITNESSED, "4 states generated, 3 distinct states found."],
+  ],
+  [
+    "_POSSIBLE Never",
+    9,
+    ["[Never |-> 0]"],
+    [LEVEL_4, NEVER_WITNESSED, "6 states generated, 3 distinct states found."],
+  ],
+  ["POSTCONDITION Post", 3, [], [POST_FALSE, "4 states generated, 3 distinct states found."]],
+  [
+    "POSTCONDITION Post",
+    9,
+    [],
+    [LEVEL_4, POST_FALSE, "6 states generated, 3 distinct states found."],
+  ],
+])(
+  "fails %s under -dfid %i as model checking does, where TLC's DFIDModelChecker checks no postconditions",
+  (config, maxDepth, prints, messages) => {
+    expect(checkPostcondition(config, maxDepth)).toEqual([10, prints, [...LEVELS, ...messages]]);
+  },
+);
+
+it("evaluates a postcondition under -dfid with the -1 that TLCGet reports for DFID's statistics", () => {
+  expect(checkPostcondition("POSTCONDITION Stats", 9)).toEqual([
+    0,
+    ["<<0, -1, -1, -1, -1>>"],
+    [...LEVELS, LEVEL_4, "success", "6 states generated, 3 distinct states found."],
+  ]);
+});
+
+it("stops at a _POSSIBLE predicate that fails under -dfid as TLC's DFIDWorker stops at the constraint that tracks it", () => {
+  expect(checkPostcondition("_POSSIBLE Bad", 9)).toEqual([
+    255,
+    [],
+    [
+      "Finished computing initial states: 1 states generated, with 1 of them distinct.",
+      "Starting level 2: 1 states generated, 1 distinct states found.",
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nThe error occurred when TLC was computing the set of next states.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 9, col 17 to line 9, col 38 of module M",
+      "The behavior up to this point is:",
+      "3 states generated, 1 distinct states found.",
+    ],
+  ]);
+});

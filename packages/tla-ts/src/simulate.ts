@@ -26,6 +26,7 @@ import {
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
+  reportPostconditionViolation,
   STOP_WALK,
   walkCoveredSuccessors,
   type CliSettings,
@@ -440,17 +441,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const node = nodes.get(state);
     return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
   };
-  const reportPostcondition = () => {
-    const postcondition = search.findPostconditionViolation();
-    if (!postcondition) return undefined;
-    if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
-    reportMessage(
-      postcondition.code,
-      postcondition.message,
-      formatInnerMessage(postcondition.code, postcondition.message, true),
-    );
-    return postcondition;
-  };
+  const reportPostcondition = () =>
+    reportPostconditionViolation(search, options.onPrint ?? console.log, reportMessage);
   const livenessChecks = withLivenessChecksExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecks(search.properties.liveness, search.spec.temporals, environment),

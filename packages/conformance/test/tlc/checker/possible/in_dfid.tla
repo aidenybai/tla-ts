@@ -1,5 +1,5 @@
 (*---
-description: "_POSSIBLE under -dfid fails on the first state, because its tracking reads named registers from BFS workers that -dfid never creates. This is a TLC bug: TLCGetOrDefault dereferences a null worker."
+description: "_POSSIBLE under -dfid fails on the first state, because its tracking reads named registers from BFS workers that -dfid never creates. This is a TLC bug: TLCGetOrDefault dereferences a null worker. tla-ts tracks the predicate and reports it unwitnessed at the end, as model checking does."
 features: [tlc-bug]
 ref: tlc2/tool/impl/SpecProcessor.java#processConfigPossible
 outcome: evaluation-failure
@@ -12,12 +12,17 @@ args:
   - "4"
 correct:
   all:
-    exit: 0
+    exit: 10
     transcript: |-
       2208:0 Finished computing initial states: 1 states generated, with 1 of them distinct.
       2205:0 Starting level 2: 1 states generated, 1 distinct states found.
       2205:0 Starting level 3: 2 states generated, 2 distinct states found.
       2205:0 Starting level 4: 4 states generated, 3 distinct states found.
+      | [Pred |-> 0]
+      2780:1 The _POSSIBLE predicate Pred at line 34, col 9 to line 34, col 13 of module in_dfid was never witnessed.
+      Others may be unwitnessed too; only witnessed predicates appear with a
+      non-zero count in the record printed above.
+      See https://explain.tlapl.us/possible-conditions for additional details.
       2206:0 Progress(-1) at <date>: 7 states generated, 3 distinct states found, -1 states left on queue.
       2204:0 7 states generated, 3 distinct states found.
 ---*)
