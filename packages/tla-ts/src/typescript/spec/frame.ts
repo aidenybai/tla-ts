@@ -5,7 +5,14 @@ import { parseModule } from "../../parser";
 import { compareNames } from "../../obligations/module";
 import { getSetBound } from "../../values";
 import { formatString } from "../../printer";
-import { type FunctionNode, getCommonJsExports, getFunction, isPlain, skipCasts } from "../context";
+import {
+  type FunctionNode,
+  getCommonJsExports,
+  getCommonJsFunctions,
+  getFunction,
+  isPlain,
+  skipCasts,
+} from "../context";
 import { createNames } from "../names";
 import { createProgram, type Library } from "../program";
 import type { ProgramSystem } from "../system";
@@ -21,13 +28,20 @@ interface Declared {
   identifier: ts.Identifier;
 }
 
-interface Exported extends Declared {
+interface Exported {
+  name: string;
+  // The node whose reads tell whether a check reads the state: the function's declaration.
+  declaration: ts.Node;
+  identifier: ts.Identifier;
   node: FunctionNode | ts.SignatureDeclaration;
   body: ts.ConciseBody;
   tags: Map<string, string>;
   // The signature of a const's type that the model calls, where the type has call signatures of
   // its own, as an overloaded or a dual function's does, and how the call reaches it.
   signature?: { value: ts.Signature; note: string };
+  // How the program names the key of module.exports that the model calls the function through,
+  // where no binding of the module names it, as exports.name.
+  label?: string;
 }
 
 interface Parameter {
@@ -559,11 +573,26 @@ export const frameModel = (
     }
     return ts.forEachChild(node, (child) => writesState(child, visited) || undefined) ?? false;
   };
-  // Whether a function reads a state variable, directly or through a declaration it reads.
+  // Whether a function reads a state variable, directly or through a declaration it reads, or a
+  // CommonJS module's exports or module, which hold what a step may change, as the functions that
+  // module.exports holds.
   const readsState = (node: ts.Node, visited: Set<ts.Node>): boolean => {
     if (ts.isIdentifier(node)) {
       const symbol = getSymbol(node);
       if (symbol !== undefined && stateSymbols.has(symbol)) return true;
+      if (
+        (node.text === "exports" || node.text === "module") &&
+        !(symbol?.declarations ?? []).some(
+          (declaration) =>
+            ts.isVariableDeclaration(declaration) ||
+            ts.isParameter(declaration) ||
+            ts.isBindingElement(declaration) ||
+            ts.isFunctionDeclaration(declaration) ||
+            ts.isClassDeclaration(declaration),
+        )
+      ) {
+        return true;
+      }
       const declaration = getTopLevelDeclaration(symbol);
       if (declaration !== undefined && !visited.has(declaration)) {
         visited.add(declaration);
@@ -629,7 +658,20 @@ export const frameModel = (
         : `its signature ${shown}, which takes the most parameters, and which dual dispatches to by its predicate`;
     return { value, note };
   };
-  const exported = helpers.flatMap((declared): Exported[] => {
+  // A function that a CommonJS file exports without a binding that names it, which a step calls
+  // through module.exports, as a program that requires the file calls it.
+  const getPropertyExport = (
+    exported: ReturnType<typeof getCommonJsFunctions>[number],
+  ): Exported => ({
+    name: exported.name,
+    declaration: exported.node,
+    identifier: exported.identifier,
+    node: exported.node,
+    body: exported.body,
+    tags: getTags(exported.tagged),
+    label: exported.label,
+  });
+  const boundExported = helpers.flatMap((declared): Exported[] => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
     const symbol = getSymbol(declared.identifier);
@@ -667,6 +709,7 @@ export const frameModel = (
         ]
       : [];
   });
+  const exported = [...boundExported, ...getCommonJsFunctions(sourceFile).map(getPropertyExport)];
   // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
   // calls the function's binding by.
   const getExportName = (base: string): string => {
@@ -1741,6 +1784,26 @@ export const frameModel = (
       notes.push(`tla-ts calls ${definition.name}${by}${taking}`);
     return reason === undefined;
   });
+  // A function that the model calls through module.exports, whose this is the object that a
+  // caller reads it from, which Node's callers give as they call it, stops.
+  called.forEach((definition) => {
+    const findThis = (node: ts.Node): ts.Node | undefined =>
+      node.kind === ts.SyntaxKind.ThisKeyword
+        ? node
+        : ts.isFunctionLike(node) && !ts.isArrowFunction(node)
+          ? undefined
+          : ts.forEachChild(node, findThis);
+    const found =
+      definition.label === undefined || ts.isArrowFunction(definition.node)
+        ? undefined
+        : ts.forEachChild(definition.body, findThis);
+    if (found !== undefined) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't call ${definition.label} as Node's callers do: its this is the object that each reads it from, or undefined`,
+        found,
+      );
+    }
+  });
   rung = RUNGS[0];
   const init: string[] = [];
   const next: string[] = [];
@@ -2028,6 +2091,11 @@ export const frameModel = (
     variables: stateNames.map((name): StateVariable => ({ name })),
     notes,
     bindings,
+    // The names of the functions that the model calls through module.exports, whose keys there
+    // bindings gives where they differ.
+    properties: new Set(
+      exported.flatMap((definition) => (definition.label === undefined ? [] : [definition.name])),
+    ),
     // The signature that the model calls of each exported const whose type has call signatures,
     // by the const's name.
     signatures: new Map(
