@@ -462,6 +462,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
           setOperator(key, { ...builtin, arity: 0, isLazy: true });
         } else {
+          // Deviation from TLC: TLC applies a [Mod] <- only where an expression refers to the name, not to a definition the configuration names.
           substitutions.set(key, targetKey);
           if (substitution.module === undefined) rootSubstituted.add(key);
         }

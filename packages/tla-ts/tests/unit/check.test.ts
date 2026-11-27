@@ -4909,6 +4909,84 @@ ASSUME TLCFP(a) = -887695703
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  const SCOPED_OVERRIDE_SOURCE =
+    '---- MODULE M ----\nEXTENDS Naturals, TLC, Ext\nCONSTANT S\nVARIABLE y\nInit == x = 0 /\\ y \\in S\nInit2 == x = 9 /\\ y \\in S\nNext == x < 2 /\\ x\' = x + 1 /\\ UNCHANGED y\nNext2 == x < 2 /\\ x\' = x + 9 /\\ UNCHANGED y\nSpec == Init /\\ [][Next]_<<x, y>>\nSpec2 == Init2 /\\ [][Next]_<<x, y>>\nInv == x < 5\nInv2 == x < 1\nSmall == x < 2\nProp == [](x < 5)\nProp2 == [](x < 1)\nConstr == TRUE\nConstr2 == x < 1\nAConstr == TRUE\nAConstr2 == x\' # 1\nView == <<x, y>>\nView2 == 0\nPost == TLCGet("distinct") > 0\nPost2 == TLCGet("distinct") < 0\n====';
+  const checkScopedOverride = (override: string, behavior: string) =>
+    check({
+      source: SCOPED_OVERRIDE_SOURCE,
+      config: `${behavior}\nCHECK_DEADLOCK FALSE\nCONSTANT ${override}\nCONSTANT S = {s1, s2}`,
+      loadModule: (name) =>
+        name === "Ext"
+          ? "---- MODULE Ext ----\nEXTENDS Naturals\nVARIABLE x\nExtInv == x < 5\n====\n"
+          : undefined,
+    });
+
+  it.each([
+    ["Init <- [M] Init2", "INIT Init\nNEXT Next\nINVARIANT Inv"],
+    ["Spec <- [M] Spec2", "SPECIFICATION Spec\nINVARIANT Inv"],
+  ])(
+    "starts from the definition %s gives, where TLC takes the configured definition's own body",
+    async (override, behavior) => {
+      const result = await checkScopedOverride(override, behavior);
+      expect([result.status, result.violation?.name, result.violation?.trace.length]).toEqual([
+        "invariant-violation",
+        "Inv",
+        1,
+      ]);
+    },
+  );
+
+  it.each([
+    ["Next <- [M] Next2", "INIT Init\nNEXT Next\nINVARIANT Inv", "invariant-violation", "Inv", 3],
+    ["Inv <- [M] Inv2", "INIT Init\nNEXT Next\nINVARIANT Inv", "invariant-violation", "Inv", 3],
+    [
+      "ExtInv <- [Ext] Inv2",
+      "INIT Init\nNEXT Next\nINVARIANT ExtInv",
+      "invariant-violation",
+      "ExtInv",
+      3,
+    ],
+    ["Prop <- [M] Prop2", "INIT Init\nNEXT Next\nPROPERTY Prop", "invariant-violation", "Prop", 3],
+    [
+      "Constr <- [M] Constr2",
+      "INIT Init\nNEXT Next\nINVARIANT Small\nCONSTRAINT Constr",
+      "success",
+      undefined,
+      2,
+    ],
+    [
+      "AConstr <- [M] AConstr2",
+      "INIT Init\nNEXT Next\nINVARIANT Small\nACTION_CONSTRAINT AConstr",
+      "success",
+      undefined,
+      2,
+    ],
+    [
+      "View <- [M] View2",
+      "INIT Init\nNEXT Next\nINVARIANT Small\nVIEW View",
+      "success",
+      undefined,
+      1,
+    ],
+    [
+      "Post <- [M] Post2",
+      "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      "postcondition-violation",
+      "Post",
+      6,
+    ],
+  ])(
+    "checks the definition %s gives, where TLC takes the configured definition's own body",
+    async (override, behavior, status, name, distinctStates) => {
+      const result = await checkScopedOverride(override, behavior);
+      expect([result.status, result.violation?.name, result.distinctStates]).toEqual([
+        status,
+        name,
+        distinctStates,
+      ]);
+    },
+  );
+
   it.each([
     [
       "{(a :> b)[b]}",
