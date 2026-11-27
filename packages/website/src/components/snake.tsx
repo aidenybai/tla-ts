@@ -1,9 +1,12 @@
+import { Bug } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search, SearchState } from "@/lib/search";
 import { SearchTree } from "./search-tree";
 import { Button } from "@/components/ui/button";
+import { KeyCap } from "@/components/ui/key-cap";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 // The board of the example's code, and its two moves, with the mistake in `turn`.
 const SIZE = 7;
@@ -128,6 +131,8 @@ interface SnakeGameProps {
 export const SnakeGame = (props: SnakeGameProps) => {
   const [snake, setSnake] = useState(START);
   const [stepCount, setStepCount] = useState(0);
+  const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
+  const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const [isMoving, setIsMoving] = useState(false);
   const [replay, setReplay] = useState<Replay>();
   if (props.search && replay?.search !== props.search) {
@@ -186,10 +191,17 @@ export const SnakeGame = (props: SnakeGameProps) => {
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
         return;
       event.preventDefault();
+      setHeldKeys((held) => new Set(held).add(event.key));
       steer(found);
     };
+    const handleKeyUp = (event: KeyboardEvent) =>
+      setHeldKeys((held) => new Set([...held].filter((key) => key !== event.key)));
     addEventListener("keydown", handleKey);
-    return () => removeEventListener("keydown", handleKey);
+    addEventListener("keyup", handleKeyUp);
+    return () => {
+      removeEventListener("keydown", handleKey);
+      removeEventListener("keyup", handleKeyUp);
+    };
   });
   const backId = useId();
   const backRef = useRef<SVGPathElement>(null);
@@ -217,7 +229,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   }, [shown.body, isReplayShown]);
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
   return (
-    <div className="my-2 flex flex-wrap items-start gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
+    <div className="my-2 flex flex-wrap gap-x-8 gap-y-5 rounded-[18px] bg-card p-4 shadow-raised">
       <div
         ref={boardRef}
         // A click heads the snake for the eighth of a turn nearest to it.
@@ -231,7 +243,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[266px] shrink-0 cursor-pointer overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[266px] shrink-0 cursor-pointer self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
@@ -316,21 +328,56 @@ export const SnakeGame = (props: SnakeGameProps) => {
           </g>
         </svg>
       </div>
-      <div className="flex min-w-48 flex-1 flex-col items-start gap-4">
-        <p aria-live="polite" className="text-sm text-pretty text-muted-foreground tabular-nums">
+      {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
+          or the tree moves nothing. */}
+      <div className="flex min-h-40 min-w-48 flex-1 flex-col items-start gap-3 self-stretch">
+        {hasBitten && !isReplayShown && (
+          <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
+            <Bug weight="fill" className="size-3.5" />
+            Bug found · It turned twice at once
+          </p>
+        )}
+        <p aria-live="polite" className="text-[15px] text-pretty text-foreground tabular-nums">
           {isReplaying ? (
             `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
           ) : isReplayShown ? (
             <>
               TLA-ts tried {tried.length} states and made the snake bite itself in {steps.length}{" "}
-              moves: <span className="font-mono text-xs text-foreground">{steps.join(", ")}</span>.
+              moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
             </>
           ) : hasBitten ? (
-            "The snake bit itself. You found the bug."
+            "A test finds this only if you thought to write it. TLA-ts finds it without being told."
+          ) : !isMoving ? (
+            isTouch ? (
+              "Tap the board to start the snake."
+            ) : (
+              <>
+                Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> to start the snake.
+              </>
+            )
+          ) : snake.body.length === START.body.length && stepCount < HINT_STEPS ? (
+            isTouch ? (
+              "Good. Tap where it should head, and eat the apple."
+            ) : (
+              <>
+                Good. Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
+                <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click, and eat the apple.
+              </>
+            )
           ) : stepCount >= HINT_STEPS ? (
-            "Hint: turn twice before the snake moves."
+            isTouch ? (
+              "Hint: tap twice, quickly, before it moves."
+            ) : (
+              <>
+                Hint: turn twice before it moves, like <KeyCap>↑</KeyCap> then <KeyCap>←</KeyCap>.
+              </>
+            )
           ) : (
-            "Rule: the snake never bites itself. It cannot turn straight back, so it should be safe. Steer with your arrow keys, or click where it should head. Make it bite anyway."
+            "The snake cannot turn straight back, so it should never bite itself. Make it bite anyway."
           )}
         </p>
         {isReplayShown && (
@@ -341,8 +388,18 @@ export const SnakeGame = (props: SnakeGameProps) => {
             onHover={setHoveredId}
           />
         )}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <Button variant="success" disabled={props.isRunning || isReplaying} onClick={props.onRun}>
+        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-1 text-sm">
+          <Button
+            variant="success"
+            disabled={props.isRunning || isReplaying}
+            onClick={props.onRun}
+            className={cn(
+              hasBitten &&
+                !isReplayShown &&
+                !props.isRunning &&
+                "motion-safe:animate-pulse-ring motion-reduce:ring-3 motion-reduce:ring-success/40",
+            )}
+          >
             {props.isRunning ? "Trying every move" : "Let TLA-ts try"}
           </Button>
           {(isMoving || isReplayShown) && !isReplaying && (
