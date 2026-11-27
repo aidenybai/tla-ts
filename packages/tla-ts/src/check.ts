@@ -104,6 +104,7 @@ import {
   getInitialStates,
   getSuccessors,
   hasIncompleteSuccessor,
+  isComplete,
   type Successor,
 } from "./successors";
 import {
@@ -780,15 +781,6 @@ const searchStates = (
       isConstrained: search.isConstrained,
     });
   }
-  let liveState: Value[] = [];
-  const addIncomplete = (successor: State, action: string | undefined) => {
-    if (
-      search.satisfiesConstraints(successor, liveState) &&
-      search.satisfiesActionConstraints(liveState, successor)
-    ) {
-      throw createIncompleteSuccessorError(successor, action, environment);
-    }
-  };
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(
@@ -801,29 +793,26 @@ const searchStates = (
               BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
             )),
           forEachActionSuccessors: (source, state, onSuccessors, replay) => {
-            liveState = state;
-            let successors: LiveSuccessor[] = [];
-            const addSuccessor = (successor: Value[]) => {
-              canonicalizeState(successor);
-              const isInModel =
-                search.satisfiesConstraints(successor, state) &&
-                search.satisfiesActionConstraints(state, successor);
-              if (!isInModel) return;
-              const fingerprintState = getFingerprintState(successor);
-              const hash = getStateHash(fingerprintState);
-              const index = findStateIndex(seenStates, hash, fingerprintState);
-              successors.push({
-                index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
-                state: successor,
-              });
+            const generated: State[] = [];
+            const generatedActions: (string | undefined)[] = [];
+            const addGenerated = (successor: State, action: string | undefined) => {
+              generated.push(successor);
+              generatedActions.push(action);
             };
             const visitSuccessor = (successor: Successor) => {
-              addSuccessor(successor.state);
+              addGenerated(successor.state, successor.action);
               return false;
             };
+            const isInModel = (successor: State) =>
+              replay
+                ? search.isInReplayedModel(state, successor, replay)
+                : search.satisfiesConstraints(successor, state) &&
+                  search.satisfiesActionConstraints(state, successor);
             const actionCount = coverage ? coverageActions.length : nextActions.length;
             for (let position = 0; position < actionCount; position++) {
-              successors = [];
+              generated.length = 0;
+              generatedActions.length = 0;
+              const successors: LiveSuccessor[] = [];
               const livenessSource = current.livenessSource;
               current.livenessSource = source;
               try {
@@ -834,15 +823,22 @@ const searchStates = (
                     coverageActions[position],
                     state,
                     replay ?? environment,
-                    addSuccessor,
-                    addIncomplete,
+                    (successor) => addGenerated(successor, undefined),
+                    addGenerated,
                   );
                 } else if (replay) {
                   const action = nextActions[position];
-                  walkSuccessors(action, -1, state, replay, addSuccessor, (partial) => {
-                    addIncomplete(partial, action.name);
-                    return true;
-                  });
+                  walkSuccessors(
+                    action,
+                    -1,
+                    state,
+                    replay,
+                    (successor) => addGenerated(successor, undefined),
+                    (partial) => {
+                      addGenerated(partial, action.name);
+                      return true;
+                    },
+                  );
                 } else {
                   const action = nextActions[position];
                   forEachSuccessor(
@@ -853,8 +849,31 @@ const searchStates = (
                     action.scope,
                     undefined,
                     undefined,
-                    addIncomplete,
+                    addGenerated,
                   );
+                }
+                // TableauLiveChecker#addNextState checks the constraints once Tool#getNextStates returns the action's successors.
+                for (let item = 0; item < generated.length; item++) {
+                  const successor = generated[item];
+                  if (!isComplete(successor)) {
+                    if (isInModel(successor)) {
+                      throw createIncompleteSuccessorError(
+                        successor,
+                        generatedActions[item],
+                        environment,
+                      );
+                    }
+                    continue;
+                  }
+                  canonicalizeState(successor);
+                  if (!isInModel(successor)) continue;
+                  const fingerprintState = getFingerprintState(successor);
+                  const hash = getStateHash(fingerprintState);
+                  const index = findStateIndex(seenStates, hash, fingerprintState);
+                  successors.push({
+                    index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+                    state: successor,
+                  });
                 }
               } finally {
                 current.livenessSource = livenessSource;

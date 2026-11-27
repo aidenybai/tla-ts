@@ -2420,6 +2420,55 @@ describe("evaluation errors match TLC", () => {
   });
 
   it.each([
+    [
+      undefined,
+      [
+        "",
+        "Line 10, column 15 to line 10, column 48 in M",
+        "Line 10, column 27 to line 10, column 48 in M",
+      ],
+    ],
+    [
+      1,
+      [
+        "Line 10, column 15 to line 10, column 48 in M",
+        "Line 10, column 27 to line 10, column 48 in M",
+      ],
+    ],
+  ])(
+    "reports the call stack of an action constraint that fails as the behavior graph expands a state again with coverage %s, as TableauLiveChecker#addNextState checks it once Tool#getNextStates returns",
+    async (coverage, callStack) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS TLC\nVARIABLES active, detected\nvars == <<active, detected>>\nInit == active = FALSE /\\ detected = FALSE\nDetect == ~active /\\ detected' = TRUE /\\ UNCHANGED active\nSpec == Init /\\ [][Detect]_vars\nQuiescence == [](~active => []~active)\nLive == ~active ~> detected\nConstraint == ~active' => CHOOSE x \\in {} : TRUE\n====",
+        config: "SPECIFICATION Spec\nPROPERTIES Quiescence Live\nACTION_CONSTRAINT Constraint",
+        coverage,
+      });
+      expect([result.failure?.exitCode, formatCallStackLines(result)]).toEqual([255, callStack]);
+    },
+  );
+
+  it("prints an action constraint after the successors of its action as the behavior graph expands a state again, as TableauLiveChecker#addNextState checks it once Tool#getNextStates returns", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC, Naturals\nVARIABLES active, detected\nvars == <<active, detected>>\nInit == active = FALSE /\\ detected = 0\nDetect == ~active /\\ detected = 0 /\\ \\E v \\in {1, 2} : PrintT(<<"a", v>>) /\\ detected\' = v /\\ UNCHANGED active\nSpec == Init /\\ [][Detect]_vars\nQuiescence == [](~active => []~active)\nLive == ~active ~> detected > 0\nConstraint == PrintT(<<"c", detected\'>>)\n====',
+      config:
+        "SPECIFICATION Spec\nPROPERTIES Quiescence Live\nACTION_CONSTRAINT Constraint\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    const expanded = ['<<"a", 1>>', '<<"a", 2>>', '<<"c", 1>>', '<<"c", 2>>'];
+    expect(prints).toEqual([
+      '<<"a", 1>>',
+      '<<"c", 1>>',
+      '<<"a", 2>>',
+      '<<"c", 2>>',
+      ...expanded,
+      ...expanded,
+    ]);
+  });
+
+  it.each([
     ["master", 9],
     ["1.7.4", 6],
   ] as const)(

@@ -925,6 +925,7 @@ export interface Search {
     addFingerprint: () => void,
     onViolated: (violation: Pick<InitialStateViolation, "status" | "name">) => void,
   ) => void;
+  isInReplayedModel: (state: Value[], next: State, tracing: Environment) => boolean;
   checkReplayedSuccessor: (
     state: Value[],
     next: Value[],
@@ -1425,6 +1426,26 @@ export const createSearch = (
     coverage && covered
       ? runAtCoverageNode(coverage, covered.node, () => holdsLikeTlc(covered.expression, context))
       : holdsLikeTlc(expression, context);
+  const isInReplayedModel = (state: Value[], next: State, tracing: Environment) => {
+    const isStateInModel = constraintPredicates.every((constraint) =>
+      holdsReplayed(
+        coveredConstraintChecks.get(constraint.predicate),
+        constraint.predicate,
+        getContext(tracing, next, undefined, constraint.scope),
+      ),
+    );
+    if (!isStateInModel) return false;
+    trackPossible(statePossible, runtime, getContext(tracing, next, undefined));
+    const isInModel = actionConstraints.every((constraint, index) =>
+      holdsReplayed(
+        coveredActionConstraints[index],
+        constraint.expression,
+        getContext(tracing, state, next, constraint.scope),
+      ),
+    );
+    if (isInModel) trackPossible(actionPossible, runtime, getContext(tracing, state, next));
+    return isInModel;
+  };
   const satisfiesCovered = (checks: CoveredCheck[], state: State, next?: State) => {
     if (!coverage) return undefined;
     for (const check of checks) {
@@ -1836,26 +1857,9 @@ export const createSearch = (
       );
       if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
+    isInReplayedModel,
     checkReplayedSuccessor: (state, next, tracing, addFingerprint, isGoingOnAfter) => {
-      const isStateInModel = constraintPredicates.every((constraint) =>
-        holdsReplayed(
-          coveredConstraintChecks.get(constraint.predicate),
-          constraint.predicate,
-          getContext(tracing, next, undefined, constraint.scope),
-        ),
-      );
-      if (isStateInModel)
-        trackPossible(statePossible, runtime, getContext(tracing, next, undefined));
-      const isInModel =
-        isStateInModel &&
-        actionConstraints.every((constraint, index) =>
-          holdsReplayed(
-            coveredActionConstraints[index],
-            constraint.expression,
-            getContext(tracing, state, next, constraint.scope),
-          ),
-        );
-      if (isInModel) trackPossible(actionPossible, runtime, getContext(tracing, state, next));
+      const isInModel = isInReplayedModel(state, next, tracing);
       // TLC checks the invariants of a successor it has not seen, even outside the model.
       const isUnseen = isInModel ? addFingerprint() : true;
       const invariant = isUnseen

@@ -1382,7 +1382,7 @@ const compileAction = (
 const getEmptyState = (environment: Environment): State =>
   environment.variables.map((): Value | undefined => undefined);
 
-const isComplete = (partial: State): partial is Value[] => {
+export const isComplete = (partial: State): partial is Value[] => {
   for (let index = 0; index < partial.length; index++) {
     if (partial[index] === undefined) return false;
   }
