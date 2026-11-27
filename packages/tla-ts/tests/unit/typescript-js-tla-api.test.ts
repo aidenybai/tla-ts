@@ -457,15 +457,14 @@ describe("run a program on the files that a host passes, as Node runs it on them
   const getHostFiles = (files: Record<string, string>) =>
     Object.fromEntries(Object.entries(files).map(([name, text]) => [`/${name}`, text]));
 
-  describe("check a React component's model on React's files", () => {
-    const REACT = getPackageFiles(
-      "react",
-      join(import.meta.dirname, "../../../website/node_modules/react"),
-    );
-    // The view leaves out React's count of the elements that its development build makes, which
-    // grows with each render.
-    const getSource = (shown: string) =>
-      `type Query = "t" | "tl";\nlet query: Query | "" = "";\nlet results: Query | "" = "";\nconst sent = new Set<Query>();\nexport const SearchBox = () => (\n  <label>\n    Search <input value={query} onChange={(event) => type(event.target.value as Query)} />\n    <output>{results}</output>\n  </label>\n);\nexport const type = (text: Query) => {\n  query = text;\n  sent.add(text);\n};\nexport const respond = (text: Query) => {\n  if (!sent.has(text)) return;\n  sent.delete(text);\n  ${shown}\n};\nexport const showsLatest = () => sent.size > 0 || results === query;\n/** @view */\nexport const shown = () => [query, results, [...sent]];\n`;
+  describe("check the website's search box on React's files", () => {
+    const WEBSITE = join(import.meta.dirname, "../../../website");
+    const REACT = {
+      ...getPackageFiles("react", join(WEBSITE, "node_modules/react")),
+      ...getPackageFiles("react-dom", join(WEBSITE, "node_modules/react-dom")),
+    };
+    const SOURCE = readFileSync(join(WEBSITE, "src/examples/search-box.tsx"), "utf8");
+    const RACE = ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'];
     // The invariant after each action that Node runs in turn, on the JavaScript that TypeScript
     // writes for the file's JSX, in the environment that a page gives, which loads React's
     // production build.
@@ -486,9 +485,8 @@ describe("run a program on the files that a host passes, as Node runs it on them
       );
 
     it("agrees with Node", async () => {
-      const source = getSource("results = text;");
       const outcome = await getBrowserOutcome(
-        source,
+        SOURCE,
         "search-box.tsx",
         true,
         true,
@@ -497,24 +495,21 @@ describe("run a program on the files that a host passes, as Node runs it on them
       expect(outcome).toMatchObject({
         status: "invariant-violation",
         name: "showsLatest",
-        actions: ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'],
+        actions: RACE,
       });
-      expect(replay(source, outcome.actions ?? [])).toEqual([true, true, true, true, false]);
-    }, 120_000);
+      expect(outcome.trace?.at(-1)).toMatchObject({ query: '"tl"', results: '"t"' });
+      expect(replay(SOURCE, outcome.actions ?? [])).toEqual([true, true, true, true, false]);
+    }, 300_000);
 
+    // A box that shows only the response to its latest query.
     it("rejects another result", async () => {
-      const source = getSource("if (text === query) results = text;");
+      const source = SOURCE.replace("  results = text;", "  if (text === query) results = text;");
+      expect(source).not.toBe(SOURCE);
       expect(
         await getBrowserOutcome(source, "search-box.tsx", true, true, getHostFiles(REACT)),
       ).toMatchObject({ status: "success" });
-      expect(replay(source, ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'])).toEqual([
-        true,
-        true,
-        true,
-        true,
-        true,
-      ]);
-    }, 120_000);
+      expect(replay(source, RACE)).toEqual([true, true, true, true, true]);
+    }, 300_000);
   });
 
   // A package's exports name a file for each set of conditions, of which Node 26 matches node,
@@ -649,6 +644,50 @@ describe("run a program on the files that a host passes, as Node runs it on them
       expect(
         getFailure(await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE))),
       ).toContain("production,,production");
+    });
+  });
+
+  // Node loads only the build that a package's index requires for the program's NODE_ENV, as
+  // React's index does, so a program runs where the other build requires a file that isn't there.
+  describe("load only the build that a package's index requires for NODE_ENV", () => {
+    const PACKAGE = {
+      "node_modules/build/package.json": JSON.stringify({ name: "build", exports: "./index.js" }),
+      "node_modules/build/index.js":
+        'if (process.env.NODE_ENV === "production") {\n  module.exports = require("./production.js");\n} else {\n  module.exports = require("./development.js");\n}\n',
+      "node_modules/build/production.js": 'module.exports = "production";\n',
+      "node_modules/build/development.js":
+        'require("./checks.js");\nmodule.exports = "development";\n',
+    };
+    const getSource = (expected: string) =>
+      `const build = require("build");\nif (build !== ${JSON.stringify(expected)}) throw new Error(build);\n`;
+    const ENVIRONMENT = { NODE_ENV: "production" };
+
+    it("agrees with Node", async () => {
+      const source = getSource("production");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("development");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).stderr).toContain(
+        "Error: production",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("production");
+    });
+
+    // A file that declares process reads its own, so the program's code reads process.env as it
+    // runs, and loads both builds.
+    it("stops where a file declares process", async () => {
+      const source = `const process = {};\n${getSource("production")}`;
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("tla-ts can't load the module ./checks.js");
     });
   });
 
