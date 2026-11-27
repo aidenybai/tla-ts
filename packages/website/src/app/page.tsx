@@ -28,12 +28,12 @@ const Page = () => (
         <div className="flex gap-2">
           <a
             href="https://github.com/aidenybai/tla-ts"
-            className={buttonVariants({ variant: "primary" })}
+            className={cn(buttonVariants({ variant: "primary" }), "pl-2")}
           >
             <GitHubIcon />
             GitHub
           </a>
-          <a href="/playground" className={cn(buttonVariants(), "text-foreground")}>
+          <a href="/playground" className={cn(buttonVariants(), "pl-2 text-foreground")}>
             <Play weight="fill" className="size-3" />
             Playground
           </a>

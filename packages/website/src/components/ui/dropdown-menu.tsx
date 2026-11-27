@@ -3,7 +3,7 @@ import { Menu } from "@base-ui/react/menu";
 import { cn } from "cn";
 
 const ITEM_CLASS_NAME =
-  "relative flex cursor-default items-center gap-2 rounded-md py-1 pr-8 pl-2 text-sm text-muted-foreground outline-none select-none data-highlighted:bg-foreground/8 data-highlighted:text-foreground pointer-coarse:py-2";
+  "relative flex cursor-default items-center gap-2 rounded-sm py-1 pr-8 pl-2 text-sm text-muted-foreground outline-none select-none data-highlighted:bg-foreground/8 data-highlighted:text-foreground pointer-coarse:py-2";
 
 const DropdownMenuRoot = (props: Menu.Root.Props) => (
   <Menu.Root data-slot="dropdown-menu" {...props} />
@@ -35,7 +35,7 @@ const DropdownMenuContent = (props: ContentProps) => {
           data-slot="dropdown-menu-content"
           {...popupProps}
           className={cn(
-            "max-h-[min(var(--available-height),20rem)] min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-raised outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-95 data-ending-style:opacity-0 data-instant:transition-none data-starting-style:scale-95 data-starting-style:opacity-0",
+            "max-h-[min(var(--available-height),20rem)] min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-raised outline-none transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-95 data-ending-style:opacity-0 data-instant:transition-none",
             className,
           )}
         />

@@ -112,7 +112,7 @@ const CodeRoot = (props: RootProps) => {
       <div
         className={cn(
           "relative flex w-full flex-wrap gap-2 overflow-hidden bg-card pl-4 shadow-raised",
-          isMultiline ? "rounded-2xl py-4 pr-4" : "h-11 items-center rounded-xl pr-1.5",
+          isMultiline ? "rounded-[18px] py-4 pr-4" : "h-11 items-center rounded-[14px] pr-1.5",
         )}
       >
         {props.children}
