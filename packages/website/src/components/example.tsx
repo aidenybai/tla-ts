@@ -1,5 +1,6 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { compilations, initial } from "virtual:compilations";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "@/lib/examples";
@@ -9,6 +10,7 @@ import { getLineMarks } from "@/lib/line-marks";
 import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
+import type { Source } from "@/lib/site-data";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { StateGraph } from "./state-graph";
@@ -21,6 +23,8 @@ import { Verdict } from "./verdict";
 
 interface ExampleState {
   example: (typeof EXAMPLES)[number];
+  // The example's TLA+, once its compilation has loaded.
+  tla: Source | undefined;
   select: (example: (typeof EXAMPLES)[number]) => void;
   isCompiled: boolean;
   setIsCompiled: (isCompiled: boolean) => void;
@@ -43,21 +47,36 @@ const ExampleRoot = (props: RootProps) => {
   const [example, setExample] = useState(EXAMPLES[0]);
   const [isCompiled, setIsCompiled] = useState(false);
   const [hasRun, setHasRun] = useState(false);
-  const isRunning = runner.isRunning;
+  // The examples' compilations that have loaded. The TLA+ of a program on React runs to megabytes,
+  // so the page loads an example's as it shows the example, as the playground loads a file's.
+  const [loaded, setLoaded] = useState(() => new Map([[initial.fileName, initial]]));
+  const compiled = loaded.get(example.fileName);
+  // A run starts once its example's compilation has loaded.
+  const [isRunWaiting, setIsRunWaiting] = useState(false);
+  const isRunning = runner.isRunning || isRunWaiting;
   const result = isRunning || !isCompiled ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
   const path = useSearchPath(result?.search, hoveredStateId);
-  const request = {
-    source: example.tla.code,
-    config: example.config,
-    modules: example.modules,
-    isSearchShown: true,
-    typescript: { source: example.typescript.code, fileName: example.fileName },
-  };
+  useEffect(() => {
+    void compilations[example.fileName]?.().then((next) =>
+      setLoaded((previous) => new Map(previous).set(next.fileName, next)),
+    );
+  }, [example]);
+  useEffect(() => {
+    if (!isRunWaiting || compiled === undefined) return;
+    setIsRunWaiting(false);
+    runner.run({
+      source: compiled.compilation.tla,
+      config: compiled.compilation.config,
+      modules: compiled.compilation.modules,
+      isSearchShown: true,
+      typescript: { source: example.typescript.code, fileName: example.fileName },
+    });
+  }, [isRunWaiting, compiled, example, runner]);
   const run = () => {
     setHasRun(true);
     setIsCompiled(true);
-    runner.run(request);
+    setIsRunWaiting(true);
   };
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -72,9 +91,11 @@ const ExampleRoot = (props: RootProps) => {
     <exampleContext.PartsContext
       value={{
         example,
+        tla: compiled?.tla,
         select: (nextExample) => {
           setExample(nextExample);
           setIsCompiled(false);
+          setIsRunWaiting(false);
           runner.reset();
         },
         isCompiled,
@@ -160,11 +181,14 @@ const PREVIEW_LINES = 28;
 const ExampleSource = () => {
   const state = exampleContext.useParts();
   const example = state.example;
+  const tla = state.tla;
+  // The TLA+ shows once it has loaded, and the TypeScript until then.
+  const isTlaShown = state.isCompiled && tla !== undefined;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   // Each declaration is marked on the model's line for it: a function on its action or check, and
   // any other on Init. The definitions it compiles to fold away with the rest of JS.tla's code.
   const lineMarks = useMemo(() => {
-    const code = example.tla.code;
+    const code = tla?.code ?? "";
     return getLineMarks(
       code.split("\n"),
       example.sourceMarks.flatMap((mark) => {
@@ -176,7 +200,7 @@ const ExampleSource = () => {
         return { name: mark.name, start, end: end === -1 ? code.length : end };
       }),
     );
-  }, [example]);
+  }, [example, tla]);
   const sourceLineMarks = useMemo(
     () => getLineMarks(example.typescript.code.split("\n"), example.sourceMarks),
     [example],
@@ -189,22 +213,22 @@ const ExampleSource = () => {
   const rows = useMemo(
     () =>
       getOutputRows({
-        lines: example.tla.lines,
+        lines: tla?.lines ?? [],
         lineMarks,
         source: example.typescript.code,
         sourceMarks: example.sourceMarks,
         openFolds,
         pinnedLines: getRunLines(result),
       }),
-    [example, lineMarks, openFolds, result],
+    [example, tla, lineMarks, openFolds, result],
   );
   return (
     <Code.Root
-      source={state.isCompiled ? example.tla : example.typescript}
-      rows={state.isCompiled ? rows : undefined}
+      source={isTlaShown ? tla : example.typescript}
+      rows={isTlaShown ? rows : undefined}
       limit={PREVIEW_LINES}
       onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
-      lineMarks={state.isCompiled ? lineMarks : sourceLineMarks}
+      lineMarks={isTlaShown ? lineMarks : sourceLineMarks}
       colors={colors}
       activeLine={result?.activeLine}
       notes={result?.notes}

@@ -11,6 +11,8 @@ import { BUILT_OUTPUT_LINES, getSourceLanguage, type Precompiled } from "./src/l
 import { getLineMarks } from "./src/lib/line-marks";
 import { getOutputRows } from "./src/lib/output-rows";
 import { getJsTlaCompilation } from "./src/lib/js-tla";
+import { compileJsTla } from "../tla-ts/src/typescript/spec/api";
+import { createMemorySystem, type ProgramSystem } from "../tla-ts/src/typescript/system";
 import { createHighlighter } from "./src/lib/highlighter";
 import { LOGO_PATH } from "./src/lib/logo";
 import { getPageFile } from "./src/router";
@@ -36,6 +38,14 @@ const PLAYGROUND_PATHS = [
 const BENCHMARK_ROW =
   /^\| (?:\[(?<linked>[^\]]+)\]\([^)]*\)|(?<plain>[^|[]+?)) +\|[^|]*\| +(?<tlc>[\d.]+) s \| +(?<tlaTs>[\d.]+) s \| +(?<speedup>[\d.]+×) \|$/;
 
+const getFileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+// The site's programs, the examples and the playground's files, by absolute path.
+const getProgramPaths = () =>
+  globSync([...EXAMPLE_PATHS, ...PLAYGROUND_PATHS], {
+    cwd: fileURLToPath(new URL(".", import.meta.url)),
+  }).map((path) => fileURLToPath(new URL(path, import.meta.url)));
+
 // JS.tla's runtime, which the build prepares once, from the host it records, for the files it
 // compiles ahead of time.
 let jsTlaRuntime: JsTlaRuntime | undefined;
@@ -44,10 +54,11 @@ const getJsTlaRuntime = () => (jsTlaRuntime ??= prepareHostRuntime(JSON.parse(ge
 const compileOnJsTla = (source: string, fileName: string) =>
   getJsTlaCompilation(source, fileName, getJsTlaRuntime(), getPackageFiles());
 
-// The code that builds a source: each distinct style once, and each run of tokens of one style as
-// its text with the style's number. JS.tla's code of a program runs to a thousand lines, whose
-// tokens each with its own style would be most of what a page loads.
-const packSource = (source: Source, code = JSON.stringify(source.code)) => {
+// The code that builds a source, from the code of an expression of its text: each distinct style
+// once, and each run of tokens of one style as its text with the style's number. JS.tla's code of
+// a program runs to a thousand lines, whose tokens each with its own style would be most of what a
+// page loads.
+const packSource = (source: Source, code: string) => {
   const styles: string[] = [];
   const lines = source.lines.map((tokens) => {
     const runs: [string, number][] = [];
@@ -63,21 +74,18 @@ const packSource = (source: Source, code = JSON.stringify(source.code)) => {
   return `((styles) => ({ code: ${code}, lines: ${JSON.stringify(lines)}.map((line) => line.map((run) => ({ content: run[0], style: styles[run[1]] }))) }))([${styles.join(",")}])`;
 };
 
+// An example as the home page shows it before it runs, whose TLA+ the page loads with the
+// playground's compilation of the file, as the TLA+ of a program on React runs to megabytes.
 const getExample = (
   path: string,
   highlight: Awaited<ReturnType<typeof createHighlighter>>,
 ): CompiledExample => {
   const typescript = readFileSync(path, "utf8").trim();
-  const fileName = path.slice(path.lastIndexOf("/") + 1);
-  const compiled = compileOnJsTla(typescript, fileName);
+  const fileName = getFileName(path);
   return {
     fileName,
-    name: compiled.name,
-    config: compiled.config,
-    modules: compiled.modules,
     typescript: highlight(typescript, getSourceLanguage(fileName)),
-    tla: highlight(compiled.tla, "tlaplus"),
-    sourceMarks: compiled.sourceMarks,
+    sourceMarks: compileOnJsTla(typescript, fileName).sourceMarks,
   };
 };
 
@@ -91,10 +99,7 @@ const maskText = (text: string) =>
 // line as its number and tokens, split by tabs, a comment after an empty cell, and a fold's count
 // of lines after a plus. The playground draws it while its compiler loads.
 const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) => {
-  const compiled = compileOnJsTla(
-    readFileSync(path, "utf8").trim(),
-    path.slice(path.lastIndexOf("/") + 1),
-  );
+  const compiled = compileOnJsTla(readFileSync(path, "utf8").trim(), getFileName(path));
   return getOutputRows({
     lines: highlight(compiled.tla, "tlaplus").lines,
     lineMarks: getLineMarks(compiled.tla.split("\n"), compiled.outputMarks),
@@ -179,13 +184,7 @@ const siteData = (): Plugin => ({
     for (const path of [...paths, fileURLToPath(README_URL)]) this.addWatchFile(path);
     const highlight = await createHighlighter();
     return [
-      `export const examples = [${paths
-        .map((path) => getExample(path, highlight))
-        .map(
-          (example) =>
-            `{ ...${JSON.stringify({ ...example, tla: undefined })}, tla: ${packSource(example.tla)} }`,
-        )
-        .join(",")}];`,
+      `export const examples = ${JSON.stringify(paths.map((path) => getExample(path, highlight)))};`,
       `export const benchmarks = ${JSON.stringify(getBenchmarks())};`,
       `export const prompt = ${JSON.stringify(PROMPT.exec(readFileSync(README_URL, "utf8"))?.groups?.prompt)};`,
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
@@ -202,14 +201,10 @@ const outlines = (): Plugin => ({
   async load(id) {
     if (id !== `\0${OUTLINES}`) return undefined;
     const highlight = await createHighlighter();
-    const paths = globSync([...EXAMPLE_PATHS, ...PLAYGROUND_PATHS], {
-      cwd: fileURLToPath(new URL(".", import.meta.url)),
-    }).map((path) => fileURLToPath(new URL(path, import.meta.url)));
+    const paths = getProgramPaths();
     for (const path of paths) this.addWatchFile(path);
     return `export default ${JSON.stringify(
-      Object.fromEntries(
-        paths.map((path) => [path.slice(path.lastIndexOf("/") + 1), getOutline(path, highlight)]),
-      ),
+      Object.fromEntries(paths.map((path) => [getFileName(path), getOutline(path, highlight)])),
     )};`;
   },
 });
@@ -286,10 +281,7 @@ const compilations = (): Plugin => ({
   resolveId: (id) => (id === COMPILATIONS || id.startsWith(COMPILATION) ? `\0${id}` : undefined),
   async load(id) {
     if (!id.startsWith("\0virtual:compilation")) return undefined;
-    const paths = globSync([...EXAMPLE_PATHS, ...PLAYGROUND_PATHS], {
-      cwd: fileURLToPath(new URL(".", import.meta.url)),
-    }).map((path) => fileURLToPath(new URL(path, import.meta.url)));
-    const getFileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+    const paths = getProgramPaths();
     if (id === `\0${COMPILATIONS}`) {
       return [
         `import initial from ${JSON.stringify(COMPILATION + INITIAL_FILE_NAME)};`,
@@ -320,13 +312,13 @@ const compilations = (): Plugin => ({
   },
 });
 
-// The packages that the site's programs import, whose files the page passes as the files that a
-// program runs on, from the root's node_modules, as a browser has no file system.
-const PACKAGES = ["react"];
+// The packages that the site's programs import, from the root's node_modules.
+const PACKAGES = ["react", "react-dom"];
 
 const PACKAGE_FILES = "virtual:package-files";
 
-const getPackageFiles = () =>
+// Every file of the packages, by its path from the root.
+const getEveryPackageFile = () =>
   new Map(
     PACKAGES.flatMap((name) => {
       const directory = fileURLToPath(new URL(`./node_modules/${name}/`, import.meta.url));
@@ -341,6 +333,60 @@ const getPackageFiles = () =>
         });
     }),
   );
+
+// The files of the packages that compiling the site's programs reads, which the page passes as the
+// files that a program runs on, as a browser has no file system: the files that JS.tla loads as
+// Node's resolution finds them, and those that their resolution and the names of their exports
+// read. The rest, such as React's development builds and react-dom's client, no program loads.
+// Each program compiles on these as on every file of the packages, which the build checks.
+const readPackageFiles = () => {
+  const files = getEveryPackageFile();
+  const read = new Set<string>();
+  const programs = getProgramPaths().map((path) => ({
+    source: readFileSync(path, "utf8").trim(),
+    fileName: getFileName(path),
+  }));
+  const getCode = (
+    program: (typeof programs)[number],
+    passed: ReadonlyMap<string, string>,
+    system?: ProgramSystem,
+  ) => {
+    const compiled = compileJsTla(
+      { ...program, files: passed },
+      getJsTlaRuntime(),
+      undefined,
+      system,
+    );
+    return `${compiled.config}\n${compiled.loadModule("ProgramCode")}`;
+  };
+  const codes = programs.map((program) => {
+    const system = createMemorySystem(files, program);
+    return getCode(program, files, {
+      ...system,
+      readFile: (path) => {
+        const text = system.readFile(path);
+        if (text !== undefined) read.add(system.resolvePath(path));
+        return text;
+      },
+      fileExists: (path) => {
+        const isFound = system.fileExists(path);
+        if (isFound) read.add(system.resolvePath(path));
+        return isFound;
+      },
+    });
+  });
+  const loaded = new Map([...files].filter((file) => read.has(file[0])));
+  programs.forEach((program, index) => {
+    if (getCode(program, loaded) !== codes[index]) {
+      throw new Error(`${program.fileName} compiles otherwise on the package files that it reads`);
+    }
+  });
+  return loaded;
+};
+
+// The files, read once a process.
+let packageFileMap: Map<string, string> | undefined;
+const getPackageFiles = () => (packageFileMap ??= readPackageFiles());
 
 const packageFiles = (): Plugin => ({
   name: "package-files",
