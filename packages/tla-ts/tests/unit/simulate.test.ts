@@ -1544,3 +1544,84 @@ it("stops at a VIEW that fails under -difftrace -continue in a violation a progr
     ],
   ]);
 });
+
+const getPostconditionLines = (definition: string, config: string, isContinued: boolean) => {
+  const lines: string[] = [];
+  const status = simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nInv == x # 1\n${definition}\n====`,
+    config: `SPECIFICATION Spec\nINVARIANT Inv\n${config}`,
+    seed: 4n,
+    traceDepth: 4,
+    traceCount: 2n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isContinued,
+    onPrint: (text) => lines.push(text),
+    onSimulation: (output) =>
+      printSimulation(
+        {
+          isTool: false,
+          isDiffTrace: false,
+          version: "master",
+          print: (code, level, text) => lines.push(formatMessage(false, code, level, text)),
+          printOutput: (text) => lines.push(text),
+        },
+        output,
+        Date.now(),
+      ),
+  });
+  return [
+    status,
+    lines.slice(lines.findIndex((line) => line.startsWith("Finished computing")) + 1),
+  ];
+};
+
+const POSTCONDITION_VIOLATION = [
+  "Error: Invariant Inv is violated.",
+  "Error: The behavior up to this point is:",
+  "State 1: <Init line 4, col 9 to line 4, col 13 of module M>\nx = 0\n",
+  "State 2: <Next line 5, col 9 to line 5, col 24 of module M>\nx = 1\n",
+  "The number of states generated: 3\nSimulation using seed 4 and aril 0",
+];
+
+const POSTCONDITION_FAILURES = [
+  [
+    "_POSSIBLE",
+    "Poss == x = 9",
+    "_POSSIBLE Poss",
+    [
+      "[Poss |-> 0]",
+      "Error: The _POSSIBLE predicate Poss at line 8, col 9 to line 8, col 13 of module M was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.",
+    ],
+  ],
+  [
+    "POSTCONDITION",
+    'Post == TLCGet("stats").generated < 0',
+    "POSTCONDITION Post",
+    ["Error: Postcondition Post at line 8, col 9 to line 8, col 37 of module M is false."],
+  ],
+] satisfies [string, string, string, string[]][];
+
+const POSTCONDITION_PROGRESS =
+  "Progress: 3 states checked, 2 traces generated (trace length: mean=0, var(x)=0, sd=0)";
+
+it.each(POSTCONDITION_FAILURES)(
+  "exits with the status of a failed %s after violations under -continue, as TLC's Simulator does",
+  (_title, definition, config, failure) => {
+    expect(getPostconditionLines(definition, config, true)).toEqual([
+      10,
+      [...POSTCONDITION_VIOLATION, ...POSTCONDITION_VIOLATION, ...failure, POSTCONDITION_PROGRESS],
+    ]);
+  },
+);
+
+it.each(POSTCONDITION_FAILURES)(
+  "exits with the violation's status over a failed %s without -continue, as TLC's Simulator does",
+  (_title, definition, config, failure) => {
+    expect(getPostconditionLines(definition, config, false)).toEqual([
+      12,
+      [...POSTCONDITION_VIOLATION, ...failure, POSTCONDITION_PROGRESS],
+    ]);
+  },
+);

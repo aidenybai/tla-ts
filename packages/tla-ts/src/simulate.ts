@@ -1119,7 +1119,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const failureStatus = printError(error);
     if (failureStatus !== undefined) return failureStatus;
   }
-  // Deviation from TLC: under -continue, Simulator#simulate keeps the worker's last result, a success, so TLC exits 0 after a violation and prints the summary again; tla-ts exits with the first violation's status, as check() does.
   const last = reported[reported.length - 1];
   const decisive = printed === -1 ? reported[0] : last;
   const errorStatus = decisive ? getMessageExitStatus(decisive.code) : EXIT_STATUS.success;
@@ -1131,7 +1130,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;
-  const status = Math.max(errorStatus, postconditionStatus);
+  // Deviation from TLC: under -continue, Simulator#simulate keeps the worker's last result, a success, so TLC exits 0 after a violation and prints the summary again; tla-ts exits with the first violation's status unless a postcondition or _POSSIBLE fails, as check() does.
+  const status =
+    printed === -1 && postcondition
+      ? postconditionStatus
+      : Math.max(errorStatus, postconditionStatus);
   if (!isReporterDead) reportProgress();
   if (status === EXIT_STATUS.success) printSummary();
   // Deviation from TLC: its ProgressReport stops on a FALSE _PERIODIC and dies when _PERIODIC fails to evaluate, yet TLC exits 0; tla-ts exits as model checking does.
