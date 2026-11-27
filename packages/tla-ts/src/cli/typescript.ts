@@ -352,7 +352,7 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
   const { compileModelToJsTla } = await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
   const { getModuleFormat } = await import("../typescript/spec/resolve");
-  const { getJsxText } = await import("../typescript/program");
+  const { getJsxText, parseFile } = await import("../typescript/program");
   const { stripTypes } = await import("../typescript/spec/strip-types");
   const runtime = await getJsTlaRuntime();
   const source = readFileSync(path, "utf8");
@@ -360,9 +360,7 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
   // another TypeScript file's text with its types stripped, which keeps every position.
   const text = getJsxText(path, source);
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
-  const code = /\.[cm]?ts$/.test(path)
-    ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
-    : text;
+  const code = /\.[cm]?ts$/.test(path) ? stripTypes(sourceFile) : text;
   const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
   // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
   // names it by its URL, but a CommonJS file of JavaScript, as TypeScript writes JSX, by its path.
@@ -395,20 +393,17 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
       return [];
     }
     const fileText = isEntry ? text : getJsxText(file.path, readFileSync(file.path, "utf8"));
-    const fileCode = /\.[cm]?ts$/.test(file.path)
-      ? stripTypes(
-          ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
-        )
-      : fileText;
-    const fileLines = isEntry ? lines : fileCode.split(/\r\n|[\n\r\u2028\u2029]/);
+    const parsed = isEntry ? sourceFile : parseFile(file.path, fileText);
+    const fileLines = isEntry
+      ? lines
+      : (/\.[cm]?ts$/.test(file.path) ? stripTypes(parsed) : fileText).split(
+          /\r\n|[\n\r\u2028\u2029]/,
+        );
     const fileUrl = isEntry
       ? url
       : file.kind === "module" || /\.[cm]?ts$/.test(file.path)
         ? pathToFileURL(realpathSync(file.path)).href
         : realpathSync(file.path);
-    const parsed = isEntry
-      ? sourceFile
-      : ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true);
     const throws: ThrowStatement[] = [];
     const collect = (node: Node): void => {
       if (ts.isThrowStatement(node)) throws.push(node);
