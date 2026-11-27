@@ -12,7 +12,11 @@ const Text = (props: TextProps) =>
     .split("`")
     .map((part, index) => ({ part, isCode: index % 2 === 1, offset: index }))
     .map((piece) =>
-      piece.isCode ? <InlineCode key={piece.offset}>{piece.part}</InlineCode> : piece.part,
+      piece.isCode ? (
+        <InlineCode key={piece.offset}>{piece.part}</InlineCode>
+      ) : (
+        piece.part.replaceAll(/(?<=\w)'(?=\w)/g, "’")
+      ),
     );
 
 interface BlockProps {

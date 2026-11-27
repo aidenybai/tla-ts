@@ -8,7 +8,7 @@ const RACE_MS = 3000;
 const AXIS_TICKS = [
   { share: 0, label: "0%" },
   { share: 0.5, label: "50%" },
-  { share: 1, label: "100% of TLC's time" },
+  { share: 1, label: "100% of TLC’s time" },
 ];
 
 export const BenchmarkChart = () => {
@@ -25,7 +25,7 @@ export const BenchmarkChart = () => {
             {benchmark.name}
           </span>
           <div
-            title={`${benchmark.tlaTsSeconds} s, against TLC's ${benchmark.tlcSeconds} s`}
+            title={`${benchmark.tlaTsSeconds} s, against TLC’s ${benchmark.tlcSeconds} s`}
             className="relative my-1.5 h-2 bg-accent"
           >
             <div

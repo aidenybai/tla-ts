@@ -1,10 +1,8 @@
 import { useState, type PointerEvent } from "react";
-import { TextMorph } from "torph/react";
 import { cn } from "cn";
 import { getTest262Percent, getTest262Share, TEST262_RUNS } from "@/lib/test262";
 
 const TICK_PERCENT = 20;
-const MORPH_MS = 300;
 const LAST_INDEX = TEST262_RUNS.length - 1;
 const AXIS_PERCENT =
   Math.ceil((Math.max(...TEST262_RUNS.map(getTest262Share)) * 100) / TICK_PERCENT) * TICK_PERCENT;
@@ -61,19 +59,13 @@ export const Test262Chart = () => {
   return (
     <figure className="flex flex-col gap-5">
       <figcaption className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-sm">
-        <TextMorph
-          as="span"
-          duration={MORPH_MS}
-          className="text-lg font-medium text-foreground tabular-nums"
-        >
+        <span className="text-lg font-medium text-foreground tabular-nums">
           {getTest262Percent(active)}
-        </TextMorph>
-        <TextMorph as="span" duration={MORPH_MS} className="text-muted-foreground tabular-nums">
+        </span>
+        <span className="text-muted-foreground tabular-nums">
           {`(${active.passed.toLocaleString()} / ${active.total.toLocaleString()} passing)`}
-        </TextMorph>
-        <TextMorph as="span" duration={MORPH_MS} className="ml-auto text-faint">
-          {active.label}
-        </TextMorph>
+        </span>
+        <span className="ml-auto text-faint">{active.label}</span>
       </figcaption>
       <div className="grid grid-cols-[auto_1fr] gap-x-3 text-xs text-faint tabular-nums">
         <div className="relative h-28 w-7">

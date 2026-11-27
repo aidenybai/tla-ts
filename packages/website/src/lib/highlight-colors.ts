@@ -1,9 +1,9 @@
 const HIGHLIGHT_COLORS = [
-  "rgb(25, 133, 255)",
-  "rgb(174, 97, 174)",
-  "rgb(255, 97, 106)",
-  "rgb(250, 192, 61)",
-  "rgb(115, 192, 88)",
+  "oklch(70% 0.17 255)",
+  "oklch(70% 0.14 325)",
+  "oklch(70% 0.17 20)",
+  "oklch(70% 0.14 85)",
+  "oklch(70% 0.17 142)",
 ];
 
 export const getHighlightColors = (names: string[]): Record<string, string> =>

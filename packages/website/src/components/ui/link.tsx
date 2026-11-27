@@ -8,7 +8,13 @@ interface LinkProps {
 }
 
 export const Link = (props: LinkProps) => (
-  <a href={props.href} className={cn(LINK_CLASS_NAME, "pointer-coarse:py-1.5")}>
+  <a
+    href={props.href}
+    className={cn(
+      LINK_CLASS_NAME,
+      "rounded-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-coarse:py-1.5",
+    )}
+  >
     {props.children}
   </a>
 );
