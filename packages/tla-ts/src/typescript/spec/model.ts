@@ -337,6 +337,34 @@ const getNames = (node: unknown, names = new Set<string>()): Set<string> => {
   return names;
 };
 
+const getDomainKey = (domain: Expression) => {
+  const bound = new Map<string, number>();
+  const addBound = (name: unknown) => {
+    if (typeof name === "string" && !bound.has(name)) bound.set(name, bound.size);
+  };
+  JSON.stringify(domain, (key, value: unknown) => {
+    if (key === "pattern" && typeof value === "object" && value !== null) {
+      if ("name" in value) addBound(value.name);
+      if ("names" in value && Array.isArray(value.names)) value.names.forEach(addBound);
+    }
+    return value;
+  });
+  return JSON.stringify(domain, (key, value: unknown) =>
+    typeof value === "object" &&
+    value !== null &&
+    !("kind" in value) &&
+    ("line" in value || "start" in value)
+      ? undefined
+      : (key === "name" || key === "operator") && typeof value === "string"
+        ? (bound.get(value) ?? value)
+        : key === "names" && Array.isArray(value)
+          ? value.map((name: unknown) =>
+              typeof name === "string" ? (bound.get(name) ?? name) : name,
+            )
+          : value,
+  );
+};
+
 interface Application {
   name: string;
   args: string[];
@@ -1354,18 +1382,21 @@ export const planModel = (
       `${action}${bounds.length === 0 ? "" : `(${bounds.join(", ")})`} == ${variable}' \\in ApplyTo(${run}, <<${variable}${bounds.map((bound) => `, ${bound}`).join("")}>>)`,
     );
   }
+  const addCheckedFunction = (name: string, bounds: Bound[]) => {
+    entries.add(bindings.get(name) ?? name);
+    const names = bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
+    const converters = bounds.map((bound) => getConverter(bound.set).name);
+    converters.forEach((converter, index) => boundConverters.set(`${name} ${index}`, converter));
+    actionParameters.set(name, names);
+    return converters;
+  };
   // A check of a function's result at a state: whether it holds, or only that it returns.
   const defineCheck = (
     name: string,
     kind: "HoldsOf" | "ReturnsOf" | "SettledOf" | "ThrownOf",
     bounds: Bound[],
   ) => {
-    entries.add(bindings.get(name) ?? name);
-    const names = bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
-    bounds.forEach((bound, index) =>
-      boundConverters.set(`${name} ${index}`, getConverter(bound.set).name),
-    );
-    actionParameters.set(name, names);
+    addCheckedFunction(name, bounds);
     const operator = define(
       "Check",
       (operatorName) =>
@@ -1442,6 +1473,75 @@ export const planModel = (
   // the first export's, as TLC stops at the first ASSUME that fails: each export's outcome is
   // reported, rather than the first that throws stopping the rest.
   const thrown: string[] = [];
+  const argumentDomains = new Map<string, string>();
+  const getArgumentDomain = (set: Expression) => {
+    const key = getDomainKey(set);
+    const known = argumentDomains.get(key);
+    if (known !== undefined) return known;
+    const domain = define(
+      "ArgumentDomain",
+      (operatorName) => `${operatorName} == ${printExpression(rewriteGuards(set))}`,
+    );
+    argumentDomains.set(key, domain);
+    return domain;
+  };
+  const convertedTables = new Map<string, string>();
+  const getConvertedTable = (set: Expression, converter: string) => {
+    const key = getDomainKey(set);
+    const known = convertedTables.get(key);
+    if (known !== undefined) return known;
+    const domain = getArgumentDomain(set);
+    const convert = define(
+      "ConvertedAtStart",
+      (operatorName) => `${operatorName}(x) == ${converter}(StepStart(${getState(started)}), x)`,
+    );
+    // TLC evaluates a function constructor's body at each application; TLCEval makes a table.
+    const table = define(
+      "ConvertedTable",
+      (operatorName) => `${operatorName} == TLCEval([x \\in ${domain} |-> ApplyTo(${convert}, x)])`,
+    );
+    convertedTables.set(key, table);
+    return table;
+  };
+  const defineThrown = (name: string, bounds: Bound[]) => {
+    const defineOutcome = (domain: string, call: string) =>
+      define(
+        "Thrown",
+        (operatorName) =>
+          `${operatorName} ==\n  LET f == [v \\in ${domain} |-> ${call}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE f[CHOOSE v \\in t : TRUE]`,
+      );
+    if (
+      bounds.length > 0 &&
+      native === undefined &&
+      bounds.every((_bound, index) => !guardChoices.has(`${name} ${index}`))
+    ) {
+      const converters = addCheckedFunction(name, bounds);
+      const domains = bounds.map((bound) => getArgumentDomain(bound.set));
+      const table = getConvertedTable(bounds[0].set, converters[0]);
+      const converted = converters.map((converter, index) =>
+        index === 0 ? "e1 == a[1]" : `e${index + 1} == ${converter}(e${index}.s, a[${index + 1}])`,
+      );
+      const check = define(
+        "Check",
+        (operatorName) =>
+          `${operatorName}(a) ==\n  LET ${converted.join("\n      ")}\n  IN ThrownOf(e${bounds.length}.s, ${getBinding(name)}, <<${bounds.map((_bound, index) => `e${index + 1}.v`).join(", ")}>>)`,
+      );
+      const values =
+        bounds.length === 1
+          ? [`${table}[v]`]
+          : bounds.map((_bound, index) => (index === 0 ? `${table}[v[1]]` : `v[${index + 1}]`));
+      return defineOutcome(domains.join(" \\X "), `ApplyTo(${check}, <<${values.join(", ")}>>)`);
+    }
+    const check = defineCheck(name, "ThrownOf", bounds);
+    if (bounds.length === 0) {
+      return define("Thrown", (operatorName) => `${operatorName} == ${check(started, [])}`);
+    }
+    const sets = bounds.map((bound) => `(${printExpression(rewriteGuards(bound.set))})`);
+    return defineOutcome(
+      sets.join(" \\X "),
+      check(started, sets.length === 1 ? ["v"] : sets.map((_, index) => `v[${index + 1}]`)),
+    );
+  };
   module.assumptions.forEach((assumption) => {
     if (assumption.expression.kind === "Identifier") {
       const name = assumption.expression.name;
@@ -1458,13 +1558,7 @@ export const planModel = (
         steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
         return;
       }
-      const check = defineCheck(name, "ThrownOf", bounds);
-      const sets = bounds.map((bound) => `(${printExpression(rewriteGuards(bound.set))})`);
-      const outcome = define("Thrown", (operatorName) =>
-        sets.length === 0
-          ? `${operatorName} == ${check(started, [])}`
-          : `${operatorName} ==\n  LET f == [v \\in ${sets.join(" \\X ")} |-> ${check(started, sets.length === 1 ? ["v"] : sets.map((_, index) => `v[${index + 1}]`))}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE f[CHOOSE v \\in t : TRUE]`,
-      );
+      const outcome = defineThrown(name, bounds);
       thrown.push(outcome);
       steps.push(
         `${name} == IF ${outcome} = <<>> THEN TRUE ELSE PrintT(${JSON.stringify(`${bindings.get(name) ?? name} throws: `)} \\o ${outcome}[1])`,
