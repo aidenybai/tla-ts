@@ -1287,6 +1287,16 @@ const evaluateThunkAfresh = (thunk: Thunk, context: Context) =>
 
 export const readBinding = (binding: ArgumentBinding, context: Context): Value => {
   if (binding.kind === "Value") return binding.value;
+  const cache = binding.cache;
+  if (
+    binding.isReleased &&
+    cache !== undefined &&
+    binding.control === context.environment.runtime.evalControl &&
+    isUnassigned(binding.state) &&
+    isUnassigned(binding.next)
+  ) {
+    return cache;
+  }
   return context.next === NULL_STATE && !binding.isReleased
     ? evaluateThunkAfresh(binding, context)
     : forceThunk(binding, context);
