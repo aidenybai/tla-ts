@@ -21,11 +21,11 @@ const Page = () => (
     <Hero.Root>
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
-        <p className="entering:animate-enter [--enter-delay:80ms]">
+        <p>
           Formally verify TypeScript code with{" "}
           <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link>.
         </p>
-        <div className="flex gap-2 entering:animate-enter [--enter-delay:160ms]">
+        <div className="flex gap-2">
           <a
             href="https://github.com/aidenybai/tla-ts"
             className={cn(buttonVariants({ variant: "primary" }), "pl-2")}
@@ -42,19 +42,13 @@ const Page = () => (
     </Hero.Root>
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
-        <Section.Title className="entering:animate-rise [--enter-delay:240ms]">
-          How it works
-        </Section.Title>
+        <Section.Title>How it works</Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
-          <li className="entering:animate-rise [--enter-delay:320ms]">
+          <li>
             Run <InlineCode>npx tla-ts [file].ts</InlineCode>
           </li>
-          <li className="entering:animate-rise [--enter-delay:400ms]">
-            TLA-ts converts it into TLA+ and formally checks every state
-          </li>
-          <li className="entering:animate-rise [--enter-delay:480ms]">
-            Get any violations, with the steps that caused them
-          </li>
+          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
+          <li>Get any violations, with the steps that caused them</li>
         </ol>
         <Example.Root>
           <Example.Description />

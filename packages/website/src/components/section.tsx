@@ -1,6 +1,5 @@
 import { LinkSimple } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
-import { cn } from "cn";
 
 interface RootProps {
   children: ReactNode;
@@ -11,7 +10,6 @@ const SectionRoot = (props: RootProps) => (
 );
 
 interface TitleProps {
-  className?: string;
   children: string;
 }
 
@@ -20,10 +18,7 @@ const SectionTitle = (props: TitleProps) => {
   return (
     <h2
       id={id}
-      className={cn(
-        "group relative scroll-mt-8 text-[17px] font-medium tracking-[-0.01em] text-balance text-foreground",
-        props.className,
-      )}
+      className="group relative scroll-mt-8 text-[17px] font-medium tracking-[-0.01em] text-balance text-foreground"
     >
       <a
         href={`#${id}`}

@@ -42,15 +42,6 @@
 @import "../generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
-/* A page that opens at its top. One that opens scrolled, at a link to a section or on a reload,
-   or that the reader scrolls, shows its lines at once. */
-@custom-variant entering {
-  @media (prefers-reduced-motion: no-preference) {
-    html:not([data-still]) & {
-      @slot;
-    }
-  }
-}
 
 :root {
   --background: #fdfdfc;
@@ -152,10 +143,10 @@
   --radius-xl: calc(var(--radius) * 1.5);
   --shadow-raised:
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
-  --animate-enter: enter 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94) var(--enter-delay, 0ms) both;
-  --animate-rise: rise 600ms cubic-bezier(0.25, 0.46, 0.45, 0.94) var(--enter-delay, 0ms) both;
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
+  --animate-logo-arrive: logo-arrive 1280ms steps(1) backwards;
+  --animate-title-shove: title-shove 1280ms steps(1) backwards;
   --animate-logo-body: logo-body 1800ms steps(1) infinite;
   --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
   --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
@@ -164,6 +155,68 @@
   --animate-logo-flip-left-arm: logo-flip-left-arm 1000ms steps(1);
   --animate-logo-flip-right-arm: logo-flip-right-arm 1000ms steps(1);
   --animate-logo-flip-toe: logo-flip-toe 1000ms steps(1);
+
+  /* Sixteen steps: the title sits where the mark belongs for three, the mark hops up to it in
+     four, waits two, shoves it aside in five, and hops once. Its width and the gap make 26px. */
+  @keyframes logo-arrive {
+    0% {
+      translate: -52px 0;
+      opacity: 0;
+    }
+    18.75% {
+      translate: -46px -4px;
+      opacity: 1;
+    }
+    25% {
+      translate: -38px -6px;
+    }
+    31.25% {
+      translate: -32px -4px;
+    }
+    37.5% {
+      translate: -26px 0;
+    }
+    50% {
+      translate: -20px 0;
+    }
+    56.25% {
+      translate: -14px -2px;
+    }
+    62.5% {
+      translate: -8px 0;
+    }
+    68.75% {
+      translate: -2px -2px;
+    }
+    75%,
+    87.5% {
+      translate: 0 0;
+    }
+    81.25% {
+      translate: 0 -2px;
+    }
+  }
+
+  @keyframes title-shove {
+    0% {
+      translate: -26px 0;
+    }
+    50% {
+      translate: -20px 0;
+    }
+    56.25% {
+      translate: -14px 0;
+    }
+    62.5% {
+      translate: -8px 0;
+    }
+    68.75% {
+      translate: -2px 0;
+    }
+    75% {
+      translate: 0 0;
+    }
+  }
 
   /* Eleven steps: crouch, leap, four in the air, fall, land, bounce, settle, rest. */
   @keyframes logo-flip-body {
@@ -335,22 +388,6 @@
     41.667%,
     58.333% {
       translate: 0 1px;
-    }
-  }
-
-  @keyframes enter {
-    from {
-      opacity: 0;
-      translate: 0 8px;
-      filter: blur(4px);
-    }
-  }
-
-  /* The rest of the page is too tall to blur. */
-  @keyframes rise {
-    from {
-      opacity: 0;
-      translate: 0 8px;
     }
   }
 

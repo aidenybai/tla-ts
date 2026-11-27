@@ -10,9 +10,11 @@ const HeroRoot = (props: PartProps) => (
 );
 
 const HeroTitle = (props: PartProps) => (
-  <h1 className="group/logo flex items-center gap-2 text-2xl font-medium tracking-[-0.02em] text-foreground entering:animate-enter">
-    <Logo />
-    {props.children}
+  <h1 className="group/logo flex items-center gap-2 text-2xl font-medium tracking-[-0.02em] text-foreground">
+    <span className="flex motion-safe:animate-logo-arrive">
+      <Logo />
+    </span>
+    <span className="motion-safe:animate-title-shove">{props.children}</span>
   </h1>
 );
 
