@@ -145,8 +145,8 @@
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
-  --animate-logo-arrive: logo-arrive 1280ms steps(1) backwards;
-  --animate-title-shove: title-shove 1280ms steps(1) backwards;
+  --animate-logo-arrive: logo-arrive 1120ms steps(1) backwards;
+  --animate-title-shove: title-shove 1120ms steps(1) backwards;
   --animate-logo-body: logo-body 1800ms steps(1) infinite;
   --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
   --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
@@ -156,44 +156,40 @@
   --animate-logo-flip-right-arm: logo-flip-right-arm 1000ms steps(1);
   --animate-logo-flip-toe: logo-flip-toe 1000ms steps(1);
 
-  /* Sixteen steps: the title sits where the mark belongs for three, the mark hops up to it in
-     four, waits two, shoves it aside in five, and hops once. Its width and the gap make 26px. */
+  /* Fourteen steps: the title sits where the mark belongs for three, the mark climbs out of its
+     T in four, hangs for one, drops into its place in three as the title gives way, and hops
+     once. The mark's width and the gap make 26px. */
   @keyframes logo-arrive {
     0% {
-      translate: -52px 0;
+      translate: 0 -4px;
       opacity: 0;
     }
-    18.75% {
-      translate: -46px -4px;
+    21.429% {
+      translate: 0 -4px;
       opacity: 1;
     }
-    25% {
-      translate: -38px -6px;
+    28.571% {
+      translate: 0 -10px;
     }
-    31.25% {
-      translate: -32px -4px;
+    35.714% {
+      translate: 0 -16px;
     }
-    37.5% {
-      translate: -26px 0;
+    42.857% {
+      translate: 0 -20px;
     }
-    50% {
-      translate: -20px 0;
+    57.143% {
+      translate: 0 -14px;
     }
-    56.25% {
-      translate: -14px -2px;
+    64.286% {
+      translate: 0 -8px;
     }
-    62.5% {
-      translate: -8px 0;
-    }
-    68.75% {
-      translate: -2px -2px;
-    }
-    75%,
-    87.5% {
-      translate: 0 0;
-    }
-    81.25% {
+    71.429%,
+    85.714% {
       translate: 0 -2px;
+    }
+    78.571%,
+    92.857% {
+      translate: 0 0;
     }
   }
 
@@ -201,19 +197,13 @@
     0% {
       translate: -26px 0;
     }
-    50% {
-      translate: -20px 0;
+    57.143% {
+      translate: -18px 0;
     }
-    56.25% {
-      translate: -14px 0;
-    }
-    62.5% {
+    64.286% {
       translate: -8px 0;
     }
-    68.75% {
-      translate: -2px 0;
-    }
-    75% {
+    71.429% {
       translate: 0 0;
     }
   }
