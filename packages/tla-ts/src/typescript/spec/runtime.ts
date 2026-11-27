@@ -60,21 +60,38 @@ const DEFINITIONS = [
   // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
   `ThrowRejection(s, promise) ==
   ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
-  // The tasks that a program queued, each a record of the callback that it calls, on a receiver,
-  // of arguments, each run as a task of its own after the jobs before it ran: the timers it set,
-  // which Node runs of no delay on the Timeout that setTimeout gave a module, and its immediates,
-  // which Node runs on their Immediates. Node runs the tasks of a kind in the order the program
-  // queued them, and a timer before an immediate where its clock says the timer is due, which its
-  // loop reads anew each time it runs its timers, so a run stops where both kinds wait at once.
+  // The tasks that a program queued, each run as a task of its own after the jobs before it ran:
+  // the timers it set, which Node runs of no delay on the Timeout that setTimeout gave a module,
+  // its immediates, which Node runs on their Immediates, each a record of the callback that it
+  // calls, on a receiver, of arguments, and the messages posted to a MessagePort, which Node
+  // delivers once the port listens. Node runs the tasks of a kind in the order the program queued
+  // them, a timer before an immediate where its clock says the timer is due, which its loop reads
+  // anew each time it runs its timers, a message as its poll finds it among the others, and the
+  // messages of two ports in an order of its own, so a run stops where two of those wait at once.
   `RunTasks(s) ==
-  IF s.tasks = <<>> THEN Ok(s, Undefined)
-  ELSE IF \\E i \\in DOMAIN s.tasks : s.tasks[i].kind # Head(s.tasks).kind
-  THEN Assert(FALSE, "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides") ELSE
-  LET task == Head(s.tasks)
-      r == Call([s EXCEPT !.tasks = Tail(@), !.task = [kind |-> "timer"]], task.callback, task.this, task.args)
+  LET ready == SelectSeq(s.tasks, LAMBDA task : IsReadyTask(s, task)) IN
+  IF ready = <<>> THEN Ok(s, Undefined)
+  ELSE IF \\E i \\in DOMAIN ready : ready[i].kind # ready[1].kind
+  THEN IF \\E i \\in DOMAIN ready : ready[i].kind = "message"
+       THEN Assert(FALSE, "tla-ts can't tell when Node delivers a MessagePort's message among its timers and immediates")
+       ELSE Assert(FALSE, "tla-ts can't tell whether Node runs a timer or an immediate first, which its clock decides")
+  ELSE IF \\E i \\in DOMAIN ready : ready[1].kind = "message" /\\ ready[i].port # ready[1].port
+  THEN Assert(FALSE, "tla-ts can't tell which of two MessagePorts Node delivers a message to first") ELSE
+  LET first == CHOOSE i \\in DOMAIN s.tasks : IsReadyTask(s, s.tasks[i]) /\\ \\A j \\in 1..(i - 1) : ~IsReadyTask(s, s.tasks[j])
+      task == s.tasks[first]
+      r == RunTask([s EXCEPT !.tasks = SubSeq(@, 1, first - 1) \\o SubSeq(@, first + 1, Len(@)), !.task = [kind |-> "timer"]], task)
   IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTasks(u.s)`,
+  // Whether Node would run a task: any but a message to a MessagePort that doesn't listen yet.
+  `IsReadyTask(s, task) == task.kind # "message" \\/ PortField(s, task.port, SV("started")) = True`,
+  // A task's run: a call of a timer's or an immediate's callback, or of a port's onmessage on the
+  // port, of a MessageEvent of the message's data, as Node's EventTarget dispatches it.
+  `RunTask(s, task) ==
+  IF task.kind # "message" THEN Call(s, task.callback, task.this, task.args) ELSE
+  LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("MessageEvent")]))
+      event == StoppingProxy(target.s, target.v, N("MessageEvent"), <<[trap |-> SV("get"), method |-> "messageEventGet", data |-> task.data]>>)
+  IN Call(event.s, PortField(s, task.port, SV("onmessage")), task.port, <<Val(event)>>)`,
   // An error that JS.tla throws with V8's message, which, as V8's, is the error's own property.
   `ThrowMessage(s, kind, units) ==
   LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
@@ -521,6 +538,7 @@ const DEFINITIONS = [
                  [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
                  [] p.kind \\in {"queueMicrotask", "setImmediate", "clearImmediate"} -> HostMethod(target.s, p.name, 1, TRUE, p.name, p.kind, Empty)
+                 [] p.kind = "MessageChannel" -> MessageChannelConstructor(target.s)
                  [] p.kind = "performance" ->
                       StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "performanceGet"],
                                                                      [trap |-> SV("set"), method |-> "performanceSet"]>>)
@@ -629,6 +647,48 @@ const DEFINITIONS = [
   LET target == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("AbortSignal")]))
       signal == StoppingProxy(target.s, target.v, N("AbortSignal"), <<[trap |-> SV("get"), method |-> "abortSignalGet"]>>)
   IN StoppingProxy(signal.s, instance, N("AbortController"), <<[trap |-> SV("get"), method |-> "abortControllerGet", data |-> Val(signal)]>>)`,
+  // Node's MessageChannel, a constructor of no arguments that a program may only call with new,
+  // whose ports' postMessage and close are the same functions on each port, as Node's
+  // MessagePort.prototype has them.
+  `MessageChannelConstructor(s) ==
+  LET f == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, N("MessageChannel"), TRUE, N("MessageChannel"), s.realmId))
+      post == HostMethod(f.s, N("postMessage"), 0, TRUE, N("MessagePort"), "portPostMessage", Empty)
+      close == HostMethod(post.s, N("close"), 1, TRUE, N("MessagePort"), "portClose", Empty)
+      methods == OrdinaryObjectCreate(close.s, Null)
+      withPost == CreateDataProperty(methods.s, Val(methods), SV("postMessage"), Val(post))
+      withClose == CreateDataProperty(withPost.s, Val(methods), SV("close"), Val(close))
+  IN StoppingProxy(withClose.s, f.v, N("MessageChannel"),
+                   <<[trap |-> SV("get"), method |-> "hostMethodGet", data |-> N("MessageChannel")],
+                     [trap |-> SV("construct"), method |-> "messageChannelConstruct", data |-> Val(methods)]>>)`,
+  // A MessageChannel, of which a program reads only port1 and port2, two ports that each post to
+  // the other. A port's target holds what Node's keeps: its onmessage, the port it posts to,
+  // whether it listens, which it does once a program sets its onmessage, and whether the channel
+  // closed.
+  `MessageChannelObject(s, methods) ==
+  LET t1 == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> N("MessagePort")]))
+      t2 == Alloc(t1.s, MakeObject(Null, "ordinary", [hostName |-> N("MessagePort")]))
+      traps == <<[trap |-> SV("get"), method |-> "messagePortGet", data |-> methods], [trap |-> SV("set"), method |-> "messagePortSet"]>>
+      p1 == StoppingProxy(t2.s, t1.v, N("MessagePort"), traps)
+      p2 == StoppingProxy(p1.s, t2.v, N("MessagePort"), traps)
+      ports == SetPortFields(SetPortFields(p2.s, t1.v, Val(p2)), t2.v, Val(p1))
+      c == Alloc(ports, MakeObject(Null, "ordinary", [hostName |-> N("MessageChannel")]))
+      withPort1 == CreateDataProperty(c.s, c.v, SV("port1"), Val(p1))
+      withPort2 == CreateDataProperty(withPort1.s, c.v, SV("port2"), Val(p2))
+  IN StoppingProxy(withPort2.s, c.v, N("MessageChannel"), <<[trap |-> SV("get"), method |-> "messageChannelGet"]>>)`,
+  `SetPortFields(s, target, peer) ==
+  LET a == CreateDataProperty(s, target, SV("onmessage"), Null)
+      b == CreateDataProperty(a.s, target, SV("peer"), peer)
+      c == CreateDataProperty(b.s, target, SV("started"), False)
+  IN CreateDataProperty(c.s, target, SV("closed"), False).s`,
+  // What a port's target holds of key, of the port.
+  `PortField(s, port, key) == OrdinaryGetOwnProperty(O(s, O(s, port).slots.target), key).value`,
+  `SetPortField(s, port, key, value) == CreateDataProperty(s, O(s, port).slots.target, key, value).s`,
+  // Whether a MessagePort of the heap listens and its channel is open, which keeps Node running.
+  `IsPortListening(s) ==
+  \\E i \\in 1..s.objs.size :
+    LET o == HeapGet(s.objs, i) IN
+    /\\ o.class = "ordinary" /\\ o.slots = [hostName |-> N("MessagePort")]
+    /\\ OrdinaryGetOwnProperty(o, SV("started")).value = True /\\ OrdinaryGetOwnProperty(o, SV("closed")).value = False`,
   // Whether a receiver is the proxy of a target, which a getter of the host's object reads as the
   // object, where another receiver's brand check would throw.
   `IsHostView(s, receiver, target) ==
@@ -1647,6 +1707,37 @@ const HOST_PATCHES = [
                                   SV("group"), SV("groupCollapsed"), SV("groupEnd"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
          ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "messageChannelConstruct" ->
+         IF ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("MessageChannel")) ELSE MessageChannelObject(s, data)
+    [] m = "messageChannelGet" ->
+         IF Arg(args, 2) \\notin {SV("port1"), SV("port2")} THEN HostStop(N("MessageChannel")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "messagePortGet" ->
+         CASE Arg(args, 2) = SV("onmessage") /\\ IsHostView(s, Arg(args, 3), Arg(args, 1)) -> Get(s, Arg(args, 1), SV("onmessage"))
+           [] Arg(args, 2) \\in {SV("postMessage"), SV("close")} -> Get(s, data, Arg(args, 2))
+           [] OTHER -> HostStop(N("MessagePort"))
+    [] m = "messagePortSet" ->
+         IF Arg(args, 2) # SV("onmessage") \\/ ~IsHostView(s, Arg(args, 4), Arg(args, 1)) \\/ ~IsCallable(s, Arg(args, 3))
+         THEN HostStop(N("MessagePort"))
+         ELSE Ok(SetPortField(SetPortField(s, Arg(args, 4), SV("onmessage"), Arg(args, 3)), Arg(args, 4), SV("started"), True), True)
+    [] m = "portPostMessage" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             port == Arg(args, 2)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsHostObject(list.s, port, N("MessagePort")) \\/ Len(Val(list)) # 1 \\/ IsObject(Arg(Val(list), 1))
+                    \\/ Arg(Val(list), 1).type = "symbol" \\/ PortField(list.s, port, SV("closed")) = True
+            THEN HostStop(N("MessagePort"))
+            ELSE Ok([list.s EXCEPT !.tasks = Append(@, [kind |-> "message", port |-> PortField(list.s, port, SV("peer")), data |-> Arg(Val(list), 1)])],
+                    Undefined)
+    [] m = "portClose" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all")
+             port == Arg(args, 2)
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF ~IsHostObject(list.s, port, N("MessagePort")) \\/ Val(list) # <<>>
+                    \\/ \\E i \\in DOMAIN list.s.tasks : list.s.tasks[i].kind = "message" /\\ list.s.tasks[i].port \\in {port, PortField(list.s, port, SV("peer"))}
+            THEN HostStop(N("MessagePort"))
+            ELSE Ok(SetPortField(SetPortField(list.s, port, SV("closed"), True), PortField(list.s, port, SV("peer")), SV("closed"), True), Undefined)
+    [] m = "messageEventGet" ->
+         IF Arg(args, 2) # SV("data") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("MessageEvent")) ELSE Ok(s, data)
     [] m = "abortControllerGet" ->
          IF Arg(args, 2) # SV("signal") \\/ ~IsHostView(s, Arg(args, 3), Arg(args, 1)) THEN HostStop(N("AbortController")) ELSE Ok(s, data)
     [] m = "abortSignalGet" ->

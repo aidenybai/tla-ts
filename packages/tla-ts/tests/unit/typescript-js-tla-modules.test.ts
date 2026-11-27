@@ -1024,6 +1024,85 @@ describe("calls process.getBuiltinModule as Node does, and stops at every other 
   });
 });
 
+// A MessageChannel's port delivers the messages posted to it once it listens, which it does once
+// a program sets its onmessage, in the order the program posted them, each a task of its own after
+// the jobs before it, as a call of onmessage on the port of a MessageEvent of the message's data,
+// as Node's EventTarget dispatches it. A program closes the port, so that Node ends.
+describe("delivers a MessagePort's messages in order, as Node does", () => {
+  const getFiles = (expected: string) => ({
+    "package.json": '{ "type": "module" }',
+    "main.js": `const log = [];
+      const channel = new MessageChannel();
+      const port = channel.port1;
+      log.push(typeof MessageChannel, MessageChannel.name, MessageChannel.length, port === channel.port1, port.onmessage, port.postMessage === channel.port2.postMessage, port.postMessage.name, port.postMessage.length, port.close.name, port.close.length);
+      channel.port2.postMessage(1);
+      queueMicrotask(() => log.push("micro"));
+      port.onmessage = function (event) {
+        log.push(\`m\${event.data}:\${this === port}:\${arguments.length}:\${typeof event}\`);
+        queueMicrotask(() => log.push(\`after\${event.data}\`));
+        if (event.data === 1) channel.port2.postMessage("two");
+        else {
+          port.close();
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        }
+      };
+      log.push(typeof port.onmessage);`,
+  });
+
+  it("agrees with Node", async () => {
+    const result = await checkEntry(
+      getFiles(
+        "function,MessageChannel,0,true,,true,postMessage,0,close,1,function,micro,m1:true:1:object,after1,mtwo:true:1:object",
+      ),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([0, undefined]);
+  });
+
+  it("rejects another result", async () => {
+    const result = await checkEntry(
+      getFiles(
+        "function,MessageChannel,0,true,,true,postMessage,0,close,1,function,micro,m1:true:1:object,mtwo:true:1:object,after1",
+      ),
+      "main.js",
+    );
+    expect([result.node, result.message]).toEqual([1, expect.stringContaining(THREW)]);
+  });
+
+  // Node delivers a message as its poll finds it, among the timers and immediates, and the
+  // messages of two ports in an order of its own, and keeps running while a port listens.
+  it.each([
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => c.port1.close(); c.port2.postMessage(1); setImmediate(() => {});",
+      "tla-ts can't tell when Node delivers a MessagePort's message among its timers and immediates",
+    ],
+    [
+      "const a = new MessageChannel(); const b = new MessageChannel(); a.port1.onmessage = () => a.port1.close(); b.port1.onmessage = () => b.port1.close(); b.port2.postMessage(1); a.port2.postMessage(1);",
+      "tla-ts can't tell which of two MessagePorts Node delivers a message to first",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => {};",
+      "tla-ts can't end a program whose MessagePort listens, which keeps Node running",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.postMessage({});",
+      "tla-ts can't run the host's MessagePort",
+    ],
+    ["const c = new MessageChannel(); c.port1.start();", "tla-ts can't run the host's MessagePort"],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = () => {}; c.port2.postMessage(1); c.port1.close();",
+      "tla-ts can't run the host's MessagePort",
+    ],
+    [
+      "const c = new MessageChannel(); c.port1.onmessage = (event) => { c.port1.close(); event.type; }; c.port2.postMessage(1);",
+      "tla-ts can't run the host's MessageEvent",
+    ],
+    ["MessageChannel()", "tla-ts can't run the host's MessageChannel"],
+  ])("stops at %s", async (code, message) => {
+    expect((await checkModules({ "main.js": code })).message).toContain(message);
+  });
+});
+
 describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
   const getFiles = (expected: string) => ({
     "main.js": `const log = [];

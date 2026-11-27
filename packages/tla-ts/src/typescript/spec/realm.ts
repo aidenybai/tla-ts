@@ -88,6 +88,7 @@ const MODELED_GLOBALS = new Set([
   "queueMicrotask",
   "setImmediate",
   "clearImmediate",
+  "MessageChannel",
 ]);
 
 // The host's constructors that make an object quietly, running nothing that a program sees but

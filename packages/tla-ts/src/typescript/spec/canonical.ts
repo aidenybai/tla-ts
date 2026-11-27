@@ -36,13 +36,15 @@ ViewClasses == {"typedArray", "dataView"}
 \* capability, and the host's: console.createTask's function that runs a task, the getter of a
 \* global's value, and the traps of the proxies that stand for process.hrtime, an AsyncResource, and
 \* a TextEncoder, of the value each one reads, the call of performance.now, of performance, the
-\* calls of a replaceable accessor's getter and setter, of the cell that holds its value, and the
-\* read of an AbortController's signal, of the signal.
+\* calls of a replaceable accessor's getter and setter, of the cell that holds its value, the read
+\* of an AbortController's signal, of the signal, and the construct of a MessageChannel and the
+\* reads of its ports, of the object of its ports' methods.
 ObjectDataBuiltins ==
   {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>,
    <<"Module", "createTask">>, <<"Module", "hostGlobal">>,
    <<"Module", "hrtimeGet">>, <<"Module", "asyncResourceGet">>, <<"Module", "textEncoderGet">>, <<"Module", "performanceNow">>,
-   <<"Module", "replaceableGet">>, <<"Module", "replaceableSet">>, <<"Module", "abortControllerGet">>}
+   <<"Module", "replaceableGet">>, <<"Module", "replaceableSet">>, <<"Module", "abortControllerGet">>,
+   <<"Module", "messageChannelConstruct">>, <<"Module", "messagePortGet">>}
 \* The host's AsyncResource constructor, whose data is a record of the functions run and destroy.
 AsyncResourceBuiltin == <<"Module", "asyncResource">>
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
