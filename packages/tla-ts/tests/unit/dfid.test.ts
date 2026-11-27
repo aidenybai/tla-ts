@@ -410,6 +410,24 @@ it("prints a deadlocked second initial state once, where TLC's DFIDWorker#printE
   ]);
 });
 
+const checkContinued = (definitions: string, config: string) => {
+  const lines: string[] = [];
+  const exitCode = checkDepthFirst({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
+    config: `${config}\nCHECK_DEADLOCK FALSE`,
+    maxDepth: 5,
+    isContinued: true,
+    onOutput: (output) => {
+      if (output.kind === "message") lines.push(output.message);
+      if (output.kind === "behavior") lines.push(...output.states);
+      if (output.kind === "nested-expressions") {
+        lines.push(`${output.callStack.length} nested expressions`);
+      }
+    },
+  });
+  return [exitCode, lines];
+};
+
 const UNEXPECTED_OVERFLOW =
   "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.StackOverflowError\njava.lang.StackOverflowError";
 
@@ -438,21 +456,12 @@ it.each([
 ])(
   "reports a stack overflow in %s again as an unexpected StackOverflowError under -continue, as TLC's DFIDWorker#run does",
   (_name, definitions, config, behavior, counts) => {
-    const lines: string[] = [];
-    const exitCode = checkDepthFirst({
-      source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}\n====`,
-      config: `${config}\nCHECK_DEADLOCK FALSE`,
-      maxDepth: 5,
-      isContinued: true,
-      onOutput: (output) => {
-        if (output.kind === "message") lines.push(output.message);
-        if (output.kind === "behavior") lines.push(...output.states);
-        if (output.kind === "nested-expressions") {
-          lines.push(`${output.callStack.length} nested expressions`);
-        }
-      },
-    });
-    expect([exitCode, lines]).toEqual([
+    expect(
+      checkContinued(
+        `RECURSIVE Spin(_)\nSpin(n) == IF n = -1 THEN 0 ELSE Spin(n + 1)\nInit == x = 0\n${definitions}`,
+        config,
+      ),
+    ).toEqual([
       255,
       [
         "Finished computing initial states: 1 states generated, with 1 of them distinct.",
@@ -460,6 +469,42 @@ it.each([
         "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.",
         "The behavior up to this point is:",
         ...behavior,
+        counts,
+      ],
+    ]);
+  },
+);
+
+it.each([
+  [
+    "an action property",
+    "Next == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [][1 \\div (1 - x') >= 0]_x",
+    "SPECIFICATION Spec\nPROPERTY Prop",
+    13,
+    "Evaluating action property Prop failed.",
+    "3 states generated, 2 distinct states found.",
+  ],
+  [
+    "an invariant outside the constraint",
+    "Next == x' \\in {x + 1, x + 2}\nInv == x # 1 \\/ 1 \\div 0 = 0\nCon == x # 1",
+    "INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTRAINT Con",
+    76,
+    "Evaluating invariant Inv failed.",
+    "5 states generated, 1 distinct states found.",
+  ],
+])(
+  "exits with the status of %s that fails to evaluate again in the replay under -continue, where TLC's DFIDModelChecker#printTrace throws a ClassCastException and TLC exits 255",
+  (_name, definitions, config, exitCode, error, counts) => {
+    expect(checkContinued(`Init == x = 0\n${definitions}`, config)).toEqual([
+      exitCode,
+      [
+        "Finished computing initial states: 1 states generated, with 1 of them distinct.",
+        "Starting level 2: 1 states generated, 1 distinct states found.",
+        error,
+        "The behavior up to this point is:",
+        "x = 0\n",
+        "x = 1\n",
+        "3 nested expressions",
         counts,
       ],
     ]);
