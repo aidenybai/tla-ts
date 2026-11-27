@@ -32,7 +32,8 @@ export interface SetValue {
   writtenElements: Value[] | undefined;
   hash: number;
   fingerprint: number;
-  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED and
+  // VALUE_ENUMERATED_WITHIN bits.
   flags: number;
   costNode?: number;
 }
@@ -50,8 +51,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
-  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL and
-  // VALUE_KEYS_ORDERLESS bits.
+  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL,
+  // VALUE_KEYS_ORDERLESS and VALUE_ENUMERATED_WITHIN bits.
   flags: number;
 }
 
@@ -235,6 +236,8 @@ const VALUE_CANONICAL = 16;
 // A function each key of whose domain isOrderless, which a key stays once it is.
 const VALUE_KEYS_ORDERLESS = 32;
 const VALUE_PAGE = 64;
+// A set or function that normalizeDeeply walked, every lazy set within which it enumerated.
+const VALUE_ENUMERATED_WITHIN = 128;
 
 export const markCanonical = (value: FunctionValue) => {
   value.flags |= VALUE_CANONICAL;
@@ -1657,6 +1660,20 @@ export const markNormalized = (value: Value): void => {
   const deeper = markNormalizedWithin(value, 0, undefined);
   for (let inner = deeper?.pop(); inner !== undefined; inner = deeper?.pop()) {
     markNormalizedWithin(inner, 0, deeper);
+  }
+};
+
+export const normalizeDeeply = (value: Value): void => {
+  if (typeof value !== "object") return;
+  if (value.kind === "Set" || value.kind === "MixedSet") {
+    const set = toFiniteSet(value);
+    if ((set.flags & VALUE_ENUMERATED_WITHIN) !== 0) return;
+    set.elements.forEach(normalizeDeeply);
+    set.flags |= VALUE_ENUMERATED_WITHIN;
+  }
+  if (value.kind === "Function" && (value.flags & VALUE_ENUMERATED_WITHIN) === 0) {
+    value.range.forEach(normalizeDeeply);
+    value.flags |= VALUE_ENUMERATED_WITHIN;
   }
 };
 
