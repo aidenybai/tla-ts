@@ -1,4 +1,4 @@
-import { ArrowUpRight } from "@phosphor-icons/react";
+import { ArrowsOutSimple, Minus } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
@@ -14,9 +14,8 @@ import { useSearchPath } from "@/hooks/use-search-path";
 import { Maze } from "./maze";
 import { MazeReplay } from "./maze-replay";
 import { Code } from "./code";
-import { buttonVariants } from "@/components/ui/button-variants";
+import { Button } from "@/components/ui/button";
 import { ToggleGroup } from "@/components/ui/toggle-group";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
 const VIEWS = ["typescript", "tla"] as const;
@@ -144,6 +143,7 @@ const ExampleSource = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   // The search the reader has put away, to play the board again.
   const [closed, setClosed] = useState<Search>();
+  const [isGameHidden, setIsGameHidden] = useState(false);
   const search = state.result?.search;
   const replayed = search === closed ? undefined : search;
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
@@ -207,36 +207,34 @@ const ExampleSource = () => {
         path={isCompiled ? state.path : undefined}
         onHoverState={state.hoverState}
       >
+        {/* The game sits over the code's corner, or above the code where the card is a phone's
+            width. The reader plays it there, and a run plays the check out on the same board.
+            Put away, it keeps its place in the game. */}
+        <div className="z-10 rounded-xl bg-card shadow-raised max-sm:mb-4 max-sm:w-full sm:absolute sm:top-3 sm:right-3">
+          <Button
+            aria-expanded={!isGameHidden}
+            onClick={() => setIsGameHidden(!isGameHidden)}
+            className={cn(
+              "h-7 w-full justify-between border-transparent bg-transparent px-2 text-xs",
+              !isGameHidden && "sm:w-52",
+            )}
+          >
+            Game
+            {isGameHidden ? <ArrowsOutSimple /> : <Minus />}
+          </Button>
+          <div className={cn("p-2 pt-0 sm:w-52", isGameHidden && "hidden")}>
+            {replayed ? (
+              <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
+            ) : (
+              <Maze onBugFound={state.findBug} />
+            )}
+          </div>
+        </div>
         <div
           ref={scrollRef}
           className="-mx-4 -mt-4 -mb-2 h-[31rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
         >
           <Code.Content />
-        </div>
-        <Code.Actions>
-          <Tooltip.Root>
-            <Tooltip.Trigger
-              render={
-                <a
-                  href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
-                  aria-label="View in playground"
-                  className={cn(buttonVariants({ size: "icon" }))}
-                />
-              }
-            >
-              <ArrowUpRight />
-            </Tooltip.Trigger>
-            <Tooltip.Content>View in playground</Tooltip.Content>
-          </Tooltip.Root>
-        </Code.Actions>
-        {/* The game sits over the code's corner: the reader plays it there, and a run plays the
-          check out on the same board, with its tree. */}
-        <div className="absolute top-13 right-3 z-10 w-52 rounded-xl bg-card p-2 shadow-raised max-sm:w-40">
-          {replayed ? (
-            <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
-          ) : (
-            <Maze onBugFound={state.findBug} />
-          )}
         </div>
         <Code.Footer>
           <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">

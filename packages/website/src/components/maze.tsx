@@ -2,6 +2,7 @@ import { Bug } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "cn";
+import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { createMazeScene, MAZE_HEART, MAZE_MAP, type MazeView, type Square } from "./maze-scene";
@@ -171,11 +172,26 @@ export const Maze = (props: MazeProps) => {
           </p>
         )}
       </div>
+      {/* A finger has no arrow keys, so a touch screen gets four buttons for them. */}
+      {isTouch && (
+        <div className="flex justify-center gap-2">
+          {[DIRECTIONS[3], DIRECTIONS[0], DIRECTIONS[2], DIRECTIONS[1]].map((direction) => (
+            <Button
+              key={direction.name}
+              aria-label={`Move ${direction.name}`}
+              onClick={() => call(direction)}
+              className="size-11 text-base text-foreground"
+            >
+              {direction.glyph}
+            </Button>
+          ))}
+        </div>
+      )}
       <p aria-live="polite" className="px-1 pb-0.5 text-xs text-pretty text-muted-foreground">
         {hasBug ? (
           "The wall has a gap. Run the code, and TLA-ts finds it without being told."
         ) : isTouch ? (
-          "Tap next to the robot to move. Walls are meant to close the heart in."
+          "Walls are meant to close the heart in. Find a way to it."
         ) : (
           <>
             Move with{" "}
