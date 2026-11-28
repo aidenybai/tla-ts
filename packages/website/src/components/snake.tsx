@@ -324,7 +324,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[304px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[403px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           (hasBug || isLost) && "motion-safe:animate-shake",
         )}
       >
