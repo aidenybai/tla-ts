@@ -137,19 +137,54 @@ const REQUIRE_CONDITIONS = new Set(["require", "node", "node-addons", "module-sy
 // sign, backslash or colon, as a URL, a builtin's scheme, or Node's checks of a name read them.
 const PACKAGE_SPECIFIER = /^((?:@[^./\\%:][^/\\%:]*\/)?[^./\\%:@#][^/\\%:]*)(\/[^\\%:]*)?$/;
 
-// The fields of the package.json in a directory, or undefined where there is none. Node stops at
-// one that isn't JSON, and tla-ts at one that isn't an object.
-const readPackage = (system: ProgramSystem, directory: string, literal: ts.StringLiteralLike) => {
+// The fields of a package.json that Node 26's reader (node_modules.cc's ParsePackageJSON) keeps:
+// its name, and its exports and imports where they are an object, an array or a string.
+interface PackageConfig {
+  name: string | undefined;
+  exports: unknown;
+  imports: unknown;
+}
+
+// The stop at a package.json that tla-ts can't read as Node does.
+const getPackageStop = (literal: ts.StringLiteralLike, directory: string, reason: string) =>
+  new TlaTypeScriptError(
+    `tla-ts can't resolve ${literal.text} without Node, as ${directory}/package.json ${reason}`,
+    literal,
+  );
+
+// The package.json in a directory, or undefined where there is none. Node stops at one that isn't
+// JSON, or whose name or type isn't a string, and tla-ts stops there too, at one that isn't an
+// object, and at exports or imports of a string that starts with [ or {, which Node parses as JSON.
+const readPackage = (
+  system: ProgramSystem,
+  directory: string,
+  literal: ts.StringLiteralLike,
+): PackageConfig | undefined => {
   const text = system.readFile(`${directory}/package.json`);
   if (text === undefined) return undefined;
   const parsed = parseJson(text);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new TlaTypeScriptError(
-      `tla-ts can't resolve ${literal.text} without Node, as ${directory}/package.json isn't a JSON object`,
-      literal,
-    );
+    throw getPackageStop(literal, directory, "isn't a JSON object");
   }
-  return new Map(Object.entries(parsed));
+  const fields = new Map(Object.entries(parsed));
+  if (["name", "type"].some((key) => fields.has(key) && typeof fields.get(key) !== "string")) {
+    throw getPackageStop(literal, directory, "has a name or a type that isn't a string");
+  }
+  const getMap = (key: string) => {
+    const value = fields.get(key);
+    if (typeof value === "string" && /^[[{]/.test(value)) {
+      throw getPackageStop(literal, directory, `has ${key} of a string that Node parses as JSON`);
+    }
+    return typeof value === "string" || (typeof value === "object" && value !== null)
+      ? value
+      : undefined;
+  };
+  const name = fields.get("name");
+  return {
+    name: typeof name === "string" ? name : undefined,
+    exports: getMap("exports"),
+    imports: getMap("imports"),
+  };
 };
 
 // A JSON text's value, or undefined where JSON.parse rejects it.
@@ -161,87 +196,218 @@ const parseJson = (text: string): unknown => {
   }
 };
 
-// The file that a package's exports name for a subpath, as Node's packageExportsResolve finds it
-// with resolvePackageTarget and finalizeResolution, or undefined where Node finds none. It reads
-// exports of strings, nulls and conditions, by the subpath's own key, which Node reads before any
-// pattern, and stops at a subpath that only a pattern could match, at arrays of fallbacks, and at
-// targets whose path Node reads by its URL, which may leave the package's directory.
-const resolveExports = (
-  system: ProgramSystem,
-  directory: string,
+// An error that Node's resolution of a package's exports or imports throws: an invalid target
+// (ERR_INVALID_PACKAGE_TARGET), which an array of targets passes over to its next, or another.
+interface Failure {
+  isInvalidTarget: boolean;
+}
+const INVALID_TARGET: Failure = { isInvalidTarget: true };
+const FAILURE: Failure = { isInvalidTarget: false };
+
+// A segment of a target or a subpath that Node's resolution rejects (deprecatedInvalidSegmentRegEx):
+// . or .. or node_modules, as it is or percent-encoded, between slashes or backslashes. Node only
+// warns of an empty one.
+const INVALID_SEGMENT =
+  /(^|\\|\/)((\.|%2e)(\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))(\\|\/|$)/i;
+
+// The URL that a target of a package's exports or imports resolves to, as Node's
+// resolvePackageTarget and resolvePackageTargetString find it from the package.json's URL, with
+// each * of a pattern's target replaced by the subpath that the key's * matched, null where each of
+// the targets is null, undefined where no condition holds, or the error that Node throws. A target
+// of a package's imports that names another package resolves as Node resolves that package, at
+// which tla-ts stops.
+const resolveTarget = (
+  packageUrl: URL,
+  target: unknown,
   subpath: string,
-  exports: unknown,
   conditions: ReadonlySet<string>,
-  literal: ts.StringLiteralLike,
-) => {
-  const getStop = (reason: string) =>
-    new TlaTypeScriptError(
-      `tla-ts can't resolve ${literal.text} without Node, as ${directory}/package.json ${reason}`,
-      literal,
-    );
-  const resolveTarget = (target: unknown): string | null | undefined => {
-    if (typeof target === "string") {
-      const segments = target.split("/");
+  isImports: boolean,
+  getStop: (reason: string) => TlaTypeScriptError,
+): URL | Failure | null | undefined => {
+  if (typeof target === "string") {
+    if (!target.startsWith("./")) {
       if (
-        segments[0] !== "." ||
-        /[%\\#?]/.test(target) ||
-        segments
-          .slice(1)
-          .some(
-            (segment) =>
-              ["", ".", ".."].includes(segment) || segment.toLowerCase() === "node_modules",
-          )
+        isImports &&
+        !target.startsWith("/") &&
+        !target.startsWith("../") &&
+        !URL.canParse(target)
       ) {
-        throw getStop(`exports ${JSON.stringify(target)}`);
+        throw getStop(`imports ${JSON.stringify(target)}, another package`);
       }
-      return `${directory}${target.slice(1)}`;
+      return INVALID_TARGET;
     }
-    if (target === null) return null;
-    if (typeof target !== "object" || Array.isArray(target)) {
-      throw getStop("exports a target that is neither a string, null nor conditions");
-    }
-    const keys = Object.keys(target);
-    if (keys.some((key) => /^(?:0|[1-9]\d*)$/.test(key))) {
-      throw getStop("exports a numeric condition");
+    if (INVALID_SEGMENT.test(target.slice(2))) return INVALID_TARGET;
+    const resolved = new URL(target, packageUrl);
+    if (!resolved.pathname.startsWith(new URL(".", packageUrl).pathname)) return INVALID_TARGET;
+    if (subpath === "") return resolved;
+    if (INVALID_SEGMENT.test(subpath)) return FAILURE;
+    const replaced = URL.parse(resolved.href.replaceAll("*", () => subpath));
+    if (replaced === null) throw getStop(`maps the subpath ${subpath} to no URL`);
+    return replaced;
+  }
+  if (Array.isArray(target)) {
+    // The first target that resolves, else the last invalid target's error, or null after a null.
+    const resolveFirst = (
+      index: number,
+      last: Failure | null | undefined,
+    ): URL | Failure | null | undefined => {
+      if (index === target.length) return last;
+      const found = resolveTarget(
+        packageUrl,
+        target[index],
+        subpath,
+        conditions,
+        isImports,
+        getStop,
+      );
+      return found === undefined
+        ? resolveFirst(index + 1, last)
+        : found === null || found === INVALID_TARGET
+          ? resolveFirst(index + 1, found)
+          : found;
+    };
+    return target.length === 0 ? null : resolveFirst(0, undefined);
+  }
+  if (typeof target === "object" && target !== null) {
+    const keys = Object.getOwnPropertyNames(target);
+    // A key that is an array index (isArrayIndex) fails as a numeric condition.
+    if (
+      keys.some((key) => `${Number(key)}` === key && Number(key) >= 0 && Number(key) < 2 ** 32 - 1)
+    ) {
+      return FAILURE;
     }
     for (const key of keys) {
       if (key !== "default" && !conditions.has(key)) continue;
-      const found = resolveTarget(Reflect.get(target, key));
+      const found = resolveTarget(
+        packageUrl,
+        Reflect.get(target, key),
+        subpath,
+        conditions,
+        isImports,
+        getStop,
+      );
       if (found !== undefined) return found;
     }
     return undefined;
-  };
-  if (typeof exports !== "string" && (typeof exports !== "object" || Array.isArray(exports))) {
-    throw getStop("exports neither a string nor an object");
   }
-  const keys = typeof exports === "string" ? [] : Object.keys(exports ?? {});
-  const isSugar = keys.every((key) => key === "" || !key.startsWith("."));
-  if (!isSugar && !keys.every((key) => key.startsWith("."))) {
-    throw getStop("exports subpaths beside conditions");
-  }
-  const map = new Map(isSugar ? [[".", exports]] : Object.entries(exports ?? {}));
-  const isExact = map.has(subpath) && !subpath.includes("*") && !subpath.endsWith("/");
-  if (
-    !isExact &&
-    (subpath.includes("*") ||
-      subpath.endsWith("/") ||
-      [...map.keys()].some((key) => key.includes("*")))
-  ) {
-    throw getStop("exports patterns, which Node matches the subpath against");
-  }
-  const file = isExact ? resolveTarget(map.get(subpath)) : undefined;
-  return file !== null && file !== undefined && system.fileExists(file)
-    ? system.realpath(file)
-    : undefined;
+  return target === null ? null : INVALID_TARGET;
 };
 
-// The file that Node 26 loads for a package's specifier where the program's files are a host's that
-// Node doesn't see, as its ES modules' resolution (packageResolve) and require's (trySelf and
-// Module._findPath) find it: by the exports of the file's own package, where the specifier names
-// it, and else of the package of the nearest node_modules directory that holds one, which a
-// require looks in but in a directory named node_modules. Node reads a package without exports by
-// its main field and its subpaths' files, at which tla-ts stops. A require that finds no file may
-// find one in Node's global folders, which only the code that runs it reads.
+// Node's patternKeyCompare: 1 where the pattern key b matches more specifically than a, by the
+// length of the part before its *, or else its whole length, and -1 where a does.
+const comparePatternKeys = (a: string, b: string) => {
+  const aIndex = a.indexOf("*");
+  const bIndex = b.indexOf("*");
+  const aBase = aIndex === -1 ? a.length : aIndex + 1;
+  const bBase = bIndex === -1 ? b.length : bIndex + 1;
+  return aBase !== bBase
+    ? Math.sign(bBase - aBase)
+    : aIndex === -1
+      ? 1
+      : bIndex === -1
+        ? -1
+        : Math.sign(b.length - a.length);
+};
+
+// The target of a package's exports or imports for a request, as Node's packageExportsResolve and
+// packageImportsResolve find it: the request's own key, where it has no * and, of exports, doesn't
+// end in /, or else the pattern key that matches it best, with one *, and what that * matches.
+const resolveMap = (
+  packageUrl: URL,
+  map: object,
+  request: string,
+  conditions: ReadonlySet<string>,
+  isImports: boolean,
+  getStop: (reason: string) => TlaTypeScriptError,
+) => {
+  if (Object.hasOwn(map, request) && !request.includes("*") && !request.endsWith("/")) {
+    return resolveTarget(packageUrl, Reflect.get(map, request), "", conditions, isImports, getStop);
+  }
+  const best = Object.getOwnPropertyNames(map).reduce<{ key: string; subpath: string } | undefined>(
+    (found, key) => {
+      const index = key.indexOf("*");
+      const trailer = key.slice(index + 1);
+      return index !== -1 &&
+        request.startsWith(key.slice(0, index)) &&
+        request.length >= key.length &&
+        request.endsWith(trailer) &&
+        comparePatternKeys(found?.key ?? "", key) === 1 &&
+        key.lastIndexOf("*") === index
+        ? { key, subpath: request.slice(index, request.length - trailer.length) }
+        : found;
+    },
+    undefined,
+  );
+  return best === undefined
+    ? undefined
+    : resolveTarget(
+        packageUrl,
+        Reflect.get(map, best.key),
+        best.subpath,
+        conditions,
+        isImports,
+        getStop,
+      );
+};
+
+// The file of a package's exports or imports for a request, as Node resolves it and its
+// finalizeResolution, or require's finalizeEsmResolution, checks it, or undefined where Node finds
+// none: where the request is no subpath that the exports export (packageExportsResolve) or import
+// that the imports define (packageImportsResolve), the exports mix subpaths with conditions, a
+// target is invalid, the URL has an encoded / or \, or no file is at its path. tla-ts stops at a
+// package whose directory a file URL encodes, and at a URL with a query or a fragment, which Node
+// loads as another module than its file's, a percent-encoded character, or a path that ends in /.
+const resolvePackageMap = (
+  system: ProgramSystem,
+  directory: string,
+  request: string,
+  config: PackageConfig,
+  conditions: ReadonlySet<string>,
+  isImports: boolean,
+  literal: ts.StringLiteralLike,
+) => {
+  const getStop = (reason: string) => getPackageStop(literal, directory, reason);
+  const packageUrl = new URL(`file://${directory}/package.json`);
+  if (packageUrl.pathname !== `${directory}/package.json`)
+    throw getStop("is at a path that a URL encodes");
+  // Whether the exports are the targets of the package's own subpath, rather than subpaths
+  // (isConditionalExportsMainSugar): a target, or conditions, whose keys, unlike a subpath's, are
+  // empty or don't start with a dot. Node fails at exports where only some keys are.
+  const exports = config.exports;
+  const keys =
+    typeof exports === "object" && exports !== null && !Array.isArray(exports)
+      ? Object.getOwnPropertyNames(exports)
+      : undefined;
+  const isCondition = (key: string) => key === "" || !key.startsWith(".");
+  const isSugar = keys === undefined || (keys.length > 0 && isCondition(keys[0]));
+  const map = isImports ? config.imports : isSugar ? { ".": exports } : exports;
+  const isFailed = isImports
+    ? request === "#" || request.endsWith("/")
+    : keys?.some((key) => isCondition(key) !== isSugar) === true;
+  const found =
+    isFailed || typeof map !== "object" || map === null || Array.isArray(map)
+      ? undefined
+      : resolveMap(packageUrl, map, request, conditions, isImports, getStop);
+  if (!(found instanceof URL)) return undefined;
+  if (found.search !== "" || found.hash !== "")
+    throw getStop(`maps ${request} to a URL with a query or a fragment`);
+  const path = found.pathname;
+  if (/%2F|%5C/i.test(path)) return undefined;
+  if (path.includes("%") || path.endsWith("/"))
+    throw getStop(`maps ${request} to the path ${path}`);
+  return system.fileExists(path) ? system.realpath(path) : undefined;
+};
+
+// The file that Node 26 loads for a package's specifier, or one of the imports of the program's own
+// package, where the program's files are a host's that Node doesn't see, as its ES modules'
+// resolution (packageResolve and packageImportsResolve) and require's (Module._resolveFilename,
+// trySelf and Module._findPath) find it: by the imports or the exports of the file's own package,
+// where the specifier starts with # or names it, and else by the exports of the package of the
+// nearest node_modules directory that holds one, which a require looks in but in a directory named
+// node_modules. Node reads a package without exports by its main field and its subpaths' files,
+// and a require of a # that its package doesn't import as a package's, at which tla-ts stops. A
+// require that finds no file may find one in Node's global folders, which only the code that runs
+// it reads.
 const resolvePackage = (
   system: ProgramSystem,
   literal: ts.StringLiteralLike,
@@ -250,46 +416,54 @@ const resolvePackage = (
 ) => {
   const specifier = literal.text;
   if (isNodeModule(specifier)) return { file: undefined, isMissing: false };
-  const parts = PACKAGE_SPECIFIER.exec(specifier);
-  if (parts === null) {
-    throw new TlaTypeScriptError(`tla-ts can't resolve ${specifier} without Node`, literal);
-  }
-  const name = parts[1];
-  const subpath = `.${parts[2] ?? ""}`;
   const conditions = isRequire ? REQUIRE_CONDITIONS : IMPORT_CONDITIONS;
   // The directories that hold the file, from its own to the root, which is "".
   const segments = system.resolvePath(containingFile).split("/").slice(0, -1);
   const directories = segments.map((_segment, index) =>
     segments.slice(0, segments.length - index).join("/"),
   );
-  const resolveIn = (directory: string, manifest: ReadonlyMap<string, unknown> | undefined) => {
-    const exports = manifest?.get("exports");
-    if (exports === undefined || exports === null) {
+  // The file's own package: the nearest package.json, which Node looks for up to a directory named
+  // node_modules, and, for a require (TraverseParent), short of the root.
+  const boundary = directories.findIndex((directory) => directory.endsWith("/node_modules"));
+  const scope = directories
+    .slice(0, boundary === -1 ? undefined : boundary)
+    .find(
+      (directory) =>
+        (!isRequire || directory !== "") && system.fileExists(`${directory}/package.json`),
+    );
+  const own = scope === undefined ? undefined : readPackage(system, scope, literal);
+  if (specifier.startsWith("#") && (!isRequire || own?.imports !== undefined)) {
+    const file =
+      scope === undefined || own === undefined
+        ? undefined
+        : resolvePackageMap(system, scope, specifier, own, conditions, true, literal);
+    return { file, isMissing: file === undefined };
+  }
+  const parts = PACKAGE_SPECIFIER.exec(specifier);
+  if (parts === null) {
+    throw new TlaTypeScriptError(`tla-ts can't resolve ${specifier} without Node`, literal);
+  }
+  const name = parts[1];
+  const subpath = `.${parts[2] ?? ""}`;
+  const resolveIn = (directory: string, config: PackageConfig | undefined) => {
+    if (config?.exports === undefined) {
       throw new TlaTypeScriptError(
         `tla-ts can't resolve ${specifier} without Node, as ${directory} has no exports`,
         literal,
       );
     }
-    const file = resolveExports(system, directory, subpath, exports, conditions, literal);
+    const file = resolvePackageMap(system, directory, subpath, config, conditions, false, literal);
     return { file, isMissing: file === undefined };
   };
-  // The file's own package: the nearest package.json, which Node looks for up to a directory named
-  // node_modules.
-  const boundary = directories.findIndex((directory) => directory.endsWith("/node_modules"));
-  const scope = directories
-    .slice(0, boundary === -1 ? undefined : boundary)
-    .find((directory) => system.fileExists(`${directory}/package.json`));
-  const own = scope === undefined ? undefined : readPackage(system, scope, literal);
-  const ownName = own?.get("name");
   if (
     scope !== undefined &&
-    typeof ownName === "string" &&
-    (specifier === ownName || specifier.startsWith(`${ownName}/`)) &&
-    own?.get("exports") !== undefined
+    own?.name !== undefined &&
+    (specifier === own.name || specifier.startsWith(`${own.name}/`)) &&
+    own.exports !== undefined
   ) {
-    if (ownName !== name) {
+    if (own.name !== name) {
       throw new TlaTypeScriptError(
-        `tla-ts can't resolve ${specifier} without Node, as its own package's name is ${ownName}`,
+        `tla-ts can't resolve ${specifier} without Node, as its own package's name is ${own.name}`,
         literal,
       );
     }
@@ -299,9 +473,6 @@ const resolvePackage = (
     if (isRequire && directory.endsWith("/node_modules")) continue;
     const modules = `${directory}/node_modules`;
     const found = `${modules}/${name}`;
-    const manifest = system.directoryExists(found)
-      ? readPackage(system, found, literal)
-      : undefined;
     // An import takes the first package's directory, and a require the first package with exports,
     // or any file at the specifier's path, which it loads by its extensions.
     if (
@@ -311,7 +482,10 @@ const resolvePackage = (
           system.fileExists(`${modules}/${specifier}${extension}`),
         ))
     ) {
-      return resolveIn(found, manifest);
+      return resolveIn(
+        found,
+        system.directoryExists(found) ? readPackage(system, found, literal) : undefined,
+      );
     }
   }
   return { file: undefined, isMissing: !isRequire };

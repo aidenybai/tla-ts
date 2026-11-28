@@ -592,18 +592,45 @@ describe("run a program on the files that a host passes, as Node runs it on them
         getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
       ).toContain("index");
     });
+  });
 
-    it("stops at a subpath that only a pattern matches", async () => {
-      const source = getSource("patterned/dist/part.js", "part");
+  // Node matches a subpath against the patterns of a package's exports, the most specific first, as
+  // Effect's exports give each of its modules by "./*" and leave out its internal ones by
+  // "./internal/*": null, and a # specifier against the imports of the file's own package.
+  describe("load the file that a pattern of a package's exports or imports matches", () => {
+    const PACKAGE = {
+      "package.json": JSON.stringify({ name: "app", imports: { "#parts/*": "./parts/*.mjs" } }),
+      "parts/one.mjs": 'export const kind = "own";\n',
+      "node_modules/patterned/package.json": JSON.stringify({
+        name: "patterned",
+        exports: {
+          "./*": "./src/*.js",
+          "./internal/*": null,
+          "./internal/open/*": "./src/internal/*.js",
+        },
+      }),
+      "node_modules/patterned/src/part.js": 'export const kind = "part";\n',
+      "node_modules/patterned/src/internal/hidden.js": 'export const kind = "hidden";\n',
+    };
+    const getSource = (expected: string) =>
+      `import { kind as part } from "patterned/part";\nimport { kind as own } from "#parts/one";\nimport { kind as open } from "patterned/internal/open/hidden";\nconst hidden = await import("patterned/internal/hidden").then(() => "loaded", () => "rejected");\nconst seen = [part, own, open, hidden].join(" ");\nif (seen !== "${expected}") throw new Error(seen);\n`;
+
+    it("agrees with Node", async () => {
+      const source = getSource("part own hidden rejected");
       expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
       expect(
-        (await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))).error,
-      ).toEqual({
-        name: "TlaTypeScriptError",
-        isTlaError: true,
-        message:
-          "main.mjs:1:22 tla-ts can't resolve patterned/dist/part.js without Node, as /node_modules/patterned/package.json exports patterns, which Node matches the subpath against",
-      });
+        await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("part own hidden loaded");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).stderr).toContain(
+        "Error: part own hidden rejected",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("part own hidden rejected");
     });
   });
 
