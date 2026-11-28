@@ -2143,7 +2143,8 @@ const someSubset = (
   costNode: number | undefined,
 ) => {
   for (let size = 0; size <= base.length; size++) {
-    const indices = Array.from({ length: size }, (_value, index) => index);
+    const indices: number[] = [];
+    for (let index = 0; index < size; index++) indices.push(index);
     do {
       // eslint-disable-next-line unicorn/no-new-array
       const elements = new Array<Value>(size);
@@ -4191,11 +4192,11 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   const elements = set.elements;
   if (elements.length > getMaximumSetSize()) throw new TlaSetBoundError(getSetBoundMessage());
-  const isAdded = Array.from({ length: elements.length }, () => false);
+  const isAdded = new Uint8Array(elements.length);
   const written = added.filter((element) => {
     const index = findSortedIndex(elements, element);
-    if (isAdded[index]) return false;
-    isAdded[index] = true;
+    if (isAdded[index] === 1) return false;
+    isAdded[index] = 1;
     return true;
   });
   const copy = createSortedSet(elements);
