@@ -16,7 +16,7 @@ import {
 } from "../exit-codes";
 import { getJsTlaRuntime } from "../compile";
 import { parseConfig } from "../config";
-import { TlaError, TlaSharedBaseError, TlaStrippingError } from "../errors";
+import { TlaError, TlaLinkError, TlaSharedBaseError, TlaStrippingError } from "../errors";
 import { KEY_SEPARATOR } from "../resolve";
 import type { CheckBase } from "../search";
 import type { TlcVersion } from "../tlc/version";
@@ -481,7 +481,6 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
 // text tla-ts can't tell, and the error stops there, as does one at syntax across lines.
 const compileRejection = async (path: string, error: TlaStrippingError) => {
   const ts = (await import("@typescript/typescript6")).default;
-  const { compileToJsTla } = await import("../typescript/spec/compile");
   const text = readFileSync(path, "utf8");
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
   const start = sourceFile.getLineAndCharacterOfPosition(error.start);
@@ -508,8 +507,15 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
   ) {
     throw error;
   }
+  return compileNodeExit(path, message);
+};
+
+// The spec of a program that fails as Node does, before it runs any of its code, with what Node
+// writes to stderr, but its stack's frames.
+const compileNodeExit = async (path: string, stderr: string) => {
+  const { compileToJsTla } = await import("../typescript/spec/compile");
   const spec = compileToJsTla("", path, await getJsTlaRuntime(), false, {
-    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
+    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(stderr)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
     entries: [],
   });
   return {
@@ -526,10 +532,15 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
 };
 
 // A TypeScript or JavaScript file compiled by specializing JS.tla (see compileJsTlaEntry), or,
-// where Node's type stripping rejects it, a program that fails as Node does.
+// where Node's type stripping rejects it, or Node fails to link its graph of ES modules, a program
+// that fails as Node does.
 export const compileTypeScriptFile = (path: string, setBound?: number): Promise<CompiledInput> =>
   compileJsTlaEntry(path, setBound).catch((error: unknown) =>
-    error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
+    error instanceof TlaStrippingError
+      ? compileRejection(path, error)
+      : error instanceof TlaLinkError && isNodeText(error.stderr)
+        ? compileNodeExit(path, error.stderr)
+        : Promise.reject(error),
   );
 
 // The definitions of a program shared by several files' models: what its entry's run leaves, which

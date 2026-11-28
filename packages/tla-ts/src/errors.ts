@@ -514,6 +514,18 @@ export class TlaStrippingError extends TlaTypeScriptError {
   }
 }
 
+// An ES module graph that Node fails to link, where an import's resolution throws an error that
+// the files alone decide, so that Node runs none of the program, which a compile stops at: what
+// Node writes to stderr, but its stack's frames, which the CLI gives as Node's exit.
+export class TlaLinkError extends TlaTypeScriptError {
+  stderr: string;
+  constructor(message: string, stderr: string) {
+    super(message);
+    this.name = "TlaLinkError";
+    this.stderr = stderr;
+  }
+}
+
 // A group of files that can't share one check of their common modules, or a file that can't start
 // from its group's: the code names the reason, which the output of -shared shows.
 export class TlaSharedBaseError extends TlaError {

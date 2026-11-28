@@ -3,6 +3,7 @@ import { type Expression, getChildren, type OperatorDefinition } from "../../ast
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import { getLocals, type Locals } from "./locals";
+import type { ResolutionFailure } from "./resolve";
 import {
   afterBlankLine,
   apply,
@@ -105,6 +106,12 @@ export interface ProgramFile {
   kind: "script" | "module" | "commonjs" | "json" | "host";
   json?: string;
   targets: ReadonlyMap<string, number>;
+  // The error that Node's resolution throws for each specifier of an import that it finds no file
+  // for, where the files alone decide it.
+  failures?: ReadonlyMap<string, ResolutionFailure>;
+  // The specifiers of a CommonJS module's requires that Node's require finds no module for, where
+  // the files alone decide it.
+  missingRequires?: ReadonlySet<string>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
   // The file of an ES module's facade, which a require of it gives the namespace of.
@@ -5121,6 +5128,32 @@ export const specialize = (
           .map((target) => parenthesized(apply(":>", [getUnits(target[0]), num(target[1])])))
           .reduce((left, right) => apply("@@", [left, right]));
   const getNames = (file: ProgramFile) => setOf((file.names ?? []).map(getUnits));
+  // The error that Node's resolution throws for each specifier that only an import() of the file
+  // requests, which the host's code for import() throws, as a function from each specifier's code
+  // units.
+  const getFailures = (file: ProgramFile) => {
+    const failures = [...(file.failures ?? [])].filter(
+      (failure) => file.targets.get(failure[0]) === 0,
+    );
+    return failures.length === 0
+      ? tuple([])
+      : failures
+          .map((failure) =>
+            parenthesized(
+              apply(":>", [
+                getUnits(failure[0]),
+                recordOf([
+                  ["name", getUnits(failure[1].name)],
+                  ["code", getUnits(failure[1].code)],
+                  ["message", getUnits(failure[1].message)],
+                  ["hasUrl", getBool(failure[1].url !== undefined)],
+                  ["url", getUnits(failure[1].url ?? "")],
+                ]),
+              ]),
+            ),
+          )
+          .reduce((left, right) => apply("@@", [left, right]));
+  };
 
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
   // as JS.tla's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
@@ -5384,6 +5417,7 @@ export const specialize = (
           ],
           ["targets", getTargets(file)],
           ["names", getNames(file)],
+          ["failures", getFailures(file)],
         ]),
       ),
     );
@@ -5409,7 +5443,9 @@ export const specialize = (
             ["dirname", getUnits(directory)],
             ["targets", getTargets(file)],
             ["names", getNames(file)],
+            ["failures", getFailures(file)],
             ["exportNames", tuple(file.exportNames.map(getUnits))],
+            ["missing", setOf([...(file.missingRequires ?? [])].map(getUnits))],
           ]),
         ),
       );
@@ -5454,6 +5490,7 @@ export const specialize = (
           ["kind", string("script")],
           ["targets", getTargets(entry)],
           ["names", getNames(entry)],
+          ["failures", getFailures(entry)],
         ]),
       ),
     );
@@ -5532,7 +5569,7 @@ export const specialize = (
     entry.kind === "module"
       ? apply("RunModuleNode", ["s", apply("ModuleNode", [num(1)])])
       : entry.kind === "commonjs"
-        ? apply("RequireFile", ["s", num(1)])
+        ? apply("RequireFile", ["s", num(1), num(0)])
         : apply(script(entry.sourceFile), ["s"]);
   // A dispatch on an id to its arms, or, where it has none, a stop with the message.
   const defineDispatch = (
