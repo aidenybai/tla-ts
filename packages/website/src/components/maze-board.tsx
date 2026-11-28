@@ -11,8 +11,6 @@ interface MazeBoardProps {
   view: MazeView;
   label: string;
   onPick?: (square: Square) => void;
-  // Draws the board with depth. A pick reads the flat board, so it does not go with this.
-  isPerspective?: boolean;
   className?: string;
   children?: ReactNode;
 }
@@ -29,7 +27,7 @@ export const MazeBoard = (props: MazeBoardProps) => {
   });
   useEffect(() => {
     if (!isInView || !canvasRef.current) return;
-    sceneRef.current ??= createMazeScene(canvasRef.current, MAZE_MAP, props.isPerspective === true);
+    sceneRef.current ??= createMazeScene(canvasRef.current, MAZE_MAP, false);
     const scene = sceneRef.current;
     if (!scene) return;
     let frame = requestAnimationFrame(function paint(now) {
