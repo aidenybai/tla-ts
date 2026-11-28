@@ -1315,11 +1315,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       undefined,
       source,
       sourcePlan,
-      getMadeHash(
-        pageScratch,
-        pageScratch[EDGE_STARTS + (slots.count & (PAGE_SIZE - 1))],
-        sourcePlan,
-      ),
+      getMadeHash(pageScratch, pageScratch[EDGE_STARTS + slots.count], sourcePlan),
       false,
     );
   };
@@ -1377,6 +1373,33 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     if (node > 0) objectNodes[objectNumbers[node]] = node;
     else environmentNodes[environmentNumbers[-node]] = node;
   }
+  const isPageInPlace = (
+    nodes: Int32Array,
+    first: number,
+    count: number,
+    previous: CanonicalPage,
+  ) => {
+    for (let slot = 0; slot < count; slot++) {
+      const number = first + slot + 1;
+      const node = nodes[number];
+      if (node === 0) continue;
+      if ((node > 0 ? node : -node) !== number || getPage(node) !== previous) return false;
+      if (
+        previous.records[slot] !== undefined &&
+        hasSlotBit(previous.edges, WEAK_CLASS_BITS, slot)
+      ) {
+        return false;
+      }
+      const start = node > 0 ? objectEdgeStarts[node] : environmentEdgeStarts[-node];
+      const array = getEdgeArray(start, previous);
+      const end = getEdgeEnd(node, start, array);
+      for (let index = getEdgeFirst(node, start, array); index < end; index++) {
+        const target = array[index];
+        if (getNew(target) !== (target > 0 ? target : -target)) return false;
+      }
+    }
+    return true;
+  };
   // Renames each node of a heap at its new number a page at a time, and makes each page, which is
   // the page of the heap before where each of its slots is in place.
   const renameHeap = (
@@ -1384,10 +1407,18 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
     renameRecord: (inner: Value) => FunctionValue,
     pagesBefore: Value[],
   ) => {
-    const slots = createSlots(nodes.length - 1);
-    return Array.from({ length: Math.ceil(slots.sources.length / PAGE_SIZE) }, (_value, page) => {
+    const size = nodes.length - 1;
+    return Array.from({ length: Math.ceil(size / PAGE_SIZE) }, (_value, page) => {
       const first = page * PAGE_SIZE;
-      const count = Math.min(PAGE_SIZE, slots.sources.length - first);
+      const count = Math.min(PAGE_SIZE, size - first);
+      const previous = pagesBefore[page];
+      const isPrevious =
+        isIncremental &&
+        isCanonicalPage(previous) &&
+        previous.writtenSlots === undefined &&
+        previous.domain.length === count;
+      if (isPrevious && isPageInPlace(nodes, first, count, previous)) return previous;
+      const slots = createSlots(count);
       pageAt = EDGE_NODES;
       pageScratch.fill(0, 0, EDGE_STARTS);
       pageScratch[0] = realm.objects;
@@ -1405,7 +1436,7 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         locations[slot] = getLocated(node, start, nodePage);
         if (nodes !== objectNodes) continue;
         if (nodePage === undefined) {
-          const objectClass = getString(slots.sources[first + slot], "class");
+          const objectClass = getString(slots.sources[slot], "class");
           if (objectClass === "promise") setSlotBit(pageScratch, PROMISE_BITS, slot);
           if (WEAK_CLASSES.has(objectClass)) setSlotBit(pageScratch, WEAK_CLASS_BITS, slot);
           if (ENTRY_CLASSES.has(objectClass)) setSlotBit(pageScratch, ENTRY_CLASS_BITS, slot);
@@ -1417,14 +1448,8 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
         }
       }
       const at = pageAt;
-      const previous = pagesBefore[page];
-      let isKept =
-        isIncremental &&
-        isCanonicalPage(previous) &&
-        previous.writtenSlots === undefined &&
-        previous.domain.length === count;
-      for (let slot = 0; isKept && slot < count; slot++)
-        isKept = slots.isInPlace[first + slot] === 1;
+      let isKept = isPrevious;
+      for (let slot = 0; isKept && slot < count; slot++) isKept = slots.isInPlace[slot] === 1;
       if (isKept) return previous;
       for (let slot = count; slot <= PAGE_SIZE; slot++) pageScratch[EDGE_STARTS + slot] = at;
       if (nodes === objectNodes) {
@@ -1436,10 +1461,10 @@ const canonicalStateOf = (state: Value, initial: Value, isIncremental: boolean):
       const made = new CanonicalPage(
         pageScratch.slice(0, at),
         locations,
-        slots.plans.slice(first, first + count),
-        slots.sources.slice(first, first + count),
-        slots.records.slice(first, first + count),
-        slots.hashes.slice(first, first + count),
+        slots.plans,
+        slots.sources,
+        slots.records,
+        slots.hashes,
         0,
         makeRecord,
         undefined,
