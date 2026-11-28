@@ -100,7 +100,9 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         : await compile.compile(options);
       setNodeGlobals(nodeGlobals);
       process.getBuiltinModule = getBuiltinModule;
-      const result = await parallel.check({ ...spec, onPrint: () => {} });
+      // The website checks a spec again, as it is, where its search passes the states it graphs.
+      const checkSpec = () => parallel.check({ ...spec, onPrint: () => {} });
+      const result = request.isCheckedTwice ? await checkSpec().then(checkSpec) : await checkSpec();
       parentPort.postMessage({
         id: request.id,
         outcome: {
@@ -148,6 +150,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
     isLibraryPassed = true,
     // The files that the compile runs the program on, by absolute path, in place of the host's.
     files?: Record<string, string>,
+    isCheckedTwice = false,
   ) =>
     new Promise<Outcome>((resolve) => {
       worker.postMessage({
@@ -157,6 +160,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         isRecorded,
         isLibraryPassed,
         files: files && Object.entries(files),
+        isCheckedTwice,
       });
       pending.push(resolve);
     });
@@ -779,6 +783,42 @@ describe("run a program on the files that a host passes, as Node runs it on them
         await getBrowserOutcome(SOURCE, "counter.ts", true, true, getHostFiles(getFiles(2))),
       ).toMatchObject({ status: "success" });
       expect(replay(2, 3)).toEqual([true, true, true, true]);
+    });
+
+    // A second check of a model's spec, as the website runs where a search passes the states that
+    // it graphs, reads the operators that the first check resolved, such as HeapKept, which a
+    // check's call passes a LAMBDA, as the first check read them.
+    describe("check a model's spec a second time as the first", () => {
+      it("agrees with Node", async () => {
+        const outcome = await getBrowserOutcome(
+          SOURCE,
+          "counter.ts",
+          true,
+          true,
+          getHostFiles(getFiles(3)),
+          true,
+        );
+        expect(outcome).toMatchObject({
+          status: "invariant-violation",
+          name: "bounded",
+          trace: [{ count: "0" }, { count: "1" }, { count: "2" }, { count: "3" }],
+        });
+        expect(replay(3, (outcome.actions ?? []).length)).toEqual([true, true, true, false]);
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          await getBrowserOutcome(
+            SOURCE,
+            "counter.ts",
+            true,
+            true,
+            getHostFiles(getFiles(2)),
+            true,
+          ),
+        ).toMatchObject({ status: "success" });
+        expect(replay(2, 3)).toEqual([true, true, true, true]);
+      });
     });
   });
 

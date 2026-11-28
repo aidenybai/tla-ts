@@ -194,7 +194,10 @@ const findNullSelection = (nulls: NullSelection[] | undefined) =>
 
 const findNullError = (nulls: NullSelection[] | undefined) => findNullSelection(nulls)?.error;
 
-const renamedArities = new WeakMap<Expression, number>();
+// The symbol that a name resolved to, by the expression that the resolution renamed to its key, so
+// that another resolution of the same module, as a second check of a spec makes, reads it as the
+// first did.
+const renamedSymbols = new WeakMap<Expression, ModuleSymbol>();
 
 export const KEY_SEPARATOR = "@";
 
@@ -984,8 +987,8 @@ const getSymbolArity = (
 ) => {
   const location = expression.location;
   if (isSelectionReported(expression, scope, unit)) return undefined;
-  const renamed = renamedArities.get(expression);
-  if (renamed !== undefined) return renamed;
+  const renamed = renamedSymbols.get(expression);
+  if (renamed !== undefined) return renamed.arity;
   if (isKey(name)) return expression.kind === "Apply" ? expression.args.length : 0;
   const local = lookupLocal(scope, name);
   if (local?.nonFactStep) {
@@ -1085,7 +1088,7 @@ const getSymbolArity = (
     operandApplications.get(expression)?.forEach((application) => {
       application.operator = symbol.key;
     });
-    renamedArities.set(expression, symbol.arity);
+    renamedSymbols.set(expression, symbol);
     return symbol.arity;
   }
   const parts = name.split("!");
@@ -1616,7 +1619,7 @@ const resolveApply = (
   unit: Unit,
 ) => {
   const operator = expression.operator;
-  const callee = findBinding(operator, scope, unit);
+  const callee = findBinding(operator, scope, unit) ?? renamedSymbols.get(expression);
   const arity = isInstanceArityReported(expression, scope, unit)
     ? undefined
     : getSymbolArity(expression, operator, scope, unit);
