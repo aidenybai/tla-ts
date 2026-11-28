@@ -15,14 +15,14 @@ export const step = () => {
   const head = y * SIZE + x;
   if (head === apple) {
     snake = [head, ...snake];
-    apple = (apple * 5 + 3) % (SIZE * SIZE);
+    while (snake.includes(apple)) apple = (apple * 5 + 3) % (SIZE * SIZE);
   } else {
     snake = [head, ...snake.slice(0, -1)];
   }
 };
 
-// The rule TLA-ts checks after every move.
-export const neverBitesItself = () => !snake.slice(1).includes(snake[0]);
+// The rule TLA-ts checks after every move: the head is never back where it just came from.
+export const neverTurnsBack = () => snake[0] !== snake[2];
 
 const SIZE = 7;
 // The eight ways to move, clockwise from up.

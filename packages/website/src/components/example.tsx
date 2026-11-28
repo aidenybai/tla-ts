@@ -200,7 +200,8 @@ const ExampleSource = () => {
           <SnakeGame
             search={state.result?.search}
             isPaused={state.view !== "preview"}
-            onBiteChange={setIsBugFound}
+            isRunning={state.isRunning}
+            onBugChange={setIsBugFound}
           />
         </div>
         {state.view !== "preview" && (

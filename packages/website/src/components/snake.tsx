@@ -53,16 +53,27 @@ const turn = (snake: Snake, next: Direction): Snake =>
     ? snake
     : { ...snake, direction: next };
 
+// The next square in the apple's round that the snake is not lying on.
+const getNextApple = (body: number[]) => {
+  let apple = body[0];
+  while (body.includes(apple)) apple = (apple * 5 + 3) % (SIZE * SIZE);
+  return apple;
+};
+
 const step = (snake: Snake): Snake => {
   const x = ((snake.body[0] % SIZE) + snake.direction.move[0] + SIZE) % SIZE;
   const y = (Math.floor(snake.body[0] / SIZE) + snake.direction.move[1] + SIZE) % SIZE;
   const head = y * SIZE + x;
   return head === snake.apple
-    ? { ...snake, body: [head, ...snake.body], apple: (snake.apple * 5 + 3) % (SIZE * SIZE) }
+    ? { ...snake, body: [head, ...snake.body], apple: getNextApple([head, ...snake.body]) }
     : { ...snake, body: [head, ...snake.body.slice(0, -1)] };
 };
 
-const isBitten = (body: number[]) => body.slice(1).includes(body[0]);
+// The bug: the head is back on the square it just came from, which `turn` is there to stop.
+const hasTurnedBack = (body: number[]) => body[0] === body[2];
+
+// A long snake that runs into the rest of itself has only lost the game.
+const hasCrashed = (body: number[]) => body.slice(1).includes(body[0]);
 
 const getSnake = (state: SearchState): Snake => {
   const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
@@ -142,7 +153,8 @@ interface SnakeGameProps {
   search: Search | undefined;
   // Whether the board is out of sight behind another view, where it neither moves nor steers.
   isPaused: boolean;
-  onBiteChange: (isBitten: boolean) => void;
+  isRunning: boolean;
+  onBugChange: (isFound: boolean) => void;
 }
 
 export const SnakeGame = (props: SnakeGameProps) => {
@@ -177,7 +189,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
       tried[Math.min(replay.index, tried.length - 1)])
     : undefined;
   const shown = useMemo(() => (active ? getSnake(active) : snake), [active, snake]);
-  const hasBitten = isReplayShown ? isBitten(shown.body) : isOver;
+  const hasBug = (isReplayShown || isOver) && hasTurnedBack(shown.body);
+  const isLost = isOver && !isReplayShown && !hasBug;
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
   const isGliding = isMoving && isInView && !isOver && !isReplayShown && !props.isPaused;
@@ -220,6 +233,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
     if (!isGliding) return;
     const glide = glideRef.current;
     glide.from = undefined;
+    glide.isStepDue = false;
     glide.startedAt = performance.now() - STEP_MS;
     let frame = requestAnimationFrame(function tick(now) {
       frame = requestAnimationFrame(tick);
@@ -230,8 +244,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
       // A frame that came late starts the next step now, so the snake does not leap to catch up.
       glide.nextStartAt = elapsed > STEP_MS * 2 ? now : glide.startedAt + STEP_MS;
       setApple(glide.to.apple);
-      if (isBitten(glide.to.body)) {
-        props.onBiteChange(true);
+      if (hasCrashed(glide.to.body)) {
+        props.onBugChange(hasTurnedBack(glide.to.body));
         return setIsOver(true);
       }
       setSnake(step);
@@ -253,9 +267,11 @@ export const SnakeGame = (props: SnakeGameProps) => {
     // A turn after the end, or after TLA-ts has had the board, starts a new game.
     const isFresh = isReplayShown || isOver;
     setReplay(replay && { ...replay, index: -1 });
-    setSnake(turn(isFresh ? START : snake, next));
+    // The turn is made on the snake as it is when the turn lands, which a step due in the
+    // same moment has already moved.
+    setSnake((current) => turn(isFresh ? START : current, next));
     if (isFresh) {
-      props.onBiteChange(false);
+      props.onBugChange(false);
       setApple(START.apple);
       setStepCount(0);
       setIsOver(false);
@@ -303,7 +319,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
         }}
         className={cn(
           "mb-1 w-full max-w-[280px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
-          hasBitten && "motion-safe:animate-shake",
+          (hasBug || isLost) && "motion-safe:animate-shake",
         )}
       >
         <svg
@@ -370,12 +386,15 @@ export const SnakeGame = (props: SnakeGameProps) => {
             <use
               href={`#${backId}`}
               strokeWidth={6.6}
-              className={hasBitten ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]"}
+              className={cn(
+                hasBug ? "stroke-destructive" : "stroke-[oklch(58%_0.17_295)]",
+                isLost && "opacity-50",
+              )}
             />
             <use href={`#${backId}`} y={-1.2} strokeWidth={1.8} className="stroke-white/25" />
             <g ref={headRef} transform={`translate(${START_BACK[0].x} ${START_BACK[0].y})`}>
               <circle cy={1.3} r={4} className={SHADE_FILL} />
-              <circle r={4} className={hasBitten ? "fill-destructive" : SNAKE_FILL} />
+              <circle r={4} className={hasBug ? "fill-destructive" : SNAKE_FILL} />
               <circle cx={-0.6} cy={-1.4} r={2.2} className="fill-white/15" />
               <g transform={`rotate(${DIRECTIONS.indexOf(shown.direction) * 45})`}>
                 <circle cx={-1.9} cy={-1.6} r={1.5} className="fill-white" />
@@ -393,10 +412,10 @@ export const SnakeGame = (props: SnakeGameProps) => {
       {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
           or the tree moves nothing. */}
       <div className="flex min-h-28 min-w-56 flex-1 flex-col items-start gap-4 self-stretch sm:min-h-44">
-        {hasBitten && !isReplayShown && (
+        {hasBug && !isReplayShown && !props.isRunning && (
           <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5 shrink-0" />
-            Bug found · Two turns at once
+            Bug found · It turned back on itself
           </p>
         )}
         <p aria-live="polite" className="text-pretty text-foreground tabular-nums">
@@ -404,11 +423,19 @@ export const SnakeGame = (props: SnakeGameProps) => {
             `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
           ) : isReplayShown ? (
             <>
-              TLA-ts tried {tried.length} states and made the snake bite itself in {steps.length}{" "}
-              moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
+              TLA-ts tried {tried.length} states and turned the snake back on itself in{" "}
+              {steps.length} moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
             </>
-          ) : hasBitten ? (
+          ) : props.isRunning ? (
+            "TLA-ts is trying every move the code allows."
+          ) : hasBug ? (
             "Would your tests have tried that? Press run to see TLA-ts get there."
+          ) : isLost ? (
+            isTouch ? (
+              "It ran into itself. That is allowed, so it is not the bug. Tap to play again."
+            ) : (
+              "It ran into itself. That is allowed, so it is not the bug. Press an arrow key to play again."
+            )
           ) : !isMoving ? (
             isTouch ? (
               "Tap the board to start the snake."
@@ -439,7 +466,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               </>
             )
           ) : (
-            "It can’t reverse, so it should never bite itself. Make it."
+            "It should never be able to turn straight back. Make it."
           )}
         </p>
         {isReplayShown && (
@@ -461,7 +488,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
                 setStepCount(0);
                 setIsMoving(false);
                 setIsOver(false);
-                props.onBiteChange(false);
+                props.onBugChange(false);
                 setReplay(replay && { ...replay, index: -1 });
               }}
             >
