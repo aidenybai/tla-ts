@@ -882,6 +882,20 @@ describe("liveness matches TLC", () => {
       expect(getPrintedResult(result)).toEqual(printed);
     },
   );
+
+  it("names the violated property of a long lasso whose other property holds, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Fa ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, b\nNext == (x < K /\\ x' = x + 1 /\\ UNCHANGED b) \\/ (x = K /\\ b' = ~b /\\ UNCHANGED x)\nSpec == x = 0 /\\ b = FALSE /\\ [][Next]_<<x, b>> /\\ WF_<<x, b>>(Next)\nSettles == []<>[](x = K)\nReturns == []<>(x = 0)\n====",
+      config: "SPECIFICATION Spec\nCONSTANT K = 1600\nPROPERTY Settles Returns",
+    });
+    expect([
+      result.status,
+      result.violation?.properties,
+      result.violation?.trace.length,
+      result.violation?.loopStart,
+    ]).toEqual(["liveness-violation", ["Returns"], 1602, 1600]);
+  });
 });
 
 describe("_PERIODIC matches TLC", () => {

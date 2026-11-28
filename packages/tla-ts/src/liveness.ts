@@ -1078,8 +1078,6 @@ export const evaluateOnLasso = (
   environment: Environment,
 ): boolean => {
   const getNext = (index: number) => (index + 1 < path.length ? index + 1 : cycleStart);
-  const getFuture = (index: number) =>
-    path.map((_state, offset) => offset).filter((offset) => offset >= Math.min(index, cycleStart));
   const recurse = (operand: LiveExpression, index = position) =>
     evaluateOnLasso(operand, path, cycleStart, index, environment);
   switch (expression.kind) {
@@ -1092,9 +1090,15 @@ export const evaluateOnLasso = (
     case "Next":
       return recurse(expression.body, getNext(position));
     case "Always":
-      return getFuture(position).every((index) => recurse(expression.body, index));
+      for (let index = Math.min(position, cycleStart); index < path.length; index++) {
+        if (!recurse(expression.body, index)) return false;
+      }
+      return true;
     case "Eventually":
-      return getFuture(position).some((index) => recurse(expression.body, index));
+      for (let index = Math.min(position, cycleStart); index < path.length; index++) {
+        if (recurse(expression.body, index)) return true;
+      }
+      return false;
     default:
       return evaluateLive(
         expression,
