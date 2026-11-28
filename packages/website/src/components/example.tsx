@@ -14,6 +14,7 @@ import { useSearchPath } from "@/hooks/use-search-path";
 import { SnakeGame } from "./snake";
 import { Code } from "./code";
 import { buttonVariants } from "@/components/ui/button-variants";
+import { InlineCode } from "@/components/ui/inline-code";
 import { ToggleGroup } from "@/components/ui/toggle-group";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
@@ -205,6 +206,7 @@ const ExampleSource = () => {
             isPaused={state.view !== "preview"}
             isRunning={state.isRunning}
             onBugChange={state.setIsBugFound}
+            onShowCode={state.setView}
           />
         </div>
         {state.view !== "preview" && (
@@ -212,6 +214,21 @@ const ExampleSource = () => {
             ref={scrollRef}
             className="absolute -inset-x-4 -top-4 -bottom-2 overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
           >
+            {/* Each view of the code says what it is to the game, and stays in sight as the code
+                scrolls under it. */}
+            <p className="sticky -top-4 z-10 -mx-4 -mt-4 mb-3 border-b bg-card px-4 py-2 pr-14 text-sm text-pretty text-muted-foreground">
+              {isCompiled ? (
+                <>
+                  <span className="text-foreground">What TLA-ts checks.</span> It turns the
+                  TypeScript into this TLA+ for you. You never write it.
+                </>
+              ) : (
+                <>
+                  <span className="text-foreground">What you write.</span> The game in plain
+                  TypeScript, and one rule it must keep: <InlineCode>neverTurnsBack</InlineCode>.
+                </>
+              )}
+            </p>
             <Code.Content />
           </div>
         )}

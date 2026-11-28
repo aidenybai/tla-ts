@@ -160,6 +160,8 @@ interface SnakeGameProps {
   isPaused: boolean;
   isRunning: boolean;
   onBugChange: (isFound: boolean) => void;
+  // Shows the game's own code, as the reader wrote it or as TLA-ts checks it.
+  onShowCode: (view: "typescript" | "tla") => void;
 }
 
 export const SnakeGame = (props: SnakeGameProps) => {
@@ -472,8 +474,19 @@ export const SnakeGame = (props: SnakeGameProps) => {
                 `TLA-ts is trying state ${Math.min(replay.index + 1, tried.length)} of ${tried.length}.`
               ) : (
                 <>
-                  TLA-ts tried {tried.length} states and turned the snake back in {steps.length}{" "}
-                  moves:
+                  TLA-ts turned the game&rsquo;s{" "}
+                  <Button
+                    variant="link"
+                    size="inline"
+                    onClick={() => props.onShowCode("typescript")}
+                  >
+                    TypeScript
+                  </Button>{" "}
+                  into{" "}
+                  <Button variant="link" size="inline" onClick={() => props.onShowCode("tla")}>
+                    TLA+
+                  </Button>
+                  , tried {tried.length} states, and broke it in {steps.length} moves:
                   <span className="mt-1 block font-mono text-xs text-foreground">
                     {steps.join(", ")}
                   </span>
@@ -587,8 +600,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
                   ))}
                 {stage === 3 &&
                   (props.isRunning
-                    ? "TLA-ts is trying every move the code allows."
-                    : "Would your tests have tried that? Press the run button below.")}
+                    ? "TLA-ts is turning the game's TypeScript into TLA+ and trying every move."
+                    : "Press the run button below. TLA-ts turns the game's TypeScript into TLA+ and tries every move.")}
               </p>
             </div>
           </>
