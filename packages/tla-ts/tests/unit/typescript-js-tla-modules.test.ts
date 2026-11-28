@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 interface ModuleResult {
   status: string;
   message: string | undefined;
+  code?: string;
 }
 
 // JS.tla's evaluation nests deeper than a test's stack, so checks run on one worker with a
@@ -37,7 +38,7 @@ const worker = new Worker(
       const model = spec.candidates === undefined ? undefined : { steps: loaded.steps, entries: [], candidates: spec.candidates };
       const compiled = loaded.compileToJsTla(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule, model);
       const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
-      parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
+      parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message, code: spec.isCodeReturned ? compiled.loadModule("ProgramCode") : undefined });
     } catch (error) {
       parentPort.postMessage({ id: spec.id, status: "stopped", message: error.message });
     }
@@ -71,7 +72,7 @@ beforeAll(() => ready, 60_000);
 // Checks a program whose entry is main.js, in a directory of its files, whose package makes each
 // JavaScript file an ES module unless the files give a package.json of their own, as Node runs
 // them.
-const checkModules = (files: Record<string, string>, isModule = true) => {
+const checkModules = (files: Record<string, string>, isModule = true, isCodeReturned = false) => {
   const directory = mkdtempSync(join(tmpdir(), "js-tla-modules-"));
   directories.push(directory);
   Object.entries({ "package.json": '{ "type": "module" }', ...files }).forEach((entry) => {
@@ -79,7 +80,12 @@ const checkModules = (files: Record<string, string>, isModule = true) => {
     writeFileSync(join(directory, entry[0]), entry[1]);
   });
   return new Promise<ModuleResult>((resolve) => {
-    worker.postMessage({ id: pending.length, path: join(directory, "main.js"), isModule });
+    worker.postMessage({
+      id: pending.length,
+      path: join(directory, "main.js"),
+      isModule,
+      isCodeReturned,
+    });
     pending.push(resolve);
   });
 };
@@ -984,6 +990,54 @@ describe("stops at the source text of the host's functions", () => {
     expect(
       (await checkModules({ "main.js": `Function.prototype.toString.call(${host});` })).message,
     ).toContain("tla-ts can't give the source text of the host's function");
+  });
+});
+
+// A function's source text, as Function.prototype.toString gives it, is the text of its file that
+// its code spans, which the program's TLA+ holds, without the text between functions that no
+// function's source text holds, such as a module's comments.
+describe("gives a function's source text as Node does, without the text between functions", () => {
+  const LIB = `// A comment \u2713 between declarations, ${"which no function holds ".repeat(20)}
+export async function load(a, b) { return "\u00e9" + a + b; }
+/** Another comment \u2603 */
+export class Box {
+  static size = 1;
+  get value() { return 2; }
+  method() { return () => "\u00fc"; }
+}
+// One more comment \u2764
+export const arrow = (x) => x * 2;
+`;
+  const LOG = `import { load, Box, arrow } from "./lib.js";
+const log = [load, Box, Object.getOwnPropertyDescriptor(Box.prototype, "value").get, new Box().method(), arrow, Box.prototype.method].map(String);
+`;
+  const getFiles = (expected: string) => ({
+    "lib.js": LIB,
+    "main.js": `${LOG}if (JSON.stringify(log) !== ${JSON.stringify(expected)}) throw new Error(JSON.stringify(log));\n`,
+  });
+  // The source texts that Node gives.
+  const getNodeLog = () => {
+    const directory = mkdtempSync(join(tmpdir(), "js-tla-source-"));
+    directories.push(directory);
+    Object.entries({
+      "package.json": '{ "type": "module" }',
+      "lib.js": LIB,
+      "main.js": `${LOG}console.log(JSON.stringify(log));\n`,
+    }).forEach((entry) => writeFileSync(join(directory, entry[0]), entry[1]));
+    return spawnSync(process.execPath, [join(directory, "main.js")], {
+      encoding: "utf8",
+    }).stdout.trim();
+  };
+
+  it("agrees with Node", async () => {
+    const result = await checkModules(getFiles(getNodeLog()), true, true);
+    expect(result.message).toBeUndefined();
+    expect(result.code).not.toContain("which no function holds");
+  });
+
+  it("rejects another result", async () => {
+    const log = getNodeLog().replace("return 2", "return 3");
+    expect((await checkModules(getFiles(log))).message).toContain(THREW);
   });
 });
 
