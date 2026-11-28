@@ -304,7 +304,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
   const shownApple = getCenter(isReplayShown ? shown.apple : apple);
   return (
-    <div className="flex w-full flex-wrap gap-x-8 gap-y-6 pb-3">
+    <div className="flex w-full flex-wrap gap-x-7 gap-y-6 pt-1 pb-4">
       <div
         ref={boardRef}
         // A click heads the snake for the eighth of a turn nearest to it.
@@ -318,7 +318,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[280px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[304px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           (hasBug || isLost) && "motion-safe:animate-shake",
         )}
       >
