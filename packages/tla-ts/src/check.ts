@@ -533,8 +533,20 @@ const searchStates = (
   const getPartialOutDegrees = () =>
     outDegrees.map((count, degree) => (degree === getOutDegreeBucket() ? count + 1 : count));
   const getFailureOutDegrees = () => (is174 ? [...outDegrees] : getPartialOutDegrees());
-  const getViolatedProperties = (checker: LivenessChecker, path: Value[][], cycleStart: number) =>
-    is174 ? [] : checker.getViolatedProperties(path, cycleStart);
+  // Deviation from TLC: LiveWorker#printTrace rebuilds the lasso without ids, so Trace in Liveness#findViolatedProperties starts from the thread's current state and fails after stuttering or past depth 2.
+  const getViolatedProperties = (checker: LivenessChecker, path: Value[][], cycleStart: number) => {
+    if (is174) return [];
+    const searchLevel = runtime.getLevel;
+    const searchBehavior = runtime.getBehavior;
+    runtime.getLevel = (state) => path.findIndex((step) => step === state) + 1;
+    runtime.getBehavior = (state) => path.slice(0, path.indexOf(state) + 1);
+    try {
+      return checker.getViolatedProperties(path, cycleStart);
+    } finally {
+      runtime.getLevel = searchLevel;
+      runtime.getBehavior = searchBehavior;
+    }
+  };
   const withOutDegrees = (result: CheckResult, degrees = [...outDegrees]): CheckResult => ({
     ...result,
     violationOutDegrees: degrees,
@@ -1394,7 +1406,10 @@ const searchStates = (
     }
     if (found.existing !== -1 && liveness) {
       const stored = states[found.existing];
-      const isStored = stored.every((value, position) => value === successor.state[position]);
+      // TLC's Worker hands the liveness checker the step it generated back to the expanded state, so Trace and TLCGet("level") read it as one step further.
+      const isStored =
+        found.existing !== index &&
+        stored.every((value, position) => value === successor.state[position]);
       liveSuccessors.push({ index: found.existing, state: isStored ? stored : successor.state });
     }
     if (found.isSeen && found.existing === -1 && liveness) {
@@ -1455,6 +1470,7 @@ const searchStates = (
       if (pending !== -1) liveness?.storeState(-2 - pending, states.length);
     }
     addState(successor.state, found.fingerprintState, index, successor.action);
+    current.candidate = undefined;
     runtime.queueSize++;
     return undefined;
   };
@@ -2074,11 +2090,15 @@ const searchStates = (
     const loopStart = lasso.prefix.length;
     const steps = getLassoSteps(path);
     const trace = traces.toTrace(steps, path, { loopStart, known: 0 }).trace;
-    const properties = getViolatedProperties(
-      checker,
-      steps.map((step) => step.state),
-      loopStart,
+    const attributed = captureOutput(() =>
+      getViolatedProperties(
+        checker,
+        steps.map((step) => step.state),
+        loopStart,
+      ),
     );
+    const properties = attributed.result;
+    trace[0].output = [...(trace[0].output ?? []), ...attributed.lines];
     const cycleStart = path[loopStart];
     const cycleEnd = path[path.length - 1];
     const lastState = steps[steps.length - 1].state;

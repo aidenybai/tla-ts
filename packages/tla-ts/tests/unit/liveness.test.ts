@@ -498,11 +498,12 @@ describe("liveness matches TLC", () => {
       config: "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => printed.push(String(text)),
     });
-    expect([result.status, result.violation?.name, printed]).toEqual([
-      "liveness-violation",
-      "Prop",
-      ['"s"', '"s"'],
-    ]);
+    expect([
+      result.status,
+      result.violation?.name,
+      printed,
+      result.violation?.trace[0].output,
+    ]).toEqual(["liveness-violation", "Prop", ['"s"'], ['"s"']]);
   });
 
   it("checks a property that calls a recursive operator with a variable", async () => {

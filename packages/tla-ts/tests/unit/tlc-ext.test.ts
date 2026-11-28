@@ -13,6 +13,16 @@ const printTrace = async (definitions: string, config = "") => {
   return prints;
 };
 
+const checkLive = async (init: string, next: string, live: string) => {
+  const prints: string[] = [];
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == ${init}\nNext == ${next}\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == ${live}\n====`,
+    config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+    onPrint: (text) => prints.push(text),
+  });
+  return { ...result, prints };
+};
+
 describe("TLCExt matches TLC", () => {
   it("checks TLC's TLCExtTrace model with Trace in an invariant and a constraint", async () => {
     const result = await checkFixture("tlc-ext", "TLCExtTrace");
@@ -69,6 +79,85 @@ describe("TLCExt matches TLC", () => {
       ],
     ]);
   });
+
+  it("rebuilds the path to a new successor for each Trace that liveness checking reads in it, as TLCExt#getTrace does", async () => {
+    const result = await checkLive(
+      'PrintT("init") /\\ x = 0',
+      "x' = 1 - x",
+      '<>(PrintT(<<"live", x, Len(Trace)>>) /\\ x = 1)',
+    );
+    expect([result.status, result.prints]).toEqual([
+      "success",
+      [
+        '"init"',
+        '<<"live", 0, 1>>',
+        '"init"',
+        '<<"live", 1, 2>>',
+        '<<"live", 0, 1>>',
+        '"init"',
+        '<<"live", 0, 3>>',
+        '"init"',
+        '<<"live", 1, 2>>',
+      ],
+    ]);
+  });
+
+  it('reads Trace and TLCGet("level") in liveness checking of a step back to the expanded state as one step further, as TLC\'s Worker does', async () => {
+    const result = await checkLive(
+      "x = 0",
+      "x' = 1 - x \\/ x' = x",
+      '<>(PrintT(<<"live", x, Len(Trace), TLCGet("level")>>) /\\ x = 1)',
+    );
+    expect([result.status, result.prints]).toEqual([
+      "success",
+      [
+        '<<"live", 0, 1, 1>>',
+        '<<"live", 1, 2, 2>>',
+        '<<"live", 0, 2, 2>>',
+        '<<"live", 0, 3, 3>>',
+        '<<"live", 1, 3, 3>>',
+      ],
+    ]);
+  });
+
+  it('reads Trace and TLCGet("level") in the properties of a lasso as its path after rebuilding it, as Liveness#findViolatedProperties does', async () => {
+    const result = await checkLive(
+      'PrintT("init") /\\ x = 0',
+      "x' = 1 - x",
+      '<>(PrintT(<<"live", x, Len(Trace), TLCGet("level")>>) /\\ x = 5)',
+    );
+    expect([result.violation?.properties, result.violation?.trace[0].output]).toEqual([
+      ["Live"],
+      ['"init"', '<<"live", 0, 1, 1>>', '<<"live", 1, 2, 2>>'],
+    ]);
+  });
+
+  // Deviation from TLC: it fails with 'Cannot invoke "tlc2.tool.TLCState.isInitial()" because "currentState" is null' after stuttering and "Index 32767 out of bounds for length 1" past depth 2.
+  it.each([
+    [
+      "that ends in stuttering",
+      "x < 1 /\\ x' = x + 1",
+      ['<<"live", 0, 1, 1>>', '<<"live", 1, 2, 2>>'],
+    ],
+    [
+      "past depth 2",
+      "x' = (x + 1) % 3",
+      ['<<"live", 0, 1, 1>>', '<<"live", 1, 2, 2>>', '<<"live", 2, 3, 3>>'],
+    ],
+  ])(
+    "reads Trace in the properties of a lasso %s as its path, unlike TLC",
+    async (_shape, next, output) => {
+      const result = await checkLive(
+        "x = 0",
+        next,
+        '<>(PrintT(<<"live", x, Len(Trace), TLCGet("level")>>) /\\ x = 5)',
+      );
+      expect([result.violation?.properties, result.violation?.trace[0].output]).toEqual([
+        ["Live"],
+        output,
+      ]);
+    },
+  );
 
   it.each([
     [
