@@ -16,7 +16,6 @@ const HEART = { x: 3, y: 3 };
 const TRY_MS = 230;
 // The calls after which a reader who has not found the way in is told where to look.
 const HINT_CALLS = 14;
-const SHOWN_CALLS = 6;
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑" },
   { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→" },
@@ -194,8 +193,6 @@ export const Maze = (props: MazeProps) => {
     const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
     return { x: Number(values.get("x")), y: Number(values.get("y")) };
   });
-  // The reader's calls, or the search's once it has played out, set the same way.
-  const shownCalls = search === undefined ? calls : flood?.isDone ? steps : [];
   // The goal the reader is on: move, reach the gold, then hand over to TLA-ts.
   const stage = hasBug || props.isRunning ? 2 : calls.length === 0 ? 0 : 1;
   const arrows = DIRECTIONS.map((direction) => (
@@ -312,7 +309,7 @@ export const Maze = (props: MazeProps) => {
                   <Button variant="link" size="inline" onClick={() => props.onShowCode("tla")}>
                     TLA+
                   </Button>
-                  , tried {reached.length} squares, and reached the heart:
+                  , tried {reached.length} squares, and reached the heart in {steps.length} moves.
                 </>
               ) : (
                 `TLA-ts is trying move ${triedCount} of ${reached.length}.`
@@ -334,28 +331,6 @@ export const Maze = (props: MazeProps) => {
             )}
           </p>
         </div>
-        <ol
-          aria-label="Calls"
-          className="flex min-h-[3.25rem] flex-wrap content-start gap-1 font-mono text-xs"
-        >
-          {shownCalls.length > SHOWN_CALLS && <li className="px-0.5 py-0.5 text-faint">...</li>}
-          {shownCalls
-            .map((made, index) => ({ made, order: index }))
-            .slice(-SHOWN_CALLS)
-            .map((item) => (
-              <li
-                key={item.order}
-                className={cn(
-                  "rounded-md border px-1.5 py-0.5 motion-safe:animate-chip-in",
-                  search !== undefined || hasBug
-                    ? "border-transparent bg-destructive/15 text-destructive"
-                    : "text-foreground",
-                )}
-              >
-                {item.made}
-              </li>
-            ))}
-        </ol>
         {(calls.length > 0 || search !== undefined) && !isFlooding && (
           <Button
             variant="link"
