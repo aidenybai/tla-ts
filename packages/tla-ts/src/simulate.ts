@@ -181,8 +181,9 @@ const getTrace = (last: TraceNode, order: number[]) => {
   for (let node: TraceNode | undefined = last; node; node = node.predecessor) {
     const predecessor = node.predecessor;
     if (predecessor && isRepeatedState(node.state, predecessor.state, order)) continue;
-    trace.unshift(node);
+    trace.push(node);
   }
+  trace.reverse();
   trace.forEach((node, index) => {
     node.predecessor = trace[index - 1];
     node.level = index + 1;

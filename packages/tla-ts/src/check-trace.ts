@@ -436,9 +436,9 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getIndexPath = (index: number) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
-      path.unshift(position);
+      path.push(position);
     }
-    return path;
+    return path.reverse();
   };
   // TLCExt#getTrace rebuilds the path from fingerprints, which evaluates Init and the actions again.
   // Deviation from TLC: TLCExt#getTrace leaves a rebuilt state current, so later draws and Trace in the same step start from it.

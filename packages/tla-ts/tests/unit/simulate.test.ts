@@ -1694,3 +1694,22 @@ it("reports a stack overflow in the next-state relation with the behavior, where
     ],
   ]);
 });
+
+it("rebuilds the trace of a deep violation in one pass, as TLC's simulator does", () => {
+  const lengths: number[] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 150000\n====",
+    config: SAFETY_CONFIG,
+    seed: 4n,
+    traceDepth: 150001,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior") lengths.push(output.printedStates.length);
+    },
+  });
+  expect(lengths).toEqual([150001]);
+});
