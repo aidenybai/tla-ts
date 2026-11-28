@@ -2398,6 +2398,19 @@ describe("the CLI with TypeScript files", () => {
       ]);
     }, 120_000);
 
+    // A file's check prints with its own runtime, not its group's base's, so the ASSUME of a call
+    // that throws prints what it throws, as a check of the file alone does, here with the count
+    // that thrower.ts sees second.
+    it("prints what a file's check prints", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      writeFileSync(
+        join(directory, "thrower.ts"),
+        'import { bump } from "./counter.ts";\nconst seen = bump();\nexport const check = (n: 0 | 1) => {\n  if (n === 1) throw new Error(`seen ${seen}`);\n  return true;\n};\n',
+      );
+      const result = runCli(directory, ["-shared", "first.ts", "thrower.ts"]);
+      expect(result.stdout).toContain('"check throws: seen 2"');
+    }, 120_000);
+
     it("checks each file alone without it, as Node runs it alone", () => {
       const directory = writeModules(copyFixtures("passing"));
       expect(runNode(directory, "alone.mjs").status).toBe(0);
