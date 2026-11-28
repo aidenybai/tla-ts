@@ -144,12 +144,7 @@ const getPath = (points: Point[]) =>
 
 const START_BACK = getBack(START.body);
 
-const GOALS = [
-  "Start the snake",
-  "Eat the apple",
-  "Make it turn straight back",
-  "Let TLA-ts find it",
-];
+const GOALS = ["Start the snake", "Eat the apple", "Turn it straight back", "Let TLA-ts find it"];
 
 interface Replay {
   search: Search;
@@ -487,111 +482,116 @@ export const SnakeGame = (props: SnakeGameProps) => {
             </p>
           </>
         ) : (
-          <ol className="flex flex-col gap-3">
-            {GOALS.map((goal, index) => {
-              // A goal the reader went past without reaching is left unticked.
-              const isDone = index < stage && [isMoving, hasEaten, hasBug][index];
-              const isCurrent = index === stage;
-              const isBug = index === 2 && hasBug;
-              return (
-                <li key={goal} className="flex gap-2.5">
-                  <span
-                    className={cn(
-                      "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-xs tabular-nums transition-colors duration-200 ease-out",
-                      isBug
-                        ? "bg-destructive/15 text-destructive"
-                        : isDone
-                          ? "bg-success/15 text-success"
-                          : isCurrent
-                            ? "bg-foreground text-background"
-                            : "bg-muted text-faint",
-                    )}
-                  >
-                    {isBug ? (
-                      <Bug weight="fill" className="size-3" />
-                    ) : isDone ? (
-                      <Check weight="bold" className="size-3" />
-                    ) : (
-                      index + 1
-                    )}
-                  </span>
-                  <div className="flex min-w-0 flex-col gap-1">
+          <>
+            <ol className="flex flex-col gap-2.5">
+              {GOALS.map((goal, index) => {
+                // A goal the reader went past without reaching is left unticked.
+                const isDone = index < stage && [isMoving, hasEaten, hasBug][index];
+                const isCurrent = index === stage;
+                const isBug = index === 2 && hasBug;
+                return (
+                  <li key={goal} className="flex gap-2.5">
                     <span
                       className={cn(
-                        "transition-colors duration-200 ease-out",
-                        isBug ? "text-destructive" : isCurrent ? "text-foreground" : "text-faint",
+                        "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-xs tabular-nums transition-colors duration-200 ease-out",
+                        isBug
+                          ? "bg-destructive/15 text-destructive"
+                          : isDone
+                            ? "bg-success/15 text-success"
+                            : isCurrent
+                              ? "bg-foreground text-background"
+                              : "bg-muted text-faint",
                       )}
                     >
-                      {isBug ? "Bug: it turned straight back" : goal}
+                      {isBug ? (
+                        <Bug weight="fill" className="size-3" />
+                      ) : isDone ? (
+                        <Check weight="bold" className="size-3" />
+                      ) : (
+                        index + 1
+                      )}
                     </span>
-                    {isCurrent && (
-                      <p
-                        aria-live="polite"
-                        className="text-sm text-pretty text-muted-foreground motion-safe:animate-chip-in"
+                    <div className="flex min-w-0 flex-col">
+                      <span
+                        className={cn(
+                          "transition-colors duration-200 ease-out",
+                          isBug ? "text-destructive" : isCurrent ? "text-foreground" : "text-faint",
+                        )}
                       >
-                        {index === 0 &&
-                          (isTouch ? (
-                            "Tap the board."
-                          ) : (
-                            <>
-                              Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
-                              <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                              <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap>
-                            </>
-                          ))}
-                        {index === 1 &&
-                          (isTouch ? (
-                            "Tap where it should head."
-                          ) : (
-                            <>
-                              Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
-                              <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
-                              <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                              <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click.
-                            </>
-                          ))}
-                        {index === 2 &&
-                          (isLost ? (
-                            `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press an arrow key"} to play again.`
-                          ) : (
-                            <>
-                              Two turns before it moves send it backwards.{" "}
-                              {isTouch ? (
-                                "Tap two places quickly."
-                              ) : recipe ? (
-                                <>
-                                  Quickly press{" "}
-                                  <KeyCap isLit={heldKeys.has(recipe[0].key ?? "")}>
-                                    {recipe[0].glyph}
-                                  </KeyCap>{" "}
-                                  then{" "}
-                                  <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>
-                                    {recipe[1].glyph}
-                                  </KeyCap>
-                                  .
-                                </>
-                              ) : (
-                                "Straighten it with an arrow key first."
-                              )}
-                              <span className="mt-2.5 block">
-                                <Button onClick={showBug} className="pl-2 text-foreground">
-                                  <Play weight="fill" className="size-3" />
-                                  Show me
-                                </Button>
-                              </span>
-                            </>
-                          ))}
-                        {index === 3 &&
-                          (props.isRunning
-                            ? "TLA-ts is trying every move the code allows."
-                            : "Would your tests have tried that? Press the run button below.")}
-                      </p>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+                        {isBug ? "Bug: it turned back" : goal}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {/* The help for the goal in hand has its own place under the list, tall enough for the
+              longest of it, so that moving on to the next goal moves no goal. */}
+            <div className="min-h-28">
+              <p
+                aria-live="polite"
+                key={stage}
+                className="text-sm text-pretty text-muted-foreground motion-safe:animate-chip-in"
+              >
+                {stage === 0 &&
+                  (isTouch ? (
+                    "Tap the board."
+                  ) : (
+                    <>
+                      Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                      <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                      <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap>
+                    </>
+                  ))}
+                {stage === 1 &&
+                  (isTouch ? (
+                    "Tap where it should head."
+                  ) : (
+                    <>
+                      Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
+                      <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                      <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                      <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click.
+                    </>
+                  ))}
+                {stage === 2 &&
+                  (isLost ? (
+                    `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press an arrow key"} to play again.`
+                  ) : (
+                    <>
+                      Two turns before it moves send it backwards.{" "}
+                      {isTouch ? (
+                        "Tap two places quickly."
+                      ) : recipe ? (
+                        <>
+                          Quickly press{" "}
+                          <KeyCap isLit={heldKeys.has(recipe[0].key ?? "")}>
+                            {recipe[0].glyph}
+                          </KeyCap>{" "}
+                          then{" "}
+                          <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>
+                            {recipe[1].glyph}
+                          </KeyCap>
+                          .
+                        </>
+                      ) : (
+                        "Straighten it with an arrow key first."
+                      )}
+                      <span className="mt-2.5 block">
+                        <Button onClick={showBug} className="pl-2 text-foreground">
+                          <Play weight="fill" className="size-3" />
+                          Show me
+                        </Button>
+                      </span>
+                    </>
+                  ))}
+                {stage === 3 &&
+                  (props.isRunning
+                    ? "TLA-ts is trying every move the code allows."
+                    : "Would your tests have tried that? Press the run button below.")}
+              </p>
+            </div>
+          </>
         )}
         {(isMoving || isReplayShown) && !isReplaying && (
           <Button
