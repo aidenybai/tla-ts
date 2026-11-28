@@ -1046,20 +1046,23 @@ export const planModel = (
         set: printExpression(renameModelValues(arg)),
         converter: getConverter(arg),
       }));
+      // TLC evaluates each set once as a constant. They share a line, keeping ProgramCode's lines.
+      const union = define("Convert", (name) => {
+        const sets = parts
+          .slice(0, -1)
+          .map((part, index) => `${name}In${index + 1} == ${part.set}`);
+        return `${sets.join(" ")}\n${name}(s, x) == ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${name}In${index + 1} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`;
+      });
       return lowerAs(
-        define(
-          "Convert",
-          (name) =>
-            `${name}(s, x) ==\n  ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${part.set} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`,
-        ),
+        union,
         lowered(
           parts.map((part) => part.converter),
           (names) =>
-            parts
-              .map((part, index) =>
-                index === parts.length - 1
-                  ? `${names[index]}(x)`
-                  : `IF x \\in ${part.set} THEN ${names[index]}(x) ELSE `,
+            names
+              .map((name, index) =>
+                index === names.length - 1
+                  ? `${name}(x)`
+                  : `IF x \\in ${union}In${index + 1} THEN ${name}(x) ELSE `,
               )
               .join(""),
         ),
