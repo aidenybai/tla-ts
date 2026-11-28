@@ -21,7 +21,6 @@ import {
   isEqualLikeTlc,
   isModelValue,
   isNormalizedSet,
-  isWrittenSlot,
   PROMISE_BITS,
   setFunctionClass,
   type FunctionValue,
@@ -1242,12 +1241,16 @@ export const createEsRuntimeOperators = (callReplaced: CallReplaced): Builtin[] 
         const records = canonical?.records ?? getTuple(page);
         if (records === undefined) return undefined;
         for (let slot = 0; slot < HEAP_PAGE_SIZE && first + slot < size; slot++) {
-          if (
-            canonical !== undefined &&
-            !isWrittenSlot(canonical, slot) &&
-            ((canonical.edges[PROMISE_BITS + (slot >> 5)] >>> (slot & 31)) & 1) === 0
-          ) {
-            continue;
+          if (canonical !== undefined) {
+            const bits =
+              (canonical.edges[PROMISE_BITS + (slot >> 5)] |
+                (canonical.writtenSlots?.[slot >> 5] ?? 0)) >>>
+              (slot & 31);
+            if (bits === 0) {
+              slot |= 31;
+              continue;
+            }
+            if ((bits & 1) === 0) continue;
           }
           // A canonical page's record that it hasn't made differs from its source only in its refs'
           // ids, which this doesn't read.
