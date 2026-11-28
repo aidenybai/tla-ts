@@ -47,11 +47,6 @@ export const PlaygroundResult = () => {
             <>
               <Result.Section title={result.isPassed ? "Verdict" : "Issue"}>
                 <Verdict result={result} />
-                {result.isEnvironmentNamed && (
-                  <p className="text-muted-foreground">
-                    process.env holds NODE_ENV=production alone
-                  </p>
-                )}
               </Result.Section>
               {result.graphOmittedPast !== undefined && (
                 <Result.Section title="States">
