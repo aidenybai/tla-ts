@@ -1,4 +1,4 @@
-import { Bug, Check, Play } from "@phosphor-icons/react";
+import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -12,12 +12,15 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 const SIZE = 7;
 const CELL = 10;
 const BOARD = SIZE * CELL;
-const STEP_MS = 300;
+// How long the snake takes to cross to the next square, which is also how often a held key
+// can step it.
+const GLIDE_MS = 150;
 // How long TLA-ts's replay spends on each state it tried, and how much of that the move takes.
 const REPLAY_MS = 170;
 const REPLAY_MOVE_MS = 120;
 // The steps after which a reader who has not eaten the apple is shown how to find the bug.
-const HINT_STEPS = 30;
+const HINT_STEPS = 12;
+const SHOWN_CALLS = 6;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
 const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
 const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
@@ -144,7 +147,7 @@ const getPath = (points: Point[]) =>
 
 const START_BACK = getBack(START.body);
 
-const GOALS = ["Start the snake", "Eat the apple", "Turn it straight back", "Let TLA-ts find it"];
+const GOALS = ["Move the snake", "Eat the apple", "Turn it straight back", "Let TLA-ts find it"];
 
 interface Replay {
   search: Search;
@@ -156,7 +159,7 @@ interface Replay {
 interface SnakeGameProps {
   // The search of the last run, whose states the board plays back in the order it tried them.
   search: Search | undefined;
-  // Whether the board is out of sight behind another view, where it neither moves nor steers.
+  // Whether the board is out of sight behind another view, where no key moves it.
   isPaused: boolean;
   isRunning: boolean;
   onBugChange: (isFound: boolean) => void;
@@ -164,13 +167,15 @@ interface SnakeGameProps {
   onShowCode: (view: "typescript" | "tla") => void;
 }
 
+// The snake waits for the reader. An arrow key calls `turn` and the space bar calls `step`, the
+// two functions of the example's code, so the reader makes by hand the calls TLA-ts tries.
 export const SnakeGame = (props: SnakeGameProps) => {
   const [snake, setSnake] = useState(START);
-  // The apple on the board, which stays until the head has reached it.
-  const [apple, setApple] = useState(START.apple);
-  const [stepCount, setStepCount] = useState(0);
-  const [isMoving, setIsMoving] = useState(false);
-  const [isOver, setIsOver] = useState(false);
+  // The calls the reader has made, in the words of the code.
+  const [calls, setCalls] = useState<string[]>([]);
+  // The snake as it lies once a step has finished crossing to its square. The apple and the
+  // end of a game are shown from it, so neither comes before the head does.
+  const [settled, setSettled] = useState(START);
   const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
   const [hoveredId, setHoveredId] = useState<string>();
   const [replay, setReplay] = useState<Replay>();
@@ -179,11 +184,10 @@ export const SnakeGame = (props: SnakeGameProps) => {
   if (props.search && replay?.search !== props.search) {
     // A reader who asked for less motion sees where the search ended, not each state it tried.
     setReplay({ search: props.search, index: isReduced ? Infinity : 0 });
-    setIsMoving(false);
   }
-  // The states the search tried, with the one that breaks the rule last.
   // A second run keeps the first one's states on the board until its own arrive.
   const search = props.search ?? replay?.search;
+  // The states the search tried, with the one that breaks the rule last.
   const tried = useMemo(() => {
     const states = search?.checkedStates ?? [];
     return [
@@ -198,72 +202,47 @@ export const SnakeGame = (props: SnakeGameProps) => {
       tried[Math.min(replay.index, tried.length - 1)])
     : undefined;
   const shown = useMemo(() => (active ? getSnake(active) : snake), [active, snake]);
-  const hasBug = ((isReplayShown && !isReplaying) || isOver) && hasTurnedBack(shown.body);
-  const isLost = isOver && !isReplayShown && !hasBug;
+  const isSettled = settled.body === snake.body;
+  const isOver = hasCrashed(snake.body);
+  const hasBug = hasTurnedBack(shown.body) && (isReplayShown ? !isReplaying : isOver && isSettled);
+  const isLost = isOver && isSettled && !isReplayShown && !hasTurnedBack(snake.body);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
-  const isGliding = isMoving && isInView && !isOver && !isReplayShown && !props.isPaused;
 
   const snakeId = useId();
   const backId = useId();
   const backRef = useRef<SVGPathElement>(null);
   const headRef = useRef<SVGGElement>(null);
-  // The step on the board: the squares the snake is leaving, the ones it is taking, and when
-  // it set off. Each frame is drawn from these, so sixty frames a second render nothing.
-  const glideRef = useRef({
-    from: undefined as number[] | undefined,
-    to: START,
-    startedAt: 0,
-    nextStartAt: 0,
-    isStepDue: false,
-  });
+  const lastBodyRef = useRef(START.body);
   const draw = (points: Point[]) => {
     backRef.current?.setAttribute("d", getPath(points));
     headRef.current?.setAttribute("transform", `translate(${points[0].x} ${points[0].y})`);
   };
+  // A step glides to its square. Each frame is written to the drawing itself, so sixty frames
+  // a second render nothing.
   useLayoutEffect(() => {
-    const glide = glideRef.current;
-    const last = glide.to.body;
-    glide.to = shown;
-    if (!isGliding) {
-      glide.from = undefined;
-      return draw(getBack(shown.body));
+    const from = lastBodyRef.current;
+    if (from === shown.body) return;
+    lastBodyRef.current = shown.body;
+    const arrive = () => {
+      if (isReplayShown) return;
+      setSettled(shown);
+      if (hasCrashed(shown.body)) props.onBugChange(hasTurnedBack(shown.body));
+    };
+    if (isReplayShown || isReduced || shown.body[1] !== from[0]) {
+      draw(getBack(shown.body));
+      return arrive();
     }
-    // A turn changes where the snake is heading and not where it is, so the step under way
-    // carries on.
-    if (last === shown.body) return;
-    glide.from = last;
-    glide.startedAt = glide.nextStartAt;
-    glide.isStepDue = false;
-    // A new game is drawn before it is painted, not a frame after.
-    if (shown.body[1] !== last[0]) draw(getBack(shown.body));
-  }, [shown, isGliding]);
-  // One clock moves the snake and draws it. A step starts where the last one ended, whatever
-  // the reader pressed in between, so the snake keeps one pace.
-  useEffect(() => {
-    if (!isGliding) return;
-    const glide = glideRef.current;
-    glide.from = undefined;
-    glide.isStepDue = false;
-    glide.startedAt = performance.now() - STEP_MS;
-    let frame = requestAnimationFrame(function tick(now) {
-      frame = requestAnimationFrame(tick);
-      const elapsed = now - glide.startedAt;
-      draw(getPose(glide.from, glide.to.body, isReduced ? 1 : Math.max(0, elapsed / STEP_MS)));
-      if (elapsed < STEP_MS || glide.isStepDue) return;
-      glide.isStepDue = true;
-      // A frame that came late starts the next step now, so the snake does not leap to catch up.
-      glide.nextStartAt = elapsed > STEP_MS * 2 ? now : glide.startedAt + STEP_MS;
-      setApple(glide.to.apple);
-      if (hasCrashed(glide.to.body)) {
-        props.onBugChange(hasTurnedBack(glide.to.body));
-        return setIsOver(true);
-      }
-      setSnake(step);
-      setStepCount((count) => count + 1);
+    const start = performance.now();
+    draw(getPose(from, shown.body, 0));
+    let frame = requestAnimationFrame(function glide(now) {
+      const progress = Math.max(0, (now - start) / GLIDE_MS);
+      draw(getPose(from, shown.body, progress));
+      if (progress < 1) frame = requestAnimationFrame(glide);
+      else arrive();
     });
     return () => cancelAnimationFrame(frame);
-  }, [isGliding, isReduced]);
+  }, [shown, isReplayShown, isReduced]);
   // The replay plays each state as the move that reached it: the snake is put where that move
   // began and makes it, faster than a reader would.
   useEffect(() => {
@@ -289,35 +268,49 @@ export const SnakeGame = (props: SnakeGameProps) => {
     return () => cancelAnimationFrame(frame);
   }, [isReplaying, tried]);
 
-  const steer = (next: Direction) => {
-    if (isReplaying) return;
-    // A turn after the end, or after TLA-ts has had the board, starts a new game.
-    const isFresh = isReplayShown || isOver;
+  // A key after the end of a game, or after TLA-ts has had the board, starts a new game.
+  const isFresh = isReplayShown || isOver;
+  const restart = (first: Snake, firstCalls: string[]) => {
     setReplay(replay && { ...replay, index: -1 });
-    // The turn is made on the snake as it is when the turn lands, which a step due in the
-    // same moment has already moved.
-    setSnake((current) => turn(isFresh ? START : current, next));
-    if (isFresh) {
-      props.onBugChange(false);
-      setApple(START.apple);
-      setStepCount(0);
-      setIsOver(false);
-    }
-    setIsMoving(true);
+    setSnake(first);
+    setCalls(firstCalls);
+    props.onBugChange(false);
   };
-  // The arrow keys steer the snake while the board is on screen, from wherever the focus is,
-  // and scroll the page again once it is not.
+  const callTurn = (next: Direction) => {
+    if (isReplaying) return;
+    const call = `turn("${next.name}")`;
+    if (isFresh) return restart(turn(START, next), [call]);
+    setSnake((current) => turn(current, next));
+    setCalls((made) => [...made, call]);
+  };
+  const callStep = () => {
+    if (isReplaying) return;
+    if (isFresh) return restart(START, []);
+    // A step waits for the last one to arrive, so a held key moves the snake at its own pace.
+    if (!isSettled) return;
+    setSnake(step);
+    setCalls((made) => [...made, "step"]);
+  };
+  // The keys work while the board is on screen, from wherever the focus is in the card, and
+  // go back to the page once it is not.
   useEffect(() => {
     if (!isInView || props.isPaused) return;
     const handleKey = (event: KeyboardEvent) => {
       const found = DIRECTIONS.find((item) => item.key === event.key);
-      if (!found || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
+      if ((!found && event.key !== " ") || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (!(event.target instanceof HTMLElement)) return;
+      if (event.target.closest("input, textarea, select")) return;
+      // The space bar still presses a button or follows a link outside the example's card.
+      if (
+        event.key === " " &&
+        event.target.closest("button, a") &&
+        !event.target.closest("[data-example]")
+      )
         return;
       event.preventDefault();
-      if (event.repeat) return;
       setHeldKeys((held) => new Set(held).add(event.key));
-      steer(found);
+      if (found && !event.repeat) callTurn(found);
+      if (!found) callStep();
     };
     const handleKeyUp = (event: KeyboardEvent) =>
       setHeldKeys((held) => new Set([...held].filter((key) => key !== event.key)));
@@ -329,6 +322,17 @@ export const SnakeGame = (props: SnakeGameProps) => {
     };
   });
   const steps = search?.states.flatMap((state) => state.call ?? []) ?? [];
+  const stepCount = calls.filter((call) => call === "step").length;
+  const hasEaten = snake.body.length > START.body.length;
+  // The goal the reader is on: move, eat, turn back, then hand over to TLA-ts.
+  const stage =
+    hasBug || props.isRunning
+      ? 3
+      : stepCount === 0
+        ? 0
+        : hasEaten || stepCount >= HINT_STEPS
+          ? 2
+          : 1;
   const heading = DIRECTIONS.indexOf(snake.direction);
   // The two keys that turn a snake heading straight back on itself: a quarter turn, then on
   // to the way it came from.
@@ -336,21 +340,13 @@ export const SnakeGame = (props: SnakeGameProps) => {
     heading % 2 === 0
       ? ([DIRECTIONS[(heading + 6) % 8], DIRECTIONS[(heading + 4) % 8]] as const)
       : undefined;
-  const showBug = () =>
-    setSnake((current) => {
-      const from = DIRECTIONS.indexOf(current.direction);
-      return turn(turn(current, DIRECTIONS[(from + 2) % 8]), DIRECTIONS[(from + 4) % 8]);
-    });
-  const hasEaten = snake.body.length > START.body.length;
-  // The goal the reader is on: start, eat, turn back, then hand over to TLA-ts.
-  const stage =
-    hasBug || props.isRunning ? 3 : !isMoving ? 0 : hasEaten || stepCount >= HINT_STEPS ? 2 : 1;
-  const shownApple = getCenter(isReplayShown ? shown.apple : apple);
+  const shownApple = getCenter(isReplayShown ? shown.apple : settled.apple);
+  const space = <KeyCap isLit={heldKeys.has(" ")}>Space</KeyCap>;
   return (
     <div className="flex w-full flex-wrap gap-x-7 gap-y-6 pt-1 pb-4">
       <div
         ref={boardRef}
-        // A click heads the snake for the eighth of a turn nearest to it.
+        // A click turns the snake to the eighth of a turn nearest to it.
         onClick={(event) => {
           const box = event.currentTarget.getBoundingClientRect();
           const head = getCenter(snake.body[0]);
@@ -358,7 +354,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
             ((event.clientX - box.left) / box.width) * BOARD - head.x,
             head.y - ((event.clientY - box.top) / box.width) * BOARD,
           );
-          steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
+          callTurn(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
           "mb-1 w-full max-w-[352px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
@@ -452,9 +448,9 @@ export const SnakeGame = (props: SnakeGameProps) => {
           ))}
         </svg>
       </div>
-      {/* The column keeps the board's height, with its link at the foot, so that a longer line
+      {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
           or the tree moves nothing. */}
-      <div className="flex min-h-28 min-w-52 flex-1 flex-col gap-4 self-stretch sm:min-h-44">
+      <div className="flex min-h-28 min-w-52 flex-1 flex-col gap-3 self-stretch sm:min-h-44">
         {isReplayShown ? (
           <>
             {/* The tree comes first, so the lines under it can grow without moving it. */}
@@ -469,7 +465,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               className="text-sm text-pretty text-muted-foreground tabular-nums"
             >
               {props.isRunning ? (
-                "TLA-ts is trying every move the code allows."
+                "TLA-ts is trying every order of calls the code allows."
               ) : isReplaying ? (
                 `TLA-ts is trying state ${Math.min(replay.index + 1, tried.length)} of ${tried.length}.`
               ) : (
@@ -486,20 +482,18 @@ export const SnakeGame = (props: SnakeGameProps) => {
                   <Button variant="link" size="inline" onClick={() => props.onShowCode("tla")}>
                     TLA+
                   </Button>
-                  , tried {tried.length} states, and broke it in {steps.length} moves:
-                  <span className="mt-1 block font-mono text-xs text-foreground">
-                    {steps.join(", ")}
-                  </span>
+                  , tried {tried.length} states, and found the same calls:
                 </>
               )}
             </p>
+            {!isReplaying && !props.isRunning && <Calls calls={steps} isBroken />}
           </>
         ) : (
           <>
             <ol className="flex flex-col gap-2.5">
               {GOALS.map((goal, index) => {
                 // A goal the reader went past without reaching is left unticked.
-                const isDone = index < stage && [isMoving, hasEaten, hasBug][index];
+                const isDone = index < stage && [stepCount > 0, hasEaten, hasBug][index];
                 const isCurrent = index === stage;
                 const isBug = index === 2 && hasBug;
                 return (
@@ -524,107 +518,120 @@ export const SnakeGame = (props: SnakeGameProps) => {
                         index + 1
                       )}
                     </span>
-                    <div className="flex min-w-0 flex-col">
-                      <span
-                        className={cn(
-                          "transition-colors duration-200 ease-out",
-                          isBug ? "text-destructive" : isCurrent ? "text-foreground" : "text-faint",
-                        )}
-                      >
-                        {isBug ? "Bug: it turned back" : goal}
-                      </span>
-                    </div>
+                    <span
+                      className={cn(
+                        "transition-colors duration-200 ease-out",
+                        isBug ? "text-destructive" : isCurrent ? "text-foreground" : "text-faint",
+                      )}
+                    >
+                      {isBug ? "Bug: it turned back" : goal}
+                    </span>
                   </li>
                 );
               })}
             </ol>
             {/* The help for the goal in hand has its own place under the list, tall enough for the
-              longest of it, so that moving on to the next goal moves no goal. */}
-            <div className="min-h-28">
+                longest of it, so that moving on to the next goal moves no goal. */}
+            <div className="min-h-[4.5rem]">
               <p
-                aria-live="polite"
                 key={stage}
+                aria-live="polite"
                 className="text-sm text-pretty text-muted-foreground motion-safe:animate-chip-in"
               >
                 {stage === 0 &&
                   (isTouch ? (
-                    "Tap the board."
+                    "It waits for you. Press Step to move it one square."
                   ) : (
-                    <>
-                      Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
-                      <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                      <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap>
-                    </>
+                    <>It waits for you. Press {space} to move it one square.</>
                   ))}
                 {stage === 1 &&
                   (isTouch ? (
-                    "Tap where it should head."
+                    "Tap the board to turn it, and press Step to move."
                   ) : (
                     <>
-                      Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
+                      Turn with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
                       <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
                       <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                      <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click.
+                      <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> and move with {space}.
                     </>
                   ))}
                 {stage === 2 &&
                   (isLost ? (
-                    `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press an arrow key"} to play again.`
-                  ) : (
+                    `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press a key"} to play again.`
+                  ) : isTouch ? (
+                    "It cannot turn back in one turn. Tap beside it, tap behind it, then press Step."
+                  ) : recipe ? (
                     <>
-                      Two turns before it moves send it backwards.{" "}
-                      {isTouch ? (
-                        "Tap two places quickly."
-                      ) : recipe ? (
-                        <>
-                          Quickly press{" "}
-                          <KeyCap isLit={heldKeys.has(recipe[0].key ?? "")}>
-                            {recipe[0].glyph}
-                          </KeyCap>{" "}
-                          then{" "}
-                          <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>
-                            {recipe[1].glyph}
-                          </KeyCap>
-                          .
-                        </>
-                      ) : (
-                        "Straighten it with an arrow key first."
-                      )}
-                      <span className="mt-2.5 block">
-                        <Button onClick={showBug} className="pl-2 text-foreground">
-                          <Play weight="fill" className="size-3" />
-                          Show me
-                        </Button>
-                      </span>
+                      One turn cannot do it. Two can: press{" "}
+                      <KeyCap isLit={heldKeys.has(recipe[0].key ?? "")}>{recipe[0].glyph}</KeyCap>,{" "}
+                      <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>{recipe[1].glyph}</KeyCap>,
+                      then {space}.
                     </>
+                  ) : (
+                    "One turn cannot do it. Straighten the snake with an arrow key first."
                   ))}
                 {stage === 3 &&
                   (props.isRunning
-                    ? "TLA-ts is trying every move the code allows."
-                    : "Would your tests have tried that? Press the run button below.")}
+                    ? "TLA-ts is trying every order of calls the code allows."
+                    : "Three calls broke it. Press run, and TLA-ts finds them without being told.")}
               </p>
             </div>
+            <Calls calls={calls} isBroken={hasBug} />
           </>
         )}
-        {(isMoving || isReplayShown) && !isReplaying && (
-          <Button
-            variant="link"
-            size="inline"
-            onClick={() => {
-              setSnake(START);
-              setApple(START.apple);
-              setStepCount(0);
-              setIsMoving(false);
-              setIsOver(false);
-              props.onBugChange(false);
-              setReplay(replay && { ...replay, index: -1 });
-            }}
-            className="mt-auto self-start text-sm"
-          >
-            Reset
-          </Button>
-        )}
+        <div className="mt-auto flex items-center gap-4">
+          {!isReplayShown && (
+            <Button disabled={hasBug} onClick={callStep} className="pr-1.5 text-foreground">
+              Step
+              <kbd className="rounded-sm bg-muted px-1 py-0.5 font-sans text-xs text-muted-foreground max-sm:hidden pointer-coarse:hidden">
+                Space
+              </kbd>
+            </Button>
+          )}
+          {(calls.length > 0 || isReplayShown) && !isReplaying && (
+            <Button
+              variant="link"
+              size="inline"
+              onClick={() => restart(START, [])}
+              className="text-sm"
+            >
+              Reset
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
 };
+
+interface CallsProps {
+  calls: string[];
+  isBroken: boolean;
+}
+
+// The calls made to the game's two functions, newest last. The reader's and TLA-ts's are set
+// the same way, so that one reads as the other.
+const Calls = (props: CallsProps) => (
+  <ol
+    aria-label="Calls"
+    className="flex min-h-[3.25rem] flex-wrap content-start gap-1 font-mono text-xs"
+  >
+    {props.calls.length > SHOWN_CALLS && <li className="px-0.5 py-0.5 text-faint">...</li>}
+    {props.calls
+      .map((call, index) => ({ call, order: index }))
+      .slice(-SHOWN_CALLS)
+      .map((item, index, shownCalls) => (
+        <li
+          key={item.order}
+          className={cn(
+            "rounded-md border px-1.5 py-0.5 motion-safe:animate-chip-in",
+            props.isBroken && index >= shownCalls.length - 3
+              ? "border-transparent bg-destructive/15 text-destructive"
+              : "text-foreground",
+          )}
+        >
+          {item.call}
+        </li>
+      ))}
+  </ol>
+);
