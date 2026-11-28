@@ -115,8 +115,19 @@ export const createTraceBuilder = (context: TraceContext) => {
   ) => {
     const searchLevel = runtime.getLevel;
     const searchBehavior = runtime.getBehavior;
-    runtime.getLevel = () => level;
-    runtime.getBehavior = getBehavior;
+    const getAliasLevel = () => level;
+    const getAliasBehavior = () => {
+      runtime.getLevel = searchLevel;
+      runtime.getBehavior = searchBehavior;
+      try {
+        return getBehavior();
+      } finally {
+        runtime.getLevel = getAliasLevel;
+        runtime.getBehavior = getAliasBehavior;
+      }
+    };
+    runtime.getLevel = getAliasLevel;
+    runtime.getBehavior = getAliasBehavior;
     try {
       return captureOutput(() =>
         search.evaluateAlias(alias, state, successor, options.isTool ?? false),
