@@ -164,7 +164,7 @@ export const Maze = (props: MazeProps) => {
           <div
             aria-hidden
             className={cn(
-              "pointer-events-none absolute inset-0 flex items-center justify-center bg-card/75 transition-opacity duration-200 ease-out motion-reduce:transition-none",
+              "pointer-events-none absolute inset-0 flex items-center justify-center bg-card/40 backdrop-blur-[3px] transition-opacity duration-200 ease-out motion-reduce:transition-none",
               hasPlayed && "opacity-0",
             )}
           >
