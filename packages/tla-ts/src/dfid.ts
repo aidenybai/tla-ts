@@ -65,6 +65,7 @@ export type DepthFirstOutput =
 interface StateEntry {
   state: Value[];
   fingerprint: bigint;
+  level: number;
 }
 
 interface CheckerState {
@@ -268,9 +269,17 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
               getFingerprintDistance([...statuses.keys()], fingerprintSet.buckets),
             ),
     });
-  const levels = new WeakMap<(Value | undefined)[], number>();
+  let evaluatedState: Value[] | undefined;
+  let evaluatedLevel = 0;
+  let checkedSuccessor: Value[] | undefined;
+  const getStateLevel = (state: (Value | undefined)[]) =>
+    state === evaluatedState
+      ? evaluatedLevel
+      : state === checkedSuccessor
+        ? evaluatedLevel + 1
+        : undefined;
   let currentState: Value[] | undefined;
-  runtime.getLevel = (state) => levels.get(state) ?? 0;
+  runtime.getLevel = (state) => getStateLevel(state) ?? 0;
   runtime.getCurrentState = () => currentState;
 
   const initialEntries: StateEntry[] = [];
@@ -307,14 +316,15 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         return MESSAGE_CODE.initialStateIncomplete;
       }
       errorState = state;
-      levels.set(state, 1);
+      evaluatedState = state;
+      evaluatedLevel = 1;
       const isInModel = search.satisfiesConstraints(state);
       if (isInModel) search.trackStatePossible(state);
       const fingerprint = isInModel ? runtime.getFingerprint(state) : 0n;
       const status = isInModel ? setStatus(fingerprint, 0) : 0;
       if (status !== 0) continue;
       if (isInModel) {
-        initialEntries.push({ state, fingerprint });
+        initialEntries.push({ state, fingerprint, level: 1 });
         stateWriter?.writeInitialState(search.getGraphState(state, fingerprint, 1, isTool));
       }
       const alias = () =>
@@ -432,7 +442,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const successorStack: StateEntry[][] = [];
   // Deviation from TLC: DFIDModelChecker sets no current state, so TLCExt#getTrace throws a NullPointerException past an initial state.
   runtime.getBehavior = (state) => [
-    ...stack.slice(0, (levels.get(state) ?? 1) - 1).map((entry) => entry.state),
+    ...stack.slice(0, (getStateLevel(state) ?? 1) - 1).map((entry) => entry.state),
     state,
   ];
   const printTrace = (
@@ -471,6 +481,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {
     const entry = stack[depth];
     const state = entry.state;
+    evaluatedState = state;
+    evaluatedLevel = entry.level;
     const source = stateWriter && search.getGraphState(state, entry.fingerprint, depth + 1, isTool);
     let isDeadlocked = true;
     let isAllDone = true;
@@ -492,7 +504,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         isDeadlocked &&= next.count === 0;
         for (const successor of next.successors) {
           processedSuccessor = successor;
-          levels.set(successor, depth + 2);
+          checkedSuccessor = successor;
           const isStateInModel = search.satisfiesConstraints(successor, state);
           if (isStateInModel) search.trackStatePossible(successor);
           const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor);
@@ -511,7 +523,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
             }
             if (!isCompleted(status)) {
               if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-              successors.push({ state: successor, fingerprint });
+              successors.push({ state: successor, fingerprint, level: depth + 2 });
             }
           }
           const failure = findCheckFailure(state, successor, status === 0);
@@ -638,7 +650,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   };
   const replayExpansion = (entry: StateEntry) => {
     const tracing = createTracingEnvironment(environment);
-    const level = runtime.getLevel(entry.state);
+    const level = entry.level;
+    evaluatedState = entry.state;
+    evaluatedLevel = level;
     const source =
       stateWriter && search.getGraphState(entry.state, entry.fingerprint, level, isTool);
     try {
