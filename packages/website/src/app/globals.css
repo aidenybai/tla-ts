@@ -146,6 +146,7 @@
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
+  --animate-line-in: line-in 250ms ease-out backwards;
   --animate-shake: shake 400ms ease-in-out;
   --animate-drop-in: drop-in 300ms cubic-bezier(0.3, 1.3, 0.5, 1) backwards;
   --animate-pulse-ring: pulse-ring 1400ms ease-out infinite;
@@ -355,6 +356,12 @@
     40%,
     80% {
       translate: 3px 0;
+    }
+  }
+
+  @keyframes line-in {
+    from {
+      opacity: 0;
     }
   }
 

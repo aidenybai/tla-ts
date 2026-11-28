@@ -1,6 +1,6 @@
 import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search } from "@/lib/search";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,6 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 // The board of the example's code, and its two moves, with the mistake in `dash`.
 const MAP = [".......", ".......", "..###..", "..#$#..", "..###..", ".......", "......."];
 const SIZE = MAP.length;
-const CELL = 10;
-const BOARD = SIZE * CELL;
 const START = { x: 0, y: 6 };
 const GOLD = { x: 3, y: 3 };
 // How long TLA-ts's flood takes to reach each next square.
@@ -19,13 +17,9 @@ const FLOOD_MS = 70;
 // The calls after which a reader who has not found the way in is told where to look.
 const HINT_CALLS = 10;
 const SHOWN_CALLS = 6;
-// How far a wall stands up from the ground, as the board is seen from a little in front.
-const LIFT = 3.4;
-// A pale sandbox: white boxes with crisp blue edges on a ground ruled in the same blue.
-const LINE_CLASS_NAME = "stroke-[oklch(62%_0.19_255)] dark:stroke-[oklch(72%_0.15_255)]";
-const GROUND_CLASS_NAME =
-  "fill-[oklch(98.5%_0.004_250)] stroke-[oklch(62%_0.19_255)]/15 dark:fill-[oklch(19%_0.012_255)] dark:stroke-[oklch(72%_0.15_255)]/20";
-const FLOOD_CLASS_NAME = "fill-[oklch(62%_0.19_255)]/20 dark:fill-[oklch(72%_0.15_255)]/25";
+const CELL = 10;
+const BOARD = SIZE * CELL;
+const CORNER = 5;
 
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", angle: 0 },
@@ -58,6 +52,12 @@ const getKey = (square: Square) => `${square.x} ${square.y}`;
 
 const SQUARES = MAP.flatMap((row, y) => [...row].map((kind, x) => ({ x, y, kind })));
 
+// The lines between the squares, as places across the board.
+const LINES = Array.from({ length: SIZE - 1 }, (_line, index) => (index + 1) * CELL);
+
+const getPoints = (squares: Square[]) =>
+  squares.map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`).join(" ");
+
 const GOALS = ["Move around", "Reach the gold", "Let TLA-ts find the way"];
 
 interface MazeProps {
@@ -76,6 +76,9 @@ interface MazeProps {
 export const Maze = (props: MazeProps) => {
   const [player, setPlayer] = useState(START);
   const [facing, setFacing] = useState<Direction>(DIRECTIONS[0]);
+  // The squares the reader has stood on, in order, which the board draws as their way.
+  const [trail, setTrail] = useState<Square[]>([START]);
+  const clipId = useId();
   // The calls the reader has made, in the words of the code.
   const [calls, setCalls] = useState<string[]>([]);
   const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
@@ -89,6 +92,7 @@ export const Maze = (props: MazeProps) => {
     setIsFloodHidden(false);
     // The player goes back to the start, where the search begins, and off the gold.
     setPlayer(START);
+    setTrail([START]);
   }
   // A second run keeps the first one's flood on the board until its own arrives.
   const search = isFloodHidden ? undefined : flood?.search;
@@ -119,6 +123,7 @@ export const Maze = (props: MazeProps) => {
 
   const restart = () => {
     setPlayer(START);
+    setTrail([START]);
     setFacing(DIRECTIONS[0]);
     setCalls([]);
     setIsFloodHidden(true);
@@ -130,6 +135,7 @@ export const Maze = (props: MazeProps) => {
     const from = hasBug || search !== undefined ? START : player;
     const next = go(from, direction, squares);
     setPlayer(next);
+    setTrail(from === player ? (next === from ? trail : [...trail, next]) : [START, next]);
     setFacing(direction);
     setIsFloodHidden(true);
     const made = `${squares === 1 ? "move" : "dash"}("${direction.name}")`;
@@ -177,154 +183,137 @@ export const Maze = (props: MazeProps) => {
       <div
         ref={boardRef}
         className={cn(
-          "relative mb-1 w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-lg ring-1 ring-[oklch(62%_0.19_255)]/25 select-none",
+          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
         <svg
           role="img"
           aria-label="A maze with a player in one corner and gold walled in at its middle. The arrow keys move the player."
-          viewBox={`0 0 ${BOARD} ${BOARD}`}
+          viewBox={`-1 -1 ${BOARD + 2} ${BOARD + 2}`}
           className="block w-full"
         >
-          {SQUARES.map((square) => {
-            const order = reached.findIndex((found) => isSame(found, square));
-            const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
-            return (
-              <g key={getKey(square)}>
-                <rect
-                  x={square.x * CELL}
-                  y={square.y * CELL}
-                  width={CELL}
-                  height={CELL}
-                  strokeWidth={0.3}
-                  // A click on a square in line with the player moves there, or dashes there.
-                  onClick={() => {
-                    const direction = DIRECTIONS.find(
-                      (found) =>
-                        Math.sign(square.x - player.x) === found.move[0] &&
-                        Math.sign(square.y - player.y) === found.move[1],
-                    );
-                    if (direction && (distance === 1 || distance === 2)) call(direction, distance);
-                  }}
-                  className={cn("cursor-pointer", GROUND_CLASS_NAME)}
-                />
-                {order >= 0 && (
+          <defs>
+            <clipPath id={clipId}>
+              <rect width={BOARD} height={BOARD} rx={CORNER} />
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#${clipId})`}>
+            {SQUARES.map((square) => {
+              const order = reached.findIndex((found) => isSame(found, square));
+              const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
+              return (
+                <g key={getKey(square)}>
                   <rect
-                    x={square.x * CELL + 0.9}
-                    y={square.y * CELL + 0.9}
-                    width={CELL - 1.8}
-                    height={CELL - 1.8}
-                    rx={1.4}
-                    style={{ animationDelay: `${order * FLOOD_MS}ms` }}
+                    x={square.x * CELL}
+                    y={square.y * CELL}
+                    width={CELL}
+                    height={CELL}
+                    // A click on a square in line with the player moves there, or dashes there.
+                    onClick={() => {
+                      const direction = DIRECTIONS.find(
+                        (found) =>
+                          Math.sign(square.x - player.x) === found.move[0] &&
+                          Math.sign(square.y - player.y) === found.move[1],
+                      );
+                      if (direction && (distance === 1 || distance === 2))
+                        call(direction, distance);
+                    }}
                     className={cn(
-                      "pointer-events-none origin-center [transform-box:fill-box] motion-safe:animate-chip-in",
-                      reached[order].isFailing ? "fill-destructive/45" : FLOOD_CLASS_NAME,
+                      "cursor-pointer",
+                      square.kind === "#" ? "fill-foreground/85" : "fill-background",
                     )}
                   />
-                )}
-              </g>
-            );
-          })}
-          {/* The walls are boxes seen from a little in front, drawn row by row so that a nearer
-              one stands over the one behind it. */}
-          {SQUARES.map((square) =>
-            square.kind === "#" ? (
-              <g
-                key={getKey(square)}
-                strokeWidth={0.45}
-                strokeLinejoin="round"
-                className="pointer-events-none"
-              >
-                <rect
-                  x={square.x * CELL + 0.8}
-                  y={square.y * CELL + CELL - 0.4}
-                  width={CELL}
-                  height={1.8}
-                  className="fill-black/10 stroke-none"
-                />
-                <rect
-                  x={square.x * CELL}
-                  y={square.y * CELL + CELL - LIFT}
-                  width={CELL}
-                  height={LIFT}
-                  className={cn(
-                    "fill-[oklch(93%_0.012_250)] dark:fill-[oklch(22%_0.015_255)]",
-                    LINE_CLASS_NAME,
+                  {order >= 0 && (
+                    <rect
+                      x={square.x * CELL}
+                      y={square.y * CELL}
+                      width={CELL}
+                      height={CELL}
+                      style={{ animationDelay: `${order * FLOOD_MS}ms` }}
+                      className={cn(
+                        "pointer-events-none motion-safe:animate-line-in",
+                        reached[order].isFailing ? "fill-destructive/25" : "fill-success/20",
+                      )}
+                    />
                   )}
-                />
-                <rect
-                  x={square.x * CELL}
-                  y={square.y * CELL - LIFT}
-                  width={CELL}
-                  height={CELL}
-                  className={cn("fill-white dark:fill-[oklch(28%_0.015_255)]", LINE_CLASS_NAME)}
-                />
-              </g>
-            ) : null,
-          )}
-          {/* The gold shows whole, over the wall in front of it. */}
-          <g
-            transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2 - 0.4})`}
-            strokeWidth={0.35}
-            className="pointer-events-none stroke-[oklch(48%_0.1_75)]"
-          >
-            <ellipse cy={2.6} rx={3.3} ry={1.2} className="fill-black/15 stroke-none" />
-            <ellipse cy={1.4} rx={2.8} ry={1.35} className="fill-[oklch(74%_0.15_82)]" />
-            <ellipse cy={0.3} rx={2.8} ry={1.35} className="fill-[oklch(80%_0.16_88)]" />
-            <ellipse cy={-0.8} rx={2.8} ry={1.35} className="fill-[oklch(88%_0.16_94)]" />
-            <ellipse cx={-0.8} cy={-1.05} rx={1} ry={0.35} className="fill-white/70 stroke-none" />
+                </g>
+              );
+            })}
+            {LINES.map((line) => (
+              <path
+                key={line}
+                d={`M${line} 0V${BOARD}M0 ${line}H${BOARD}`}
+                strokeWidth={0.5}
+                className="pointer-events-none stroke-input"
+              />
+            ))}
           </g>
-          {path && flood?.isDone && (
-            <polyline
-              points={path
-                .map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`)
-                .join(" ")}
+          <rect
+            width={BOARD}
+            height={BOARD}
+            rx={CORNER}
+            fill="none"
+            strokeWidth={0.7}
+            className="pointer-events-none stroke-faint"
+          />
+          <g
+            fill="none"
+            strokeWidth={6.2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="pointer-events-none"
+          >
+            {/* The reader's own way across the board, and then the way TLA-ts found. */}
+            {search === undefined ? (
+              <polyline
+                points={getPoints(trail)}
+                className={cn(
+                  "transition-colors duration-200 ease-out",
+                  hasBug ? "stroke-destructive/55" : "stroke-success/55",
+                )}
+              />
+            ) : (
+              path &&
+              flood?.isDone && (
+                <polyline
+                  points={getPoints(path)}
+                  className="stroke-destructive/55 motion-safe:animate-line-in"
+                />
+              )
+            )}
+          </g>
+          <g
+            transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2})`}
+            className="pointer-events-none"
+          >
+            <circle r={3.3} className="fill-[oklch(80%_0.16_88)]" />
+            <circle
+              r={2.1}
               fill="none"
-              strokeWidth={1.4}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray="0.1 2.6"
-              className="pointer-events-none stroke-destructive motion-safe:animate-chip-in"
+              strokeWidth={0.55}
+              className="stroke-[oklch(62%_0.14_78)]"
             />
-          )}
+          </g>
           <g
             style={{
               translate: `${player.x * CELL + CELL / 2}px ${player.y * CELL + CELL / 2}px`,
             }}
-            strokeWidth={0.45}
-            className="pointer-events-none stroke-[oklch(36%_0.08_50)] transition-[translate] duration-150 ease-out motion-reduce:transition-none"
+            className="pointer-events-none transition-[translate] duration-150 ease-out motion-reduce:transition-none"
           >
-            <ellipse cy={3.3} rx={3.2} ry={1.2} className="fill-black/15 stroke-none" />
-            <rect
-              x={-3.3}
-              y={-3.6}
-              width={6.6}
-              height={6.6}
-              rx={2.4}
-              className={
-                hasBug && search === undefined ? "fill-destructive" : "fill-[oklch(74%_0.17_58)]"
-              }
+            <circle
+              r={3.5}
+              className={cn(
+                "transition-colors duration-200 ease-out",
+                hasBug && search === undefined ? "fill-destructive" : "fill-foreground",
+              )}
             />
-            <rect
-              x={-2.5}
-              y={-3}
-              width={3.4}
-              height={1.3}
-              rx={0.65}
-              className="fill-white/35 stroke-none"
-            />
-            <g transform={`rotate(${facing.angle})`} className="stroke-none">
-              <rect
-                x={-2.3}
-                y={-2.2}
-                width={4.6}
-                height={2.2}
-                rx={1.1}
-                className="fill-[oklch(24%_0.03_255)]"
-              />
-              <circle cx={-1.05} cy={-1.1} r={0.55} className="fill-white" />
-              <circle cx={1.05} cy={-1.1} r={0.55} className="fill-white" />
+            <g
+              style={{ translate: `${facing.move[0] * 0.8}px ${facing.move[1] * 0.8}px` }}
+              className="fill-background transition-[translate] duration-150 ease-out"
+            >
+              <circle cx={-1.25} r={0.75} />
+              <circle cx={1.25} r={0.75} />
             </g>
           </g>
         </svg>
