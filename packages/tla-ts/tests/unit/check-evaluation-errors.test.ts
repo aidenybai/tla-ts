@@ -2514,14 +2514,14 @@ describe("evaluation errors match TLC", () => {
     "evaluates the action of ENABLED on a counterexample as TLC %s does",
     async (version, count) => {
       const prints: string[] = [];
-      await check({
+      const result = await check({
         source:
           '---- MODULE M ----\nEXTENDS TLC\nVARIABLE y\nInit == y = 0\nA == y\' = 0 /\\ PrintT("A")\nNext == A\nProp == [](ENABLED A => <>FALSE)\n====',
         config: "INIT Init\nNEXT Next\nPROPERTY Prop",
         version,
         onPrint: (text) => prints.push(text),
       });
-      expect(prints).toHaveLength(count);
+      expect([...prints, ...(result.violation?.trace[0].output ?? [])]).toHaveLength(count);
     },
   );
 
