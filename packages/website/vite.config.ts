@@ -432,7 +432,7 @@ const logoFiles = (): Plugin => ({
 });
 
 // Each route but / is built from the HTML file of its name.
-const ROUTES = ["/playground"];
+const ROUTES = ["/playground", "/video"];
 const ORIGIN = "https://tla-ts.com";
 const EMPTY_ROOT = '<div id="root"></div>';
 const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;

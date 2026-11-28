@@ -58,6 +58,8 @@ uniform float uFlat;
 // centre height, half width, half height, corner. Zero width for none.
 uniform vec4 uVisor;
 uniform vec3 uCamera;
+// How far from the camera things start to fade into the void, and where they are gone.
+uniform vec2 uFog;
 out vec4 fragment;
 
 // The void things fade into, and every line's colour, set for the theme.
@@ -108,7 +110,7 @@ float grid(vec2 at, float size) {
 
 void main() {
   float distance = length(uCamera - vWorld);
-  float fog = smoothstep(22.0, 70.0, distance);
+  float fog = smoothstep(uFog.x, uFog.y, distance);
 
   if (uKind == ${KIND.shadow}) {
     // A soft shadow in its tone (black, or a tint), blended over the ground.
@@ -266,6 +268,33 @@ const getParallel = (reach: number, aspect: number, near: number, far: number) =
     1,
   ]);
 
+// A view with a vanishing point, which shows `reach` as half its height at `distance`.
+const getPerspective = (
+  reach: number,
+  aspect: number,
+  distance: number,
+  near: number,
+  far: number,
+) =>
+  new Float32Array([
+    distance / (reach * aspect),
+    0,
+    0,
+    0,
+    0,
+    distance / reach,
+    0,
+    0,
+    0,
+    0,
+    (far + near) / (near - far),
+    -1,
+    0,
+    0,
+    (2 * far * near) / (near - far),
+    0,
+  ]);
+
 // The camera's own axes: to its right, up, and back from what it looks at.
 export const getCameraAxes = (eye: Vec3, target: Vec3) => {
   const away = { x: eye.x - target.x, y: eye.y - target.y, z: eye.z - target.z };
@@ -354,6 +383,7 @@ export const createRenderer = (canvas: HTMLCanvasElement) => {
     flat: gl.getUniformLocation(program, "uFlat"),
     visor: gl.getUniformLocation(program, "uVisor"),
     camera: gl.getUniformLocation(program, "uCamera"),
+    fog: gl.getUniformLocation(program, "uFog"),
     void: gl.getUniformLocation(program, "uVoid"),
     line: gl.getUniformLocation(program, "uLine"),
   };
@@ -380,7 +410,7 @@ export const createRenderer = (canvas: HTMLCanvasElement) => {
 
   // Clears the canvas at its size on the page and sets the camera. Returns its width over its
   // height.
-  const begin = (eye: Vec3, target: Vec3, reach: number) => {
+  const begin = (eye: Vec3, target: Vec3, reach: number, isPerspective = false, fog = [22, 70]) => {
     const ratio = Math.min(devicePixelRatio, 2);
     const width = Math.round(canvas.clientWidth * ratio);
     const height = Math.round(canvas.clientHeight * ratio);
@@ -394,9 +424,21 @@ export const createRenderer = (canvas: HTMLCanvasElement) => {
     gl.uniformMatrix4fv(
       uniforms.viewProjection,
       false,
-      multiply(getParallel(reach, aspect, 0.3, 120), getView(eye, target)),
+      multiply(
+        isPerspective
+          ? getPerspective(
+              reach,
+              aspect,
+              Math.hypot(eye.x - target.x, eye.y - target.y, eye.z - target.z),
+              0.3,
+              Math.max(120, fog[1] * 1.5),
+            )
+          : getParallel(reach, aspect, 0.3, 120),
+        getView(eye, target),
+      ),
     );
     gl.uniform3f(uniforms.camera, eye.x, eye.y, eye.z);
+    gl.uniform2f(uniforms.fog, fog[0], fog[1]);
     const theme = isDark() ? THEMES.dark : THEMES.light;
     gl.uniform3fv(uniforms.void, theme.void);
     gl.uniform3fv(uniforms.line, theme.line);

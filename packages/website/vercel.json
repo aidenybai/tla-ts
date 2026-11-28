@@ -20,6 +20,10 @@
     {
       "source": "/playground",
       "destination": "/playground.html"
+    },
+    {
+      "source": "/video",
+      "destination": "/video.html"
     }
   ],
   "headers": [

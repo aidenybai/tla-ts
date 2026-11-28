@@ -1,18 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Search, SearchState } from "@/lib/search";
+import { getPath, getTriedStates, type Search } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { MazeBoard } from "./maze-board";
-import { MAZE_HEART } from "./maze-scene";
+import { getStateSquare, MAZE_HEART } from "./maze-scene";
 import { SearchTree } from "./search-tree";
 
 // How long the robot spends on each move of the search it plays back.
 const TRY_MS = 230;
-
-const getSquare = (state: SearchState | undefined) => {
-  const values = new Map(state?.variables.map((variable) => [variable.name, variable.value]));
-  return { x: Number(values.get("x")), y: Number(values.get("y")) };
-};
 
 interface MazeReplayProps {
   search: Search;
@@ -32,14 +27,8 @@ export const MazeReplay = (props: MazeReplayProps) => {
     setPlayed(props.search);
     setAttempt(0);
   }
-  // The states the search reached, in the order it reached them, with the heart last.
-  const states = useMemo(() => {
-    const checked = props.search.checkedStates;
-    return [
-      ...checked.filter((state) => !state.isFailing),
-      ...checked.filter((state) => state.isFailing),
-    ];
-  }, [props.search]);
+  const states = useMemo(() => getTriedStates(props.search), [props.search]);
+  const statesById = useMemo(() => new Map(states.map((state) => [state.id, state])), [states]);
   const isDone = isReduced || attempt >= states.length;
   useEffect(() => {
     if (isDone) return;
@@ -53,8 +42,8 @@ export const MazeReplay = (props: MazeReplayProps) => {
     states.at(triedCount - 1);
   const parent = states.find((state) => state.id === tried?.parentId);
 
-  const square = getSquare(tried);
-  const cameFrom = parent && getSquare(parent);
+  const square = getStateSquare(tried);
+  const cameFrom = parent && getStateSquare(parent);
   return (
     <div className="flex flex-col gap-2">
       <MazeBoard
@@ -66,8 +55,8 @@ export const MazeReplay = (props: MazeReplayProps) => {
           trail: [],
           reached: states
             .slice(0, triedCount)
-            .map((state) => ({ ...getSquare(state), isFailing: state.isFailing })),
-          route: isDone ? props.search.states.map(getSquare) : undefined,
+            .map((state) => ({ ...getStateSquare(state), isFailing: state.isFailing })),
+          route: getPath(statesById, tried?.id).map(getStateSquare),
           isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
           isStill: isReduced,
         }}
