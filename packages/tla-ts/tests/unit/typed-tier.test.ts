@@ -597,6 +597,19 @@ describe("typed tier matches TLC", () => {
     ]).toEqual(["liveness-violation", ["Returns"], 6002, 6000]);
   });
 
+  it("rebuilds a lasso through every state of a large ring in one pass over the search's bits", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Fa ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nNext == x' = (x + 1) % K\nSpec == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nSettles == <>[](x = 0)\n====",
+      config: "SPECIFICATION Spec\nCONSTANT K = 80000\nPROPERTY Settles",
+    });
+    expect([result.status, result.violation?.trace.length, result.violation?.loopStart]).toEqual([
+      "liveness-violation",
+      80000,
+      0,
+    ]);
+  });
+
   it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
