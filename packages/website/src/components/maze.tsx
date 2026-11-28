@@ -1,6 +1,6 @@
 import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search } from "@/lib/search";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,9 @@ const HINT_CALLS = 10;
 const SHOWN_CALLS = 6;
 const CELL = 10;
 const BOARD = SIZE * CELL;
-const CORNER = 5;
+// One dark line goes round every shape, as in a cartoon.
+const INK_STROKE = "stroke-[oklch(27%_0.05_285)]";
+const INK_FILL = "fill-[oklch(27%_0.05_285)]";
 
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", angle: 0 },
@@ -52,9 +54,6 @@ const getKey = (square: Square) => `${square.x} ${square.y}`;
 
 const SQUARES = MAP.flatMap((row, y) => [...row].map((kind, x) => ({ x, y, kind })));
 
-// The lines between the squares, as places across the board.
-const LINES = Array.from({ length: SIZE - 1 }, (_line, index) => (index + 1) * CELL);
-
 const getPoints = (squares: Square[]) =>
   squares.map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`).join(" ");
 
@@ -78,7 +77,6 @@ export const Maze = (props: MazeProps) => {
   const [facing, setFacing] = useState<Direction>(DIRECTIONS[0]);
   // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
-  const clipId = useId();
   // The calls the reader has made, in the words of the code.
   const [calls, setCalls] = useState<string[]>([]);
   const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
@@ -183,138 +181,177 @@ export const Maze = (props: MazeProps) => {
       <div
         ref={boardRef}
         className={cn(
-          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start select-none",
+          "relative mb-1.5 w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-2xl border-[3px] border-[oklch(27%_0.05_285)] shadow-[0_5px_0_oklch(27%_0.05_285)] select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
         <svg
           role="img"
           aria-label="A maze with a player in one corner and gold walled in at its middle. The arrow keys move the player."
-          viewBox={`-1 -1 ${BOARD + 2} ${BOARD + 2}`}
+          viewBox={`0 0 ${BOARD} ${BOARD}`}
+          strokeLinejoin="round"
+          strokeLinecap="round"
           className="block w-full"
         >
-          <defs>
-            <clipPath id={clipId}>
-              <rect width={BOARD} height={BOARD} rx={CORNER} />
-            </clipPath>
-          </defs>
-          <g clipPath={`url(#${clipId})`}>
-            {SQUARES.map((square) => {
-              const order = reached.findIndex((found) => isSame(found, square));
-              const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
-              return (
-                <g key={getKey(square)}>
+          {SQUARES.map((square) => {
+            const order = reached.findIndex((found) => isSame(found, square));
+            const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
+            return (
+              <g key={getKey(square)}>
+                <rect
+                  x={square.x * CELL}
+                  y={square.y * CELL}
+                  width={CELL}
+                  height={CELL}
+                  // A click on a square in line with the player moves there, or dashes there.
+                  onClick={() => {
+                    const direction = DIRECTIONS.find(
+                      (found) =>
+                        Math.sign(square.x - player.x) === found.move[0] &&
+                        Math.sign(square.y - player.y) === found.move[1],
+                    );
+                    if (direction && (distance === 1 || distance === 2)) call(direction, distance);
+                  }}
+                  className={cn(
+                    "cursor-pointer",
+                    (square.x + square.y) % 2 === 0
+                      ? "fill-[oklch(87%_0.14_135)] dark:fill-[oklch(50%_0.11_140)]"
+                      : "fill-[oklch(83%_0.15_135)] dark:fill-[oklch(46%_0.11_140)]",
+                  )}
+                />
+                {order >= 0 && (
                   <rect
-                    x={square.x * CELL}
-                    y={square.y * CELL}
-                    width={CELL}
-                    height={CELL}
-                    // A click on a square in line with the player moves there, or dashes there.
-                    onClick={() => {
-                      const direction = DIRECTIONS.find(
-                        (found) =>
-                          Math.sign(square.x - player.x) === found.move[0] &&
-                          Math.sign(square.y - player.y) === found.move[1],
-                      );
-                      if (direction && (distance === 1 || distance === 2))
-                        call(direction, distance);
-                    }}
+                    x={square.x * CELL + 1}
+                    y={square.y * CELL + 1}
+                    width={CELL - 2}
+                    height={CELL - 2}
+                    rx={2.2}
+                    style={{ animationDelay: `${order * FLOOD_MS}ms` }}
                     className={cn(
-                      "cursor-pointer",
-                      square.kind === "#" ? "fill-foreground/85" : "fill-background",
+                      "pointer-events-none origin-center [transform-box:fill-box] motion-safe:animate-chip-in",
+                      reached[order].isFailing ? "fill-destructive/70" : "fill-white/55",
                     )}
                   />
-                  {order >= 0 && (
-                    <rect
-                      x={square.x * CELL}
-                      y={square.y * CELL}
-                      width={CELL}
-                      height={CELL}
-                      style={{ animationDelay: `${order * FLOOD_MS}ms` }}
-                      className={cn(
-                        "pointer-events-none motion-safe:animate-line-in",
-                        reached[order].isFailing ? "fill-destructive/25" : "fill-success/20",
-                      )}
-                    />
-                  )}
-                </g>
-              );
-            })}
-            {LINES.map((line) => (
-              <path
-                key={line}
-                d={`M${line} 0V${BOARD}M0 ${line}H${BOARD}`}
-                strokeWidth={0.5}
-                className="pointer-events-none stroke-input"
-              />
-            ))}
-          </g>
-          <rect
-            width={BOARD}
-            height={BOARD}
-            rx={CORNER}
-            fill="none"
-            strokeWidth={0.7}
-            className="pointer-events-none stroke-faint"
-          />
-          <g
-            fill="none"
-            strokeWidth={6.2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="pointer-events-none"
-          >
-            {/* The reader's own way across the board, and then the way TLA-ts found. */}
-            {search === undefined ? (
-              <polyline
-                points={getPoints(trail)}
-                className={cn(
-                  "transition-colors duration-200 ease-out",
-                  hasBug ? "stroke-destructive/55" : "stroke-success/55",
                 )}
+              </g>
+            );
+          })}
+          {/* The reader's own way across the board, as a line of dots. */}
+          {search === undefined && (
+            <polyline
+              points={getPoints(trail)}
+              fill="none"
+              strokeWidth={2.2}
+              strokeDasharray="0.01 3.3"
+              className={cn(
+                "pointer-events-none transition-colors duration-200 ease-out",
+                hasBug ? "stroke-destructive" : "stroke-white/80",
+              )}
+            />
+          )}
+          {/* Each wall is a chunky block: a dark foot, and a lighter top that stands over it. */}
+          {SQUARES.filter((square) => square.kind === "#").map((square) => (
+            <g
+              key={getKey(square)}
+              strokeWidth={0.7}
+              className={cn("pointer-events-none", INK_STROKE)}
+            >
+              <rect
+                x={square.x * CELL + 0.35}
+                y={square.y * CELL + 0.9}
+                width={CELL - 0.7}
+                height={CELL - 1.2}
+                rx={2}
+                className="fill-[oklch(56%_0.06_265)]"
               />
-            ) : (
-              path &&
-              flood?.isDone && (
-                <polyline
-                  points={getPoints(path)}
-                  className="stroke-destructive/55 motion-safe:animate-line-in"
-                />
-              )
-            )}
-          </g>
+              <rect
+                x={square.x * CELL + 0.35}
+                y={square.y * CELL - 1.5}
+                width={CELL - 0.7}
+                height={CELL - 1.2}
+                rx={2}
+                className="fill-[oklch(80%_0.05_265)]"
+              />
+              <path
+                d={`M${square.x * CELL + 2.4} ${square.y * CELL + 0.5}h${CELL - 5.6}`}
+                strokeWidth={1}
+                className="stroke-white/70"
+              />
+            </g>
+          ))}
+          {path && flood?.isDone && (
+            <g fill="none" className="pointer-events-none motion-safe:animate-line-in">
+              <polyline points={getPoints(path)} strokeWidth={3.6} className={INK_STROKE} />
+              <polyline points={getPoints(path)} strokeWidth={2.2} className="stroke-destructive" />
+            </g>
+          )}
           <g
             transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2})`}
-            className="pointer-events-none"
+            strokeWidth={0.6}
+            className={cn("pointer-events-none", INK_STROKE)}
           >
-            <circle r={3.3} className="fill-[oklch(80%_0.16_88)]" />
-            <circle
-              r={2.1}
-              fill="none"
-              strokeWidth={0.55}
-              className="stroke-[oklch(62%_0.14_78)]"
+            <ellipse cy={3.1} rx={3.3} ry={1.1} className="fill-black/20 stroke-none" />
+            {[1.7, 0.2, -1.3].map((cy) => (
+              <g key={cy}>
+                <ellipse cy={cy + 0.9} rx={3} ry={1.45} className="fill-[oklch(70%_0.16_75)]" />
+                <ellipse cy={cy} rx={3} ry={1.45} className="fill-[oklch(88%_0.18_95)]" />
+              </g>
+            ))}
+            <path
+              d="M2.6 -4.6l0.5 1.1 1.1 0.5 -1.1 0.5 -0.5 1.1 -0.5 -1.1 -1.1 -0.5 1.1 -0.5z"
+              strokeWidth={0.35}
+              className="fill-white"
             />
           </g>
           <g
             style={{
               translate: `${player.x * CELL + CELL / 2}px ${player.y * CELL + CELL / 2}px`,
             }}
-            className="pointer-events-none transition-[translate] duration-150 ease-out motion-reduce:transition-none"
+            strokeWidth={0.7}
+            className={cn(
+              "pointer-events-none transition-[translate] duration-150 ease-[cubic-bezier(0.3,1.4,0.5,1)] motion-reduce:transition-none",
+              INK_STROKE,
+            )}
           >
-            <circle
-              r={3.5}
+            <ellipse cy={3.4} rx={3.3} ry={1.1} className="fill-black/20 stroke-none" />
+            <path
+              d="M-3.6 0.6C-3.6 -2.4 -2 -4 0 -4S3.6 -2.4 3.6 0.6C3.6 2.6 2.4 3.4 0 3.4S-3.6 2.6 -3.6 0.6Z"
               className={cn(
                 "transition-colors duration-200 ease-out",
-                hasBug && search === undefined ? "fill-destructive" : "fill-foreground",
+                hasBug && search === undefined ? "fill-destructive" : "fill-[oklch(68%_0.19_300)]",
               )}
             />
-            <g
-              style={{ translate: `${facing.move[0] * 0.8}px ${facing.move[1] * 0.8}px` }}
-              className="fill-background transition-[translate] duration-150 ease-out"
-            >
-              <circle cx={-1.25} r={0.75} />
-              <circle cx={1.25} r={0.75} />
+            <path
+              d="M-2.3 -2.2Q-1.2 -3.3 0.2 -3.2"
+              fill="none"
+              strokeWidth={0.8}
+              className="stroke-white/60"
+            />
+            <g strokeWidth={0.4}>
+              <circle cx={-1.5} cy={-0.5} r={1.35} className="fill-white" />
+              <circle cx={1.5} cy={-0.5} r={1.35} className="fill-white" />
             </g>
+            <g
+              style={{ translate: `${facing.move[0] * 0.55}px ${facing.move[1] * 0.55}px` }}
+              className="stroke-none transition-[translate] duration-150 ease-out"
+            >
+              <circle cx={-1.5} cy={-0.5} r={0.7} className={INK_FILL} />
+              <circle cx={1.5} cy={-0.5} r={0.7} className={INK_FILL} />
+            </g>
+            <ellipse
+              cx={-2.5}
+              cy={1.2}
+              rx={0.7}
+              ry={0.45}
+              className="fill-[oklch(78%_0.14_10)]/70 stroke-none"
+            />
+            <ellipse
+              cx={2.5}
+              cy={1.2}
+              rx={0.7}
+              ry={0.45}
+              className="fill-[oklch(78%_0.14_10)]/70 stroke-none"
+            />
           </g>
         </svg>
         {hasBug && search === undefined && (
