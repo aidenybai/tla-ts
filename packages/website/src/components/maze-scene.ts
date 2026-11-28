@@ -19,6 +19,18 @@ import {
 } from "@/lib/sandbox-figure";
 import { createRenderer, getCameraAxes, isDark, KIND } from "@/lib/sandbox-render";
 
+// The board of the example's code: # is a wall and o is the heart.
+export const MAZE_MAP = [
+  ".......",
+  ".......",
+  "..#.#..",
+  "..#o#..",
+  "..###..",
+  ".......",
+  ".......",
+];
+export const MAZE_HEART = { x: 3, y: 3 };
+
 export interface Square {
   x: number;
   y: number;

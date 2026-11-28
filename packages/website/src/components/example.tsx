@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { examples } from "virtual:site-data";
@@ -12,6 +12,7 @@ import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { Maze } from "./maze";
+import { MazeReplay } from "./maze-replay";
 import { Code } from "./code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
@@ -27,11 +28,11 @@ interface ExampleState {
   view: View;
   setView: (view: View) => void;
   isRunning: boolean;
-  // Whether TLA-ts has run, by the reader's hand or by the game's.
+  // Whether TLA-ts has run.
   hasRun: boolean;
-  showCode: (view: View) => void;
-  sourceRef: RefObject<HTMLDivElement | null>;
-  check: () => void;
+  // Whether the reader has reached the heart, which the run button then asks to be pressed for.
+  isBugFound: boolean;
+  findBug: () => void;
   result: RunResult | undefined;
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
@@ -49,7 +50,7 @@ const ExampleRoot = (props: RootProps) => {
   const example = examples[0];
   const [view, setView] = useState<View>("typescript");
   const [hasRun, setHasRun] = useState(false);
-  const sourceRef = useRef<HTMLDivElement>(null);
+  const [isBugFound, setIsBugFound] = useState(false);
   const isRunning = runner.isRunning;
   const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
@@ -61,15 +62,11 @@ const ExampleRoot = (props: RootProps) => {
     isSearchShown: true,
     typescript: { source: example.typescript.code, fileName: example.fileName },
   };
-  // The game checks its own code once the reader has found the bug in it.
-  const check = () => {
-    setHasRun(true);
-    runner.run(request);
-  };
-  // A run from the code shows where it ended in the TLA+.
+  // A run shows where it ended in the TLA+.
   const run = () => {
+    setHasRun(true);
     setView("tla");
-    check();
+    runner.run(request);
   };
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -88,12 +85,8 @@ const ExampleRoot = (props: RootProps) => {
         setView,
         isRunning,
         hasRun,
-        showCode: (next) => {
-          setView(next);
-          sourceRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-        },
-        check,
-        sourceRef,
+        isBugFound,
+        findBug: () => setIsBugFound(true),
         result,
         path,
         hoverState: setHoveredStateId,
@@ -197,7 +190,7 @@ const ExampleSource = () => {
     [example, lineMarks, openFolds, result],
   );
   return (
-    <div ref={state.sourceRef} className="w-full">
+    <div className="w-full">
       <Code.Root
         source={isCompiled ? example.tla : example.typescript}
         rows={isCompiled ? rows : undefined}
@@ -232,6 +225,12 @@ const ExampleSource = () => {
             <Tooltip.Content>View in playground</Tooltip.Content>
           </Tooltip.Root>
         </Code.Actions>
+        {/* The check plays out on a small board over the code's corner, with its tree. */}
+        {state.result?.search && (
+          <div className="absolute top-14 right-3 z-10 w-44 max-sm:w-36">
+            <MazeReplay search={state.result.search} />
+          </div>
+        )}
         <Code.Footer>
           <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
             <ToggleGroup.Root
@@ -255,6 +254,7 @@ const ExampleSource = () => {
           <Code.Run
             isRunning={state.isRunning}
             isDone={state.result !== undefined}
+            isSuggested={state.isBugFound && !state.hasRun}
             onRun={state.run}
           />
         </Code.Footer>
@@ -267,12 +267,7 @@ const ExampleGame = () => {
   const state = exampleContext.useParts();
   return (
     <div className="w-full rounded-[18px] bg-card p-5 shadow-raised">
-      <Maze
-        search={state.result?.search}
-        isRunning={state.isRunning}
-        onBugFound={state.check}
-        onShowCode={state.showCode}
-      />
+      <Maze onBugFound={state.findBug} />
     </div>
   );
 };
