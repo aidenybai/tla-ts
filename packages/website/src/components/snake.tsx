@@ -1,4 +1,4 @@
-import { Bug, Check } from "@phosphor-icons/react";
+import { Bug, Check, Play } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -12,8 +12,10 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 const SIZE = 7;
 const CELL = 10;
 const BOARD = SIZE * CELL;
-const STEP_MS = 210;
-const REPLAY_MS = 100;
+const STEP_MS = 300;
+// How long TLA-ts's replay spends on each state it tried, and how much of that the move takes.
+const REPLAY_MS = 170;
+const REPLAY_MOVE_MS = 120;
 // The steps after which a reader who has not eaten the apple is shown how to find the bug.
 const HINT_STEPS = 30;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
@@ -145,7 +147,7 @@ const START_BACK = getBack(START.body);
 const GOALS = [
   "Start the snake",
   "Eat the apple",
-  "Break it: turn it straight back",
+  "Make it turn straight back",
   "Let TLA-ts find it",
 ];
 
@@ -193,13 +195,13 @@ export const SnakeGame = (props: SnakeGameProps) => {
     ];
   }, [search]);
   const isReplayShown = replay !== undefined && replay.index >= 0 && tried.length > 0;
-  const isReplaying = isReplayShown && replay.index < tried.length - 1;
+  const isReplaying = isReplayShown && replay.index < tried.length;
   const active = isReplayShown
     ? ((isReplaying ? undefined : tried.find((state) => state.id === hoveredId)) ??
       tried[Math.min(replay.index, tried.length - 1)])
     : undefined;
   const shown = useMemo(() => (active ? getSnake(active) : snake), [active, snake]);
-  const hasBug = (isReplayShown || isOver) && hasTurnedBack(shown.body);
+  const hasBug = ((isReplayShown && !isReplaying) || isOver) && hasTurnedBack(shown.body);
   const isLost = isOver && !isReplayShown && !hasBug;
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
@@ -265,14 +267,30 @@ export const SnakeGame = (props: SnakeGameProps) => {
     });
     return () => cancelAnimationFrame(frame);
   }, [isGliding, isReduced]);
+  // The replay plays each state as the move that reached it: the snake is put where that move
+  // began and makes it, faster than a reader would.
   useEffect(() => {
     if (!isReplaying) return;
-    const timer = setInterval(
-      () => setReplay((current) => current && { ...current, index: current.index + 1 }),
-      REPLAY_MS,
-    );
-    return () => clearInterval(timer);
-  }, [isReplaying]);
+    const snakes = new Map(tried.map((state) => [state.id, getSnake(state)]));
+    const start = performance.now();
+    let frame = requestAnimationFrame(function play(now) {
+      const index = Math.floor((now - start) / REPLAY_MS);
+      setReplay((current) =>
+        current && current.index !== index ? { ...current, index } : current,
+      );
+      if (index >= tried.length) return;
+      frame = requestAnimationFrame(play);
+      const state = tried[index];
+      draw(
+        getPose(
+          snakes.get(state.parentId ?? "")?.body,
+          snakes.get(state.id)?.body ?? START.body,
+          ((now - start) % REPLAY_MS) / REPLAY_MOVE_MS,
+        ),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isReplaying, tried]);
 
   const steer = (next: Direction) => {
     if (isReplaying) return;
@@ -456,7 +474,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               {props.isRunning ? (
                 "TLA-ts is trying every move the code allows."
               ) : isReplaying ? (
-                `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
+                `TLA-ts is trying state ${Math.min(replay.index + 1, tried.length)} of ${tried.length}.`
               ) : (
                 <>
                   TLA-ts tried {tried.length} states and turned the snake back in {steps.length}{" "}
@@ -539,7 +557,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
                             <>
                               Two turns before it moves send it backwards.{" "}
                               {isTouch ? (
-                                "Tap two places quickly, or "
+                                "Tap two places quickly."
                               ) : recipe ? (
                                 <>
                                   Quickly press{" "}
@@ -550,15 +568,17 @@ export const SnakeGame = (props: SnakeGameProps) => {
                                   <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>
                                     {recipe[1].glyph}
                                   </KeyCap>
-                                  , or{" "}
+                                  .
                                 </>
                               ) : (
-                                "Straighten it with an arrow key, or "
+                                "Straighten it with an arrow key first."
                               )}
-                              <Button variant="link" size="inline" onClick={showBug}>
-                                show me
-                              </Button>
-                              .
+                              <span className="mt-2.5 block">
+                                <Button onClick={showBug} className="pl-2 text-foreground">
+                                  <Play weight="fill" className="size-3" />
+                                  Show me
+                                </Button>
+                              </span>
                             </>
                           ))}
                         {index === 3 &&
