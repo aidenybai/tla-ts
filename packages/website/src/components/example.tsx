@@ -32,6 +32,8 @@ interface ExampleState {
   // Whether the reader has reached the heart, which the run button then asks to be pressed for.
   isBugFound: boolean;
   findBug: () => void;
+  isPreviewHidden: boolean;
+  setIsPreviewHidden: (isHidden: boolean) => void;
   result: RunResult | undefined;
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
@@ -50,6 +52,7 @@ const ExampleRoot = (props: RootProps) => {
   const [view, setView] = useState<View>("typescript");
   const [hasRun, setHasRun] = useState(false);
   const [isBugFound, setIsBugFound] = useState(false);
+  const [isPreviewHidden, setIsPreviewHidden] = useState(false);
   const isRunning = runner.isRunning;
   const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
@@ -65,6 +68,7 @@ const ExampleRoot = (props: RootProps) => {
   const run = () => {
     setHasRun(true);
     setView("tla");
+    setIsPreviewHidden(false);
     runner.run(request);
   };
   useEffect(() => {
@@ -86,6 +90,8 @@ const ExampleRoot = (props: RootProps) => {
         hasRun,
         isBugFound,
         findBug: () => setIsBugFound(true),
+        isPreviewHidden,
+        setIsPreviewHidden,
         result,
         path,
         hoverState: setHoveredStateId,
@@ -249,7 +255,7 @@ const ExampleSource = (props: SourceProps) => {
 const ExamplePreview = () => {
   const state = exampleContext.useParts();
   const [closed, setClosed] = useState<Search>();
-  const [isHidden, setIsHidden] = useState(false);
+  const isHidden = state.isPreviewHidden;
   const search = state.result?.search;
   const replayed = search === closed ? undefined : search;
   return (
@@ -261,7 +267,7 @@ const ExamplePreview = () => {
     >
       <Button
         aria-expanded={!isHidden}
-        onClick={() => setIsHidden(!isHidden)}
+        onClick={() => state.setIsPreviewHidden(!isHidden)}
         className="h-8 w-full justify-between gap-3 rounded-none border-transparent bg-transparent px-2.5 text-xs active:scale-100"
       >
         Preview
