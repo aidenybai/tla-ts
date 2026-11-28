@@ -18,6 +18,7 @@ import {
   type Vec3,
 } from "@/lib/sandbox-figure";
 import { createRenderer, getCameraAxes, isDark, KIND } from "@/lib/sandbox-render";
+import type { SearchState } from "@/lib/search";
 
 // The board of the example's code: # is a wall and o is the heart.
 export const MAZE_MAP = [
@@ -35,6 +36,11 @@ export interface Square {
   x: number;
   y: number;
 }
+
+export const getStateSquare = (state: SearchState | undefined): Square => {
+  const values = new Map(state?.variables.map((variable) => [variable.name, variable.value]));
+  return { x: Number(values.get("x")), y: Number(values.get("y")) };
+};
 
 export interface MazeView {
   player: Square;

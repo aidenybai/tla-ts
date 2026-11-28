@@ -116,3 +116,9 @@ export const getPath = (
   }
   return path;
 };
+
+// The states a search reached, in the order it reached them, with the failing state last.
+export const getTriedStates = (search: Search) => [
+  ...search.checkedStates.filter((state) => !state.isFailing),
+  ...search.checkedStates.filter((state) => state.isFailing),
+];
