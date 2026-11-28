@@ -6599,26 +6599,26 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     return compiled.decode(reader);
   };
   // The states on the path to a state, given the number of states expanded.
-  const getPathIndexes = (index: number, expanded: number) => {
+  const getPathIndexes = (index: number, expanded: number, isKnown = (_index: number) => false) => {
     // A state's 1 bit comes after the one of the state it was found from, so one pass back over the
     // bits of the states expanded finds the whole path.
     const indexes = [index];
     let bit = finds.size;
     let zeros = expanded;
     let ones = finds.size - expanded;
-    while (indexes[0] >= initialStates.distinct) {
-      const found = indexes[0] - initialStates.distinct;
+    for (let last = index; last >= initialStates.distinct && !isKnown(last); last = zeros) {
+      const found = last - initialStates.distinct;
       for (;;) {
         bit--;
         if (((finds.data[bit >> 5] >>> (bit & 31)) & 1) === 0) zeros--;
         else if (--ones === found) break;
       }
-      indexes.unshift(zeros);
+      indexes.push(zeros);
     }
-    return indexes;
+    return indexes.reverse();
   };
   // Each state on the path is the first successor of the one before it with its key, as it was found.
-  const getPath = (indexes: number[]) => {
+  const getPath = (indexes: number[], first?: Plain[]) => {
     const findFirst = (states: (emit: (state: Plain[]) => void) => void, target: number) => {
       const found: Plain[][] = [];
       states((state) => {
@@ -6629,12 +6629,13 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
       return found[0];
     };
     const path = [
-      findFirst((emit) => {
-        const cursor: Cursor = { data: initialBytes.data, position: 0 };
-        for (let initial = 0; initial < initialStarts.size; initial++) {
-          emit(program.variableTypes.map((type) => readPlain(cursor, type, program.plains)));
-        }
-      }, indexes[0]),
+      first ??
+        findFirst((emit) => {
+          const cursor: Cursor = { data: initialBytes.data, position: 0 };
+          for (let initial = 0; initial < initialStarts.size; initial++) {
+            emit(program.variableTypes.map((type) => readPlain(cursor, type, program.plains)));
+          }
+        }, indexes[0]),
     ];
     indexes.slice(1).forEach((target) => {
       path.push(findFirst((emit) => compiled.next(path[path.length - 1], emit), target));
@@ -6821,14 +6822,17 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   if (isImaged) deopt();
   const found = new Map<number, { index: number; parent: number; state: Plain[] }>();
   [...lasso.prefix, ...lasso.cycle].forEach((target) => {
-    const indexes = getPathIndexes(target, statistics.distinct);
-    getPath(indexes).forEach((state, position) =>
+    if (found.has(target)) return;
+    const indexes = getPathIndexes(target, statistics.distinct, (index) => found.has(index));
+    const known = found.get(indexes[0]);
+    getPath(indexes, known?.state).forEach((state, position) => {
+      if (position === 0 && known) return;
       found.set(indexes[position], {
         index: indexes[position],
         parent: indexes[position - 1] ?? -1,
         state,
-      }),
-    );
+      });
+    });
   });
   return getResult(0, {
     deadlock: undefined,
