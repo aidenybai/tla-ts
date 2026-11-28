@@ -1,4 +1,4 @@
-import { Bug } from "@phosphor-icons/react";
+import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -140,6 +140,8 @@ const getPath = (points: Point[]) =>
   points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join("");
 
 const START_BACK = getBack(START.body);
+
+const GOALS = ["Start the snake", "Eat the apple", "Turn it straight back", "Let TLA-ts find it"];
 
 interface Replay {
   search: Search;
@@ -302,6 +304,10 @@ export const SnakeGame = (props: SnakeGameProps) => {
     };
   });
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
+  const hasEaten = snake.body.length > START.body.length;
+  // The goal the reader is on: start, eat, turn back, then hand over to TLA-ts.
+  const stage =
+    hasBug || props.isRunning ? 3 : !isMoving ? 0 : hasEaten || stepCount >= HINT_STEPS ? 2 : 1;
   const shownApple = getCenter(isReplayShown ? shown.apple : apple);
   return (
     <div className="flex w-full flex-wrap gap-x-7 gap-y-6 pt-1 pb-4">
@@ -409,93 +415,139 @@ export const SnakeGame = (props: SnakeGameProps) => {
           ))}
         </svg>
       </div>
-      {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
+      {/* The column keeps the board's height, with its link at the foot, so that a longer line
           or the tree moves nothing. */}
-      <div className="flex min-h-28 min-w-56 flex-1 flex-col items-start gap-4 self-stretch sm:min-h-44">
-        {hasBug && !isReplayShown && !props.isRunning && (
-          <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
-            <Bug weight="fill" className="size-3.5 shrink-0" />
-            Bug found · It turned back on itself
-          </p>
-        )}
-        <p aria-live="polite" className="text-pretty text-foreground tabular-nums">
-          {isReplaying ? (
-            `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
-          ) : isReplayShown ? (
-            <>
-              TLA-ts tried {tried.length} states and turned the snake back on itself in{" "}
-              {steps.length} moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
-            </>
-          ) : props.isRunning ? (
-            "TLA-ts is trying every move the code allows."
-          ) : hasBug ? (
-            "Would your tests have tried that? Press run to see TLA-ts get there."
-          ) : isLost ? (
-            isTouch ? (
-              "It ran into itself. That is allowed, so it is not the bug. Tap to play again."
-            ) : (
-              "It ran into itself. That is allowed, so it is not the bug. Press an arrow key to play again."
-            )
-          ) : !isMoving ? (
-            isTouch ? (
-              "Tap the board to start the snake."
-            ) : (
-              <>
-                Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
-                <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> to start the snake.
-              </>
-            )
-          ) : snake.body.length === START.body.length && stepCount < HINT_STEPS ? (
-            isTouch ? (
-              "Good. Tap where it should head, and eat the apple."
-            ) : (
-              <>
-                Good. Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
-                <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
-                <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
-                <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click, and eat the apple.
-              </>
-            )
-          ) : stepCount >= HINT_STEPS ? (
-            isTouch ? (
-              "Hint: tap twice, quickly, before it moves."
-            ) : (
-              <>
-                Hint: turn twice before it moves, like <KeyCap>↑</KeyCap> then <KeyCap>←</KeyCap>.
-              </>
-            )
-          ) : (
-            "It should never be able to turn straight back. Make it."
-          )}
-        </p>
-        {isReplayShown && (
-          <SearchTree
-            states={tried}
-            triedCount={replay.index + 1}
-            activeId={active?.id}
-            onHover={setHoveredId}
-          />
-        )}
-        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 text-sm">
-          {(isMoving || isReplayShown) && !isReplaying && (
-            <Button
-              variant="link"
-              size="inline"
-              onClick={() => {
-                setSnake(START);
-                setApple(START.apple);
-                setStepCount(0);
-                setIsMoving(false);
-                setIsOver(false);
-                props.onBugChange(false);
-                setReplay(replay && { ...replay, index: -1 });
-              }}
+      <div className="flex min-h-28 min-w-52 flex-1 flex-col gap-4 self-stretch sm:min-h-44">
+        {isReplayShown ? (
+          <>
+            <p
+              aria-live="polite"
+              className="text-sm text-pretty text-muted-foreground tabular-nums"
             >
-              Reset
-            </Button>
-          )}
-        </div>
+              {isReplaying ? (
+                `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
+              ) : (
+                <>
+                  TLA-ts tried {tried.length} states and turned the snake back on itself in{" "}
+                  {steps.length} moves:{" "}
+                  <span className="font-mono text-xs text-foreground">{steps.join(", ")}</span>.
+                </>
+              )}
+            </p>
+            <SearchTree
+              states={tried}
+              triedCount={replay.index + 1}
+              activeId={active?.id}
+              onHover={setHoveredId}
+            />
+          </>
+        ) : (
+          <ol className="flex flex-col gap-3">
+            {GOALS.map((goal, index) => {
+              // A goal the reader went past without reaching is left unticked.
+              const isDone = index < stage && [isMoving, hasEaten, hasBug][index];
+              const isCurrent = index === stage;
+              const isBug = index === 2 && hasBug;
+              return (
+                <li key={goal} className="flex gap-2.5">
+                  <span
+                    className={cn(
+                      "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-xs tabular-nums transition-colors duration-200 ease-out",
+                      isBug
+                        ? "bg-destructive/15 text-destructive"
+                        : isDone
+                          ? "bg-success/15 text-success"
+                          : isCurrent
+                            ? "bg-foreground text-background"
+                            : "bg-muted text-faint",
+                    )}
+                  >
+                    {isBug ? (
+                      <Bug weight="fill" className="size-3" />
+                    ) : isDone ? (
+                      <Check weight="bold" className="size-3" />
+                    ) : (
+                      index + 1
+                    )}
+                  </span>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span
+                      className={cn(
+                        "transition-colors duration-200 ease-out",
+                        isBug ? "text-destructive" : isCurrent ? "text-foreground" : "text-faint",
+                      )}
+                    >
+                      {isBug ? "Bug: it turned straight back" : goal}
+                    </span>
+                    {isCurrent && (
+                      <p
+                        aria-live="polite"
+                        className="text-sm text-pretty text-muted-foreground motion-safe:animate-chip-in"
+                      >
+                        {index === 0 &&
+                          (isTouch ? (
+                            "Tap the board."
+                          ) : (
+                            <>
+                              Press <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                              <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                              <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap>
+                            </>
+                          ))}
+                        {index === 1 &&
+                          (isTouch ? (
+                            "Tap where it should head."
+                          ) : (
+                            <>
+                              Steer with <KeyCap isLit={heldKeys.has("ArrowLeft")}>←</KeyCap>
+                              <KeyCap isLit={heldKeys.has("ArrowUp")}>↑</KeyCap>
+                              <KeyCap isLit={heldKeys.has("ArrowDown")}>↓</KeyCap>
+                              <KeyCap isLit={heldKeys.has("ArrowRight")}>→</KeyCap> or a click.
+                            </>
+                          ))}
+                        {index === 2 &&
+                          (isLost ? (
+                            `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press an arrow key"} to play again.`
+                          ) : stepCount < HINT_STEPS ? (
+                            "The code is meant to stop this. It has a bug."
+                          ) : isTouch ? (
+                            "Hint: tap twice, quickly, before it moves."
+                          ) : (
+                            <>
+                              Hint: turn twice before it moves, like <KeyCap>↑</KeyCap> then{" "}
+                              <KeyCap>←</KeyCap>.
+                            </>
+                          ))}
+                        {index === 3 &&
+                          (props.isRunning
+                            ? "TLA-ts is trying every move the code allows."
+                            : "Would your tests have tried that? Press the run button below.")}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        {(isMoving || isReplayShown) && !isReplaying && (
+          <Button
+            variant="link"
+            size="inline"
+            onClick={() => {
+              setSnake(START);
+              setApple(START.apple);
+              setStepCount(0);
+              setIsMoving(false);
+              setIsOver(false);
+              props.onBugChange(false);
+              setReplay(replay && { ...replay, index: -1 });
+            }}
+            className="mt-auto self-start text-sm"
+          >
+            Reset
+          </Button>
+        )}
       </div>
     </div>
   );
