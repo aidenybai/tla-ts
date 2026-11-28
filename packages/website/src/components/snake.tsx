@@ -12,9 +12,10 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 const SIZE = 7;
 const CELL = 10;
 const BOARD = SIZE * CELL;
-const STEP_MS = 190;
+const STEP_MS = 210;
 const REPLAY_MS = 100;
-const HINT_STEPS = 45;
+// The steps after which a reader who has not eaten the apple is shown how to find the bug.
+const HINT_STEPS = 30;
 const SNAKE_FILL = "fill-[oklch(58%_0.17_295)]";
 const SHADE_FILL = "fill-[oklch(35%_0.08_140)]/25";
 const SHADE_STROKE = "stroke-[oklch(35%_0.08_140)]/25";
@@ -27,14 +28,14 @@ const TILES = [-BOARD, 0, BOARD]
 
 // The eight ways to move, clockwise from up, each an eighth of a turn from the last.
 const DIRECTIONS = [
-  { name: "up", move: [0, -1], key: "ArrowUp" },
-  { name: "upRight", move: [1, -1], key: undefined },
-  { name: "right", move: [1, 0], key: "ArrowRight" },
-  { name: "downRight", move: [1, 1], key: undefined },
-  { name: "down", move: [0, 1], key: "ArrowDown" },
-  { name: "downLeft", move: [-1, 1], key: undefined },
-  { name: "left", move: [-1, 0], key: "ArrowLeft" },
-  { name: "upLeft", move: [-1, -1], key: undefined },
+  { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑" },
+  { name: "upRight", move: [1, -1], key: undefined, glyph: undefined },
+  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→" },
+  { name: "downRight", move: [1, 1], key: undefined, glyph: undefined },
+  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓" },
+  { name: "downLeft", move: [-1, 1], key: undefined, glyph: undefined },
+  { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←" },
+  { name: "upLeft", move: [-1, -1], key: undefined, glyph: undefined },
 ] as const;
 
 type Direction = (typeof DIRECTIONS)[number];
@@ -141,7 +142,12 @@ const getPath = (points: Point[]) =>
 
 const START_BACK = getBack(START.body);
 
-const GOALS = ["Start the snake", "Eat the apple", "Turn it straight back", "Let TLA-ts find it"];
+const GOALS = [
+  "Start the snake",
+  "Eat the apple",
+  "Break it: turn it straight back",
+  "Let TLA-ts find it",
+];
 
 interface Replay {
   search: Search;
@@ -177,13 +183,15 @@ export const SnakeGame = (props: SnakeGameProps) => {
     setIsMoving(false);
   }
   // The states the search tried, with the one that breaks the rule last.
+  // A second run keeps the first one's states on the board until its own arrive.
+  const search = props.search ?? replay?.search;
   const tried = useMemo(() => {
-    const states = props.search?.checkedStates ?? [];
+    const states = search?.checkedStates ?? [];
     return [
       ...states.filter((state) => !state.isFailing),
       ...states.filter((state) => state.isFailing),
     ];
-  }, [props.search]);
+  }, [search]);
   const isReplayShown = replay !== undefined && replay.index >= 0 && tried.length > 0;
   const isReplaying = isReplayShown && replay.index < tried.length - 1;
   const active = isReplayShown
@@ -228,6 +236,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
     glide.from = last;
     glide.startedAt = glide.nextStartAt;
     glide.isStepDue = false;
+    // A new game is drawn before it is painted, not a frame after.
+    if (shown.body[1] !== last[0]) draw(getBack(shown.body));
   }, [shown, isGliding]);
   // One clock moves the snake and draws it. A step starts where the last one ended, whatever
   // the reader pressed in between, so the snake keeps one pace.
@@ -303,7 +313,19 @@ export const SnakeGame = (props: SnakeGameProps) => {
       removeEventListener("keyup", handleKeyUp);
     };
   });
-  const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
+  const steps = search?.states.flatMap((state) => state.call ?? []) ?? [];
+  const heading = DIRECTIONS.indexOf(snake.direction);
+  // The two keys that turn a snake heading straight back on itself: a quarter turn, then on
+  // to the way it came from.
+  const recipe =
+    heading % 2 === 0
+      ? ([DIRECTIONS[(heading + 6) % 8], DIRECTIONS[(heading + 4) % 8]] as const)
+      : undefined;
+  const showBug = () =>
+    setSnake((current) => {
+      const from = DIRECTIONS.indexOf(current.direction);
+      return turn(turn(current, DIRECTIONS[(from + 2) % 8]), DIRECTIONS[(from + 4) % 8]);
+    });
   const hasEaten = snake.body.length > START.body.length;
   // The goal the reader is on: start, eat, turn back, then hand over to TLA-ts.
   const stage =
@@ -424,7 +446,9 @@ export const SnakeGame = (props: SnakeGameProps) => {
               aria-live="polite"
               className="text-sm text-pretty text-muted-foreground tabular-nums"
             >
-              {isReplaying ? (
+              {props.isRunning ? (
+                "TLA-ts is trying every move the code allows."
+              ) : isReplaying ? (
                 `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
               ) : (
                 <>
@@ -508,14 +532,30 @@ export const SnakeGame = (props: SnakeGameProps) => {
                         {index === 2 &&
                           (isLost ? (
                             `It ran into itself. That is allowed, so it is not the bug. ${isTouch ? "Tap" : "Press an arrow key"} to play again.`
-                          ) : stepCount < HINT_STEPS ? (
-                            "The code is meant to stop this. It has a bug."
-                          ) : isTouch ? (
-                            "Hint: tap twice, quickly, before it moves."
                           ) : (
                             <>
-                              Hint: turn twice before it moves, like <KeyCap>↑</KeyCap> then{" "}
-                              <KeyCap>←</KeyCap>.
+                              Two turns before it moves send it backwards.{" "}
+                              {isTouch ? (
+                                "Tap two places quickly, or "
+                              ) : recipe ? (
+                                <>
+                                  Quickly press{" "}
+                                  <KeyCap isLit={heldKeys.has(recipe[0].key ?? "")}>
+                                    {recipe[0].glyph}
+                                  </KeyCap>{" "}
+                                  then{" "}
+                                  <KeyCap isLit={heldKeys.has(recipe[1].key ?? "")}>
+                                    {recipe[1].glyph}
+                                  </KeyCap>
+                                  , or{" "}
+                                </>
+                              ) : (
+                                "Straighten it with an arrow key, or "
+                              )}
+                              <Button variant="link" size="inline" onClick={showBug}>
+                                show me
+                              </Button>
+                              .
                             </>
                           ))}
                         {index === 3 &&

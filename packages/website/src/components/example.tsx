@@ -27,7 +27,9 @@ interface ExampleState {
   view: View;
   setView: (view: View) => void;
   isRunning: boolean;
-  hasRun: boolean;
+  // Whether the reader has found the game's bug and not yet run TLA-ts on it.
+  isBugFound: boolean;
+  setIsBugFound: (isBugFound: boolean) => void;
   result: RunResult | undefined;
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
@@ -44,7 +46,7 @@ const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
   const example = examples[0];
   const [view, setView] = useState<View>("preview");
-  const [hasRun, setHasRun] = useState(false);
+  const [isBugFound, setIsBugFound] = useState(false);
   const isRunning = runner.isRunning;
   const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
@@ -57,7 +59,6 @@ const ExampleRoot = (props: RootProps) => {
     typescript: { source: example.typescript.code, fileName: example.fileName },
   };
   const run = () => {
-    setHasRun(true);
     // A run from the TypeScript shows where it ended in the TLA+. One from the game stays on it.
     if (view === "typescript") setView("tla");
     runner.run(request);
@@ -78,7 +79,8 @@ const ExampleRoot = (props: RootProps) => {
         view,
         setView,
         isRunning,
-        hasRun,
+        isBugFound,
+        setIsBugFound,
         result,
         path,
         hoverState: setHoveredStateId,
@@ -106,7 +108,8 @@ const ExampleHint = () => {
       aria-hidden
       className={cn(
         "pointer-events-none absolute top-full right-4 flex -rotate-3 items-start gap-1 font-hand text-2xl text-muted-foreground transition-opacity duration-200 ease-out",
-        state.hasRun && "opacity-0",
+        // The hint waits for the reader to find the bug, and goes once they run.
+        !(state.isBugFound && state.result === undefined && !state.isRunning) && "opacity-0",
       )}
     >
       <span className="mt-3">Click me!</span>
@@ -132,7 +135,6 @@ const ExampleSource = () => {
   const state = exampleContext.useParts();
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
-  const [isBugFound, setIsBugFound] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
   // A run's verdict is on a line that may be below the fold of the code.
@@ -202,7 +204,7 @@ const ExampleSource = () => {
             search={state.result?.search}
             isPaused={state.view !== "preview"}
             isRunning={state.isRunning}
-            onBugChange={setIsBugFound}
+            onBugChange={state.setIsBugFound}
           />
         </div>
         {state.view !== "preview" && (
@@ -258,7 +260,7 @@ const ExampleSource = () => {
         <Code.Run
           isRunning={state.isRunning}
           isDone={state.result !== undefined}
-          isSuggested={isBugFound && state.result === undefined}
+          isSuggested={state.isBugFound && state.result === undefined}
           onRun={state.run}
         />
       </Code.Footer>
