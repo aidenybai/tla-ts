@@ -134,6 +134,20 @@ it("reads Trace as the states on the path to the state, unlike TLC", () => {
   expect(prints).toEqual(["<<[x |-> 0]>>", "<<[x |-> 0]>>", "<<[x |-> 0], [x |-> 1]>>"]);
 });
 
+it('reads TLCGet("level") as the level of the state it expands and of its successor, as TLC\'s DFIDWorker does', () => {
+  const messages: string[] = [];
+  checkDepthFirst({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == Assert(TLCGet("level") = x + 1, "Next") /\\ x < 6 /\\ x\' = x + 1\nInv == Assert(TLCGet("level") = x + 1, "Inv")\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    maxDepth: 10,
+    onOutput: (output) => {
+      if (output.kind === "message") messages.push(output.message);
+    },
+  });
+  expect(messages.at(-1)).toBe("28 states generated, 7 distinct states found.");
+});
+
 it("replays the step whose invariant fails to evaluate with the actions it counts under coverage, as TLC's DFIDModelChecker does", () => {
   const outputs: DepthFirstOutput[] = [];
   checkDepthFirst({
