@@ -442,6 +442,13 @@ export const SnakeGame = (props: SnakeGameProps) => {
       <div className="flex min-h-28 min-w-52 flex-1 flex-col gap-4 self-stretch sm:min-h-44">
         {isReplayShown ? (
           <>
+            {/* The tree comes first, so the lines under it can grow without moving it. */}
+            <SearchTree
+              states={tried}
+              triedCount={replay.index + 1}
+              activeId={active?.id}
+              onHover={setHoveredId}
+            />
             <p
               aria-live="polite"
               className="text-sm text-pretty text-muted-foreground tabular-nums"
@@ -452,18 +459,14 @@ export const SnakeGame = (props: SnakeGameProps) => {
                 `TLA-ts is trying state ${replay.index + 1} of ${tried.length}.`
               ) : (
                 <>
-                  TLA-ts tried {tried.length} states and turned the snake back on itself in{" "}
-                  {steps.length} moves:{" "}
-                  <span className="font-mono text-xs text-foreground">{steps.join(", ")}</span>.
+                  TLA-ts tried {tried.length} states and turned the snake back in {steps.length}{" "}
+                  moves:
+                  <span className="mt-1 block font-mono text-xs text-foreground">
+                    {steps.join(", ")}
+                  </span>
                 </>
               )}
             </p>
-            <SearchTree
-              states={tried}
-              triedCount={replay.index + 1}
-              activeId={active?.id}
-              onHover={setHoveredId}
-            />
           </>
         ) : (
           <ol className="flex flex-col gap-3">
