@@ -113,7 +113,8 @@ export const Explainer = () => {
     let lastTime = 0;
     let checked = 0;
     let frame = requestAnimationFrame(function paint(now) {
-      const time = held === null ? (now - startedAt) % LOOP_MS : Number(held);
+      // A frame's time can be a moment before the clock read that started the loop.
+      const time = held === null ? Math.max(0, now - startedAt) % LOOP_MS : Number(held);
       if (time < lastTime) checked = 0;
       const drawnBack = Math.max(0, time - HOLD_MS) / (LOOP_MS - HOLD_MS);
       const width = BOARD.width / SHRINK ** drawnBack;
