@@ -98,7 +98,6 @@ const LAYOUT_LIST = Array.from({ length: LAYOUTS }, (_value, index) => {
 // heart and walls, some of which pass the check.
 export const Explainer = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const countRef = useRef<HTMLSpanElement>(null);
   const scale = useSyncExternalStore(
     subscribeToResize,
     () => Math.min(innerWidth / STAGE.width, innerHeight / STAGE.height),
@@ -118,12 +117,9 @@ export const Explainer = () => {
     // ?at=4000 holds the loop at one moment, for a still.
     const held = new URLSearchParams(location.search).get("at");
     const startedAt = performance.now();
-    let lastTime = 0;
-    let checked = 0;
     let frame = requestAnimationFrame(function paint(now) {
       // A frame's time can be a moment before the clock read that started the loop.
       const time = held === null ? Math.max(0, now - startedAt) % LOOP_MS : Number(held);
-      if (time < lastTime) checked = 0;
       const drawnBack = Math.max(0, time - HOLD_MS) / (LOOP_MS - HOLD_MS);
       const distance = CAMERA.distance * CAMERA.drawnBack ** drawnBack;
       const steps = Math.floor(time / STEP_MS);
@@ -175,10 +171,6 @@ export const Explainer = () => {
         boards,
         now,
       );
-      // Every board in sight checks a state each step.
-      checked += (boards.length * Math.max(0, time - lastTime)) / STEP_MS;
-      lastTime = time;
-      if (countRef.current) countRef.current.textContent = Math.round(checked).toLocaleString();
       canvas.dataset.ready = "";
       frame = requestAnimationFrame(paint);
     });
@@ -201,11 +193,8 @@ export const Explainer = () => {
           className="absolute inset-0 size-full"
         />
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between bg-linear-to-t from-card via-card/80 to-transparent px-16 pt-40 pb-12 font-pixel text-foreground">
-          <p className="text-4xl text-muted-foreground">
-            <span ref={countRef} className="mr-4 text-8xl text-foreground tabular-nums">
-              0
-            </span>
-            states checked
+          <p className="font-sans text-7xl font-medium tracking-tight">
+            Find bugs in TypeScript code
           </p>
           <p className="text-5xl">TLA-ts</p>
         </div>
