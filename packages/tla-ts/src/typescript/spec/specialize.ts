@@ -3,6 +3,7 @@ import { type Expression, getChildren, type OperatorDefinition } from "../../ast
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import { getLocals, type Locals } from "./locals";
+import type { ResolutionFailure } from "./resolve";
 import {
   afterBlankLine,
   apply,
@@ -105,6 +106,12 @@ export interface ProgramFile {
   kind: "script" | "module" | "commonjs" | "json" | "host";
   json?: string;
   targets: ReadonlyMap<string, number>;
+  // The error that Node's resolution throws for each specifier of an import that it finds no file
+  // for, where the files alone decide it.
+  failures?: ReadonlyMap<string, ResolutionFailure>;
+  // The specifiers of a CommonJS module's requires that Node's require finds no module for, where
+  // the files alone decide it.
+  missingRequires?: ReadonlySet<string>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
   // The file of an ES module's facade, which a require of it gives the namespace of.
@@ -965,6 +972,24 @@ const METHOD_PRODUCTIONS = {
 export const isHostProcess = (files: readonly ProgramFile[]) =>
   files[0].kind !== "script" && !files.some((file) => isProcessDeclared(file.sourceFile));
 
+// The range of a file's text that a function's or a class's source text spans, which starts at
+// async where the code says it, after the modifiers that ECMAScript's syntax leaves out of it, such
+// as static and export, and the ones whose text Node strips, such as private.
+const getSourceRange = (node: ts.Node) => {
+  const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+  const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+  const last = modifiers.at(-1);
+  const start =
+    async?.getStart() ??
+    (last === undefined
+      ? node.getStart()
+      : (node
+          .getChildren()
+          .find((child) => child.pos >= last.end)
+          ?.getStart() ?? node.getStart()));
+  return { start, end: node.getEnd() };
+};
+
 // Specializes JS.tla to a script. A function reached only by a name that the script never writes
 // elsewhere, and that JS.tla's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
@@ -995,6 +1020,28 @@ export const specialize = (
       file.sourceFile,
       files.slice(0, index).reduce((start, other) => start + other.sourceFile.text.length, 0),
     ]),
+  );
+  // The segments of each file's text that hold the source text of its functions and classes, each
+  // where its text starts in the file's SourceText, which holds them one after another and leaves
+  // out the text between them, such as the comments between a module's declarations, which no
+  // function's source text holds. A function's or class's text spans one segment.
+  const sourceSegments = new Map(
+    files.map((file) => {
+      const ranges: { start: number; end: number }[] = [];
+      const collect = (node: ts.Node): void => {
+        if (ts.isFunctionLike(node) || ts.isClassLike(node)) ranges.push(getSourceRange(node));
+        ts.forEachChild(node, collect);
+      };
+      collect(file.sourceFile);
+      const segments: { start: number; end: number; at: number }[] = [];
+      for (const range of ranges.sort((left, right) => left.start - right.start)) {
+        const last = segments.at(-1);
+        if (last !== undefined && range.start <= last.end) last.end = Math.max(last.end, range.end);
+        else
+          segments.push({ ...range, at: last === undefined ? 0 : last.at + last.end - last.start });
+      }
+      return [file.sourceFile, segments] as const;
+    }),
   );
   // Each throw statement's number in its file, from 1, in the order of the file's text, which
   // stays the order of the throws in the file the program was transpiled from.
@@ -1093,25 +1140,20 @@ export const specialize = (
         ])
       : apply(call, args);
 
-  // A function's or a class's source text, which starts at async where the code says it, after
-  // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
-  // ones whose text Node strips, such as private.
+  // A function's or a class's source text, as its file's number and the range of the file's
+  // SourceText it spans, which SourceUnits makes code units of when a program reads it.
   const getSourceText = (node: ts.Node) => {
-    const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
-    const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
-    const last = modifiers.at(-1);
-    const start =
-      async?.getStart() ??
-      (last === undefined
-        ? node.getStart()
-        : (node
-            .getChildren()
-            .find((child) => child.pos >= last.end)
-            ?.getStart() ?? node.getStart()));
+    const range = getSourceRange(node);
+    const segment = sourceSegments
+      .get(node.getSourceFile())
+      ?.find((candidate) => candidate.start <= range.start && range.end <= candidate.end);
+    if (segment === undefined) {
+      throw new TlaTypeScriptError("tla-ts can't find the source text of this code", node);
+    }
     return tuple([
       num(fileNumbers.get(node.getSourceFile()) ?? 0),
-      num(start + 1),
-      num(node.getEnd()),
+      num(segment.at + range.start - segment.start + 1),
+      num(segment.at + range.end - segment.start),
     ]);
   };
 
@@ -5086,6 +5128,32 @@ export const specialize = (
           .map((target) => parenthesized(apply(":>", [getUnits(target[0]), num(target[1])])))
           .reduce((left, right) => apply("@@", [left, right]));
   const getNames = (file: ProgramFile) => setOf((file.names ?? []).map(getUnits));
+  // The error that Node's resolution throws for each specifier that only an import() of the file
+  // requests, which the host's code for import() throws, as a function from each specifier's code
+  // units.
+  const getFailures = (file: ProgramFile) => {
+    const failures = [...(file.failures ?? [])].filter(
+      (failure) => file.targets.get(failure[0]) === 0,
+    );
+    return failures.length === 0
+      ? tuple([])
+      : failures
+          .map((failure) =>
+            parenthesized(
+              apply(":>", [
+                getUnits(failure[0]),
+                recordOf([
+                  ["name", getUnits(failure[1].name)],
+                  ["code", getUnits(failure[1].code)],
+                  ["message", getUnits(failure[1].message)],
+                  ["hasUrl", getBool(failure[1].url !== undefined)],
+                  ["url", getUnits(failure[1].url ?? "")],
+                ]),
+              ]),
+            ),
+          )
+          .reduce((left, right) => apply("@@", [left, right]));
+  };
 
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
   // as JS.tla's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
@@ -5349,6 +5417,7 @@ export const specialize = (
           ],
           ["targets", getTargets(file)],
           ["names", getNames(file)],
+          ["failures", getFailures(file)],
         ]),
       ),
     );
@@ -5374,7 +5443,9 @@ export const specialize = (
             ["dirname", getUnits(directory)],
             ["targets", getTargets(file)],
             ["names", getNames(file)],
+            ["failures", getFailures(file)],
             ["exportNames", tuple(file.exportNames.map(getUnits))],
+            ["missing", setOf([...(file.missingRequires ?? [])].map(getUnits))],
           ]),
         ),
       );
@@ -5419,6 +5490,7 @@ export const specialize = (
           ["kind", string("script")],
           ["targets", getTargets(entry)],
           ["names", getNames(entry)],
+          ["failures", getFailures(entry)],
         ]),
       ),
     );
@@ -5497,7 +5569,7 @@ export const specialize = (
     entry.kind === "module"
       ? apply("RunModuleNode", ["s", apply("ModuleNode", [num(1)])])
       : entry.kind === "commonjs"
-        ? apply("RequireFile", ["s", num(1)])
+        ? apply("RequireFile", ["s", num(1), num(0)])
         : apply(script(entry.sourceFile), ["s"]);
   // A dispatch on an id to its arms, or, where it has none, a stop with the message.
   const defineDispatch = (
@@ -5582,7 +5654,13 @@ export const specialize = (
     "",
   );
   addDefinition(defineOperator("Program", ["s"], program));
-  const sources = files.map((file) => getSourceString(file.sourceFile.text));
+  const sources = files.map((file) =>
+    getSourceString(
+      (sourceSegments.get(file.sourceFile) ?? [])
+        .map((segment) => file.sourceFile.text.slice(segment.start, segment.end))
+        .join(""),
+    ),
+  );
   // The position in its file of the unit at an offset of the source text that t gives, which TLA+
   // reads as t[2] + (offset - 1), as - binds tighter than +.
   const getSourcePosition = (offset: string) =>
