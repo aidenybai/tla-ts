@@ -1058,13 +1058,26 @@ const loadFiles = (
           }
           if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
           const target = getRealPath(found);
-          // A require's facade of an ES module imports it as the require loads it.
-          if (
+          const isRequire =
             literal !== undefined &&
-            !facades.has(path) &&
-            !(ts.isCallExpression(literal.parent) && !isImportCall(literal.parent))
+            ts.isCallExpression(literal.parent) &&
+            !isImportCall(literal.parent);
+          const targetText = target.endsWith(".json")
+            ? undefined
+            : getJsxText(target, readFile(target), system);
+          // A require of a file that Node warns it fails to load as CommonJS (see warn) has no
+          // target, so that the require stops where it runs.
+          if (
+            isRequire &&
+            targetText !== undefined &&
+            getKind(target, targetText) === "commonjs" &&
+            hasModuleSyntax(target, targetText)
           ) {
-            warnTypelessImport(target, getJsxText(target, readFile(target), system), parsed);
+            return [];
+          }
+          // A require's facade of an ES module imports it as the require loads it.
+          if (!isRequire && targetText !== undefined && !facades.has(path)) {
+            warnTypelessImport(target, targetText, parsed);
           }
           if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
           const facade = `${target}.facade.mjs`;

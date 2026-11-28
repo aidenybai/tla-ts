@@ -1866,14 +1866,6 @@ describe("the CLI with TypeScript files", () => {
     ["main.cjs", { "main.cjs": "export const v = 1;\n" }],
     ["main.cts", { "main.cts": "const n: number = 1;\nexport { n };\n" }],
     ["main.mjs", { "main.mjs": 'import "./dep.cjs";\n', "dep.cjs": "await 1;\n" }],
-    [
-      "main.cjs",
-      {
-        "main.cjs": 'try {\n  require("./dep.js");\n} catch {}\n',
-        "package.json": '{ "type": "commonjs" }\n',
-        "dep.js": "const module = 1;\n",
-      },
-    ],
   ])(
     "stops where Node warns that it failed to load %s's ES module syntax as CommonJS",
     (entry, files) => {
@@ -1890,6 +1882,35 @@ describe("the CLI with TypeScript files", () => {
       );
     },
   );
+
+  // A require loads its file where it runs, so Node warns that it failed to load the file's ES
+  // module syntax as CommonJS only where the require runs, as where the program catches the
+  // error, and not where the program throws before it.
+  describe("loads a CommonJS file of ES module syntax where its require runs", () => {
+    const getDirectory = (main: string) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "package.json"), '{ "type": "commonjs" }\n');
+      writeFileSync(join(directory, "dep.js"), "const module = 1;\n");
+      writeFileSync(join(directory, "main.js"), main);
+      return directory;
+    };
+
+    it("stops where the require runs", () => {
+      const directory = getDirectory('try {\n  require("./dep.js");\n} catch {}\n');
+      expect(runNode(directory, "main.js").stderr).toMatch(
+        /^\(node:\d+\) Warning: Failed to load the ES module: /,
+      );
+      const result = runCli(directory, ["main.js"]);
+      expect(result.stdout).toContain("tla-ts can't load the module ./dep.js");
+    });
+
+    it("fails as Node does where the program throws before the require", () => {
+      const directory = getDirectory('throw new RangeError("first");\nrequire("./dep.js");\n');
+      const node = runNode(directory, "main.js");
+      expect(node.stderr).toContain("RangeError: first");
+      expect(getExit(runCli(directory, ["main.js"]))).toEqual(getExit(node));
+    });
+  });
 
   // Node runs a file whose package names no type as an ES module where it fails to compile as
   // CommonJS only for syntax that CommonJS rejects, as a declaration of a name that Node's wrapper
