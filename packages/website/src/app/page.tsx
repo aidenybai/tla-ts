@@ -43,7 +43,10 @@ const Page = () => (
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <p className="text-pretty">This snake has a bug. Play it and see if you can find it.</p>
+        <p className="text-pretty">
+          TLA-ts takes your TypeScript program and uses TLA+ to formally check it. Here’s a
+          TypeScript Snake game example:
+        </p>
         <Example.Root>
           <Example.Source />
           <Example.Hint />
