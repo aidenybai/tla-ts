@@ -43,10 +43,7 @@ const Page = () => (
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <p className="text-pretty">
-          TLA-ts calls your functions in every order they can be called, and tells you which order
-          breaks a rule. Try it on this snake game.
-        </p>
+        <p className="text-pretty">This snake has a bug. Play it and see if you can find it.</p>
         <Example.Root>
           <Example.Source />
           <Example.Hint />
