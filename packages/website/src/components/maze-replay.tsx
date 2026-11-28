@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Search, SearchState } from "@/lib/search";
+import { Button } from "@/components/ui/button";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { createMazeScene, MAZE_HEART, MAZE_MAP, type MazeView } from "./maze-scene";
 import { SearchTree } from "./search-tree";
@@ -14,6 +15,8 @@ const getSquare = (state: SearchState | undefined) => {
 
 interface MazeReplayProps {
   search: Search;
+  // Puts the board back in the reader's hands.
+  onClose: () => void;
 }
 
 // A small board that plays a search back: the robot makes every move the search made, each from
@@ -78,12 +81,12 @@ export const MazeReplay = (props: MazeReplayProps) => {
     return () => cancelAnimationFrame(frame);
   }, []);
   return (
-    <div className="flex flex-col gap-2 rounded-xl bg-card p-2 shadow-raised motion-safe:animate-chip-in">
+    <div className="flex flex-col gap-2">
       <canvas
         ref={canvasRef}
         role="img"
         aria-label="The maze, with the robot making each move TLA-ts tried."
-        className="block aspect-[20/19] w-full"
+        className="block aspect-[20/19] w-full rounded-lg"
       />
       <SearchTree
         states={states}
@@ -91,14 +94,21 @@ export const MazeReplay = (props: MazeReplayProps) => {
         activeId={tried?.id}
         onHover={setHoveredId}
       />
-      <p
-        aria-live="polite"
-        className="px-1 pb-0.5 text-xs text-pretty text-muted-foreground tabular-nums"
-      >
+      <p aria-live="polite" className="px-1 text-xs text-pretty text-muted-foreground tabular-nums">
         {isDone
           ? `Tried ${states.length} squares. Reached the heart in ${props.search.states.length - 1} moves.`
           : `Trying move ${triedCount} of ${states.length}.`}
       </p>
+      {isDone && (
+        <Button
+          variant="link"
+          size="inline"
+          onClick={props.onClose}
+          className="self-start px-1 pb-0.5 text-xs"
+        >
+          Play it yourself
+        </Button>
+      )}
     </div>
   );
 };

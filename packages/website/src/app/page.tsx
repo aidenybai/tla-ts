@@ -43,15 +43,15 @@ const Page = () => (
     <div className="mt-20 flex flex-col gap-20">
       <Section.Root>
         <Section.Title>How it works</Section.Title>
-        <p className="text-pretty">
-          TLA-ts takes your TypeScript program and uses TLA+ to formally check it. Here’s a
-          TypeScript maze game example:
-        </p>
+        <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
+          <li>
+            Run <InlineCode>npx tla-ts [file].ts</InlineCode>
+          </li>
+          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
+          <li>Get any violations, with the steps that caused them</li>
+        </ol>
+        <p className="text-pretty">Here&rsquo;s a TypeScript maze game example:</p>
         <Example.Root>
-          <Example.Game />
-          <p className="mt-10 text-pretty">
-            This is the game&rsquo;s code. Run it, and TLA-ts checks every state it can reach.
-          </p>
           <Example.Source />
           <Example.Hint />
         </Example.Root>

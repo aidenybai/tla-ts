@@ -1,15 +1,12 @@
-import { ArrowCounterClockwise, Bug, Check } from "@phosphor-icons/react";
+import { Bug } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "cn";
-import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { createMazeScene, MAZE_HEART, MAZE_MAP, type MazeView, type Square } from "./maze-scene";
 
 const START = { x: 0, y: 6 };
-// The calls after which a reader who has not found the way in is told where to look.
-const HINT_CALLS = 14;
 
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑" },
@@ -33,8 +30,6 @@ const go = (from: Square, direction: Direction): Square => {
 
 const isSame = (first: Square, second: Square) => first.x === second.x && first.y === second.y;
 
-const GOALS = ["Move around", "Reach the heart", "Run the code below"];
-
 interface MazeProps {
   // Called when the reader reaches the heart.
   onBugFound: () => void;
@@ -45,7 +40,6 @@ interface MazeProps {
 export const Maze = (props: MazeProps) => {
   // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
-  const [moveCount, setMoveCount] = useState(0);
   const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
   const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -90,7 +84,6 @@ export const Maze = (props: MazeProps) => {
     const from = hasBug ? START : player;
     const next = go(from, direction);
     setTrail(hasBug ? [START, next] : isSame(next, from) ? trail : [...trail, next]);
-    setMoveCount(hasBug ? 1 : moveCount + 1);
     if (isSame(next, MAZE_HEART)) props.onBugFound();
   };
   // The keys work while the board is on screen, from wherever the focus is, and scroll the
@@ -115,14 +108,12 @@ export const Maze = (props: MazeProps) => {
       removeEventListener("keyup", handleKeyUp);
     };
   });
-  // The goal the reader is on: move, reach the heart, then run the code.
-  const stage = hasBug ? 2 : moveCount === 0 ? 0 : 1;
   return (
-    <div className="flex w-full flex-wrap items-center gap-x-7 gap-y-6">
+    <div className="flex flex-col gap-2">
       <div
         ref={boardRef}
         className={cn(
-          "relative w-full max-w-[336px] shrink-0 touch-manipulation overflow-hidden rounded-xl select-none",
+          "relative w-full touch-manipulation overflow-hidden rounded-lg select-none",
           hasBug && "motion-safe:animate-shake",
         )}
       >
@@ -174,94 +165,29 @@ export const Maze = (props: MazeProps) => {
           </svg>
         )}
         {hasBug && (
-          <p className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-destructive px-3 py-1 text-sm whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
-            <Bug weight="fill" className="size-3.5" />
-            Bug found · The wall has a gap
+          <p className="absolute top-1.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-xs whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
+            <Bug weight="fill" className="size-3" />
+            Bug found
           </p>
         )}
       </div>
-      <div className="flex min-w-52 flex-1 flex-col gap-3 self-stretch py-1">
-        <ol className="flex flex-col gap-2.5">
-          {GOALS.map((goal, index) => {
-            const isBug = index === 1 && hasBug;
-            const isDone = index === 0 && moveCount > 0;
-            return (
-              <li key={goal} className="flex gap-2.5">
-                <span
-                  className={cn(
-                    "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-xs tabular-nums transition-colors duration-200 ease-out",
-                    isBug
-                      ? "bg-destructive/15 text-destructive"
-                      : isDone
-                        ? "bg-success/15 text-success"
-                        : index === stage
-                          ? "bg-foreground text-background"
-                          : "bg-muted text-faint",
-                  )}
-                >
-                  {isBug ? (
-                    <Bug weight="fill" className="size-3" />
-                  ) : isDone ? (
-                    <Check weight="bold" className="size-3" />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    "transition-colors duration-200 ease-out",
-                    isBug ? "text-destructive" : index === stage ? "text-foreground" : "text-faint",
-                  )}
-                >
-                  {goal}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-        {/* The help for the goal in hand has its own place under the list, tall enough for the
-            longest of it, so that moving on to the next goal moves no goal. */}
-        <div className="min-h-[5.5rem]">
-          <p
-            key={stage}
-            aria-live="polite"
-            className="text-sm text-pretty text-muted-foreground motion-safe:animate-chip-in"
-          >
-            {stage === 0 &&
-              (isTouch ? (
-                "Tap a square next to the robot to move there."
-              ) : (
-                <>
-                  Press{" "}
-                  {DIRECTIONS.map((direction) => (
-                    <KeyCap key={direction.name} isLit={heldKeys.has(direction.key)}>
-                      {direction.glyph}
-                    </KeyCap>
-                  ))}{" "}
-                  to move one square.
-                </>
-              ))}
-            {stage === 1 &&
-              (moveCount < HINT_CALLS
-                ? "Walls are meant to close the heart in. Find a way to it."
-                : "Hint: walk all the way round the walls.")}
-            {stage === 2 &&
-              "The wall was missing a piece. Run the code below, and TLA-ts finds that without being told."}
-          </p>
-        </div>
-        {moveCount > 0 && (
-          <Button
-            onClick={() => {
-              setTrail([START]);
-              setMoveCount(0);
-            }}
-            className="mt-1 self-start pl-2 text-foreground"
-          >
-            <ArrowCounterClockwise className="size-3.5" />
-            Reset
-          </Button>
+      <p aria-live="polite" className="px-1 pb-0.5 text-xs text-pretty text-muted-foreground">
+        {hasBug ? (
+          "The wall has a gap. Run the code, and TLA-ts finds it without being told."
+        ) : isTouch ? (
+          "Tap next to the robot to move. Walls are meant to close the heart in."
+        ) : (
+          <>
+            Move with{" "}
+            {DIRECTIONS.map((direction) => (
+              <KeyCap key={direction.name} isLit={heldKeys.has(direction.key)}>
+                {direction.glyph}
+              </KeyCap>
+            ))}
+            . Walls are meant to close the heart in.
+          </>
         )}
-      </div>
+      </p>
     </div>
   );
 };

@@ -8,7 +8,7 @@ import { startJsTlaWorker } from "@/lib/js-tla-worker";
 import { getLineMarks } from "@/lib/line-marks";
 import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
-import type { SearchState } from "@/lib/search";
+import type { Search, SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { Maze } from "./maze";
@@ -142,6 +142,10 @@ const ExampleSource = () => {
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The search the reader has put away, to play the board again.
+  const [closed, setClosed] = useState<Search>();
+  const search = state.result?.search;
+  const replayed = search === closed ? undefined : search;
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
   // A run's verdict is on a line that may be below the fold of the code.
   useEffect(() => {
@@ -205,7 +209,7 @@ const ExampleSource = () => {
       >
         <div
           ref={scrollRef}
-          className="-mx-4 -mt-4 -mb-2 h-[26rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
+          className="-mx-4 -mt-4 -mb-2 h-[31rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
         >
           <Code.Content />
         </div>
@@ -225,12 +229,15 @@ const ExampleSource = () => {
             <Tooltip.Content>View in playground</Tooltip.Content>
           </Tooltip.Root>
         </Code.Actions>
-        {/* The check plays out on a small board over the code's corner, with its tree. */}
-        {state.result?.search && (
-          <div className="absolute top-14 right-3 z-10 w-44 max-sm:w-36">
-            <MazeReplay search={state.result.search} />
-          </div>
-        )}
+        {/* The game sits over the code's corner: the reader plays it there, and a run plays the
+          check out on the same board, with its tree. */}
+        <div className="absolute top-13 right-3 z-10 w-52 rounded-xl bg-card p-2 shadow-raised max-sm:w-40">
+          {replayed ? (
+            <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
+          ) : (
+            <Maze onBugFound={state.findBug} />
+          )}
+        </div>
         <Code.Footer>
           <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
             <ToggleGroup.Root
@@ -263,18 +270,8 @@ const ExampleSource = () => {
   );
 };
 
-const ExampleGame = () => {
-  const state = exampleContext.useParts();
-  return (
-    <div className="w-full rounded-[18px] bg-card p-5 shadow-raised">
-      <Maze onBugFound={state.findBug} />
-    </div>
-  );
-};
-
 export const Example = {
   Root: ExampleRoot,
-  Game: ExampleGame,
   Hint: ExampleHint,
   Source: ExampleSource,
 };
