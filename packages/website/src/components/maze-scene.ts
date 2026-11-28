@@ -52,7 +52,7 @@ export interface MazeView {
   cameFrom: Square | undefined;
   // The squares a search has reached so far, in order.
   reached: (Square & { isFailing: boolean })[];
-  // The way the search found to the heart, once all of it has shown.
+  // The way the search took to the square it is on.
   route: Square[] | undefined;
   isHeartTaken: boolean;
   // Whether the reader asked for less motion, so that nothing bobs, turns or glides.
@@ -64,6 +64,8 @@ const EYE = vec(0.5, 12, 6.4);
 const TARGET = vec(0.5, 0, 0.62);
 // Half the height of what the camera shows.
 const REACH = 3.4;
+// The camera of the explainer, lower and with a vanishing point, so the board has depth.
+const DEEP = { eye: vec(0.5, 7.6, 9.4), target: vec(0.5, 0, 0.5), reach: 4.9 };
 const WALL_HEIGHT = 0.7;
 const BOT = { size: 0.4, lift: 0.5 };
 const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
@@ -193,7 +195,11 @@ const dome = (sphere: Vec3) => {
 const getGround = (square: Square) => vec(square.x - 2.5, 0, square.y - 2.5);
 
 // Returns nothing where the browser cannot draw the scene.
-export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
+export const createMazeScene = (
+  canvas: HTMLCanvasElement,
+  map: string[],
+  isPerspective: boolean,
+) => {
   const renderer = createRenderer(canvas);
   if (!renderer) return undefined;
   const meshes = {
@@ -215,7 +221,9 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
   const draw = (view: MazeView, now: number) => {
     const colours = isDark() ? DARK : LIGHT;
     const seconds = view.isStill ? 0 : now / 1000;
-    aspect = renderer.begin(EYE, TARGET, REACH);
+    aspect = isPerspective
+      ? renderer.begin(DEEP.eye, DEEP.target, DEEP.reach, true)
+      : renderer.begin(EYE, TARGET, REACH, false);
     const drawBox = (centre: Vec3, half: Vec3, tone: number[], kind: number) =>
       renderer.draw(meshes.cube, place(centre, 0, half), { tone, kind });
     // The void's floor, a wire grid far below the board.
@@ -305,7 +313,7 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
           );
         });
       drawWay(view.trail, colours.way, 1);
-      if (view.route) drawWay(view.route, RED, 1);
+      if (view.route) drawWay(view.route, view.isHeartTaken ? RED : colours.way, 1);
       const isOverWall = isWall({ x: Math.round(at.x + 2.5), y: Math.round(at.z + 2.5) });
       renderer.draw(
         meshes.disc,

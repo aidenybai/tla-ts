@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getTriedStates, type Search } from "@/lib/search";
+import { getPath, getTriedStates, type Search } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { MazeBoard } from "./maze-board";
@@ -28,6 +28,7 @@ export const MazeReplay = (props: MazeReplayProps) => {
     setAttempt(0);
   }
   const states = useMemo(() => getTriedStates(props.search), [props.search]);
+  const statesById = useMemo(() => new Map(states.map((state) => [state.id, state])), [states]);
   const isDone = isReduced || attempt >= states.length;
   useEffect(() => {
     if (isDone) return;
@@ -55,7 +56,7 @@ export const MazeReplay = (props: MazeReplayProps) => {
           reached: states
             .slice(0, triedCount)
             .map((state) => ({ ...getStateSquare(state), isFailing: state.isFailing })),
-          route: isDone ? props.search.states.map(getStateSquare) : undefined,
+          route: getPath(statesById, tried?.id).map(getStateSquare),
           isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
           isStill: isReduced,
         }}
