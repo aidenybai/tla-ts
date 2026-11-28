@@ -891,23 +891,28 @@ describe("the CLI with TypeScript files", () => {
 
   // A model's state may live in a module it imports, which a call of an export changes though the
   // model's own code writes no binding of it: an export that returns nothing is a step, and one
-  // that returns a value is a check, which stops where its call changes the state that a later call
-  // may read.
+  // that returns a value is a check, which Node's driver calls whatever it changes, so a call of it
+  // that changes what a later call may read is a step too.
   describe("checks a model whose exports change the state of a module it imports", () => {
     const STORE = [
       "let count: number = 0;",
       "const seen = new WeakMap<object, number>();",
       "const held = new WeakSet<object>();",
+      "const cache = new Map<string, number>();",
       "exports.anchor = {};",
       "exports.bump = () => {\n  count = (count + 1) % 4;\n  return count;\n};",
       "exports.restore = () => {\n  const saved = count;\n  count = 3;\n  count = saved;\n  return saved;\n};",
       "exports.remember = (key: object) => {\n  seen.set(key, 3);\n  return 1;\n};",
       "exports.hold = (key: object) => {\n  held.add(key);\n  return 1;\n};",
+      "exports.cached = (key: string) => {\n  if (!cache.has(key)) cache.set(key, key.length);\n  return cache.get(key);\n};",
       "exports.get = () => (seen.has(exports.anchor) || held.has(exports.anchor) ? 3 : count);",
       "",
     ].join("\n");
-    const getModel = (tick: string) =>
-      `import { anchor, bump, get, hold, remember, restore } from "./store.cts";\nexport const tick = ${tick};\nexport const isLow = () => get() < 3;\n`;
+    // A model of its own state, which a step turns, whose check reads it, so that it runs in every
+    // state rather than once as the model starts.
+    const OWN = "let turns: number = 0;\nexport const turn = () => {\n  turns = 1 - turns;\n};\n";
+    const getModel = (tick: string, own = "") =>
+      `import { anchor, bump, cached, get, hold, remember, restore } from "./store.cts";\n${own}export const tick = ${tick};\nexport const isLow = () => get() < 3;\n`;
     // Whether Node, ticking the model's module three times, finds isLow false.
     const isViolatedInNode = (directory: string) =>
       spawnSync(
@@ -921,33 +926,33 @@ describe("the CLI with TypeScript files", () => {
       ).stdout.trim() === "false";
 
     it.each([
-      ["returns nothing", "() => {\n  bump();\n}"],
-      ["returns a value", "() => bump()"],
-      ["adds a WeakMap entry under a key that existed", "() => remember(anchor)"],
-      ["adds a WeakSet entry that existed", "() => hold(anchor)"],
-    ])("never passes where Node violates an invariant and an export %s", (_, tick) => {
+      ["returns nothing", "() => {\n  bump();\n}", ""],
+      ["returns a value", "() => bump()", ""],
+      ["adds a WeakMap entry under a key that existed", "() => remember(anchor)", ""],
+      ["adds a WeakSet entry that existed", "() => hold(anchor)", ""],
+      ["returns a value and reads the model's state", "() => turns + bump()", OWN],
+      ["adds a WeakMap entry and reads the model's state", "() => turns + remember(anchor)", OWN],
+    ])("never passes where Node violates an invariant and an export %s", (_, tick, own) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "store.cts"), STORE);
-      writeFileSync(join(directory, "model.ts"), getModel(tick));
+      writeFileSync(join(directory, "model.ts"), getModel(tick, own));
       expect(isViolatedInNode(directory)).toBe(true);
       const result = runCli(directory, ["model.ts"]);
       expect(result.stdout).not.toContain("No error has been found");
-      expect(result.stdout).toContain(
-        tick.includes("{")
-          ? "Error: Invariant isLow is violated."
-          : "tla-ts can't check tick as a function that changes nothing: its call changes the program's state",
-      );
+      expect(result.stdout).toContain("Error: Invariant isLow is violated.");
     });
 
     it.each([
-      ["changes nothing", "() => get() + 1"],
-      ["writes what it read back", "() => restore()"],
-      ["adds a WeakMap entry under a key it makes", "() => remember({})"],
-      ["adds a WeakSet entry that it makes", "() => hold({})"],
-    ])("checks an export that returns a value and %s", (_, tick) => {
+      ["changes nothing", "() => get() + 1", ""],
+      ["writes what it read back", "() => restore()", ""],
+      ["adds a WeakMap entry under a key it makes", "() => remember({})", ""],
+      ["adds a WeakSet entry that it makes", "() => hold({})", ""],
+      ["fills a cache that a later call reads", '() => cached("ab")', ""],
+      ["fills a cache and reads the model's state", '() => turns + cached("ab")', OWN],
+    ])("checks an export that returns a value and %s", (_, tick, own) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "store.cts"), STORE);
-      writeFileSync(join(directory, "model.ts"), getModel(tick));
+      writeFileSync(join(directory, "model.ts"), getModel(tick, own));
       expect(isViolatedInNode(directory)).toBe(false);
       const result = runCli(directory, ["model.ts"]);
       expect(result.status).toBe(0);
