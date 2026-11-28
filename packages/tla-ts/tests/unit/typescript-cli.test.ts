@@ -1751,6 +1751,43 @@ describe("the CLI with TypeScript files", () => {
     },
   );
 
+  // Node's loader of ES modules warns, by its process id, where it reads a file as an ES module by
+  // its syntax because its package.json names no type, for the entry and for a file that an import
+  // loads, but not for one that a require loads.
+  it.each([
+    ["main.js", { "package.json": "{}\n", "main.js": "export {};\n" }],
+    ["main.js", { "package.json": '{ "type": "other" }\n', "main.js": 'import "./dep.mjs";\n' }],
+    ["main.ts", { "package.json": "{}\n", "main.ts": "const n: number = 1;\nexport { n };\n" }],
+    ["main.mjs", { "package.json": "{}\n", "main.mjs": 'import "./dep.js";\n' }],
+    ["main.cjs", { "package.json": "{}\n", "main.cjs": 'import("./dep.js");\n' }],
+  ])("stops where Node warns that %s's package.json names no type", (entry, files) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "dep.mjs"), "export const v = 1;\n");
+    writeFileSync(join(directory, "dep.js"), "export const v = 1;\n");
+    Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+    expect(runNode(directory, entry).stderr).toMatch(
+      /^\(node:\d+\) \[MODULE_TYPELESS_PACKAGE_JSON\] Warning: /,
+    );
+    const result = runCli(directory, [entry]);
+    expect(result.status).toBe(255);
+    expect(result.stderr).toMatch(
+      /tla-ts can't print the warning, with Node's process id, that Node prints where it reads \S+ as an ES module by its syntax, as \S+package\.json names no type\n$/,
+    );
+  });
+
+  it("runs a file that a require loads as an ES module of a package.json without a type", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "package.json"), "{}\n");
+    writeFileSync(join(directory, "dep.js"), "export const v = 1;\n");
+    writeFileSync(
+      join(directory, "main.cjs"),
+      'if (require("./dep.js").v !== 1) throw new Error("v");\n',
+    );
+    const node = runNode(directory, "main.cjs");
+    expect(node.stderr).toBe("");
+    expect(getExit(runCli(directory, ["main.cjs"]))).toEqual(getExit(node));
+  });
+
   // tla-ts parses a TypeScript file's code as JavaScript, and names the file by its own name where
   // it stops in the code: the entry as it's given, as Node names it, and an import by its path.
   it("names an entry of TypeScript by its own name where its code has a syntax error", () => {

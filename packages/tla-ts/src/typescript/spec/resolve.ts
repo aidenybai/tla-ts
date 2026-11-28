@@ -392,12 +392,12 @@ const findManifest = (path: string, system: ProgramSystem): string | undefined =
 };
 
 // The type of the package.json nearest a file, which Node reads its format by, or undefined where
-// that package.json names none, or none holds the file.
+// that package.json names none, or none holds the file. Node reads no type but commonjs and module.
 const getPackageType = (path: string, system: ProgramSystem) => {
   const manifest = findManifest(path, system);
   const type: unknown =
     manifest === undefined ? undefined : JSON.parse(system.readFile(manifest) ?? "{}").type;
-  return typeof type === "string" ? type : undefined;
+  return type === "commonjs" || type === "module" ? type : undefined;
 };
 
 // Whether a package's imports hold a target that is itself a specifier of imports, which
@@ -437,4 +437,21 @@ export const getModuleFormat = (
       : hasModuleSyntax(absolute, text)
         ? "module"
         : "commonjs";
+};
+
+// The package.json that Node 26 warns names no type, by its process id, where its loader of ES
+// modules reads a file as an ES module by its syntax (warnTypelessPackageJsonFile of
+// esm/get_format.js): the nearest one to a .js or a .ts file outside node_modules, where it names
+// no type and the file has an ES module's syntax, or undefined where Node doesn't warn.
+export const getTypelessManifest = (path: string, text: string, system: ProgramSystem) => {
+  const absolute = system.resolvePath(path);
+  const manifest =
+    /\.[jt]s$/.test(absolute) && !absolute.includes("/node_modules/")
+      ? findManifest(absolute, system)
+      : undefined;
+  return manifest !== undefined &&
+    getPackageType(absolute, system) === undefined &&
+    hasModuleSyntax(absolute, text)
+    ? manifest
+    : undefined;
 };

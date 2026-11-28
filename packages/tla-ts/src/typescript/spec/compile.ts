@@ -3,7 +3,12 @@ import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { createModulesParser, getNodeParses, rejectEarlyErrors } from "../early-errors";
 import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
-import { createModuleResolver, getModuleFormat, hasModuleSyntax } from "./resolve";
+import {
+  createModuleResolver,
+  getModuleFormat,
+  getTypelessManifest,
+  hasModuleSyntax,
+} from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
 import type { ModuleTexts, PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
@@ -842,6 +847,17 @@ const loadFiles = (
     );
     return { path, text, kind, written, sourceFile };
   };
+  // Node's loader of ES modules, which loads the entry and each file that an import requests, but
+  // not one that a require does, prints a warning that names its process id where it reads a file
+  // of a package.json without a type as an ES module (see getTypelessManifest).
+  const rejectTypelessImport = (path: string, text: string, node?: ts.Node) => {
+    const manifest = getTypelessManifest(path, text, system);
+    if (manifest === undefined) return;
+    throw new TlaTypeScriptError(
+      `tla-ts can't print the warning, with Node's process id, that Node prints where it reads ${path} as an ES module by its syntax, as ${manifest} names no type`,
+      node,
+    );
+  };
   // A prepared file's requests, which number the files it loads, and the file itself.
   const load = (
     file: ReturnType<typeof prepare>,
@@ -874,7 +890,10 @@ const loadFiles = (
         `tla-ts can't print the warning, with Node's process id, that Node prints where it fails to load the ES module ${path} as CommonJS`,
       );
     }
-    if (path === entry) rejectEarlyErrors(sourceFile, nodeParse);
+    if (path === entry) {
+      rejectTypelessImport(path, text);
+      rejectEarlyErrors(sourceFile, nodeParse);
+    }
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile, nodeParse);
     // The candidates of the file's directory, each requested as an import() of "./" and its name
     // would request it, which Node's resolution finds as it finds the file of a literal's.
@@ -940,6 +959,14 @@ const loadFiles = (
           }
           if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
           const target = getRealPath(found);
+          // A require's facade of an ES module imports it as the require loads it.
+          if (
+            literal !== undefined &&
+            !facades.has(path) &&
+            !(ts.isCallExpression(literal.parent) && !isImportCall(literal.parent))
+          ) {
+            rejectTypelessImport(target, getJsxText(target, readFile(target), system), parsed);
+          }
           if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
           const facade = `${target}.facade.mjs`;
           if (
