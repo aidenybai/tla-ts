@@ -1,37 +1,46 @@
 import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search, SearchState } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { createMazeScene, type MazeView, type Square } from "./maze-scene";
 
-// The board of the example's code, and its two moves, with the mistake in `dash`.
-const MAP = [".......", ".......", "..###..", "..#o#..", "..###..", ".......", "......."];
+// The board of the example's code, and its one move, with the gap left in the wall.
+const MAP = [".......", ".......", "..#.#..", "..#o#..", "..###..", ".......", "......."];
 const START = { x: 0, y: 6 };
 const HEART = { x: 3, y: 3 };
+const SIZE = MAP.length;
+const CELL = 10;
+const BOARD = SIZE * CELL;
+const MOVE_MS = 180;
 // How long the robot spends on each move of the search it plays back.
 const TRY_MS = 230;
 // The calls after which a reader who has not found the way in is told where to look.
-const HINT_CALLS = 10;
+const HINT_CALLS = 14;
 const SHOWN_CALLS = 6;
 const DIRECTIONS = [
-  { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", yaw: Math.PI },
-  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→", yaw: Math.PI / 2 },
-  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓", yaw: 0 },
-  { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←", yaw: -Math.PI / 2 },
+  { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑" },
+  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→" },
+  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓" },
+  { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←" },
 ] as const;
 
 type Direction = (typeof DIRECTIONS)[number];
 
-// Both moves go through here, as they do in the code. Only the square the player lands on is
-// looked at, so a dash goes over a wall.
-const go = (from: Square, direction: Direction, squares: number): Square => {
+interface Square {
+  x: number;
+  y: number;
+}
+
+const SQUARES = MAP.flatMap((row, y) => [...row].map((kind, x) => ({ x, y, kind })));
+
+// The move of the code: one square, unless a wall or the board's edge is there.
+const go = (from: Square, direction: Direction): Square => {
   const next = {
-    x: from.x + direction.move[0] * squares,
-    y: from.y + direction.move[1] * squares,
+    x: from.x + direction.move[0],
+    y: from.y + direction.move[1],
   };
   const square = MAP[next.y]?.[next.x];
   return square === undefined || square === "#" ? from : next;
@@ -53,10 +62,9 @@ interface MazeProps {
 }
 
 // Each square of the board is one state of the game's code, so the reader walks the states
-// TLA-ts checks. An arrow key calls `move` and one with the shift key calls `dash`.
+// TLA-ts checks. An arrow key calls `move`.
 export const Maze = (props: MazeProps) => {
   const [player, setPlayer] = useState(START);
-  const [facing, setFacing] = useState<Direction>(DIRECTIONS[2]);
   // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
   // The calls the reader has made, in the words of the code.
@@ -119,59 +127,45 @@ export const Maze = (props: MazeProps) => {
   const tried = reached.at(triedCount - 1);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const sceneRef = useRef<ReturnType<typeof createMazeScene>>(undefined);
-  const viewRef = useRef<MazeView>(undefined);
-  // The scene draws itself every frame from the game as it last rendered, while it is in sight.
-  useEffect(() => {
-    viewRef.current = {
-      player: tried ?? player,
-      cameFrom: tried?.from,
-      yaw:
-        (tried?.from &&
-          DIRECTIONS.find(
-            (found) =>
-              found.move[0] === Math.sign(tried.x - (tried.from?.x ?? 0)) &&
-              found.move[1] === Math.sign(tried.y - (tried.from?.y ?? 0)),
-          )?.yaw) ??
-        facing.yaw,
-      trail: search === undefined ? trail : [],
-      reached: reached.slice(0, triedCount),
-      route: flood?.isDone ? path : undefined,
-      isHeartTaken: isSame(tried ?? player, HEART),
-      isStill: isReduced,
-    };
-  });
-  useEffect(() => {
-    if (!isInView || props.isPaused || !canvasRef.current) return;
-    sceneRef.current ??= createMazeScene(canvasRef.current, MAP);
-    const scene = sceneRef.current;
-    if (!scene) return;
-    let frame = requestAnimationFrame(function paint(now) {
-      if (viewRef.current) scene.draw(viewRef.current, now);
-      frame = requestAnimationFrame(paint);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isInView, props.isPaused]);
+  const robotRef = useRef<SVGGElement>(null);
+  const shown = tried ?? player;
+  const cameFrom = tried?.from;
+  const lastShownRef = useRef(shown);
+  const isHeartTaken = isSame(shown, HEART);
+  const shownReached = reached.slice(0, triedCount);
+  // Each move is a glide from the square it was made from, with a hop in the middle.
+  useLayoutEffect(() => {
+    const from = cameFrom ?? lastShownRef.current;
+    lastShownRef.current = shown;
+    if (isReduced || isSame(from, shown)) return;
+    const getPlace = (square: Square) =>
+      `${square.x * CELL + CELL / 2}px ${square.y * CELL + CELL / 2}px`;
+    robotRef.current?.animate(
+      [
+        { translate: getPlace(from), scale: 1 },
+        { scale: 1.12, offset: 0.5 },
+        { translate: getPlace(shown), scale: 1 },
+      ],
+      { duration: MOVE_MS, easing: "ease-in-out" },
+    );
+  }, [shown.x, shown.y, cameFrom?.x, cameFrom?.y, isReduced]);
 
   const restart = () => {
     setPlayer(START);
     setTrail([START]);
-    setFacing(DIRECTIONS[2]);
     setCalls([]);
     setIsFloodHidden(true);
     props.onBugChange(false);
   };
-  const call = (direction: Direction, squares: number) => {
+  const call = (direction: Direction) => {
     if (isFlooding) return;
     // A move after the heart is reached, or after TLA-ts has had the board, starts a new game.
     const from = hasBug || search !== undefined ? START : player;
-    const next = go(from, direction, squares);
+    const next = go(from, direction);
     setPlayer(next);
     setTrail(from === player ? (next === from ? trail : [...trail, next]) : [START, next]);
-    setFacing(direction);
     setIsFloodHidden(true);
-    const made = `${squares === 1 ? "move" : "dash"}("${direction.name}")`;
+    const made = `move("${direction.name}")`;
     setCalls(from === player ? [...calls, made] : [made]);
     props.onBugChange(isSame(next, HEART));
   };
@@ -181,13 +175,12 @@ export const Maze = (props: MazeProps) => {
     if (!isInView || props.isPaused) return;
     const handleKey = (event: KeyboardEvent) => {
       const found = DIRECTIONS.find((item) => item.key === event.key);
-      if (event.key === "Shift") setHeldKeys((held) => new Set(held).add("Shift"));
       if (!found || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
         return;
       event.preventDefault();
       setHeldKeys((held) => new Set(held).add(event.key));
-      call(found, event.shiftKey ? 2 : 1);
+      call(found);
     };
     const handleKeyUp = (event: KeyboardEvent) =>
       setHeldKeys((held) => new Set([...held].filter((key) => key !== event.key)));
@@ -203,9 +196,10 @@ export const Maze = (props: MazeProps) => {
     const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
     return { x: Number(values.get("x")), y: Number(values.get("y")) };
   });
+  // The reader's calls, or the search's once it has played out, set the same way.
+  const shownCalls = search === undefined ? calls : flood?.isDone ? steps : [];
   // The goal the reader is on: move, reach the gold, then hand over to TLA-ts.
   const stage = hasBug || props.isRunning ? 2 : calls.length === 0 ? 0 : 1;
-  const shift = <KeyCap isLit={heldKeys.has("Shift")}>Shift</KeyCap>;
   const arrows = DIRECTIONS.map((direction) => (
     <KeyCap key={direction.name} isLit={heldKeys.has(direction.key)}>
       {direction.glyph}
@@ -216,36 +210,163 @@ export const Maze = (props: MazeProps) => {
       <div
         ref={boardRef}
         className={cn(
-          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-xl select-none",
+          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
-        <canvas
-          ref={canvasRef}
+        <svg
           role="img"
           aria-label="A maze with a robot in one corner and a heart walled in at its middle. The arrow keys move the robot."
-          // A click on a square in line with the robot moves there, or dashes there.
-          onClick={(event) => {
-            const box = event.currentTarget.getBoundingClientRect();
-            const square = sceneRef.current?.pick(
-              (event.clientX - box.left) / box.width,
-              (event.clientY - box.top) / box.height,
-            );
-            if (!square) return;
+          viewBox={`-1 -1 ${BOARD + 2} ${BOARD + 3}`}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          className="block w-full"
+        >
+          <rect y={1} width={BOARD} height={BOARD} rx={2.5} className="fill-foreground/15" />
+          <rect width={BOARD} height={BOARD} rx={2.5} className="fill-card" />
+          {SQUARES.map((square) => {
+            const order = shownReached.findIndex((found) => isSame(found, square));
             const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
-            const direction = DIRECTIONS.find(
-              (found) =>
-                Math.sign(square.x - player.x) === found.move[0] &&
-                Math.sign(square.y - player.y) === found.move[1],
+            return (
+              <g key={`${square.x} ${square.y}`}>
+                <rect
+                  x={square.x * CELL}
+                  y={square.y * CELL}
+                  width={CELL}
+                  height={CELL}
+                  fill="transparent"
+                  // A click on a square next to the robot moves there.
+                  onClick={() => {
+                    const direction = DIRECTIONS.find(
+                      (found) =>
+                        Math.sign(square.x - player.x) === found.move[0] &&
+                        Math.sign(square.y - player.y) === found.move[1],
+                    );
+                    if (direction && distance === 1) call(direction);
+                  }}
+                  className="cursor-pointer"
+                />
+                {order >= 0 && (
+                  <rect
+                    x={square.x * CELL + 0.9}
+                    y={square.y * CELL + 0.9}
+                    width={CELL - 1.8}
+                    height={CELL - 1.8}
+                    rx={1.2}
+                    className={cn(
+                      "pointer-events-none origin-center [transform-box:fill-box] motion-safe:animate-chip-in",
+                      shownReached[order].isFailing ? "fill-destructive/35" : "fill-success/30",
+                    )}
+                  />
+                )}
+                {square.kind === "#" && (
+                  <rect
+                    x={square.x * CELL}
+                    y={square.y * CELL}
+                    width={CELL}
+                    height={CELL}
+                    strokeWidth={0.45}
+                    className="pointer-events-none fill-secondary stroke-muted-foreground"
+                  />
+                )}
+              </g>
             );
-            if (direction && (distance === 1 || distance === 2)) call(direction, distance);
-          }}
-          className="block aspect-[8/7] w-full cursor-pointer"
-        />
+          })}
+          <g strokeWidth={0.2} className="pointer-events-none stroke-foreground/10">
+            {Array.from({ length: SIZE - 1 }, (_line, index) => (
+              <path
+                key={index}
+                d={`M${(index + 1) * CELL} 0V${BOARD}M0 ${(index + 1) * CELL}H${BOARD}`}
+              />
+            ))}
+          </g>
+          <rect
+            width={BOARD}
+            height={BOARD}
+            rx={2.5}
+            fill="none"
+            strokeWidth={0.45}
+            className="pointer-events-none stroke-muted-foreground"
+          />
+          {search === undefined &&
+            trail
+              .slice(0, -1)
+              .map((square, index) => (
+                <circle
+                  key={index}
+                  cx={square.x * CELL + CELL / 2}
+                  cy={square.y * CELL + CELL / 2}
+                  r={0.9}
+                  className="pointer-events-none fill-muted-foreground/50"
+                />
+              ))}
+          {path && flood?.isDone && (
+            <polyline
+              points={path
+                .map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`)
+                .join(" ")}
+              fill="none"
+              strokeWidth={1.7}
+              strokeDasharray="0.01 3.3"
+              className="pointer-events-none stroke-destructive motion-safe:animate-line-in"
+            />
+          )}
+          {!isHeartTaken && (
+            <g
+              transform={`translate(${HEART.x * CELL + CELL / 2} ${HEART.y * CELL + CELL / 2})`}
+              className="pointer-events-none"
+            >
+              <ellipse cy={3.4} rx={2.4} ry={0.7} className="fill-[oklch(55%_0.2_10)]/20" />
+              <path
+                d="M0 2.9C-4.6 -0.4 -3.4 -3.3 -1.6 -3.3C-0.7 -3.3 -0.2 -2.8 0 -2.2C0.2 -2.8 0.7 -3.3 1.6 -3.3C3.4 -3.3 4.6 -0.4 0 2.9Z"
+                className="fill-[oklch(68%_0.21_10)]"
+              />
+              <path
+                d="M-2.4 -1.6Q-2.2 -2.6 -1.3 -2.6"
+                fill="none"
+                strokeWidth={0.5}
+                className="stroke-white/70"
+              />
+            </g>
+          )}
+          <g
+            ref={robotRef}
+            style={{ translate: `${shown.x * CELL + CELL / 2}px ${shown.y * CELL + CELL / 2}px` }}
+            strokeWidth={0.45}
+            className="pointer-events-none stroke-muted-foreground"
+          >
+            <ellipse cy={3.9} rx={2.9} ry={0.8} className="fill-foreground/15 stroke-none" />
+            <rect x={-3.9} y={-1.2} width={1.4} height={2.6} rx={0.6} className="fill-card" />
+            <rect x={2.5} y={-1.2} width={1.4} height={2.6} rx={0.6} className="fill-card" />
+            <rect x={-1.1} y={-4.2} width={2.2} height={1.2} rx={0.5} className="fill-card" />
+            <rect x={-3.1} y={-3.3} width={6.2} height={6.4} rx={2.3} className="fill-card" />
+            <rect
+              x={-2.2}
+              y={-1.5}
+              width={4.4}
+              height={2.7}
+              rx={1.2}
+              className="fill-foreground stroke-none"
+            />
+            {isHeartTaken ? (
+              <path
+                d="M-1.5 0.2Q-1 -0.7 -0.5 0.2M0.5 0.2Q1 -0.7 1.5 0.2"
+                fill="none"
+                strokeWidth={0.5}
+                className="stroke-background"
+              />
+            ) : (
+              <g className="fill-background stroke-none">
+                <rect x={-1.35} y={-0.75} width={0.7} height={1.3} rx={0.35} />
+                <rect x={0.65} y={-0.75} width={0.7} height={1.3} rx={0.35} />
+              </g>
+            )}
+          </g>
+        </svg>
         {hasBug && search === undefined && (
           <p className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-destructive px-3 py-1 text-sm whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5" />
-            Bug found · It dashed through a wall
+            Bug found · The wall has a gap
           </p>
         )}
       </div>
@@ -336,19 +457,12 @@ export const Maze = (props: MazeProps) => {
               )
             ) : stage === 1 ? (
               calls.length < HINT_CALLS ? (
-                isTouch ? (
-                  "Walls close the heart in. Tap two squares away to dash. Find a way in."
-                ) : (
-                  <>
-                    Walls close the heart in. Hold {shift} with an arrow to dash two squares. Find a
-                    way in.
-                  </>
-                )
+                "Walls are meant to close the heart in. Find a way to it."
               ) : (
-                "Hint: a dash only looks at the square it lands on."
+                "Hint: walk all the way round the walls."
               )
             ) : (
-              "A dash never looked at the wall. Press run, and TLA-ts finds that without being told."
+              "The wall was missing a piece. Press run, and TLA-ts finds that without being told."
             )}
           </p>
         </div>
@@ -356,7 +470,8 @@ export const Maze = (props: MazeProps) => {
           aria-label="Calls"
           className="flex min-h-[3.25rem] flex-wrap content-start gap-1 font-mono text-xs"
         >
-          {(search !== undefined && flood?.isDone ? steps : search !== undefined ? [] : calls)
+          {shownCalls.length > SHOWN_CALLS && <li className="px-0.5 py-0.5 text-faint">...</li>}
+          {shownCalls
             .map((made, index) => ({ made, order: index }))
             .slice(-SHOWN_CALLS)
             .map((item) => (
