@@ -52,7 +52,7 @@ const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
 const MOVE_MS = 190;
 const RED = [0.92, 0.12, 0.2];
 
-// The page's own warm whites and inks, with green for a square that was checked.
+// The page's own warm whites and inks.
 const LIGHT = {
   track: rgb("#FDFDFC"),
   block: rgb("#F6F5F3"),
@@ -60,8 +60,8 @@ const LIGHT = {
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#C2224F"),
   wireFill: rgb("#FDFDFC"),
-  checked: rgb("#22863A"),
   trail: rgb("#63635E"),
+  way: rgb("#BCBBB5"),
 };
 const DARK = {
   track: rgb("#222221"),
@@ -70,8 +70,8 @@ const DARK = {
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#FF2D62"),
   wireFill: rgb("#191918"),
-  checked: rgb("#85E89D"),
   trail: rgb("#B5B3AD"),
+  way: rgb("#62605B"),
 };
 
 // A box from -1 to 1 on each axis, each face flat, so the shader can find its edges.
@@ -259,42 +259,35 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
         tone: colours.wireFill,
       });
 
-    // The way the search found, as red studs. They ride over a wall where the way crosses one.
-    if (view.route)
-      view.route.slice(1).forEach((square, index) => {
-        const from = view.route?.[index] ?? square;
-        for (const share of [0.25, 0.5, 0.75, 1]) {
-          const stud = {
-            x: blend(from.x, square.x, share),
-            y: blend(from.y, square.y, share),
-          };
-          const lift = isWall({ x: Math.round(stud.x), y: Math.round(stud.y) }) ? WALL_HEIGHT : 0;
-          renderer.draw(
-            meshes.disc,
-            place(add(getGround(stud), vec(0, lift + 0.03, 0)), 0, vec(0.11, 30, 0.11)),
-            { tone: RED },
-          );
-        }
-      });
-
     renderer.drawBlended(() => {
-      for (const square of view.reached) {
+      // A square the search stood on is a shade darker, with no edge of its own.
+      for (const square of view.reached)
         renderer.draw(
           meshes.cube,
-          place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.44, 0.004, 0.44)),
+          place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.5, 0.004, 0.5)),
           {
-            tone: square.isFailing ? RED : colours.checked,
-            alpha: square.isFailing ? 0.55 : 0.22,
+            tone: square.isFailing ? RED : colours.trail,
+            alpha: square.isFailing ? 0.22 : 0.09,
             isFlat: true,
           },
         );
-      }
-      for (const square of view.trail.slice(0, -1))
-        renderer.draw(
-          meshes.disc,
-          place(add(getGround(square), vec(0, 0.014, 0)), 0, vec(0.12, 1, 0.12)),
-          { tone: colours.trail, alpha: 0.55, isFlat: true },
-        );
+      // A way across the board is one thin line: the reader's in ink, the search's in red.
+      const drawWay = (way: Square[], tone: number[], alpha: number) =>
+        way.slice(1).forEach((square, index) => {
+          const from = getGround(way[index]);
+          const to = getGround(square);
+          renderer.draw(
+            meshes.cube,
+            place(
+              vec((from.x + to.x) / 2, 0.016, (from.z + to.z) / 2),
+              0,
+              vec(Math.abs(to.x - from.x) / 2 + 0.03, 0.004, Math.abs(to.z - from.z) / 2 + 0.03),
+            ),
+            { tone, alpha, isFlat: true },
+          );
+        });
+      drawWay(view.trail, colours.way, 1);
+      if (view.route) drawWay(view.route, RED, 1);
       const isOverWall = isWall({ x: Math.round(at.x + 2.5), y: Math.round(at.z + 2.5) });
       renderer.draw(
         meshes.disc,
