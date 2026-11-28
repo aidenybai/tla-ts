@@ -3,9 +3,9 @@ import { vec } from "@/lib/sandbox-figure";
 import { createMazeScene, MAZE_MAP, PLAIN_PITCH, type PlainBoard, type Tried } from "./maze-scene";
 
 const STAGE = { width: 1920, height: 1080 };
-const LOOP_MS = 10_000;
+const LOOP_MS = 20_000;
 // One board fills the stage for this long, and then the camera draws back.
-const HOLD_MS = 900;
+const HOLD_MS = 1800;
 const STEP_MS = 170;
 // The part of a step the robot spends moving to its square.
 const GLIDE = 0.75;
@@ -93,7 +93,7 @@ const LAYOUT_LIST = Array.from({ length: LAYOUTS }, (_value, index) => {
   };
 });
 
-// Ten seconds of TLA-ts checking mazes, on a 1920 by 1080 stage that fits the window, to record.
+// Twenty seconds of TLA-ts checking mazes, on a 1920 by 1080 stage that fits the window, to record.
 // It opens on the example's board and draws back over a plain of other boards, each with its own
 // heart and walls, some of which pass the check.
 export const Explainer = () => {
