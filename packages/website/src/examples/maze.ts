@@ -1,6 +1,5 @@
 type Direction = "up" | "down" | "left" | "right";
 
-// # is a wall and o is the heart, which the walls are meant to close in.
 const MAP = [".......", ".......", "..#.#..", "..#o#..", "..###..", ".......", "......."];
 const MOVES = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 
