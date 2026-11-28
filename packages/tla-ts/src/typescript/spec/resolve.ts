@@ -344,15 +344,24 @@ export const createModuleResolver = (entry: string, system: ProgramSystem) => {
   return (literal: ts.StringLiteralLike, isRequire: boolean) => {
     const specifier = literal.text;
     const containingFile = literal.getSourceFile().fileName;
-    const typeScriptFile = ts.resolveModuleName(
-      specifier,
-      containingFile,
-      options,
-      system,
-      cache,
-      undefined,
-      isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
-    ).resolvedModule?.resolvedFileName;
+    // A specifier of imports, where the imports of the file's package hold a target of imports,
+    // has no file of TypeScript's, which might resolve it without end (see hasImportsTarget).
+    const manifest = specifier.startsWith("#")
+      ? findManifest(system.resolvePath(containingFile), system)
+      : undefined;
+    const typeScriptFile =
+      manifest !== undefined &&
+      hasImportsTarget(Reflect.get(Object(parseJson(system.readFile(manifest) ?? "")), "imports"))
+        ? undefined
+        : ts.resolveModuleName(
+            specifier,
+            containingFile,
+            options,
+            system,
+            cache,
+            undefined,
+            isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
+          ).resolvedModule?.resolvedFileName;
     const node =
       module !== undefined
         ? resolveWithNode(module, specifier, containingFile, isRequire)
@@ -370,17 +379,34 @@ export const createModuleResolver = (entry: string, system: ProgramSystem) => {
   };
 };
 
-// The type of the package.json nearest a file, which Node reads its format by, or undefined where
-// that package.json names none, or none holds the file.
-const getPackageType = (path: string, system: ProgramSystem): string | undefined => {
+// The package.json nearest a file, which TypeScript reads as the file's package, or undefined
+// where none holds the file.
+const findManifest = (path: string, system: ProgramSystem): string | undefined => {
   const directory = path.slice(0, Math.max(path.lastIndexOf("/"), 1));
   const manifest = `${directory === "/" ? "" : directory}/package.json`;
-  if (system.fileExists(manifest)) {
-    const type: unknown = JSON.parse(system.readFile(manifest) ?? "{}").type;
-    return typeof type === "string" ? type : undefined;
-  }
-  return directory === "/" ? undefined : getPackageType(directory, system);
+  return system.fileExists(manifest)
+    ? manifest
+    : directory === "/"
+      ? undefined
+      : findManifest(directory, system);
 };
+
+// The type of the package.json nearest a file, which Node reads its format by, or undefined where
+// that package.json names none, or none holds the file.
+const getPackageType = (path: string, system: ProgramSystem) => {
+  const manifest = findManifest(path, system);
+  const type: unknown =
+    manifest === undefined ? undefined : JSON.parse(system.readFile(manifest) ?? "{}").type;
+  return typeof type === "string" ? type : undefined;
+};
+
+// Whether a package's imports hold a target that is itself a specifier of imports, which
+// TypeScript resolves by the imports again, endlessly where the targets cycle, and Node resolves
+// as a package's name (resolvePackageTargetString).
+const hasImportsTarget = (value: unknown): boolean =>
+  typeof value === "string"
+    ? value.startsWith("#")
+    : typeof value === "object" && value !== null && Object.values(value).some(hasImportsTarget);
 
 // Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
 // names no type (see containsModuleSyntax), in the code that runs once a TypeScript file's types
