@@ -965,6 +965,24 @@ const METHOD_PRODUCTIONS = {
 export const isHostProcess = (files: readonly ProgramFile[]) =>
   files[0].kind !== "script" && !files.some((file) => isProcessDeclared(file.sourceFile));
 
+// The range of a file's text that a function's or a class's source text spans, which starts at
+// async where the code says it, after the modifiers that ECMAScript's syntax leaves out of it, such
+// as static and export, and the ones whose text Node strips, such as private.
+const getSourceRange = (node: ts.Node) => {
+  const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+  const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+  const last = modifiers.at(-1);
+  const start =
+    async?.getStart() ??
+    (last === undefined
+      ? node.getStart()
+      : (node
+          .getChildren()
+          .find((child) => child.pos >= last.end)
+          ?.getStart() ?? node.getStart()));
+  return { start, end: node.getEnd() };
+};
+
 // Specializes JS.tla to a script. A function reached only by a name that the script never writes
 // elsewhere, and that JS.tla's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
@@ -995,6 +1013,28 @@ export const specialize = (
       file.sourceFile,
       files.slice(0, index).reduce((start, other) => start + other.sourceFile.text.length, 0),
     ]),
+  );
+  // The segments of each file's text that hold the source text of its functions and classes, each
+  // where its text starts in the file's SourceText, which holds them one after another and leaves
+  // out the text between them, such as the comments between a module's declarations, which no
+  // function's source text holds. A function's or class's text spans one segment.
+  const sourceSegments = new Map(
+    files.map((file) => {
+      const ranges: { start: number; end: number }[] = [];
+      const collect = (node: ts.Node): void => {
+        if (ts.isFunctionLike(node) || ts.isClassLike(node)) ranges.push(getSourceRange(node));
+        ts.forEachChild(node, collect);
+      };
+      collect(file.sourceFile);
+      const segments: { start: number; end: number; at: number }[] = [];
+      for (const range of ranges.sort((left, right) => left.start - right.start)) {
+        const last = segments.at(-1);
+        if (last !== undefined && range.start <= last.end) last.end = Math.max(last.end, range.end);
+        else
+          segments.push({ ...range, at: last === undefined ? 0 : last.at + last.end - last.start });
+      }
+      return [file.sourceFile, segments] as const;
+    }),
   );
   // Each throw statement's number in its file, from 1, in the order of the file's text, which
   // stays the order of the throws in the file the program was transpiled from.
@@ -1093,25 +1133,20 @@ export const specialize = (
         ])
       : apply(call, args);
 
-  // A function's or a class's source text, which starts at async where the code says it, after
-  // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
-  // ones whose text Node strips, such as private.
+  // A function's or a class's source text, as its file's number and the range of the file's
+  // SourceText it spans, which SourceUnits makes code units of when a program reads it.
   const getSourceText = (node: ts.Node) => {
-    const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
-    const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
-    const last = modifiers.at(-1);
-    const start =
-      async?.getStart() ??
-      (last === undefined
-        ? node.getStart()
-        : (node
-            .getChildren()
-            .find((child) => child.pos >= last.end)
-            ?.getStart() ?? node.getStart()));
+    const range = getSourceRange(node);
+    const segment = sourceSegments
+      .get(node.getSourceFile())
+      ?.find((candidate) => candidate.start <= range.start && range.end <= candidate.end);
+    if (segment === undefined) {
+      throw new TlaTypeScriptError("tla-ts can't find the source text of this code", node);
+    }
     return tuple([
       num(fileNumbers.get(node.getSourceFile()) ?? 0),
-      num(start + 1),
-      num(node.getEnd()),
+      num(segment.at + range.start - segment.start + 1),
+      num(segment.at + range.end - segment.start),
     ]);
   };
 
@@ -5582,7 +5617,13 @@ export const specialize = (
     "",
   );
   addDefinition(defineOperator("Program", ["s"], program));
-  const sources = files.map((file) => getSourceString(file.sourceFile.text));
+  const sources = files.map((file) =>
+    getSourceString(
+      (sourceSegments.get(file.sourceFile) ?? [])
+        .map((segment) => file.sourceFile.text.slice(segment.start, segment.end))
+        .join(""),
+    ),
+  );
   // The position in its file of the unit at an offset of the source text that t gives, which TLA+
   // reads as t[2] + (offset - 1), as - binds tighter than +.
   const getSourcePosition = (offset: string) =>
