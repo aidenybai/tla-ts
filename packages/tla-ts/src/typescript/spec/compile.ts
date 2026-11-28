@@ -962,6 +962,9 @@ const loadFiles = (
     // The error that Node's resolution throws for each specifier of an import that it finds no file
     // for, where the files alone decide it.
     const failures = new Map<string, ResolutionFailure>();
+    // The specifiers of the requires that Node's require finds no module for, where the files
+    // alone decide it.
+    const missingRequires = new Set<string>();
     const targets = new Map(
       [...(isRejected ? [] : getSpecifiers(sourceFile, kind, isDead)), ...candidates].flatMap(
         ([specifier, parsed]) => {
@@ -975,16 +978,21 @@ const loadFiles = (
             return [[specifier, numbers.get(builtin) ?? 0] as const];
           }
           const found = literal === undefined ? undefined : resolve(literal);
-          // A CommonJS module's require of a file that isn't there stops as an import of one does,
-          // where the module's code always requires it as it loads, rather than in a function, a
-          // class, a branch, a loop, or a try, which may not run it, at the require in the code that
-          // tla-ts parses, which Node's wrapper holds.
-          if (
+          // A CommonJS module's require that Node finds no module for throws Node's error, where
+          // the files alone decide it, and else stops as an import of one does, where the module's
+          // code always requires it as it loads, rather than in a function, a class, a branch, a
+          // loop, or a try, which may not run it, at the require in the code that tla-ts parses,
+          // which Node's wrapper holds.
+          const isRequired =
             found === undefined &&
             literal !== undefined &&
             kind === "commonjs" &&
             ts.isCallExpression(literal.parent) &&
-            !isImportCall(literal.parent) &&
+            !isImportCall(literal.parent);
+          if (isRequired && resolveModule(literal, true).failure !== undefined) {
+            missingRequires.add(specifier);
+          } else if (
+            isRequired &&
             /^\.\.?\//.test(literal.text) &&
             ts.findAncestor(literal, isConditional) === undefined
           ) {
@@ -1030,6 +1038,7 @@ const loadFiles = (
       kind,
       targets,
       failures,
+      missingRequires,
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
       isRejected,
       names:

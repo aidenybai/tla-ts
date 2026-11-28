@@ -38,9 +38,10 @@ const DETERMINED_ERRORS = new Set([
   "ERR_INVALID_MODULE_SPECIFIER",
 ]);
 
-// An error that Node's ESM resolution throws for a specifier: its class, Error or TypeError, its
-// code, its message, its url where it has one, and what Node writes to stderr where the link of
-// its entry fails with it, but its stack's frames, or undefined where tla-ts can't tell that.
+// An error that Node's resolution throws for a specifier: its class, Error or TypeError, its code,
+// its message, but a require's stack of the modules that required one another, its url where it
+// has one, and what Node writes to stderr where the link of its entry fails with it, but its
+// stack's frames, or undefined where tla-ts can't tell that, as for a require.
 export interface ResolutionFailure {
   name: string;
   code: string;
@@ -118,6 +119,45 @@ const isCaseDependent = (path: string): boolean => {
     fs.readdirSync(parent).some((entry) => getFolded(entry) === name)
   );
 };
+
+// Whether a require of a path that finds no module might find one on a file system that ignores
+// case: the path is there, as a directory whose files Node reads by their names, or the directory
+// where Node looks for the path with each of its extensions holds a name that the path's starts in
+// another case, or ends in another case after the path's.
+const isRequireCaseDependent = (path: string) => {
+  const fs = process.getBuiltinModule("node:fs");
+  const nodePath = process.getBuiltinModule("node:path");
+  const parent = nodePath.dirname(path);
+  const base = nodePath.basename(path);
+  if (fs.existsSync(path)) return true;
+  if (!fs.existsSync(parent)) return isCaseDependent(parent);
+  return (
+    fs.statSync(parent).isDirectory() &&
+    fs
+      .readdirSync(parent)
+      .some(
+        (entry) =>
+          getFolded(entry).startsWith(getFolded(base)) &&
+          !(
+            entry.startsWith(base) &&
+            entry.slice(base.length) === entry.slice(base.length).toLowerCase()
+          ),
+      )
+  );
+};
+
+// Whether a require's error is the one that Node's require throws where it finds no module for a
+// relative or absolute specifier, of the file that requires it, which the files alone decide: an
+// Error of the code MODULE_NOT_FOUND, whose message names the specifier and the file, as the
+// module of the require that createRequire makes has no parent.
+const isRequireNotFound = (error: Error, specifier: string, containingFile: string) =>
+  /^(?:\.\.?(?:\/|$)|\/)/.test(specifier) &&
+  Object.getPrototypeOf(error) === Error.prototype &&
+  Reflect.ownKeys(error).map(String).join() === "stack,message,code,requireStack" &&
+  error.message === `Cannot find module '${specifier}'\nRequire stack:\n- ${containingFile}` &&
+  !isRequireCaseDependent(
+    process.getBuiltinModule("node:path").resolve(containingFile, "..", specifier),
+  );
 
 // Whether Node's resolution of a specifier from the file containingFile, which failed, reads a path
 // that a file system that ignores case might find: the URL that it names, and, for a package's
@@ -274,11 +314,19 @@ const resolveWithNode = (
     return {
       file: undefined,
       isMissing: true,
-      failure:
-        !isRequire &&
-        DETERMINED_ERRORS.has(code) &&
-        isNodeErrorShape(error) &&
-        !isCaseDependentFailure(specifier, containingFile, Reflect.get(error, "url"))
+      failure: isRequire
+        ? isRequireNotFound(error, specifier, containingFile)
+          ? {
+              name: "Error",
+              code,
+              message: `Cannot find module '${specifier}'`,
+              url: undefined,
+              stderr: undefined,
+            }
+          : undefined
+        : DETERMINED_ERRORS.has(code) &&
+            isNodeErrorShape(error) &&
+            !isCaseDependentFailure(specifier, containingFile, Reflect.get(error, "url"))
           ? getFailure(error, code)
           : undefined,
     };

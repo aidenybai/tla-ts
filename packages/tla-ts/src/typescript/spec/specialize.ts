@@ -109,6 +109,9 @@ export interface ProgramFile {
   // The error that Node's resolution throws for each specifier of an import that it finds no file
   // for, where the files alone decide it.
   failures?: ReadonlyMap<string, ResolutionFailure>;
+  // The specifiers of a CommonJS module's requires that Node's require finds no module for, where
+  // the files alone decide it.
+  missingRequires?: ReadonlySet<string>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
   // The file of an ES module's facade, which a require of it gives the namespace of.
@@ -5407,6 +5410,7 @@ export const specialize = (
             ["names", getNames(file)],
             ["failures", getFailures(file)],
             ["exportNames", tuple(file.exportNames.map(getUnits))],
+            ["missing", setOf([...(file.missingRequires ?? [])].map(getUnits))],
           ]),
         ),
       );
@@ -5530,7 +5534,7 @@ export const specialize = (
     entry.kind === "module"
       ? apply("RunModuleNode", ["s", apply("ModuleNode", [num(1)])])
       : entry.kind === "commonjs"
-        ? apply("RequireFile", ["s", num(1)])
+        ? apply("RequireFile", ["s", num(1), num(0)])
         : apply(script(entry.sourceFile), ["s"]);
   // A dispatch on an id to its arms, or, where it has none, a stop with the message.
   const defineDispatch = (

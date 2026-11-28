@@ -314,7 +314,7 @@ const DEFINITIONS = [
   CASE rec.node = None -> Ok(SyntheticEvaluate(s, m), value)
     [] rec.status = "evaluated" -> IF rec.error = Empty THEN Ok(s, value) ELSE ThrowValue(s, rec.error)
     [] OTHER ->
-         LET r == RequireFile(s, rec.node.file)
+         LET r == RequireFile(s, rec.node.file, 0)
              set == IF IsAbrupt(r) THEN r ELSE SetCommonJsExports(r.s, rec.env, Val(r), rec.node.exportNames)
          IN IF IsAbrupt(set) THEN Abrupt(SetModule(set.s, m, [status |-> "evaluated", error |-> set.c.value]), set.c)
             ELSE Ok(SetModule(set.s, m, [status |-> "evaluated"]), value)`,
@@ -354,11 +354,12 @@ const DEFINITIONS = [
   // Module._load of Node's CommonJS loader (lib/internal/modules/cjs/loader.js) for a file of the
   // program, which require calls: the exports of the module, whose code runs the first time, in
   // the function Node wraps it in, with this as its exports; and, for a module whose code still
-  // runs, its exports so far. The state's required holds each module object and whether its code
-  // ran, and forgets a module whose code threw. A module with an early error throws a SyntaxError,
+  // runs, its exports so far. The state's required holds each module object, whether its code ran,
+  // and the file that first required it, parent, or 0 for none, and forgets a module whose code
+  // threw. A module with an early error throws a SyntaxError,
   // as Node's compile of it does. Node's require is a function that new constructs
   // too, which the proxy of it stops at.
-  `RequireFile(s, id) ==
+  `RequireFile(s, id, parent) ==
   IF id \\in DOMAIN s.required THEN
     LET exports == Get(s, s.required[id].module, SV("exports")) IN
     IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports
@@ -369,7 +370,7 @@ const DEFINITIONS = [
   IF node.kind = "rejected" \\/ (node.kind = "commonjs" /\\ node.code = None) THEN ThrowError(s, "SyntaxError") ELSE
   IF node.kind = "module" THEN
     LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
-        r == RequireEsm([module.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], node)
+        r == RequireEsm([module.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE, parent |-> parent]) @@ @], node)
         made == IF IsAbrupt(r) THEN r ELSE CreateDataProperty(r.s, Val(module), SV("exports"), Val(r))
     IN IF IsAbrupt(made) THEN Abrupt([made.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], made.c)
        ELSE Ok([made.s EXCEPT !.required[id].loaded = TRUE], Val(r))
@@ -384,7 +385,7 @@ const DEFINITIONS = [
                                                               [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
       requireProxy == StoppingProxy(moduleProxy.s, Val(require), N("require"), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
       f == CodeFunctionCreate(requireProxy.s, Intrinsic(requireProxy.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
-      r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
+      r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE, parent |-> parent]) @@ @], f.v, Val(exports),
                 <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
   IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
      ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
@@ -794,9 +795,27 @@ const DEFINITIONS = [
   ELSE IF id \\in {SV("node:crypto"), SV("crypto")} THEN BuiltinModule(s, -2, N("crypto"), <<>>, FALSE)
   ELSE IF id \\in {SV("node:stream"), SV("stream")} THEN BuiltinModule(s, -3, N("stream"), <<>>, TRUE)
   ELSE IF ~IsString(id) THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
+  ELSE IF id.value \\in ModuleNode(referrer).missing THEN RequireNotFound(s, referrer, id.value)
   ELSE IF id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't load the module " \\o UnitsText(id.value))
-  ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
+  ELSE RequireFile(s, ModuleNode(referrer).targets[id.value], referrer)`,
+  // The error that Node's require throws where it finds no module for the request of the file
+  // referrer (Module._resolveFilename of lib/internal/modules/cjs/loader.js): an Error whose message
+  // names the request and the stack of the files that required one another, each the file that
+  // first required the one before, to one that no file required, which its requireStack lists.
+  `RequireNotFound(s, referrer, request) ==
+  LET stackFiles == RequireStack(s, referrer)
+      a == Alloc(s, MakeObject(Obj(s.realm["ErrorPrototype"]), "error", [data |-> Empty]))
+      m == CreateMethodProperty(InstallStack(a.s, a.v), a.v, SV("message"),
+             Str(N("Cannot find module '") \\o request \\o <<39, 10>> \\o N("Require stack:") \\o RequireStackText(stackFiles)))
+      coded == CreateDataProperty(m.s, a.v, SV("code"), SV("MODULE_NOT_FOUND"))
+      listed == CreateArrayFromList(coded.s, MapSeq(stackFiles, LAMBDA u : Str(u)))
+      withStack == CreateDataProperty(listed.s, a.v, SV("requireStack"), Val(listed))
+  IN ThrowValue(withStack.s, a.v)`,
+  `RequireStack(s, id) ==
+  IF id = 0 \\/ id \\notin DOMAIN s.required THEN <<>>
+  ELSE <<ModuleNode(id).filename>> \\o RequireStack(s, s.required[id].parent)`,
+  `RequireStackText(files) == IF files = <<>> THEN <<>> ELSE <<10>> \\o N("- ") \\o Head(files) \\o RequireStackText(Tail(files))`,
   // A part of ECMAScript that JS.tla leaves out, by the reason that JS.tla gives after
   // "Unsupported: ", or none.
   `Unsupported(s, what) ==

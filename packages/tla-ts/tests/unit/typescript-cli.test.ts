@@ -1309,28 +1309,37 @@ describe("the CLI with TypeScript files", () => {
     });
 
     // Each of these ran the file that TypeScript resolves the specifier to, where Node finds none or
-    // another, but for the extensionless import outside a project, which stopped already.
+    // another, but for the extensionless import outside a project, which stopped already. A require
+    // that Node finds no module for throws Node's error, whose text the CLI can't write where
+    // nothing catches it.
     it.each([
       [
         "a require of a TypeScript file without its extension",
         "main.cjs",
         'const two = require("./dep");\nif (two !== 2) throw new Error("two");\n',
         1,
-        "main.cjs:1:21 tla-ts can't load the module ./dep",
+        "tla-ts can't print what Node prints for this uncaught exception",
       ],
       [
         "a require of a file that isn't there",
         "main.cjs",
         'const missing = require("./missing.cjs");\n',
         1,
-        "main.cjs:1:25 tla-ts can't load the module ./missing.cjs",
+        "tla-ts can't print what Node prints for this uncaught exception",
       ],
       [
         "a function's require of a file that isn't there, which it runs",
         "main.cjs",
         'const load = () => require("./missing.cjs");\nload();\n',
         1,
-        "tla-ts can't load the module ./missing.cjs",
+        "tla-ts can't print what Node prints for this uncaught exception",
+      ],
+      [
+        "a require of a file whose name's case differs from the file's",
+        "main.cjs",
+        'const two = require("./Dep");\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "main.cjs:1:21 tla-ts can't load the module ./Dep",
       ],
       [
         "an import of a file that isn't there, after one of a built-in module that Node lacks",
@@ -1474,6 +1483,66 @@ describe("the CLI with TypeScript files", () => {
         expect(getExit(cli)).toEqual(getExit(node));
         expect(getExit(cli)).not.toEqual(getExit(getRun(specifier)[1]));
       });
+    });
+
+    // A require that Node finds no module for throws Node's Error, of the code MODULE_NOT_FOUND,
+    // whose message and requireStack name the request and each file that first required the one
+    // before, which a program that catches it reads as Node's, once the code before it ran.
+    describe.each([
+      ["the entry", "main.cjs", "", "./missing.cjs", "./absent"],
+      [
+        "a module that the entry requires",
+        "main.cjs",
+        'require("./lib.cjs");\n',
+        "./missing.cjs",
+        "./sub/missing.cjs",
+      ],
+      [
+        "a module that an ES module imports",
+        "main.mjs",
+        'import "./lib.cjs";\n',
+        "./missing.cjs",
+        "/missing.cjs",
+      ],
+    ])(
+      "throws Node's error where %s requires a file that isn't there",
+      (_, file, main, specifier, other) => {
+        const getRun = (required: string) => {
+          const caught = `globalThis.ran = (globalThis.ran ?? "") + "${main === "" ? "main" : "lib"}";\ntry {\n  require(${JSON.stringify(required)});\n} catch (error) {\n  throw new Error([globalThis.ran, error instanceof Error, error.constructor === Error, error.code, error.message, error.requireStack, Object.keys(error), Object.getOwnPropertyNames(error)].join("|"));\n}\n`;
+          const directory = write(file, main === "" ? caught : `globalThis.ran = "main";\n${main}`);
+          writeFileSync(join(directory, "lib.cjs"), caught);
+          return [runNode(directory, file), runCli(directory, [file])];
+        };
+
+        it("agrees with Node", () => {
+          const [node, cli] = getRun(specifier);
+          expect(node.status).toBe(1);
+          expect(getExit(cli)).toEqual(getExit(node));
+        });
+
+        it("rejects another result", () => {
+          const [node, cli] = getRun(other);
+          expect(getExit(cli)).toEqual(getExit(node));
+          expect(getExit(cli)).not.toEqual(getExit(getRun(specifier)[1]));
+        });
+      },
+    );
+
+    // A require runs only where its function or its branch does, as Node loads nothing for it before.
+    it.each([
+      ["a function, which never runs,", 'const load = () => require("./missing.cjs");\n'],
+      [
+        "a branch, which it doesn't take,",
+        'const mode = typeof window === "object" ? require("./missing.cjs") : "node";\n',
+      ],
+      [
+        "a try, which catches nothing,",
+        'try {\n  if (typeof window === "object") require("./missing.cjs");\n} catch {}\n',
+      ],
+    ])("runs a module where %s requires a file that isn't there", (_, source) => {
+      const directory = write("main.cjs", source);
+      expect(runNode(directory, "main.cjs").status).toBe(0);
+      expect(getExit(runCli(directory, ["main.cjs"]))).toEqual([0, ""]);
     });
   });
 
