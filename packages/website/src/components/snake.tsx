@@ -283,7 +283,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   const steps = props.search?.states.flatMap((state) => state.call ?? []) ?? [];
   const shownApple = getCenter(isReplayShown ? shown.apple : apple);
   return (
-    <div className="my-4 flex flex-wrap gap-x-10 gap-y-6 rounded-[22px] bg-card p-5 shadow-raised sm:-mx-6 sm:p-7 lg:-mx-10">
+    <div className="flex w-full flex-wrap gap-x-8 gap-y-6 pb-3">
       <div
         ref={boardRef}
         // A click heads the snake for the eighth of a turn nearest to it.
@@ -297,7 +297,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
           steer(DIRECTIONS[(Math.round(angle / (Math.PI / 4)) + 8) % 8]);
         }}
         className={cn(
-          "mb-1 w-full max-w-[294px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "mb-1 w-full max-w-[280px] shrink-0 cursor-pointer touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
           hasBitten && "motion-safe:animate-shake",
         )}
       >
@@ -387,7 +387,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
       </div>
       {/* The column keeps the board's height, with its buttons at the foot, so that a longer line
           or the tree moves nothing. */}
-      <div className="flex min-h-44 min-w-56 flex-1 flex-col items-start gap-4 self-stretch">
+      <div className="flex min-h-28 min-w-56 flex-1 flex-col items-start gap-4 self-stretch sm:min-h-44">
         {hasBitten && !isReplayShown && (
           <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5 shrink-0" />

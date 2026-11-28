@@ -18,10 +18,14 @@ import { ToggleGroup } from "@/components/ui/toggle-group";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
+const VIEWS = ["preview", "typescript", "tla"] as const;
+
+type View = (typeof VIEWS)[number];
+
 interface ExampleState {
   example: (typeof examples)[number];
-  isCompiled: boolean;
-  setIsCompiled: (isCompiled: boolean) => void;
+  view: View;
+  setView: (view: View) => void;
   isRunning: boolean;
   hasRun: boolean;
   result: RunResult | undefined;
@@ -39,10 +43,10 @@ interface RootProps {
 const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
   const example = examples[0];
-  const [isCompiled, setIsCompiled] = useState(false);
+  const [view, setView] = useState<View>("preview");
   const [hasRun, setHasRun] = useState(false);
   const isRunning = runner.isRunning;
-  const result = isRunning || !isCompiled ? undefined : runner.result;
+  const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
   const path = useSearchPath(result?.search, hoveredStateId);
   const request = {
@@ -54,7 +58,8 @@ const ExampleRoot = (props: RootProps) => {
   };
   const run = () => {
     setHasRun(true);
-    setIsCompiled(true);
+    // A run from the TypeScript shows where it ended in the TLA+. One from the game stays on it.
+    if (view === "typescript") setView("tla");
     runner.run(request);
   };
   useEffect(() => {
@@ -70,8 +75,8 @@ const ExampleRoot = (props: RootProps) => {
     <exampleContext.PartsContext
       value={{
         example,
-        isCompiled,
-        setIsCompiled,
+        view,
+        setView,
         isRunning,
         hasRun,
         result,
@@ -100,7 +105,7 @@ const ExampleHint = () => {
       aria-hidden
       className={cn(
         "pointer-events-none absolute top-full right-4 flex -rotate-3 items-start gap-1 font-hand text-2xl text-muted-foreground transition-opacity duration-200 ease-out",
-        state.hasRun && "opacity-0",
+        (state.hasRun || state.view === "preview") && "opacity-0",
       )}
     >
       <span className="mt-3">Click me!</span>
@@ -151,7 +156,9 @@ const ExampleSource = () => {
     () => getHighlightColors(example.sourceMarks.map((mark) => mark.name)),
     [example],
   );
-  const result = state.result;
+  const isCompiled = state.view === "tla";
+  // A run's marks are on the TLA+, so the game and the TypeScript show none of them.
+  const result = isCompiled ? state.result : undefined;
   const rows = useMemo(
     () =>
       getOutputRows({
@@ -166,45 +173,58 @@ const ExampleSource = () => {
   );
   return (
     <Code.Root
-      source={state.isCompiled ? example.tla : example.typescript}
-      rows={state.isCompiled ? rows : undefined}
+      source={isCompiled ? example.tla : example.typescript}
+      rows={isCompiled ? rows : undefined}
       limit={PREVIEW_LINES}
       onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
-      lineMarks={state.isCompiled ? lineMarks : sourceLineMarks}
+      lineMarks={isCompiled ? lineMarks : sourceLineMarks}
       colors={colors}
       activeLine={result?.activeLine}
       notes={result?.notes}
       search={result?.search}
-      path={state.path}
+      path={isCompiled ? state.path : undefined}
       onHoverState={state.hoverState}
     >
-      <Code.Content />
-      <Code.More />
-      <Code.Actions>
-        <Tooltip.Root>
-          <Tooltip.Trigger
-            render={
-              <a
-                href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
-                aria-label="View in playground"
-                className={cn(buttonVariants({ size: "icon" }))}
-              />
-            }
-          >
-            <ArrowUpRight />
-          </Tooltip.Trigger>
-          <Tooltip.Content>View in playground</Tooltip.Content>
-        </Tooltip.Root>
-      </Code.Actions>
+      {/* The game stays where it is while the code shows, so a look at the code loses no game. */}
+      <div className={cn("w-full", state.view !== "preview" && "hidden")}>
+        <SnakeGame search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />
+      </div>
+      {state.view !== "preview" && (
+        <>
+          <Code.Content />
+          <Code.More />
+          <Code.Actions>
+            <Tooltip.Root>
+              <Tooltip.Trigger
+                render={
+                  <a
+                    href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
+                    aria-label="View in playground"
+                    className={cn(buttonVariants({ size: "icon" }))}
+                  />
+                }
+              >
+                <ArrowUpRight />
+              </Tooltip.Trigger>
+              <Tooltip.Content>View in playground</Tooltip.Content>
+            </Tooltip.Root>
+          </Code.Actions>
+        </>
+      )}
       <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
           <ToggleGroup.Root
-            label="Language"
-            value={state.isCompiled ? "tla" : "typescript"}
+            label="View"
+            value={state.view}
             isDisabled={state.isRunning}
-            onValueChange={(value) => state.setIsCompiled(value === "tla")}
+            onValueChange={(value) =>
+              state.setView(VIEWS.find((view) => view === value) ?? "preview")
+            }
             className="mr-1 -ml-1.5 rounded-lg"
           >
+            <ToggleGroup.Item value="preview" className={VIEW_ITEM_CLASS_NAME}>
+              Preview
+            </ToggleGroup.Item>
             <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
               TypeScript
             </ToggleGroup.Item>
@@ -214,24 +234,20 @@ const ExampleSource = () => {
           </ToggleGroup.Root>
           {state.result && <Verdict result={state.result} />}
         </output>
-        <Code.Run
-          isRunning={state.isRunning}
-          isDone={state.result !== undefined}
-          onRun={state.run}
-        />
+        {state.view !== "preview" && (
+          <Code.Run
+            isRunning={state.isRunning}
+            isDone={state.result !== undefined}
+            onRun={state.run}
+          />
+        )}
       </Code.Footer>
     </Code.Root>
   );
-};
-
-const ExampleGame = () => {
-  const state = exampleContext.useParts();
-  return <SnakeGame search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />;
 };
 
 export const Example = {
   Root: ExampleRoot,
   Hint: ExampleHint,
   Source: ExampleSource,
-  Game: ExampleGame,
 };

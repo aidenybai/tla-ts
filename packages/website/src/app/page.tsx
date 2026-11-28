@@ -45,14 +45,14 @@ const Page = () => (
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">This snake game has a bug. Find it before TLA-ts does.</p>
         <Example.Root>
-          <Example.Game />
-          <p className="mt-8 text-pretty">
-            A test only checks the moves you thought to try. TLA-ts tries all of them against one
-            rule, which is the last line of the game&rsquo;s code:
-          </p>
           <Example.Source />
           <Example.Hint />
         </Example.Root>
+        <p className="mt-6 text-pretty">
+          A test only checks the moves you thought to try. TLA-ts tries all of them against one
+          rule, <InlineCode>neverBitesItself</InlineCode>, written in the same TypeScript as the
+          game.
+        </p>
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>

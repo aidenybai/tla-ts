@@ -1,28 +1,3 @@
-// The eight ways to move, clockwise from up.
-const DIRECTIONS = [
-  "up",
-  "upRight",
-  "right",
-  "downRight",
-  "down",
-  "downLeft",
-  "left",
-  "upLeft",
-] as const;
-const MOVES = [
-  [0, -1],
-  [1, -1],
-  [1, 0],
-  [1, 1],
-  [0, 1],
-  [-1, 1],
-  [-1, 0],
-  [-1, -1],
-];
-const SIZE = 7;
-
-type Direction = (typeof DIRECTIONS)[number];
-
 // The squares are numbered row by row, and the snake's head comes first.
 let snake = [23, 22, 21];
 let apple = 26;
@@ -46,4 +21,30 @@ export const step = () => {
   }
 };
 
+// The rule TLA-ts checks after every move.
 export const neverBitesItself = () => !snake.slice(1).includes(snake[0]);
+
+const SIZE = 7;
+// The eight ways to move, clockwise from up.
+const DIRECTIONS = [
+  "up",
+  "upRight",
+  "right",
+  "downRight",
+  "down",
+  "downLeft",
+  "left",
+  "upLeft",
+] as const;
+const MOVES = [
+  [0, -1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
+  [0, 1],
+  [-1, 1],
+  [-1, 0],
+  [-1, -1],
+];
+
+type Direction = (typeof DIRECTIONS)[number];
