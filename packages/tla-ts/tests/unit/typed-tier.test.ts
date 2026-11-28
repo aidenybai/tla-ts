@@ -583,6 +583,20 @@ describe("typed tier matches TLC", () => {
     expect([result.status, result.violation?.name]).toEqual(["liveness-violation", "Prop"]);
   });
 
+  it("rebuilds the paths to a long lasso's states, as TLC prints them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Fa ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, b\nNext == (x < K /\\ x' = x + 1 /\\ UNCHANGED b) \\/ (x = K /\\ b' = ~b /\\ UNCHANGED x)\nSpec == x = 0 /\\ b = FALSE /\\ [][Next]_<<x, b>> /\\ WF_<<x, b>>(Next)\nReturns == []<>(x = 0)\n====",
+      config: "SPECIFICATION Spec\nCONSTANT K = 6000\nPROPERTY Returns",
+    });
+    expect([
+      result.status,
+      result.violation?.properties,
+      result.violation?.trace.length,
+      result.violation?.loopStart,
+    ]).toEqual(["liveness-violation", ["Returns"], 6002, 6000]);
+  });
+
   it("reports no progress below the last report when the interpreter checks again what the tier searched, as TLC's counts never go back", async () => {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 1000));
