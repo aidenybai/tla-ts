@@ -436,7 +436,7 @@ const DEFINITIONS = [
   // takes, whose result the state keeps as the function that import() calls.
   `SetupHostImport(s, id) ==
   LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ModuleNode(id).code, FALSE, s.globalEnv, NoPrivateEnvironment)
-      fns == HostImportFunctions(f.s, <<"hostLoad", "hostDependencies", "hostIsInstantiated", "hostInstantiate", "hostEvaluate", "hostNamespace">>, <<>>)
+      fns == HostImportFunctions(f.s, <<"hostLoad", "hostDependencies", "hostIsInstantiated", "hostInstantiate", "hostEvaluate", "hostNamespace", "hostFailure", "hostUntrace">>, <<>>)
       r == Call(fns.s, f.v, Undefined, fns.v)
   IN IF IsAbrupt(r) THEN r ELSE Ok([r.s EXCEPT !.hostImport = Val(r)], Empty)`,
   `HostImportFunctions(s, methods, acc) ==
@@ -1776,6 +1776,17 @@ const HOST_PATCHES = [
          LET loading == LoadRequestedModules(loaded.s, Val(loaded)) IN
          IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading))
          ELSE Ok(loading.s, IntV(Val(loaded)))
+    \\* The class, code, message, and url, or undefined, of the error that Node's resolution throws
+    \\* for a specifier of the referrer, where the files alone decide it, or undefined.
+    [] m = "hostFailure" ->
+         LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
+             specifier == Arg(args, 2).value
+         IN IF specifier \\notin DOMAIN referrer.failures THEN Ok(s, Undefined) ELSE
+            LET failure == referrer.failures[specifier] IN
+            CreateArrayFromList(s, <<Str(failure.name), Str(failure.code), Str(failure.message), IF failure.hasUrl THEN Str(failure.url) ELSE Undefined>>)
+    \\* An error without the frames that its constructor captured, whose stack V8 writes with Node's.
+    [] m = "hostUntrace" ->
+         Ok(SetO(s, Arg(args, 1), [O(s, Arg(args, 1)) EXCEPT !.slots = [k \\in DOMAIN @ \\ {"trace"} |-> @[k]]]), Arg(args, 1))
     [] m = "hostDependencies" ->
          LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN
          CreateArrayFromList(s, IF rec.kind = "source" THEN MapSeq(rec.requests, LAMBDA r : IntV(rec.loaded[r])) ELSE <<>>)

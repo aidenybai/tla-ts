@@ -1445,6 +1445,36 @@ describe("the CLI with TypeScript files", () => {
         expect(getExit(cli)).not.toEqual(getExit(getRun(source)[1]));
       });
     });
+
+    // An import() whose resolution fails so rejects with Node's error, of its class, with its code,
+    // its url and its message as its own properties, which a program that catches it reads as
+    // Node's.
+    describe.each([
+      ["a file that isn't there", "main.mjs", "./missing.mjs", "./absent"],
+      ["a directory", "main.mjs", "./dir", "./dir/"],
+      ["a package's name that isn't valid", "main.mjs", "@conditions", "conditions/missing"],
+      ["a file that isn't there, from a CommonJS module", "main.cjs", "./missing.mjs", "./dir"],
+    ])("rejects an import() of %s with Node's error", (_, file, specifier, other) => {
+      const getRun = (imported: string) => {
+        const directory = write(
+          file,
+          `import(${JSON.stringify(imported)}).catch((error) => {\n  throw new Error([error instanceof Error, error instanceof TypeError, error.constructor === Error, String(error), error.code, error.url, Object.keys(error), Object.getOwnPropertyNames(error)].join("|"));\n});\n`,
+        );
+        return [runNode(directory, file), runCli(directory, [file])];
+      };
+
+      it("agrees with Node", () => {
+        const [node, cli] = getRun(specifier);
+        expect(node.status).toBe(1);
+        expect(getExit(cli)).toEqual(getExit(node));
+      });
+
+      it("rejects another result", () => {
+        const [node, cli] = getRun(other);
+        expect(getExit(cli)).toEqual(getExit(node));
+        expect(getExit(cli)).not.toEqual(getExit(getRun(specifier)[1]));
+      });
+    });
   });
 
   // Skipped until JS.tla checks a model that imports files, as above.

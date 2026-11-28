@@ -984,6 +984,7 @@ const loadFiles = (
             literal !== undefined &&
             kind === "commonjs" &&
             ts.isCallExpression(literal.parent) &&
+            !isImportCall(literal.parent) &&
             /^\.\.?\//.test(literal.text) &&
             ts.findAncestor(literal, isConditional) === undefined
           ) {
