@@ -1932,6 +1932,25 @@ describe("the CLI with TypeScript files", () => {
     );
   });
 
+  // Node loads a program's ES modules in the order that it links them, and loads none after an
+  // import that it finds no file for, so it doesn't warn at a later one.
+  it.each([
+    ["dep.js", { "package.json": "{}\n", "dep.js": "export const v = 1;\n" }],
+    [
+      "lib/dep.js",
+      { "lib/package.json": '{ "type": "commonjs" }\n', "lib/dep.js": "export const v = 1;\n" },
+    ],
+  ])("fails as Node does where it fails to link the program before it loads %s", (dep, files) => {
+    const directory = copyFixtures("passing");
+    mkdirSync(join(directory, "lib"), { recursive: true });
+    Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+    writeFileSync(join(directory, "main.mjs"), `import "./missing.mjs";\nimport "./${dep}";\n`);
+    const node = runNode(directory, "main.mjs");
+    expect(node.stderr).toContain("Error [ERR_MODULE_NOT_FOUND]: Cannot find module");
+    expect(node.stderr).not.toContain("Warning");
+    expect(getExit(runCli(directory, ["main.mjs"]))).toEqual(getExit(node));
+  });
+
   it("runs a file that a require loads as an ES module of a package.json without a type", () => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "package.json"), "{}\n");
