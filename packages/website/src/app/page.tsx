@@ -45,7 +45,7 @@ const Page = () => (
         <Section.Title>How it works</Section.Title>
         <p className="text-pretty">
           TLA-ts takes your TypeScript program and uses TLA+ to formally check it. Here’s a
-          TypeScript Snake game example:
+          TypeScript maze game example:
         </p>
         <Example.Root>
           <Example.Source />

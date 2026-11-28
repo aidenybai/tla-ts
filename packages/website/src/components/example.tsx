@@ -11,7 +11,7 @@ import type { RunResult } from "@/lib/run-worker";
 import type { SearchState } from "@/lib/search";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { SnakeGame } from "./snake";
+import { Maze } from "./maze";
 import { Code } from "./code";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
@@ -201,7 +201,7 @@ const ExampleSource = () => {
           look at the code loses no game. The code scrolls in the game's space. */}
       <div className="relative w-full">
         <div className={cn(state.view !== "preview" && "invisible")}>
-          <SnakeGame
+          <Maze
             search={state.result?.search}
             isPaused={state.view !== "preview"}
             isRunning={state.isRunning}
