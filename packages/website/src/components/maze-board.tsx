@@ -27,7 +27,7 @@ export const MazeBoard = (props: MazeBoardProps) => {
   });
   useEffect(() => {
     if (!isInView || !canvasRef.current) return;
-    sceneRef.current ??= createMazeScene(canvasRef.current, MAZE_MAP, false);
+    sceneRef.current ??= createMazeScene(canvasRef.current, MAZE_MAP);
     const scene = sceneRef.current;
     if (!scene) return;
     let frame = requestAnimationFrame(function paint(now) {

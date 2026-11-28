@@ -64,8 +64,6 @@ const EYE = vec(0.5, 12, 6.4);
 const TARGET = vec(0.5, 0, 0.62);
 // Half the height of what the camera shows.
 const REACH = 3.4;
-// The camera of the explainer, lower and with a vanishing point, so the board has depth.
-const DEEP = { eye: vec(0.5, 7.6, 9.4), target: vec(0.5, 0, 0.5), reach: 4.9 };
 const WALL_HEIGHT = 0.7;
 const BOT = { size: 0.4, lift: 0.5 };
 const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
@@ -195,11 +193,7 @@ const dome = (sphere: Vec3) => {
 const getGround = (square: Square) => vec(square.x - 2.5, 0, square.y - 2.5);
 
 // Returns nothing where the browser cannot draw the scene.
-export const createMazeScene = (
-  canvas: HTMLCanvasElement,
-  map: string[],
-  isPerspective: boolean,
-) => {
+export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
   const renderer = createRenderer(canvas);
   if (!renderer) return undefined;
   const meshes = {
@@ -221,9 +215,7 @@ export const createMazeScene = (
   const draw = (view: MazeView, now: number) => {
     const colours = isDark() ? DARK : LIGHT;
     const seconds = view.isStill ? 0 : now / 1000;
-    aspect = isPerspective
-      ? renderer.begin(DEEP.eye, DEEP.target, DEEP.reach, true)
-      : renderer.begin(EYE, TARGET, REACH, false);
+    aspect = renderer.begin(EYE, TARGET, REACH);
     const drawBox = (centre: Vec3, half: Vec3, tone: number[], kind: number) =>
       renderer.draw(meshes.cube, place(centre, 0, half), { tone, kind });
     // The void's floor, a wire grid far below the board.

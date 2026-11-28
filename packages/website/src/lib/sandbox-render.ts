@@ -266,33 +266,6 @@ const getParallel = (reach: number, aspect: number, near: number, far: number) =
     1,
   ]);
 
-// A view with a vanishing point, which shows `reach` as half its height at `distance`.
-const getPerspective = (
-  reach: number,
-  aspect: number,
-  distance: number,
-  near: number,
-  far: number,
-) =>
-  new Float32Array([
-    distance / (reach * aspect),
-    0,
-    0,
-    0,
-    0,
-    distance / reach,
-    0,
-    0,
-    0,
-    0,
-    (far + near) / (near - far),
-    -1,
-    0,
-    0,
-    (2 * far * near) / (near - far),
-    0,
-  ]);
-
 // The camera's own axes: to its right, up, and back from what it looks at.
 export const getCameraAxes = (eye: Vec3, target: Vec3) => {
   const away = { x: eye.x - target.x, y: eye.y - target.y, z: eye.z - target.z };
@@ -407,7 +380,7 @@ export const createRenderer = (canvas: HTMLCanvasElement) => {
 
   // Clears the canvas at its size on the page and sets the camera. Returns its width over its
   // height.
-  const begin = (eye: Vec3, target: Vec3, reach: number, isPerspective: boolean) => {
+  const begin = (eye: Vec3, target: Vec3, reach: number) => {
     const ratio = Math.min(devicePixelRatio, 2);
     const width = Math.round(canvas.clientWidth * ratio);
     const height = Math.round(canvas.clientHeight * ratio);
@@ -421,18 +394,7 @@ export const createRenderer = (canvas: HTMLCanvasElement) => {
     gl.uniformMatrix4fv(
       uniforms.viewProjection,
       false,
-      multiply(
-        isPerspective
-          ? getPerspective(
-              reach,
-              aspect,
-              Math.hypot(eye.x - target.x, eye.y - target.y, eye.z - target.z),
-              0.3,
-              120,
-            )
-          : getParallel(reach, aspect, 0.3, 120),
-        getView(eye, target),
-      ),
+      multiply(getParallel(reach, aspect, 0.3, 120), getView(eye, target)),
     );
     gl.uniform3f(uniforms.camera, eye.x, eye.y, eye.z);
     const theme = isDark() ? THEMES.dark : THEMES.light;

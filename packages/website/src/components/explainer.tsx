@@ -11,6 +11,11 @@ const LOOP_MS = 10_000;
 // One board fills the stage for this long, and then the view draws back.
 const HOLD_MS = 900;
 const BOARD = { width: 1000, height: 950 };
+// The ground the boards lie on, which the stage sees tilted away from it. It is wider and deeper
+// than the stage, as its far edge shows at half the size.
+const GROUND = { width: 3800, height: 2600 };
+const TILT_DEGREES = 50;
+const VIEW_DISTANCE = 1100;
 // How many times smaller a board is at the end of the loop than at its start.
 const SHRINK = 18;
 const STEP_MS = 130;
@@ -29,8 +34,8 @@ const getPhase = (column: number, row: number) =>
   column === 0 && row === 0 ? 0 : Math.abs((column * 73_856_093) ^ (row * 19_349_663)) % 1000;
 
 // Ten seconds of TLA-ts checking the maze, on a 1920 by 1080 stage that fits the window, to
-// record. It opens on one board and draws back to a wall of them, each at its own point in the
-// check.
+// record. It opens on one board and draws back over a plain of them, each at its own point in
+// the check.
 export const Explainer = () => {
   const example = examples[0];
   const runner = useRun(true);
@@ -70,7 +75,7 @@ export const Explainer = () => {
     const root = document.documentElement;
     const wasDark = root.classList.contains("dark");
     root.classList.add("dark");
-    const scene = createMazeScene(sceneCanvas, MAZE_MAP, true);
+    const scene = createMazeScene(sceneCanvas, MAZE_MAP);
     if (!scene) return;
     const statesById = new Map(states.map((state) => [state.id, state]));
     // Every state of the check as a picture of the board, at each size.
@@ -103,9 +108,9 @@ export const Explainer = () => {
         return picture;
       });
     });
-    const ratio = Math.min(devicePixelRatio, 2);
-    wall.width = STAGE.width * ratio;
-    wall.height = STAGE.height * ratio;
+    const ratio = Math.min(devicePixelRatio, 1.5);
+    wall.width = GROUND.width * ratio;
+    wall.height = GROUND.height * ratio;
     const ground = getComputedStyle(root).getPropertyValue("--card");
     // ?at=4000 holds the loop at one moment, for a still.
     const held = new URLSearchParams(location.search).get("at");
@@ -123,21 +128,19 @@ export const Explainer = () => {
         0,
         SCALES.findLastIndex((size) => BOARD.width * size >= width * ratio),
       );
-      // The boards stand far apart at first, so the stage opens on one, and close up as it draws back.
-      const pitch = 1 + 0.95 * (width / BOARD.width) ** 2;
-      const columns = Math.ceil(STAGE.width / 2 / (width * pitch) + 0.5);
-      const rows = Math.ceil(STAGE.height / 2 / (height * pitch) + 0.5);
+      const columns = Math.ceil(GROUND.width / 2 / width + 0.5);
+      const rows = Math.ceil(GROUND.height / 2 / height + 0.5);
       const steps = Math.floor(time / STEP_MS);
       pen.setTransform(ratio, 0, 0, ratio, 0, 0);
       pen.fillStyle = ground;
-      pen.fillRect(0, 0, STAGE.width, STAGE.height);
+      pen.fillRect(0, 0, GROUND.width, GROUND.height);
       for (let row = -rows; row <= rows; row++)
         for (let column = -columns; column <= columns; column++) {
           const step = (steps + getPhase(column, row)) % (states.length + REST_STEPS);
           pen.drawImage(
             pictures[Math.min(step, states.length - 1)][level],
-            STAGE.width / 2 + column * width * pitch - width / 2,
-            STAGE.height / 2 + row * height * pitch - height / 2,
+            GROUND.width / 2 + (column - 0.5) * width,
+            GROUND.height / 2 + (row - 0.5) * height,
             width,
             height,
           );
@@ -167,12 +170,22 @@ export const Explainer = () => {
           style={{ width: BOARD.width, height: BOARD.height }}
           className="pointer-events-none absolute top-0 left-0 opacity-0"
         />
-        <canvas
-          ref={wallRef}
-          role="img"
-          aria-label="A wall of mazes, each with a robot making the moves TLA-ts tries."
-          className="absolute inset-0 size-full"
-        />
+        <div style={{ perspective: VIEW_DISTANCE }} className="absolute inset-0">
+          <canvas
+            ref={wallRef}
+            role="img"
+            aria-label="A plain of mazes, each with a robot making the moves TLA-ts tries."
+            style={{
+              width: GROUND.width,
+              height: GROUND.height,
+              left: (STAGE.width - GROUND.width) / 2,
+              top: (STAGE.height - GROUND.height) / 2,
+              transform: `rotateX(${TILT_DEGREES}deg)`,
+            }}
+            className="absolute"
+          />
+        </div>
+        <div className="absolute inset-x-0 top-0 h-[420px] bg-linear-to-b from-card via-card/70 to-transparent" />
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between bg-linear-to-t from-card via-card/80 to-transparent px-16 pt-40 pb-12 font-pixel text-foreground">
           <p className="text-4xl text-muted-foreground">
             <span ref={countRef} className="mr-4 text-8xl text-foreground tabular-nums">
