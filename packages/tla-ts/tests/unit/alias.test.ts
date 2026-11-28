@@ -245,6 +245,50 @@ describe("ALIAS matches TLC", () => {
     ]);
   });
 
+  it("rebuilds the path for an alias that reads Trace with the search's Trace, which the next-state relation reads, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x < 6 /\\ Len(Trace) >= 1 /\\ x' = x + 1\nInv == x < 3\nAlias == [x |-> x, t |-> Len(Trace)]\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+    });
+    expect([
+      result.status,
+      formatTrace(result.violation?.trace),
+      [result.generatedStates, result.distinctStates, result.depth],
+    ]).toEqual([
+      "invariant-violation",
+      [
+        ["x = 0", "t = 1"],
+        ["x = 1", "t = 2"],
+        ["x = 2", "t = 3"],
+        ["x = 3", "t = 4"],
+      ],
+      [4, 4, 4],
+    ]);
+  });
+
+  it("rebuilds the path for an alias that reads Trace at the level of each state it rebuilds, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == PrintT("init") /\\ x = 0\nNext == x < 6 /\\ PrintT(<<"next", x, TLCGet("level")>>) /\\ x\' = x + 1\nInv == x < 3\nAlias == [x |-> x, t |-> Len(Trace)]\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([prints, result.violation?.traceOutput]).toEqual([
+      ['"init"', '<<"next", 0, 1>>', '<<"next", 1, 2>>', '<<"next", 2, 3>>'],
+      [
+        '"init"',
+        '<<"next", 0, 1>>',
+        '<<"next", 1, 2>>',
+        '<<"next", 2, 3>>',
+        '"init"',
+        '"init"',
+        '<<"next", 0, 1>>',
+      ],
+    ]);
+  });
+
   it("prints a deadlocked initial state without the alias, as TLC does", async () => {
     const result = await checkModule("Next == x > 0 /\\ x' = x\nAlias == [y |-> x]", "ALIAS Alias");
     expect([result.status, result.violation?.trace[0].state]).toEqual(["deadlock", { x: 0 }]);
