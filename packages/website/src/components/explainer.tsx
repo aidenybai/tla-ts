@@ -15,6 +15,8 @@ const LOOP_BEATS = 100;
 // The moves of the search the robot makes in a beat, which leaves the last third of the loop on
 // the bug it found.
 const MOVES_PER_BEAT = 0.6;
+// The beat the board, which fills the stage until then, draws back to show the tree on.
+const TREE_BEAT = 22;
 
 const subscribeToResize = (onChange: () => void) => {
   addEventListener("resize", onChange);
@@ -87,7 +89,7 @@ export const Explainer = () => {
         data-beat={search ? beat : undefined}
         className="relative shrink-0"
       >
-        <div className="absolute inset-0 flex items-center justify-center gap-20">
+        <div className="absolute inset-0 flex items-center justify-center">
           <MazeBoard
             isPerspective
             label="The maze, with the robot making each move TLA-ts tries."
@@ -103,15 +105,28 @@ export const Explainer = () => {
               isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
               isStill: false,
             }}
-            className={cn("w-[860px] shrink-0", isFound && "motion-safe:animate-shake")}
+            className={cn(
+              "shrink-0 transition-[width] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
+              beat >= TREE_BEAT ? "w-[860px]" : "w-[1560px]",
+              isFound && "motion-safe:animate-shake",
+            )}
           />
-          <div style={{ zoom: 2.9 }} className="w-[280px]">
-            <SearchTree
-              states={states}
-              triedCount={triedCount}
-              activeId={tried?.id}
-              onHover={() => {}}
-            />
+          <div
+            style={{ zoom: 2.9 }}
+            className={cn(
+              "overflow-hidden transition-[width,margin,opacity] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
+              beat >= TREE_BEAT ? "ml-5 w-[300px]" : "ml-0 w-0 opacity-0",
+            )}
+          >
+            <div className="w-[280px]">
+              <SearchTree
+                states={states}
+                triedCount={triedCount}
+                activeId={tried?.id}
+                onHover={() => {}}
+                isFormal
+              />
+            </div>
           </div>
         </div>
       </div>

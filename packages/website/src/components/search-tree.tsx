@@ -50,6 +50,8 @@ interface SearchTreeProps {
   triedCount: number;
   activeId: string | undefined;
   onHover: (stateId: string | undefined) => void;
+  // Draws the tree as a figure: ring nodes named by their state, hairline edges and a depth scale.
+  isFormal?: boolean;
 }
 
 export const SearchTree = (props: SearchTreeProps) => {
@@ -80,6 +82,28 @@ export const SearchTree = (props: SearchTreeProps) => {
       onPointerLeave={() => props.onHover(undefined)}
       className="w-full max-w-[280px] overflow-visible"
     >
+      {props.isFormal &&
+        Array.from({ length: depth + 1 }, (_value, level) => (
+          <g key={level}>
+            <line
+              x1={MARGIN_PX - 4}
+              y1={MARGIN_PX + level * row}
+              x2={WIDTH_PX}
+              y2={MARGIN_PX + level * row}
+              strokeWidth={0.25}
+              strokeDasharray="0.8 2"
+              className="stroke-muted-foreground/40"
+            />
+            <text
+              x={0}
+              y={MARGIN_PX + level * row + 1.4}
+              fontSize={4}
+              className="fill-muted-foreground font-serif italic"
+            >
+              {level}
+            </text>
+          </g>
+        ))}
       {tree.nodes.flatMap((node) => {
         const parent = nodesById.get(node.state.parentId ?? "");
         if (!parent || !isTried(node)) return [];
@@ -90,11 +114,15 @@ export const SearchTree = (props: SearchTreeProps) => {
             y1={getY(parent)}
             x2={getX(node)}
             y2={getY(node)}
-            strokeWidth={Math.min(1.5, radius * 0.4)}
+            strokeWidth={props.isFormal ? 0.5 : Math.min(1.5, radius * 0.4)}
             strokeLinecap="round"
             className={cn(
               "motion-safe:animate-chip-in",
-              isDone && failingIds.has(node.state.id) ? "stroke-destructive" : "stroke-input",
+              isDone && failingIds.has(node.state.id)
+                ? "stroke-destructive"
+                : props.isFormal
+                  ? "stroke-muted-foreground"
+                  : "stroke-input",
             )}
           />,
         ];
@@ -121,12 +149,39 @@ export const SearchTree = (props: SearchTreeProps) => {
                     className={node.state.isFailing ? "fill-destructive/25" : "fill-foreground/15"}
                   />
                 )}
-                <circle
-                  cx={getX(node)}
-                  cy={getY(node)}
-                  r={radius}
-                  className={node.state.isFailing ? "fill-destructive" : "fill-success"}
-                />
+                {props.isFormal ? (
+                  <>
+                    <circle
+                      cx={getX(node)}
+                      cy={getY(node)}
+                      r={radius * 0.62}
+                      strokeWidth={0.6}
+                      className={
+                        node.state.isFailing
+                          ? "fill-destructive stroke-destructive"
+                          : "fill-card stroke-foreground"
+                      }
+                    />
+                    <text
+                      x={getX(node) + radius + 1}
+                      y={getY(node) + 1.5}
+                      fontSize={4.4}
+                      className={cn(
+                        "font-serif italic",
+                        node.state.isFailing ? "fill-destructive" : "fill-muted-foreground",
+                      )}
+                    >
+                      ⟨{node.state.variables.map((variable) => variable.value).join(", ")}⟩
+                    </text>
+                  </>
+                ) : (
+                  <circle
+                    cx={getX(node)}
+                    cy={getY(node)}
+                    r={radius}
+                    className={node.state.isFailing ? "fill-destructive" : "fill-success"}
+                  />
+                )}
               </g>,
             ]
           : [],
