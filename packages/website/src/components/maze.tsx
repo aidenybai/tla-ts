@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { createMazeScene, type MazeView, type Square } from "./maze-scene";
+import { SearchTree } from "./search-tree";
 
 // The board of the example's code, and its one move, with the gap left in the wall.
 const MAP = [".......", ".......", "..#.#..", "..#o#..", "..###..", ".......", "......."];
@@ -64,6 +65,7 @@ export const Maze = (props: MazeProps) => {
   const [isFloodHidden, setIsFloodHidden] = useState(false);
   // The state of the search the robot is trying, while it plays the search back.
   const [attempt, setAttempt] = useState(0);
+  const [hoveredId, setHoveredId] = useState<string>();
   const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   if (props.search && flood?.search !== props.search) {
@@ -88,6 +90,7 @@ export const Maze = (props: MazeProps) => {
       ...states.filter((state) => state.isFailing),
     ].map((state) => ({
       ...getSquare(state),
+      state,
       isFailing: state.isFailing,
       // The square the move that reached this one was made from.
       from:
@@ -113,7 +116,11 @@ export const Maze = (props: MazeProps) => {
   }, [isFlooding, floodMs]);
   const hasBug = isSame(player, HEART);
   const triedCount = isFlooding ? Math.min(attempt + 1, reached.length) : reached.length;
-  const tried = reached.at(triedCount - 1);
+  // A state pointed at in the tree shows on the board, once the search has played out.
+  const tried =
+    (isFlooding ? undefined : reached.find((found) => found.state.id === hoveredId)) ??
+    reached.at(triedCount - 1);
+  const states = useMemo(() => reached.map((found) => found.state), [reached]);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -331,6 +338,16 @@ export const Maze = (props: MazeProps) => {
             )}
           </p>
         </div>
+        {/* The search as a tree: each state hangs under the one its move was made from, and
+            appears as the robot makes that move. */}
+        {search !== undefined && (
+          <SearchTree
+            states={states}
+            triedCount={triedCount}
+            activeId={tried?.state.id}
+            onHover={setHoveredId}
+          />
+        )}
         {(calls.length > 0 || search !== undefined) && !isFlooding && (
           <Button
             variant="link"
