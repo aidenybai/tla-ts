@@ -1,4 +1,4 @@
-import { Bug, Check } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
@@ -382,12 +382,8 @@ export const Maze = (props: MazeProps) => {
           />
         )}
         {(calls.length > 0 || search !== undefined) && !isFlooding && (
-          <Button
-            variant="link"
-            size="inline"
-            onClick={restart}
-            className="mt-auto self-start text-sm"
-          >
+          <Button onClick={restart} className="mt-1 self-start pl-2 text-foreground">
+            <ArrowCounterClockwise className="size-3.5" />
             Reset
           </Button>
         )}
