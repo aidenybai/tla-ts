@@ -1701,6 +1701,23 @@ describe("the CLI with TypeScript files", () => {
     ]);
   });
 
+  // Node runs a file whose package names no type as an ES module where it fails to compile as
+  // CommonJS only for syntax that CommonJS rejects, as a declaration of a name that Node's wrapper
+  // binds.
+  it.each(["const require = 1;", "let module = 1;", "class exports {}"])(
+    "runs a file of no type as an ES module where %s fails to compile as CommonJS",
+    (declaration) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "detected.js"),
+        `${declaration}\nif (typeof __filename !== "undefined") throw new Error("CommonJS");\n`,
+      );
+      const node = runNode(directory, "detected.js");
+      expect(node.status).toBe(0);
+      expect(getExit(runCli(directory, ["detected.js"]))).toEqual(getExit(node));
+    },
+  );
+
   // tla-ts parses a TypeScript file's code as JavaScript, and names the file by its own name where
   // it stops in the code: the entry as it's given, as Node names it, and an import by its path.
   it("names an entry of TypeScript by its own name where its code has a syntax error", () => {

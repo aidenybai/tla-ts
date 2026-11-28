@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { containsModuleSyntax } from "../early-errors";
 import { isNodeModule } from "../common-js";
 import { getProjectCompilerOptions } from "../program";
 import { getHostSystem, type ProgramSystem } from "../system";
@@ -382,22 +383,15 @@ const getPackageType = (path: string, system: ProgramSystem): string | undefined
 };
 
 // Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
-// names no type: an import or an export, import.meta, or an await at its top level, in the code
-// that runs once a TypeScript file's types are stripped.
-const hasModuleSyntax = (path: string, text: string) => {
-  const isTypeScript = /\.[cm]?ts$/.test(path);
-  const code = isTypeScript
-    ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
-    : text;
-  const file = ts.createSourceFile(path, code, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const isTopLevelAwait = (node: ts.Node): boolean =>
-    !ts.isFunctionLike(node) &&
-    !ts.isClassLike(node) &&
-    (ts.isAwaitExpression(node) ||
-      (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
-      (ts.forEachChild(node, isTopLevelAwait) ?? false));
-  return ts.isExternalModule(file) || isTopLevelAwait(file);
-};
+// names no type (see containsModuleSyntax), in the code that runs once a TypeScript file's types
+// are stripped.
+const hasModuleSyntax = (path: string, text: string) =>
+  containsModuleSyntax(
+    path,
+    /\.[cm]?ts$/.test(path)
+      ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
+      : text,
+  );
 
 // The format that Node loads a file in, as TypeScript tells it by the file's extension and its
 // package's type (getImpliedNodeFormatForFile under nodenext), and, where no type says, as Node
