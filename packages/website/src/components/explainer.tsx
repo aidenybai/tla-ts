@@ -10,15 +10,16 @@ const STAGE = { width: 1920, height: 1080 };
 const LOOP_MS = 10_000;
 // One board fills the stage for this long, and then the view draws back.
 const HOLD_MS = 900;
-const BOARD = { width: 1000, height: 950 };
-// The ground the boards lie on, which the stage sees tilted away from it. It is wider and deeper
-// than the stage, as its far edge shows at half the size.
-const GROUND = { width: 3800, height: 2600 };
-const TILT_DEGREES = 50;
-const VIEW_DISTANCE = 1100;
+// A board as tall as the stage.
+const BOARD = { width: 1140, height: 1083 };
 // How many times smaller a board is at the end of the loop than at its start.
 const SHRINK = 18;
-const STEP_MS = 130;
+const STEP_MS = 170;
+// The part of a step the robot spends moving to its square.
+const GLIDE = 0.75;
+// The square the robot's pictures are taken on.
+const CENTRE = { x: 3, y: 3 };
+const FACINGS = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
 // The steps a board rests on the bug it found before it starts over.
 const REST_STEPS = 10;
 // Each board is kept at these sizes, so a small one is not drawn from a large picture.
@@ -34,8 +35,8 @@ const getPhase = (column: number, row: number) =>
   column === 0 && row === 0 ? 0 : Math.abs((column * 73_856_093) ^ (row * 19_349_663)) % 1000;
 
 // Ten seconds of TLA-ts checking the maze, on a 1920 by 1080 stage that fits the window, to
-// record. It opens on one board and draws back over a plain of them, each at its own point in
-// the check.
+// record. It opens on one board and draws back to a wall of them, each at its own point in the
+// check.
 export const Explainer = () => {
   const example = examples[0];
   const runner = useRun(true);
@@ -78,26 +79,7 @@ export const Explainer = () => {
     const scene = createMazeScene(sceneCanvas, MAZE_MAP);
     if (!scene) return;
     const statesById = new Map(states.map((state) => [state.id, state]));
-    // Every state of the check as a picture of the board, at each size.
-    const pictures = states.map((state, index) => {
-      const square = getStateSquare(state);
-      const parent = statesById.get(state.parentId ?? "");
-      const cameFrom = parent && getStateSquare(parent);
-      scene.draw(
-        {
-          player: square,
-          cameFrom: undefined,
-          yaw: cameFrom ? Math.atan2(square.x - cameFrom.x, square.y - cameFrom.y) : 0,
-          trail: [],
-          reached: states
-            .slice(0, index + 1)
-            .map((reached) => ({ ...getStateSquare(reached), isFailing: reached.isFailing })),
-          route: getPath(statesById, state.id).map(getStateSquare),
-          isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
-          isStill: true,
-        },
-        1_000_000,
-      );
+    const keep = () => {
       let source: HTMLCanvasElement = sceneCanvas;
       return SCALES.map((size) => {
         const picture = document.createElement("canvas");
@@ -107,10 +89,57 @@ export const Explainer = () => {
         source = picture;
         return picture;
       });
+    };
+    const empty = { trail: [], reached: [], route: undefined, isStill: true };
+    // Every state of the check as a picture of the board without its robot, at each size.
+    const boards = states.map((state, index) => {
+      const square = getStateSquare(state);
+      scene.draw(
+        {
+          ...empty,
+          player: square,
+          cameFrom: undefined,
+          yaw: 0,
+          reached: states
+            .slice(0, index + 1)
+            .map((reached) => ({ ...getStateSquare(reached), isFailing: reached.isFailing })),
+          route: getPath(statesById, state.id).map(getStateSquare),
+          isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
+        },
+        1_000_000,
+        "board",
+      );
+      return keep();
     });
-    const ratio = Math.min(devicePixelRatio, 1.5);
-    wall.width = GROUND.width * ratio;
-    wall.height = GROUND.height * ratio;
+    // The robot alone, facing each way it can go, and as it is on the heart.
+    const getRobot = (yaw: number, isHeartTaken: boolean) => {
+      scene.draw(
+        { ...empty, player: CENTRE, cameFrom: undefined, yaw, isHeartTaken },
+        1_000_000,
+        "player",
+      );
+      return keep();
+    };
+    const robots = FACINGS.map((yaw) => getRobot(yaw, false));
+    const cheering = getRobot(0, true);
+    const stride = scene.getStride();
+    const squares = states.map(getStateSquare);
+    // Where each state's move began, and the way the robot faces as it makes it.
+    const moves = states.map((state, index) => {
+      const parent = statesById.get(state.parentId ?? "");
+      const from = parent ? getStateSquare(parent) : squares[index];
+      const yaw = Math.atan2(squares[index].x - from.x, squares[index].y - from.y);
+      return {
+        from,
+        facing: Math.max(
+          0,
+          FACINGS.findIndex((facing) => Math.abs(Math.cos(facing - yaw) - 1) < 0.01),
+        ),
+      };
+    });
+    const ratio = Math.min(devicePixelRatio, 2);
+    wall.width = STAGE.width * ratio;
+    wall.height = STAGE.height * ratio;
     const ground = getComputedStyle(root).getPropertyValue("--card");
     // ?at=4000 holds the loop at one moment, for a still.
     const held = new URLSearchParams(location.search).get("at");
@@ -128,19 +157,29 @@ export const Explainer = () => {
         0,
         SCALES.findLastIndex((size) => BOARD.width * size >= width * ratio),
       );
-      const columns = Math.ceil(GROUND.width / 2 / width + 0.5);
-      const rows = Math.ceil(GROUND.height / 2 / height + 0.5);
+      const columns = Math.ceil(STAGE.width / 2 / width + 0.5);
+      const rows = Math.ceil(STAGE.height / 2 / height + 0.5);
       const steps = Math.floor(time / STEP_MS);
       pen.setTransform(ratio, 0, 0, ratio, 0, 0);
       pen.fillStyle = ground;
-      pen.fillRect(0, 0, GROUND.width, GROUND.height);
+      pen.fillRect(0, 0, STAGE.width, STAGE.height);
+      const glide = Math.min(1, (time % STEP_MS) / STEP_MS / GLIDE);
+      const eased = glide * glide * (3 - 2 * glide);
       for (let row = -rows; row <= rows; row++)
         for (let column = -columns; column <= columns; column++) {
           const step = (steps + getPhase(column, row)) % (states.length + REST_STEPS);
+          const index = Math.min(step, states.length - 1);
+          const isResting = step >= states.length;
+          const left = STAGE.width / 2 + (column - 0.5) * width;
+          const top = STAGE.height / 2 + (row - 0.5) * height;
+          pen.drawImage(boards[index][level], left, top, width, height);
+          const moved = isResting ? 1 : eased;
+          const from = moves[index].from;
+          const to = squares[index];
           pen.drawImage(
-            pictures[Math.min(step, states.length - 1)][level],
-            GROUND.width / 2 + (column - 0.5) * width,
-            GROUND.height / 2 + (row - 0.5) * height,
+            (isResting && states[index].isFailing ? cheering : robots[moves[index].facing])[level],
+            left + (from.x + (to.x - from.x) * moved - CENTRE.x) * stride.across * width,
+            top + (from.y + (to.y - from.y) * moved - CENTRE.y) * stride.down * height,
             width,
             height,
           );
@@ -170,22 +209,12 @@ export const Explainer = () => {
           style={{ width: BOARD.width, height: BOARD.height }}
           className="pointer-events-none absolute top-0 left-0 opacity-0"
         />
-        <div style={{ perspective: VIEW_DISTANCE }} className="absolute inset-0">
-          <canvas
-            ref={wallRef}
-            role="img"
-            aria-label="A plain of mazes, each with a robot making the moves TLA-ts tries."
-            style={{
-              width: GROUND.width,
-              height: GROUND.height,
-              left: (STAGE.width - GROUND.width) / 2,
-              top: (STAGE.height - GROUND.height) / 2,
-              transform: `rotateX(${TILT_DEGREES}deg)`,
-            }}
-            className="absolute"
-          />
-        </div>
-        <div className="absolute inset-x-0 top-0 h-[420px] bg-linear-to-b from-card via-card/70 to-transparent" />
+        <canvas
+          ref={wallRef}
+          role="img"
+          aria-label="A wall of mazes, each with a robot making the moves TLA-ts tries."
+          className="absolute inset-0 size-full"
+        />
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between bg-linear-to-t from-card via-card/80 to-transparent px-16 pt-40 pb-12 font-pixel text-foreground">
           <p className="text-4xl text-muted-foreground">
             <span ref={countRef} className="mr-4 text-8xl text-foreground tabular-nums">
