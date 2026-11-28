@@ -143,7 +143,7 @@ const ExampleSource = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   // The search the reader has put away, to play the board again.
   const [closed, setClosed] = useState<Search>();
-  const [isGameHidden, setIsGameHidden] = useState(false);
+  const [isPreviewHidden, setIsPreviewHidden] = useState(false);
   const search = state.result?.search;
   const replayed = search === closed ? undefined : search;
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
@@ -207,27 +207,41 @@ const ExampleSource = () => {
         path={isCompiled ? state.path : undefined}
         onHoverState={state.hoverState}
       >
-        {/* The game sits over the code's corner, or above the code where the card is a phone's
-            width. The reader plays it there, and a run plays the check out on the same board.
-            Put away, it keeps its place in the game. */}
-        <div className="z-10 rounded-xl bg-card shadow-raised max-sm:mb-4 max-sm:w-full sm:absolute sm:top-3 sm:right-3">
+        {/* The preview sits over the code's corner, or above the code where the card is a phone's
+            width. The reader plays the game there, and a run plays the check out on the same
+            board. Put away, it folds down to its bar and keeps its place in the game. The fold
+            has the small overshoot of the Crucible app's screenshots. */}
+        <div
+          className={cn(
+            "z-10 overflow-hidden rounded-xl bg-card shadow-raised transition-[width] duration-[450ms] ease-[cubic-bezier(0.3,1.15,0.5,1)] max-sm:mb-4 max-sm:w-full motion-reduce:transition-none sm:absolute sm:top-3 sm:right-3",
+            isPreviewHidden ? "sm:w-26" : "sm:w-52",
+          )}
+        >
           <Button
-            aria-expanded={!isGameHidden}
-            onClick={() => setIsGameHidden(!isGameHidden)}
+            aria-expanded={!isPreviewHidden}
+            onClick={() => setIsPreviewHidden(!isPreviewHidden)}
+            // The bar takes the panel's own corners, so its hover fills the panel edge to edge.
+            className="h-8 w-full justify-between gap-3 rounded-none border-transparent bg-transparent px-2.5 text-xs active:scale-100"
+          >
+            Preview
+            {isPreviewHidden ? <ArrowsOutSimple /> : <Minus />}
+          </Button>
+          <div
+            inert={isPreviewHidden}
             className={cn(
-              "h-7 w-full justify-between border-transparent bg-transparent px-2 text-xs",
-              !isGameHidden && "sm:w-52",
+              "grid transition-[grid-template-rows,opacity] duration-[450ms,300ms] ease-[cubic-bezier(0.3,1.15,0.5,1),ease-out] motion-reduce:transition-none",
+              isPreviewHidden ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
             )}
           >
-            Game
-            {isGameHidden ? <ArrowsOutSimple /> : <Minus />}
-          </Button>
-          <div className={cn("p-2 pt-0 sm:w-52", isGameHidden && "hidden")}>
-            {replayed ? (
-              <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
-            ) : (
-              <Maze onBugFound={state.findBug} />
-            )}
+            <div className="min-h-0 overflow-hidden">
+              <div className="p-2 pt-0 sm:w-52">
+                {replayed ? (
+                  <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
+                ) : (
+                  <Maze onBugFound={state.findBug} />
+                )}
+              </div>
+            </div>
           </div>
         </div>
         <div

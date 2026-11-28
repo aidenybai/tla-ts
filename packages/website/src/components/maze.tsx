@@ -41,7 +41,8 @@ interface MazeProps {
 export const Maze = (props: MazeProps) => {
   // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
-  const [heldKeys, setHeldKeys] = useState<ReadonlySet<string>>(new Set());
+  // Whether the reader has pressed a move, which puts the keys shown over the board away.
+  const [hasPlayed, setHasPlayed] = useState(false);
   const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const player = trail[trail.length - 1];
@@ -81,6 +82,7 @@ export const Maze = (props: MazeProps) => {
   }, [isInView]);
 
   const call = (direction: Direction) => {
+    setHasPlayed(true);
     // A move after the heart is reached starts a new game.
     const from = hasBug ? START : player;
     const next = go(from, direction);
@@ -97,17 +99,10 @@ export const Maze = (props: MazeProps) => {
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select"))
         return;
       event.preventDefault();
-      setHeldKeys((held) => new Set(held).add(event.key));
       call(found);
     };
-    const handleKeyUp = (event: KeyboardEvent) =>
-      setHeldKeys((held) => new Set([...held].filter((key) => key !== event.key)));
     addEventListener("keydown", handleKey);
-    addEventListener("keyup", handleKeyUp);
-    return () => {
-      removeEventListener("keydown", handleKey);
-      removeEventListener("keyup", handleKeyUp);
-    };
+    return () => removeEventListener("keydown", handleKey);
   });
   return (
     <div className="flex flex-col gap-2">
@@ -165,6 +160,29 @@ export const Maze = (props: MazeProps) => {
             <circle cx={58} cy={581} r={28} className="fill-muted" />
           </svg>
         )}
+        {!isTouch && (
+          <div
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-0 flex items-center justify-center bg-card/75 transition-opacity duration-200 ease-out motion-reduce:transition-none",
+              hasPlayed && "opacity-0",
+            )}
+          >
+            <div className="grid grid-cols-3 gap-1">
+              {[DIRECTIONS[0], DIRECTIONS[3], DIRECTIONS[2], DIRECTIONS[1]].map((direction) => (
+                <span
+                  key={direction.name}
+                  className={cn(
+                    direction.name === "up" && "col-start-2",
+                    direction.name === "left" && "col-start-1",
+                  )}
+                >
+                  <KeyCap>{direction.glyph}</KeyCap>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {hasBug && (
           <p className="absolute top-1.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-xs whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3" />
@@ -188,21 +206,9 @@ export const Maze = (props: MazeProps) => {
         </div>
       )}
       <p aria-live="polite" className="px-1 pb-0.5 text-xs text-pretty text-muted-foreground">
-        {hasBug ? (
-          "The wall has a gap. Run the code, and TLA-ts finds it without being told."
-        ) : isTouch ? (
-          "Walls are meant to close the heart in. Find a way to it."
-        ) : (
-          <>
-            Move with{" "}
-            {DIRECTIONS.map((direction) => (
-              <KeyCap key={direction.name} isLit={heldKeys.has(direction.key)}>
-                {direction.glyph}
-              </KeyCap>
-            ))}
-            . Walls are meant to close the heart in.
-          </>
-        )}
+        {hasBug
+          ? "The wall has a gap. Run the code, and TLA-ts finds it without being told."
+          : "Walls are meant to close the heart in. Find a way to it."}
       </p>
     </div>
   );
