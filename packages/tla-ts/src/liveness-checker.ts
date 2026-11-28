@@ -386,7 +386,7 @@ const getViolatedProperties = (
             path,
             cycleStart,
             0,
-            environment,
+            getInterpretedAtoms(environment),
           );
         } catch (error) {
           if (!failures || !(error instanceof TlaEvaluationError)) throw error;
