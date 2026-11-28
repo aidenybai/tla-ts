@@ -1070,42 +1070,59 @@ export const evaluateLive = <State>(
   }
 };
 
+const getNextPosition = (path: Value[][], cycleStart: number, position: number) =>
+  position + 1 < path.length ? position + 1 : cycleStart;
+
 export const evaluateOnLasso = (
   expression: LiveExpression,
   path: Value[][],
   cycleStart: number,
   position: number,
-  environment: Environment,
+  atoms: LiveAtoms<Value[]>,
 ): boolean => {
-  const getNext = (index: number) => (index + 1 < path.length ? index + 1 : cycleStart);
-  const recurse = (operand: LiveExpression, index = position) =>
-    evaluateOnLasso(operand, path, cycleStart, index, environment);
   switch (expression.kind) {
     case "Not":
-      return !recurse(expression.body);
+      return !evaluateOnLasso(expression.body, path, cycleStart, position, atoms);
     case "And":
-      return expression.operands.every((operand) => recurse(operand));
+      for (let index = 0; index < expression.operands.length; index++) {
+        if (!evaluateOnLasso(expression.operands[index], path, cycleStart, position, atoms))
+          return false;
+      }
+      return true;
     case "Or":
-      return expression.operands.some((operand) => recurse(operand));
+      for (let index = 0; index < expression.operands.length; index++) {
+        if (evaluateOnLasso(expression.operands[index], path, cycleStart, position, atoms))
+          return true;
+      }
+      return false;
     case "Next":
-      return recurse(expression.body, getNext(position));
+      return evaluateOnLasso(
+        expression.body,
+        path,
+        cycleStart,
+        getNextPosition(path, cycleStart, position),
+        atoms,
+      );
     case "Always":
       for (let index = Math.min(position, cycleStart); index < path.length; index++) {
-        if (!recurse(expression.body, index)) return false;
+        if (!evaluateOnLasso(expression.body, path, cycleStart, index, atoms)) return false;
       }
       return true;
     case "Eventually":
       for (let index = Math.min(position, cycleStart); index < path.length; index++) {
-        if (recurse(expression.body, index)) return true;
+        if (evaluateOnLasso(expression.body, path, cycleStart, index, atoms)) return true;
       }
       return false;
-    default:
-      return evaluateLive(
+    case "Boolean":
+      return expression.value;
+    case "State":
+    case "Enabled":
+      return atoms.holdsState(expression, path[position]);
+    case "Action":
+      return atoms.holdsAction(
         expression,
         path[position],
-        path[getNext(position)],
-        getInterpretedAtoms(environment),
-        new Map(),
+        path[getNextPosition(path, cycleStart, position)],
       );
   }
 };
