@@ -258,6 +258,8 @@ const CodeActions = (props: ActionsProps) => {
 interface RunProps {
   isRunning: boolean;
   isDone: boolean;
+  // Whether running is the next thing to do, which draws the eye to the button.
+  isSuggested?: boolean;
   onRun: () => void;
 }
 
@@ -276,6 +278,11 @@ const CodeRun = (props: RunProps) => {
             disabled={!isHydrated}
             aria-disabled={props.isRunning}
             onClick={() => !props.isRunning && props.onRun()}
+            className={cn(
+              props.isSuggested &&
+                !props.isRunning &&
+                "motion-safe:animate-pulse-ring motion-reduce:ring-3 motion-reduce:ring-success/40",
+            )}
           />
         }
       >

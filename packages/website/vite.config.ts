@@ -26,11 +26,7 @@ import type {
 
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
-const EXAMPLE_PATHS = [
-  "./src/examples/likes.ts",
-  "./src/examples/search-box.tsx",
-  "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
-];
+const EXAMPLE_PATHS = ["./src/examples/maze.ts"];
 const PLAYGROUND_PATHS = [
   "./src/examples/*.{ts,tsx}",
   "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",

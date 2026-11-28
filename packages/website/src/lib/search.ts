@@ -23,6 +23,8 @@ export interface SearchEdge {
 export interface Search {
   states: SearchState[];
   listedStates: SearchState[];
+  // Every state the search reached before it stopped.
+  checkedStates: SearchState[];
   edges: SearchEdge[];
 }
 
@@ -89,6 +91,7 @@ export const getSearch = (
   return {
     states: shownStates,
     listedStates: failingIds.length > 0 ? shownStates : [...states.values()],
+    checkedStates: [...states.values()],
     edges: [...edges.values()],
   };
 };

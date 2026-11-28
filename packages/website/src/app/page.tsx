@@ -50,10 +50,11 @@ const Page = () => (
           <li>TLA-ts converts it into TLA+ and formally checks every state</li>
           <li>Get any violations, with the steps that caused them</li>
         </ol>
+        <p className="text-pretty">Here&rsquo;s a TypeScript maze game example:</p>
         <Example.Root>
-          <Example.Description />
-          <Example.Source />
-          <Example.Graph />
+          <Example.Source>
+            <Example.Preview />
+          </Example.Source>
           <Example.Hint />
         </Example.Root>
       </Section.Root>

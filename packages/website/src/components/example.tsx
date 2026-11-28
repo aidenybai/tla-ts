@@ -1,35 +1,44 @@
-import { ArrowUpRight } from "@phosphor-icons/react";
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { compilations, initial } from "virtual:compilations";
+import { ArrowsOutSimple, Minus } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
-import { EXAMPLES } from "@/lib/examples";
+import { compilations } from "virtual:compilations";
+import { examples } from "virtual:site-data";
+import type { Precompiled } from "@/lib/compilation";
 import { getHighlightColors } from "@/lib/highlight-colors";
 import { startJsTlaWorker } from "@/lib/js-tla-worker";
 import { getLineMarks } from "@/lib/line-marks";
 import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
-import type { SearchState } from "@/lib/search";
+import type { Search, SearchState } from "@/lib/search";
 import type { Source } from "@/lib/site-data";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
-import { StateGraph } from "./state-graph";
+import { Maze } from "./maze";
+import { MazeReplay } from "./maze-replay";
 import { Code } from "./code";
 import { Button } from "@/components/ui/button";
-import { buttonVariants } from "@/components/ui/button-variants";
 import { ToggleGroup } from "@/components/ui/toggle-group";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
+const VIEWS = ["typescript", "tla"] as const;
+
+type View = (typeof VIEWS)[number];
+
 interface ExampleState {
-  example: (typeof EXAMPLES)[number];
+  example: (typeof examples)[number];
   // The example's TLA+, once its compilation has loaded.
   tla: Source | undefined;
-  select: (example: (typeof EXAMPLES)[number]) => void;
-  isCompiled: boolean;
-  setIsCompiled: (isCompiled: boolean) => void;
+  view: View;
+  setView: (view: View) => void;
   isRunning: boolean;
+  // Whether TLA-ts has run.
   hasRun: boolean;
+  // Whether the reader has reached the heart, which the run button then asks to be pressed for.
+  isBugFound: boolean;
+  findBug: () => void;
+  isPreviewHidden: boolean;
+  setIsPreviewHidden: (isHidden: boolean) => void;
   result: RunResult | undefined;
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
@@ -44,23 +53,21 @@ interface RootProps {
 
 const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
-  const [example, setExample] = useState(EXAMPLES[0]);
-  const [isCompiled, setIsCompiled] = useState(false);
+  const example = examples[0];
+  const [view, setView] = useState<View>("typescript");
   const [hasRun, setHasRun] = useState(false);
-  // The examples' compilations that have loaded. The TLA+ of a program on React runs to megabytes,
-  // so the page loads an example's as it shows the example, as the playground loads a file's.
-  const [loaded, setLoaded] = useState(() => new Map([[initial.fileName, initial]]));
-  const compiled = loaded.get(example.fileName);
-  // A run starts once its example's compilation has loaded.
+  const [isBugFound, setIsBugFound] = useState(false);
+  const [isPreviewHidden, setIsPreviewHidden] = useState(false);
+  // The example's TLA+ loads apart from the page, as the playground loads a file's.
+  const [compiled, setCompiled] = useState<Precompiled>();
+  // A run starts once the example's compilation has loaded.
   const [isRunWaiting, setIsRunWaiting] = useState(false);
   const isRunning = runner.isRunning || isRunWaiting;
-  const result = isRunning || !isCompiled ? undefined : runner.result;
+  const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
   const path = useSearchPath(result?.search, hoveredStateId);
   useEffect(() => {
-    void compilations[example.fileName]?.().then((next) =>
-      setLoaded((previous) => new Map(previous).set(next.fileName, next)),
-    );
+    void compilations[example.fileName]?.().then(setCompiled);
   }, [example]);
   useEffect(() => {
     if (!isRunWaiting || compiled === undefined) return;
@@ -73,9 +80,11 @@ const ExampleRoot = (props: RootProps) => {
       typescript: { source: example.typescript.code, fileName: example.fileName },
     });
   }, [isRunWaiting, compiled, example, runner]);
+  // A run shows where it ended in the TLA+.
   const run = () => {
     setHasRun(true);
-    setIsCompiled(true);
+    setView("tla");
+    setIsPreviewHidden(false);
     setIsRunWaiting(true);
   };
   useEffect(() => {
@@ -92,16 +101,14 @@ const ExampleRoot = (props: RootProps) => {
       value={{
         example,
         tla: compiled?.tla,
-        select: (nextExample) => {
-          setExample(nextExample);
-          setIsCompiled(false);
-          setIsRunWaiting(false);
-          runner.reset();
-        },
-        isCompiled,
-        setIsCompiled,
+        view,
+        setView,
         isRunning,
         hasRun,
+        isBugFound,
+        findBug: () => setIsBugFound(true),
+        isPreviewHidden,
+        setIsPreviewHidden,
         result,
         path,
         hoverState: setHoveredStateId,
@@ -113,38 +120,13 @@ const ExampleRoot = (props: RootProps) => {
         // example, ahead of the run. A touch comes with the tap, too late to help.
         onPointerEnter={(event) => event.pointerType === "mouse" && startJsTlaWorker()}
         onFocus={startJsTlaWorker}
-        className="relative flex flex-col gap-3"
+        data-example
+        // The card is wider than the column it sits in, for a board large enough to play on.
+        className="relative flex flex-col gap-3 sm:-mx-3"
       >
         {props.children}
       </div>
     </exampleContext.PartsContext>
-  );
-};
-
-const ExampleDescription = () => {
-  const state = exampleContext.useParts();
-  return (
-    <p className="text-pretty">
-      Here, TLA-ts checks{" "}
-      {EXAMPLES.map((example, index) => (
-        <Fragment key={example.fileName}>
-          {index === EXAMPLES.length - 1 && "or "}
-          {example.article}{" "}
-          <span className="whitespace-nowrap">
-            <Button
-              variant="link"
-              size="inline"
-              aria-pressed={example === state.example}
-              disabled={state.isRunning}
-              onClick={() => state.select(example)}
-            >
-              {example.label}
-            </Button>
-            {index === EXAMPLES.length - 1 ? "." : ","}
-          </span>{" "}
-        </Fragment>
-      ))}
-    </p>
   );
 };
 
@@ -176,15 +158,25 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
-const PREVIEW_LINES = 28;
 
-const ExampleSource = () => {
+interface SourceProps {
+  children?: ReactNode;
+}
+
+const ExampleSource = (props: SourceProps) => {
   const state = exampleContext.useParts();
   const example = state.example;
   const tla = state.tla;
-  // The TLA+ shows once it has loaded, and the TypeScript until then.
-  const isTlaShown = state.isCompiled && tla !== undefined;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
+  // A run's verdict is on a line that may be below the fold of the code.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const line = scroller?.querySelector<HTMLElement>(`[data-line="${failingLine}"]`);
+    if (!scroller || !line || state.view !== "tla") return;
+    scroller.scrollTo({ top: line.offsetTop - scroller.clientHeight / 2 });
+  }, [failingLine, state.view]);
   // Each declaration is marked on the model's line for it: a function on its action or check, and
   // any other on Init. The definitions it compiles to fold away with the rest of JS.tla's code.
   const lineMarks = useMemo(() => {
@@ -209,7 +201,10 @@ const ExampleSource = () => {
     () => getHighlightColors(example.sourceMarks.map((mark) => mark.name)),
     [example],
   );
-  const result = state.result;
+  // The TLA+ shows once it has loaded, and the TypeScript until then.
+  const isCompiled = state.view === "tla" && tla !== undefined;
+  // A run's marks are on the TLA+, so the game and the TypeScript show none of them.
+  const result = isCompiled ? state.result : undefined;
   const rows = useMemo(
     () =>
       getOutputRows({
@@ -223,88 +218,104 @@ const ExampleSource = () => {
     [example, tla, lineMarks, openFolds, result],
   );
   return (
-    <Code.Root
-      source={isTlaShown ? tla : example.typescript}
-      rows={isTlaShown ? rows : undefined}
-      limit={PREVIEW_LINES}
-      onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
-      lineMarks={isTlaShown ? lineMarks : sourceLineMarks}
-      colors={colors}
-      activeLine={result?.activeLine}
-      notes={result?.notes}
-      search={result?.search}
-      path={state.path}
-      onHoverState={state.hoverState}
-    >
-      {/* A new example is other code, not this code in another language, so it does not morph. */}
-      <Code.Content key={example.fileName} />
-      <Code.More />
-      <Code.Actions>
-        <Tooltip.Root>
-          <Tooltip.Trigger
-            render={
-              <a
-                href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
-                aria-label="View in playground"
-                className={cn(buttonVariants({ size: "icon" }))}
-              />
-            }
-          >
-            <ArrowUpRight />
-          </Tooltip.Trigger>
-          <Tooltip.Content>View in playground</Tooltip.Content>
-        </Tooltip.Root>
-      </Code.Actions>
-      <Code.Footer>
-        <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
-          {/* A new example starts on its TypeScript, which the toggle shows without sliding there. */}
-          <ToggleGroup.Root
-            key={state.example.fileName}
-            label="Language"
-            value={state.isCompiled ? "tla" : "typescript"}
-            isDisabled={state.isRunning}
-            onValueChange={(value) => state.setIsCompiled(value === "tla")}
-            className="mr-1 -ml-1.5 rounded-lg"
-          >
-            <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
-              TypeScript
-            </ToggleGroup.Item>
-            <ToggleGroup.Item value="tla" className={VIEW_ITEM_CLASS_NAME}>
-              TLA+
-            </ToggleGroup.Item>
-          </ToggleGroup.Root>
-          {state.result && <Verdict result={state.result} />}
-        </output>
-        <Code.Run
-          isRunning={state.isRunning}
-          isDone={state.result !== undefined}
-          onRun={state.run}
-        />
-      </Code.Footer>
-    </Code.Root>
+    <div className="w-full">
+      <Code.Root
+        source={isCompiled ? tla : example.typescript}
+        rows={isCompiled ? rows : undefined}
+        onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
+        lineMarks={isCompiled ? lineMarks : sourceLineMarks}
+        colors={colors}
+        activeLine={result?.activeLine}
+        notes={result?.notes}
+        search={result?.search}
+        path={isCompiled ? state.path : undefined}
+        onHoverState={state.hoverState}
+      >
+        {props.children}
+        <div
+          ref={scrollRef}
+          className="-mx-4 -mt-4 -mb-2 h-80 w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto sm:h-[27.5rem] [scrollbar-width:none] mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
+        >
+          <Code.Content />
+        </div>
+        <Code.Footer>
+          <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
+            <ToggleGroup.Root
+              label="View"
+              value={state.view}
+              isDisabled={state.isRunning}
+              onValueChange={(value) =>
+                state.setView(VIEWS.find((view) => view === value) ?? "typescript")
+              }
+              className="mr-1 -ml-1.5 rounded-lg"
+            >
+              <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
+                TypeScript
+              </ToggleGroup.Item>
+              <ToggleGroup.Item value="tla" className={VIEW_ITEM_CLASS_NAME}>
+                TLA+
+              </ToggleGroup.Item>
+            </ToggleGroup.Root>
+            {state.result && <Verdict result={state.result} />}
+          </output>
+          <Code.Run
+            isRunning={state.isRunning}
+            isDone={state.result !== undefined}
+            isSuggested={state.isBugFound && !state.hasRun}
+            onRun={state.run}
+          />
+        </Code.Footer>
+      </Code.Root>
+    </div>
   );
 };
 
-const ExampleGraph = () => {
+// The game the reader plays, over the code's corner, which a run takes over to play the check out.
+const ExamplePreview = () => {
   const state = exampleContext.useParts();
+  const [closed, setClosed] = useState<Search>();
+  const isHidden = state.isPreviewHidden;
+  const search = state.result?.search;
+  const replayed = search === closed ? undefined : search;
   return (
-    state.result?.search && (
-      <div className="absolute top-10 left-full ml-8 w-60 transition-[opacity,translate] duration-200 ease-out max-xl:hidden starting:opacity-0 motion-safe:starting:-translate-x-2">
-        <StateGraph.Root
-          search={state.result.search}
-          limit={12}
-          path={state.path}
-          onHover={state.hoverState}
-        />
+    <div
+      className={cn(
+        "z-10 overflow-hidden rounded-xl bg-card shadow-raised transition-[width] duration-[450ms] ease-[cubic-bezier(0.3,1.15,0.5,1)] max-sm:mb-4 max-sm:w-full motion-reduce:transition-none sm:absolute sm:top-3 sm:right-3",
+        isHidden ? "sm:w-26" : "sm:w-52",
+      )}
+    >
+      <Button
+        aria-expanded={!isHidden}
+        onClick={() => state.setIsPreviewHidden(!isHidden)}
+        className="h-8 w-full justify-between gap-3 rounded-none border-transparent bg-transparent px-2.5 text-xs active:scale-100"
+      >
+        Preview
+        {isHidden ? <ArrowsOutSimple /> : <Minus />}
+      </Button>
+      <div
+        inert={isHidden}
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-[450ms,300ms] ease-[cubic-bezier(0.3,1.15,0.5,1),ease-out] motion-reduce:transition-none",
+          isHidden ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="p-2 pt-0 sm:w-52">
+            {replayed ? (
+              <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
+            ) : (
+              <Maze onBugFound={state.findBug} />
+            )}
+          </div>
+        </div>
       </div>
-    )
+    </div>
   );
 };
 
 export const Example = {
   Root: ExampleRoot,
-  Description: ExampleDescription,
   Hint: ExampleHint,
   Source: ExampleSource,
-  Graph: ExampleGraph,
+  Preview: ExamplePreview,
 };
