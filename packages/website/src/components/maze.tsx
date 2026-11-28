@@ -6,36 +6,23 @@ import type { Search } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { createMazeScene, FLOOD_MS, type MazeView, type Square } from "./maze-scene";
 
 // The board of the example's code, and its two moves, with the mistake in `dash`.
-const MAP = [".......", ".......", "..###..", "..#$#..", "..###..", ".......", "......."];
-const SIZE = MAP.length;
+const MAP = [".......", ".......", "..###..", "..#o#..", "..###..", ".......", "......."];
 const START = { x: 0, y: 6 };
-const GOLD = { x: 3, y: 3 };
-// How long TLA-ts's flood takes to reach each next square.
-const FLOOD_MS = 70;
+const HEART = { x: 3, y: 3 };
 // The calls after which a reader who has not found the way in is told where to look.
 const HINT_CALLS = 10;
 const SHOWN_CALLS = 6;
-const CELL = 10;
-const BOARD = SIZE * CELL;
-// One dark line goes round every shape, as in a cartoon.
-const INK_STROKE = "stroke-[oklch(27%_0.05_285)]";
-const INK_FILL = "fill-[oklch(27%_0.05_285)]";
-
 const DIRECTIONS = [
-  { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", angle: 0 },
-  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→", angle: 90 },
-  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓", angle: 180 },
-  { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←", angle: 270 },
+  { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", yaw: Math.PI },
+  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→", yaw: Math.PI / 2 },
+  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓", yaw: 0 },
+  { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←", yaw: -Math.PI / 2 },
 ] as const;
 
 type Direction = (typeof DIRECTIONS)[number];
-
-interface Square {
-  x: number;
-  y: number;
-}
 
 // Both moves go through here, as they do in the code. Only the square the player lands on is
 // looked at, so a dash goes over a wall.
@@ -50,14 +37,7 @@ const go = (from: Square, direction: Direction, squares: number): Square => {
 
 const isSame = (first: Square, second: Square) => first.x === second.x && first.y === second.y;
 
-const getKey = (square: Square) => `${square.x} ${square.y}`;
-
-const SQUARES = MAP.flatMap((row, y) => [...row].map((kind, x) => ({ x, y, kind })));
-
-const getPoints = (squares: Square[]) =>
-  squares.map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`).join(" ");
-
-const GOALS = ["Move around", "Reach the gold", "Let TLA-ts find the way"];
+const GOALS = ["Move around", "Reach the heart", "Let TLA-ts find the way"];
 
 interface MazeProps {
   // The search of the last run, whose squares the board fills in the order it reached them.
@@ -74,7 +54,7 @@ interface MazeProps {
 // TLA-ts checks. An arrow key calls `move` and one with the shift key calls `dash`.
 export const Maze = (props: MazeProps) => {
   const [player, setPlayer] = useState(START);
-  const [facing, setFacing] = useState<Direction>(DIRECTIONS[0]);
+  const [facing, setFacing] = useState<Direction>(DIRECTIONS[2]);
   // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
   // The calls the reader has made, in the words of the code.
@@ -94,7 +74,7 @@ export const Maze = (props: MazeProps) => {
   }
   // A second run keeps the first one's flood on the board until its own arrives.
   const search = isFloodHidden ? undefined : flood?.search;
-  // The squares the search reached, in the order it reached them, with the gold last.
+  // The squares the search reached, in the order it reached them, with the heart last.
   const reached = useMemo(() => {
     const states = search?.checkedStates ?? [];
     return [
@@ -115,21 +95,52 @@ export const Maze = (props: MazeProps) => {
     );
     return () => clearTimeout(timer);
   }, [isFlooding, floodMs]);
-  const hasBug = isSame(player, GOLD);
+  const hasBug = isSame(player, HEART);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sceneRef = useRef<ReturnType<typeof createMazeScene>>(undefined);
+  const viewRef = useRef<MazeView>(undefined);
+  const floodAtRef = useRef(0);
+  // The scene draws itself every frame from the game as it last rendered, while it is in sight.
+  useEffect(() => {
+    if (flood?.search) floodAtRef.current = performance.now();
+  }, [flood?.search]);
+  useEffect(() => {
+    viewRef.current = {
+      player,
+      yaw: facing.yaw,
+      trail: search === undefined ? trail : [],
+      reached,
+      floodAt: floodAtRef.current,
+      route: flood?.isDone ? path : undefined,
+      isHeartTaken: hasBug,
+      isStill: isReduced,
+    };
+  });
+  useEffect(() => {
+    if (!isInView || props.isPaused || !canvasRef.current) return;
+    sceneRef.current ??= createMazeScene(canvasRef.current, MAP);
+    const scene = sceneRef.current;
+    if (!scene) return;
+    let frame = requestAnimationFrame(function paint(now) {
+      if (viewRef.current) scene.draw(viewRef.current, now);
+      frame = requestAnimationFrame(paint);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isInView, props.isPaused]);
 
   const restart = () => {
     setPlayer(START);
     setTrail([START]);
-    setFacing(DIRECTIONS[0]);
+    setFacing(DIRECTIONS[2]);
     setCalls([]);
     setIsFloodHidden(true);
     props.onBugChange(false);
   };
   const call = (direction: Direction, squares: number) => {
     if (isFlooding) return;
-    // A move after the gold is reached, or after TLA-ts has had the board, starts a new game.
+    // A move after the heart is reached, or after TLA-ts has had the board, starts a new game.
     const from = hasBug || search !== undefined ? START : player;
     const next = go(from, direction, squares);
     setPlayer(next);
@@ -138,7 +149,7 @@ export const Maze = (props: MazeProps) => {
     setIsFloodHidden(true);
     const made = `${squares === 1 ? "move" : "dash"}("${direction.name}")`;
     setCalls(from === player ? [...calls, made] : [made]);
-    props.onBugChange(isSame(next, GOLD));
+    props.onBugChange(isSame(next, HEART));
   };
   // The keys work while the board is on screen, from wherever the focus is, and scroll the
   // page again once it is not.
@@ -181,179 +192,32 @@ export const Maze = (props: MazeProps) => {
       <div
         ref={boardRef}
         className={cn(
-          "relative mb-1.5 w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-2xl border-[3px] border-[oklch(27%_0.05_285)] shadow-[0_5px_0_oklch(27%_0.05_285)] select-none",
+          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-xl select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
-        <svg
+        <canvas
+          ref={canvasRef}
           role="img"
-          aria-label="A maze with a player in one corner and gold walled in at its middle. The arrow keys move the player."
-          viewBox={`0 0 ${BOARD} ${BOARD}`}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          className="block w-full"
-        >
-          {SQUARES.map((square) => {
-            const order = reached.findIndex((found) => isSame(found, square));
-            const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
-            return (
-              <g key={getKey(square)}>
-                <rect
-                  x={square.x * CELL}
-                  y={square.y * CELL}
-                  width={CELL}
-                  height={CELL}
-                  // A click on a square in line with the player moves there, or dashes there.
-                  onClick={() => {
-                    const direction = DIRECTIONS.find(
-                      (found) =>
-                        Math.sign(square.x - player.x) === found.move[0] &&
-                        Math.sign(square.y - player.y) === found.move[1],
-                    );
-                    if (direction && (distance === 1 || distance === 2)) call(direction, distance);
-                  }}
-                  className={cn(
-                    "cursor-pointer",
-                    (square.x + square.y) % 2 === 0
-                      ? "fill-[oklch(87%_0.14_135)] dark:fill-[oklch(50%_0.11_140)]"
-                      : "fill-[oklch(83%_0.15_135)] dark:fill-[oklch(46%_0.11_140)]",
-                  )}
-                />
-                {order >= 0 && (
-                  <rect
-                    x={square.x * CELL + 1}
-                    y={square.y * CELL + 1}
-                    width={CELL - 2}
-                    height={CELL - 2}
-                    rx={2.2}
-                    style={{ animationDelay: `${order * FLOOD_MS}ms` }}
-                    className={cn(
-                      "pointer-events-none origin-center [transform-box:fill-box] motion-safe:animate-chip-in",
-                      reached[order].isFailing ? "fill-destructive/70" : "fill-white/55",
-                    )}
-                  />
-                )}
-              </g>
+          aria-label="A maze with a robot in one corner and a heart walled in at its middle. The arrow keys move the robot."
+          // A click on a square in line with the robot moves there, or dashes there.
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            const square = sceneRef.current?.pick(
+              (event.clientX - box.left) / box.width,
+              (event.clientY - box.top) / box.height,
             );
-          })}
-          {/* The reader's own way across the board, as a line of dots. */}
-          {search === undefined && (
-            <polyline
-              points={getPoints(trail)}
-              fill="none"
-              strokeWidth={2.2}
-              strokeDasharray="0.01 3.3"
-              className={cn(
-                "pointer-events-none transition-colors duration-200 ease-out",
-                hasBug ? "stroke-destructive" : "stroke-white/80",
-              )}
-            />
-          )}
-          {/* Each wall is a chunky block: a dark foot, and a lighter top that stands over it. */}
-          {SQUARES.filter((square) => square.kind === "#").map((square) => (
-            <g
-              key={getKey(square)}
-              strokeWidth={0.7}
-              className={cn("pointer-events-none", INK_STROKE)}
-            >
-              <rect
-                x={square.x * CELL + 0.35}
-                y={square.y * CELL + 0.9}
-                width={CELL - 0.7}
-                height={CELL - 1.2}
-                rx={2}
-                className="fill-[oklch(56%_0.06_265)]"
-              />
-              <rect
-                x={square.x * CELL + 0.35}
-                y={square.y * CELL - 1.5}
-                width={CELL - 0.7}
-                height={CELL - 1.2}
-                rx={2}
-                className="fill-[oklch(80%_0.05_265)]"
-              />
-              <path
-                d={`M${square.x * CELL + 2.4} ${square.y * CELL + 0.5}h${CELL - 5.6}`}
-                strokeWidth={1}
-                className="stroke-white/70"
-              />
-            </g>
-          ))}
-          {path && flood?.isDone && (
-            <g fill="none" className="pointer-events-none motion-safe:animate-line-in">
-              <polyline points={getPoints(path)} strokeWidth={3.6} className={INK_STROKE} />
-              <polyline points={getPoints(path)} strokeWidth={2.2} className="stroke-destructive" />
-            </g>
-          )}
-          <g
-            transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2})`}
-            strokeWidth={0.6}
-            className={cn("pointer-events-none", INK_STROKE)}
-          >
-            <ellipse cy={3.1} rx={3.3} ry={1.1} className="fill-black/20 stroke-none" />
-            {[1.7, 0.2, -1.3].map((cy) => (
-              <g key={cy}>
-                <ellipse cy={cy + 0.9} rx={3} ry={1.45} className="fill-[oklch(70%_0.16_75)]" />
-                <ellipse cy={cy} rx={3} ry={1.45} className="fill-[oklch(88%_0.18_95)]" />
-              </g>
-            ))}
-            <path
-              d="M2.6 -4.6l0.5 1.1 1.1 0.5 -1.1 0.5 -0.5 1.1 -0.5 -1.1 -1.1 -0.5 1.1 -0.5z"
-              strokeWidth={0.35}
-              className="fill-white"
-            />
-          </g>
-          <g
-            style={{
-              translate: `${player.x * CELL + CELL / 2}px ${player.y * CELL + CELL / 2}px`,
-            }}
-            strokeWidth={0.7}
-            className={cn(
-              "pointer-events-none transition-[translate] duration-150 ease-[cubic-bezier(0.3,1.4,0.5,1)] motion-reduce:transition-none",
-              INK_STROKE,
-            )}
-          >
-            <ellipse cy={3.4} rx={3.3} ry={1.1} className="fill-black/20 stroke-none" />
-            <path
-              d="M-3.6 0.6C-3.6 -2.4 -2 -4 0 -4S3.6 -2.4 3.6 0.6C3.6 2.6 2.4 3.4 0 3.4S-3.6 2.6 -3.6 0.6Z"
-              className={cn(
-                "transition-colors duration-200 ease-out",
-                hasBug && search === undefined ? "fill-destructive" : "fill-[oklch(68%_0.19_300)]",
-              )}
-            />
-            <path
-              d="M-2.3 -2.2Q-1.2 -3.3 0.2 -3.2"
-              fill="none"
-              strokeWidth={0.8}
-              className="stroke-white/60"
-            />
-            <g strokeWidth={0.4}>
-              <circle cx={-1.5} cy={-0.5} r={1.35} className="fill-white" />
-              <circle cx={1.5} cy={-0.5} r={1.35} className="fill-white" />
-            </g>
-            <g
-              style={{ translate: `${facing.move[0] * 0.55}px ${facing.move[1] * 0.55}px` }}
-              className="stroke-none transition-[translate] duration-150 ease-out"
-            >
-              <circle cx={-1.5} cy={-0.5} r={0.7} className={INK_FILL} />
-              <circle cx={1.5} cy={-0.5} r={0.7} className={INK_FILL} />
-            </g>
-            <ellipse
-              cx={-2.5}
-              cy={1.2}
-              rx={0.7}
-              ry={0.45}
-              className="fill-[oklch(78%_0.14_10)]/70 stroke-none"
-            />
-            <ellipse
-              cx={2.5}
-              cy={1.2}
-              rx={0.7}
-              ry={0.45}
-              className="fill-[oklch(78%_0.14_10)]/70 stroke-none"
-            />
-          </g>
-        </svg>
+            if (!square) return;
+            const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
+            const direction = DIRECTIONS.find(
+              (found) =>
+                Math.sign(square.x - player.x) === found.move[0] &&
+                Math.sign(square.y - player.y) === found.move[1],
+            );
+            if (direction && (distance === 1 || distance === 2)) call(direction, distance);
+          }}
+          className="block aspect-[8/7] w-full cursor-pointer"
+        />
         {hasBug && search === undefined && (
           <p className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-destructive px-3 py-1 text-sm whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5" />
@@ -435,7 +299,7 @@ export const Maze = (props: MazeProps) => {
                   <Button variant="link" size="inline" onClick={() => props.onShowCode("tla")}>
                     TLA+
                   </Button>
-                  , tried {reached.length} squares, and reached the gold:
+                  , tried {reached.length} squares, and reached the heart:
                 </>
               ) : (
                 "TLA-ts is trying every square the code can reach."
@@ -449,10 +313,10 @@ export const Maze = (props: MazeProps) => {
             ) : stage === 1 ? (
               calls.length < HINT_CALLS ? (
                 isTouch ? (
-                  "Walls close the gold in. Tap two squares away to dash. Find a way in."
+                  "Walls close the heart in. Tap two squares away to dash. Find a way in."
                 ) : (
                   <>
-                    Walls close the gold in. Hold {shift} with an arrow to dash two squares. Find a
+                    Walls close the heart in. Hold {shift} with an arrow to dash two squares. Find a
                     way in.
                   </>
                 )
