@@ -600,8 +600,8 @@ export const SnakeGame = (props: SnakeGameProps) => {
                   ))}
                 {stage === 3 &&
                   (props.isRunning
-                    ? "TLA-ts is turning the game's TypeScript into TLA+ and trying every move."
-                    : "Press the run button below. TLA-ts turns the game's TypeScript into TLA+ and tries every move.")}
+                    ? "TLA-ts is trying every move the code allows."
+                    : "Would your tests have tried that? Press the run button below.")}
               </p>
             </div>
           </>
