@@ -8,13 +8,10 @@ export interface Source {
   lines: Token[][];
 }
 
+// An example of the home page, whose compilation the page loads apart, as the playground does.
 export interface CompiledExample {
   fileName: string;
-  name: string;
-  config: string;
-  modules: Record<string, string>;
   typescript: Source;
-  tla: Source;
   sourceMarks: Mark[];
 }
 

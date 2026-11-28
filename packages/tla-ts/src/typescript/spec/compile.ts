@@ -1,10 +1,16 @@
 import ts from "@typescript/typescript6";
-import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
-import { getNodeParses, rejectEarlyErrors } from "../early-errors";
+import { TlaLinkError, TlaStrippingError, TlaTypeScriptError } from "../../errors";
+import { createModulesParser, getNodeParses, rejectEarlyErrors } from "../early-errors";
+import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
-import { createModuleResolver, getModuleFormat } from "./resolve";
+import {
+  createModuleResolver,
+  getModuleFormat,
+  isTypelessModule,
+  type ResolutionFailure,
+} from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
-import type { PreparedModule } from "../../tlc/order";
+import type { ModuleTexts, PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type JsTlaRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import type { HostRealm } from "./realm";
@@ -17,7 +23,7 @@ import {
   getUnitsOf,
   LOCALE_METHODS,
 } from "./runtime";
-import type { Expression } from "../../ast";
+import type { Expression, Module } from "../../ast";
 import {
   apply,
   type CodeDefinition,
@@ -37,7 +43,13 @@ import {
 import { getPatchedUnits, isTlaString } from "./units";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
-import { getNumber, type ProgramFile, type ProgramRegion, specialize } from "./specialize";
+import {
+  getNumber,
+  isHostProcess,
+  type ProgramFile,
+  type ProgramRegion,
+  specialize,
+} from "./specialize";
 import { stripTypes } from "./strip-types";
 import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
@@ -549,9 +561,75 @@ const isOnlyImportCalled = (sourceFile: ts.SourceFile, specifier: string) => {
   return !isRequested(sourceFile);
 };
 
+// The error that Node's link of a program's graph of ES modules throws first, where it's an
+// import's resolution's that the files alone decide: Node resolves and loads each request of a
+// module in order, and links each module that it loads anew before the next request (ModuleJob's
+// syncLink), so a depth-first walk from the entry meets the failures in Node's order, and Node runs
+// none of the program's code. The walk gives "linked" where no import fails, and "unknown" where a
+// module before the failure may fail to load, as a file with an early error, a JSON file that the
+// attributes don't type as one, a TypeScript file in node_modules, a file of JSX, a module's source
+// or deferred import, or a file that tla-ts doesn't load, does, or where Node warns, with its
+// process's id, that it detects a module's format. Only Node's resolution fails so, so a walk with
+// failures runs where Node is at hand.
+const getLinkFailure = (files: readonly ProgramFile[], system: ProgramSystem) => {
+  if (files.every((file) => (file.failures?.size ?? 0) === 0)) return "linked";
+  const visited = new Set<number>();
+  const visit = (number: number): ResolutionFailure | "linked" | "unknown" => {
+    const file = files[number - 1];
+    visited.add(number);
+    if (/\/node_modules\/.*\.[cm]?ts$|\.[jt]sx$/.test(file.path)) return "unknown";
+    if (file.kind !== "module") return "linked";
+    if (system.fileExists(file.path) && isTypelessModule(file.path, system)) return "unknown";
+    const statements = file.sourceFile.statements.filter(
+      (statement) => ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement),
+    );
+    for (const statement of statements) {
+      const specifier =
+        statement.moduleSpecifier !== undefined && ts.isStringLiteral(statement.moduleSpecifier)
+          ? statement.moduleSpecifier.text
+          : undefined;
+      if (specifier === undefined) continue;
+      const failure = file.failures?.get(specifier);
+      if (failure !== undefined) return failure;
+      if (
+        ts.isImportDeclaration(statement) &&
+        statement.importClause?.phaseModifier !== undefined
+      ) {
+        return "unknown";
+      }
+      const target = file.targets.get(specifier) ?? 0;
+      if (target === 0 && process.getBuiltinModule("node:module").isBuiltin(specifier)) continue;
+      const child: ProgramFile | undefined = files[target - 1];
+      const elements = statement.attributes?.elements ?? [];
+      const isJsonType =
+        elements.length === 1 &&
+        elements[0].name.text === "type" &&
+        ts.isStringLiteral(elements[0].value) &&
+        elements[0].value.text === "json";
+      if (
+        child === undefined ||
+        child.isRejected === true ||
+        (child.kind === "json") !== isJsonType ||
+        (elements.length > 0 && !isJsonType) ||
+        (child.kind === "json" && child.json === undefined)
+      ) {
+        return "unknown";
+      }
+      const found = visited.has(target) ? "linked" : visit(target);
+      if (found !== "linked") return found;
+    }
+    return "linked";
+  };
+  return visit(1);
+};
+
 // The specifier of each import and export of a module, or each require of a string of a CommonJS
-// module, with the literal that names it.
-const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => {
+// module but those that isSkipped skips, with the literal that names it.
+const getSpecifiers = (
+  sourceFile: ts.SourceFile,
+  kind: ProgramFile["kind"],
+  isSkipped = (_call: ts.CallExpression) => false,
+) => {
   const specifiers = new Map<string, ts.StringLiteralLike>();
   const visit = (node: ts.Node): void => {
     const literal =
@@ -563,7 +641,8 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
               kind === "commonjs" &&
               ts.isIdentifier(node.expression) &&
               node.expression.text === "require" &&
-              node.arguments.length === 1
+              node.arguments.length === 1 &&
+              !isSkipped(node)
             ? node.arguments[0]
             : undefined;
     if (literal !== undefined && ts.isStringLiteralLike(literal)) {
@@ -612,9 +691,12 @@ const atSourceLocations = <T>(
   try {
     return compile(names);
   } catch (error) {
-    // Node's stripping of a file's types reads the file's own code, which its error points into.
+    // Node's stripping of a file's types reads the file's own code, which its error points into,
+    // and a failure of Node's link is at no place of the code.
     const found =
-      error instanceof TlaTypeScriptError && !(error instanceof TlaStrippingError)
+      error instanceof TlaTypeScriptError &&
+      !(error instanceof TlaStrippingError) &&
+      !(error instanceof TlaLinkError)
         ? /^(.+?):(\d+):(\d+) ([^]*)$/.exec(error.message)
         : null;
     if (found === null) throw error;
@@ -689,6 +771,7 @@ const loadFiles = (
   host: Pick<JsTlaSteps, "isTest262Host" | "candidates">,
   names: ParsedNames,
   system: ProgramSystem,
+  isPruned: boolean,
 ): ProgramFile[] => {
   // Whether the host loads a file as an ES module or as CommonJS (see getModuleFormat).
   const getKind = (path: string, text: string): ProgramFile["kind"] =>
@@ -874,8 +957,16 @@ const loadFiles = (
             : [];
         });
     const requested = new Map([...written, ...candidates]);
+    // A require that never runs, where the files are pruned, loads nothing.
+    const isDead = (call: ts.CallExpression) => isPruned && isDeadCode(call, false, system);
+    // The error that Node's resolution throws for each specifier of an import that it finds no file
+    // for, where the files alone decide it.
+    const failures = new Map<string, ResolutionFailure>();
+    // The specifiers of the requires that Node's require finds no module for, where the files
+    // alone decide it.
+    const missingRequires = new Set<string>();
     const targets = new Map(
-      [...(isRejected ? [] : getSpecifiers(sourceFile, kind)), ...candidates].flatMap(
+      [...(isRejected ? [] : getSpecifiers(sourceFile, kind, isDead)), ...candidates].flatMap(
         ([specifier, parsed]) => {
           const literal = requested.get(specifier);
           const builtin =
@@ -887,28 +978,40 @@ const loadFiles = (
             return [[specifier, numbers.get(builtin) ?? 0] as const];
           }
           const found = literal === undefined ? undefined : resolve(literal);
-          // A CommonJS module's require of a file that isn't there stops as an import of one does,
-          // where the module's code always requires it as it loads, rather than in a function, a
-          // class, a branch, a loop, or a try, which may not run it, at the require in the code that
-          // tla-ts parses, which Node's wrapper holds.
-          if (
+          // A CommonJS module's require that Node finds no module for throws Node's error, where
+          // the files alone decide it, and else stops as an import of one does, where the module's
+          // code always requires it as it loads, rather than in a function, a class, a branch, a
+          // loop, or a try, which may not run it, at the require in the code that tla-ts parses,
+          // which Node's wrapper holds.
+          const isRequired =
             found === undefined &&
             literal !== undefined &&
             kind === "commonjs" &&
             ts.isCallExpression(literal.parent) &&
+            !isImportCall(literal.parent);
+          if (isRequired && resolveModule(literal, true).failure !== undefined) {
+            missingRequires.add(specifier);
+          } else if (
+            isRequired &&
             /^\.\.?\//.test(literal.text) &&
             ts.findAncestor(literal, isConditional) === undefined
           ) {
             throw new TlaTypeScriptError(`tla-ts can't load the module ${literal.text}`, parsed);
           }
+          const missing =
+            found === undefined &&
+            literal !== undefined &&
+            (!ts.isCallExpression(literal.parent) || isImportCall(literal.parent))
+              ? resolveModule(literal, false)
+              : undefined;
+          if (missing?.failure !== undefined) failures.set(specifier, missing.failure);
           // An import() of a string that Node's resolution rejects, which the file requests no
           // other way, has the target 0, at which the host rejects the call as Node does.
           if (
-            found === undefined &&
             literal !== undefined &&
             isImportCall(literal.parent) &&
             isOnlyImportCalled(sourceFile, specifier) &&
-            resolveModule(literal, false).isMissing
+            missing?.isMissing === true
           ) {
             return [[specifier, 0] as const];
           }
@@ -934,6 +1037,8 @@ const loadFiles = (
       path,
       kind,
       targets,
+      failures,
+      missingRequires,
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
       isRejected,
       names:
@@ -962,7 +1067,7 @@ const loadFiles = (
         ? [outcome.value.sourceFile]
         : [],
     );
-    const nodeParses = getNodeParses(parsed);
+    const nodeParses = getNodeParses(parsed, parser);
     for (const outcome of outcomes) {
       if ("error" in outcome) throw outcome.error;
       const file = outcome.value;
@@ -970,7 +1075,12 @@ const loadFiles = (
     }
     loadWave(start + wave.length);
   };
-  loadWave(0);
+  const parser = createModulesParser();
+  try {
+    loadWave(0);
+  } finally {
+    parser?.close();
+  }
   const withFacades = files.map((file) => ({
     ...file,
     facade: numbers.get(`${file.path}.facade.mjs`),
@@ -1064,6 +1174,24 @@ const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostR
 // promise of its evaluation, and the proxies that stand for what of the host JS.tla lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
 
+// A scope of its own, so that V8's closure context for getText doesn't hold compileToJsTla's files.
+const getProgramCode = (module: Module, texts: ModuleTexts, getText: () => string) => {
+  const programCode: PreparedModule = {
+    name: "ProgramCode",
+    get text() {
+      return getText();
+    },
+    tokens: [],
+    module,
+    levels: undefined,
+    texts,
+  };
+  return {
+    programCode,
+    loadModule: (name: string) => (name === "ProgramCode" ? getText() : undefined),
+  };
+};
+
 // Compiles a TypeScript script or module to a spec whose Init runs it as JS.tla runs a script or a
 // host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
 // fails Init's assertion. The spec's module ProgramCode holds the program's code and the spec's
@@ -1081,7 +1209,26 @@ export const compileToJsTla = (
   // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
   // hold, is U+FFFD.
   const { files, program } = atSourceLocations(fileName, system, (names) => {
-    const loaded = loadFiles(source.toWellFormed(), fileName, isModule, model, names, system);
+    const load = (isPruned: boolean) =>
+      loadFiles(source.toWellFormed(), fileName, isModule, model, names, system, isPruned);
+    // The files that the program loads but those that only a require that never runs loads, where
+    // a condition on process.env skips it, as the branch of a package's index for the other
+    // NODE_ENV does, which holds where the program's process is Node's, whose env each file's code
+    // reads as a constant. Only a CommonJS file requires. A program that fails to load so loads
+    // them all, as it did before.
+    const pruned = getOutcome(() => load(true));
+    const loaded =
+      "value" in pruned &&
+      (isHostProcess(pruned.value) || !pruned.value.some((file) => file.kind === "commonjs"))
+        ? pruned.value
+        : load(false);
+    const failure = getLinkFailure(loaded, system);
+    if (typeof failure === "object" && failure.stderr !== undefined) {
+      throw new TlaLinkError(
+        `tla-ts can't run a program whose graph of ES modules Node fails to link: ${failure.name} [${failure.code}]: ${failure.message}`,
+        failure.stderr,
+      );
+    }
     return {
       files: loaded,
       program: specialize(
@@ -1396,16 +1543,7 @@ export const compileToJsTla = (
     "",
   ];
   const laidOut = layOutModule("ProgramCode", parts);
-  const programCode: PreparedModule = {
-    name: "ProgramCode",
-    get text() {
-      return laidOut.getText();
-    },
-    tokens: [],
-    module: laidOut.module,
-    levels: undefined,
-    texts: laidOut.texts,
-  };
+  const code = getProgramCode(laidOut.module, laidOut.texts, laidOut.getText);
   return {
     name: "Program",
     source: ROOT,
@@ -1413,7 +1551,7 @@ export const compileToJsTla = (
       "\n",
     ),
     regions: program.regions,
-    loadModule: (name) => (name === "ProgramCode" ? laidOut.getText() : undefined),
-    preparedModules: [...runtime.modules, view, programCode],
+    loadModule: code.loadModule,
+    preparedModules: [...runtime.modules, view, code.programCode],
   };
 };

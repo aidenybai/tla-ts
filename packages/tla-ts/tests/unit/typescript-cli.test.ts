@@ -412,6 +412,20 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
+  // A check shows the message of the first value that throws, so the message of another, which
+  // TLA+ strings can't hold, stops nothing.
+  it("shows only the message of the first value that throws", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(
+      join(directory, "shout.ts"),
+      'export const shout = (loud: boolean): number => {\n  throw new Error(loud ? "loud \\u00e9" : "quiet");\n};\n',
+    );
+    const result = runCli(directory, ["shout.ts"]);
+    expect(result.status).toBe(10);
+    expect(result.stdout).toContain('"shout throws: quiet"');
+    expect(result.stdout).not.toContain("can't show a string");
+  });
+
   // A type parameter without a constraint takes 0, 1, and 2, an iterable each array of its
   // elements up to 3 long, and a callback each table from its first argument's values to its
   // result's, as the note says. Node, calling count with each of those, finds no throw where the
@@ -758,61 +772,147 @@ describe("the CLI with TypeScript files", () => {
     });
   });
 
-  // The frame calls a CommonJS file's functions by the bindings that its exports name, and stops at
-  // a function that it exports without one, which it would otherwise leave unchecked.
-  describe("checks a CommonJS model by the bindings that its exports name", () => {
+  // The frame calls a CommonJS file's functions by the bindings that its exports name, and a
+  // function that it exports without one through module.exports, reading the key in the state
+  // where the call happens, as a program that requires the file calls it.
+  describe("checks a CommonJS model's exports as Node calls them", () => {
     const getModel = (limit: number, exported: string) =>
       `let count = 0;\nconst tick = () => {\n  count = count === 3 ? 0 : count + 1;\n};\nconst isBounded = () => count < ${limit};\n${exported}\n`;
-    // Whether Node, ticking the model's module up to three times, finds isBounded false.
-    const isViolatedInNode = (directory: string) =>
-      spawnSync(
+    // What Node gives, ticking the model's module up to three times: whether it finds isBounded
+    // false, or what a call throws.
+    const runNodeModel = (directory: string) => {
+      const result = spawnSync(
         process.execPath,
         [
           "-e",
           'const model = require("./model.cjs");\nconsole.log([1, 2, 3].some(() => (model.tick(), !model.isBounded())));',
         ],
         { cwd: directory, encoding: "utf8" },
-      ).stdout.trim() === "true";
+      );
+      return result.stdout.trim() === "" ? result.stderr : result.stdout.trim();
+    };
 
     it.each([
       ["exports.tick = tick;\nexports.isBounded = isBounded;"],
       ["module.exports = { tick, isBounded };"],
       ["module.exports = { tick: tick, isBounded: isBounded };"],
+      ["exports.tick = () => tick();\nexports.isBounded = isBounded;"],
+      ["module.exports = { tick() {\n  tick();\n}, isBounded };"],
+      ["module.exports = { tick: function () {\n  tick();\n}, isBounded: () => isBounded() };"],
+      // A later assignment replaces the function that an earlier one exported.
+      [
+        "exports.isBounded = () => true;\nexports.tick = tick;\nexports.isBounded = function () {\n  return isBounded();\n};",
+      ],
+      // A step replaces the function that the top level exported.
+      [
+        "exports.tick = () => {\n  tick();\n  exports.isBounded = isBounded;\n};\nexports.isBounded = () => true;",
+      ],
     ])("agrees with Node where %s", (exported) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
-      expect(isViolatedInNode(directory)).toBe(true);
+      expect(runNodeModel(directory)).toBe("true");
       expect(runCli(directory, ["model.cjs"]).stdout).toContain(
         "Error: Invariant isBounded is violated.",
       );
       writeFileSync(join(directory, "model.cjs"), getModel(4, exported));
-      expect(isViolatedInNode(directory)).toBe(false);
+      expect(runNodeModel(directory)).toBe("false");
       expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
     });
 
-    it.each([
-      ["exports.tick", "exports.tick = () => tick();\nexports.isBounded = isBounded;"],
-      ["module.exports", "module.exports = { tick() {\n  tick();\n}, isBounded };"],
-    ])("stops where %s sets a function that no binding names", (target, exported) => {
+    // A check that reads module.exports reads what a step may change, as a check that reads a
+    // state variable does, so the model checks it in every state rather than once.
+    it.each([["exports"], ["module.exports"]])(
+      "checks in every state a check that reads %s",
+      (target) => {
+        const getChecked = (limit: number) =>
+          getModel(
+            3,
+            `exports.tick = tick;\nexports.get = () => count;\nexports.check = function () {\n  if (${target}.get() > ${limit}) throw new Error("big");\n  return 1;\n};`,
+          );
+        // What Node's check throws, ticking the model's module up to three times.
+        const getThrownInNode = (directory: string) =>
+          spawnSync(
+            process.execPath,
+            [
+              "-e",
+              'const model = require("./model.cjs");\ntry {\n  [1, 2, 3].forEach(() => (model.tick(), model.check()));\n  console.log("nothing");\n} catch (error) {\n  console.log(error.message);\n}',
+            ],
+            { cwd: directory, encoding: "utf8" },
+          ).stdout.trim();
+        const directory = copyFixtures("passing");
+        writeFileSync(join(directory, "model.cjs"), getChecked(2));
+        expect(getThrownInNode(directory)).toBe("big");
+        const result = runCli(directory, ["model.cjs"]);
+        expect(result.stdout).toContain('the second argument was:\n"big"');
+        writeFileSync(join(directory, "model.cjs"), getChecked(3));
+        expect(getThrownInNode(directory)).toBe("nothing");
+        expect(runCli(directory, ["model.cjs"]).stdout).toContain("No error has been found");
+      },
+    );
+
+    // Node's TypeError names the caller's own expression, which no model has.
+    it("stops where the key that a check calls holds no function", () => {
       const directory = copyFixtures("passing");
-      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
-      expect(isViolatedInNode(directory)).toBe(true);
+      writeFileSync(
+        join(directory, "model.cjs"),
+        getModel(
+          4,
+          "exports.tick = () => {\n  tick();\n  exports.isBounded = 1;\n};\nexports.isBounded = () => isBounded();",
+        ),
+      );
+      expect(runNodeModel(directory)).toContain("TypeError: model.isBounded is not a function");
       const result = runCli(directory, ["model.cjs"]);
       expect(result.stdout).not.toContain("No error has been found");
-      expect(result.stderr).toContain(
-        `tla-ts can't check a function that ${target} sets without a binding that names it`,
+      expect(result.stdout).toContain(
+        "tla-ts can't call module.exports.isBounded, which holds no function as the call reads it",
       );
+    });
+
+    it.each([
+      [
+        "a getter gives",
+        "module.exports = { get tick() {\n  return tick;\n}, isBounded };",
+        "tla-ts can't check a function that module.exports sets without a binding that names it",
+      ],
+      [
+        "its this is the caller's",
+        "exports.tick = function () {\n  this.tick = tick;\n  tick();\n};\nexports.isBounded = isBounded;",
+        "tla-ts can't call exports.tick as Node's callers do: its this is the object that each reads it from",
+      ],
+    ])("stops at a function that %s", (_, exported, message) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "model.cjs"), getModel(3, exported));
+      expect(runNodeModel(directory)).toBe("true");
+      const result = runCli(directory, ["model.cjs"]);
+      expect(result.stdout).not.toContain("No error has been found");
+      expect(result.stderr).toContain(message);
     });
   });
 
   // A model's state may live in a module it imports, which a call of an export changes though the
   // model's own code writes no binding of it: an export that returns nothing is a step, and one
-  // that returns a value is a check, which stops where its call changes the state.
+  // that returns a value is a check, which Node's driver calls whatever it changes, so a call of it
+  // that changes what a later call may read is a step too.
   describe("checks a model whose exports change the state of a module it imports", () => {
-    const STORE =
-      "let count: number = 0;\nexports.bump = () => {\n  count = (count + 1) % 4;\n  return count;\n};\nexports.get = () => count;\n";
-    const getModel = (tick: string) =>
-      `import { bump, get } from "./store.cts";\nexport const tick = ${tick};\nexport const isLow = () => get() < 3;\n`;
+    const STORE = [
+      "let count: number = 0;",
+      "const seen = new WeakMap<object, number>();",
+      "const held = new WeakSet<object>();",
+      "const cache = new Map<string, number>();",
+      "exports.anchor = {};",
+      "exports.bump = () => {\n  count = (count + 1) % 4;\n  return count;\n};",
+      "exports.restore = () => {\n  const saved = count;\n  count = 3;\n  count = saved;\n  return saved;\n};",
+      "exports.remember = (key: object) => {\n  seen.set(key, 3);\n  return 1;\n};",
+      "exports.hold = (key: object) => {\n  held.add(key);\n  return 1;\n};",
+      "exports.cached = (key: string) => {\n  if (!cache.has(key)) cache.set(key, key.length);\n  return cache.get(key);\n};",
+      "exports.get = () => (seen.has(exports.anchor) || held.has(exports.anchor) ? 3 : count);",
+      "",
+    ].join("\n");
+    // A model of its own state, which a step turns, whose check reads it, so that it runs in every
+    // state rather than once as the model starts.
+    const OWN = "let turns: number = 0;\nexport const turn = () => {\n  turns = 1 - turns;\n};\n";
+    const getModel = (tick: string, own = "") =>
+      `import { anchor, bump, cached, get, hold, remember, restore } from "./store.cts";\n${own}export const tick = ${tick};\nexport const isLow = () => get() < 3;\n`;
     // Whether Node, ticking the model's module three times, finds isLow false.
     const isViolatedInNode = (directory: string) =>
       spawnSync(
@@ -826,26 +926,33 @@ describe("the CLI with TypeScript files", () => {
       ).stdout.trim() === "false";
 
     it.each([
-      ["returns nothing", "() => {\n  bump();\n}"],
-      ["returns a value", "() => bump()"],
-    ])("never passes where Node violates an invariant and an export %s", (_, tick) => {
+      ["returns nothing", "() => {\n  bump();\n}", ""],
+      ["returns a value", "() => bump()", ""],
+      ["adds a WeakMap entry under a key that existed", "() => remember(anchor)", ""],
+      ["adds a WeakSet entry that existed", "() => hold(anchor)", ""],
+      ["returns a value and reads the model's state", "() => turns + bump()", OWN],
+      ["adds a WeakMap entry and reads the model's state", "() => turns + remember(anchor)", OWN],
+    ])("never passes where Node violates an invariant and an export %s", (_, tick, own) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "store.cts"), STORE);
-      writeFileSync(join(directory, "model.ts"), getModel(tick));
+      writeFileSync(join(directory, "model.ts"), getModel(tick, own));
       expect(isViolatedInNode(directory)).toBe(true);
       const result = runCli(directory, ["model.ts"]);
       expect(result.stdout).not.toContain("No error has been found");
-      expect(result.stdout).toContain(
-        tick.includes("{")
-          ? "Error: Invariant isLow is violated."
-          : "tla-ts can't check tick as a function that changes nothing: its call changes the program's state",
-      );
+      expect(result.stdout).toContain("Error: Invariant isLow is violated.");
     });
 
-    it("checks an export that returns a value and changes nothing", () => {
+    it.each([
+      ["changes nothing", "() => get() + 1", ""],
+      ["writes what it read back", "() => restore()", ""],
+      ["adds a WeakMap entry under a key it makes", "() => remember({})", ""],
+      ["adds a WeakSet entry that it makes", "() => hold({})", ""],
+      ["fills a cache that a later call reads", '() => cached("ab")', ""],
+      ["fills a cache and reads the model's state", '() => turns + cached("ab")', OWN],
+    ])("checks an export that returns a value and %s", (_, tick, own) => {
       const directory = copyFixtures("passing");
       writeFileSync(join(directory, "store.cts"), STORE);
-      writeFileSync(join(directory, "model.ts"), getModel("() => get() + 1"));
+      writeFileSync(join(directory, "model.ts"), getModel(tick, own));
       expect(isViolatedInNode(directory)).toBe(false);
       const result = runCli(directory, ["model.ts"]);
       expect(result.status).toBe(0);
@@ -1118,13 +1225,13 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // The project's barrel re-exports from "./limits/maximum", which Node doesn't find without its
-  // extension, so the compile stops rather than load the file that TypeScript resolves it to.
-  it("stops at a module that re-exports from a file that Node doesn't find", () => {
+  // extension, so the CLI fails as Node does rather than load the file that TypeScript resolves it
+  // to.
+  it("fails as Node does at a module that re-exports from a file that Node doesn't find", () => {
     const directory = copyFixtures("project");
-    expect(runNode(directory, "barrel.ts").stderr).toContain("ERR_MODULE_NOT_FOUND");
-    const result = runCli(directory, ["barrel.ts"]);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("tla-ts can't load the module ./limits/maximum");
+    const node = runNode(directory, "barrel.ts");
+    expect(node.stderr).toContain("ERR_MODULE_NOT_FOUND");
+    expect(getExit(runCli(directory, ["barrel.ts"]))).toEqual(getExit(node));
   });
 
   // Each import and require loads the file that Node resolves it to: require's resolution, or
@@ -1207,56 +1314,58 @@ describe("the CLI with TypeScript files", () => {
     });
 
     // Each of these ran the file that TypeScript resolves the specifier to, where Node finds none or
-    // another, but for the extensionless import outside a project, which stopped already.
+    // another, but for the extensionless import outside a project, which stopped already. A require
+    // that Node finds no module for throws Node's error, whose text the CLI can't write where
+    // nothing catches it.
     it.each([
       [
         "a require of a TypeScript file without its extension",
         "main.cjs",
         'const two = require("./dep");\nif (two !== 2) throw new Error("two");\n',
         1,
-        "main.cjs:1:21 tla-ts can't load the module ./dep",
+        "tla-ts can't print what Node prints for this uncaught exception",
       ],
       [
         "a require of a file that isn't there",
         "main.cjs",
         'const missing = require("./missing.cjs");\n',
         1,
-        "main.cjs:1:25 tla-ts can't load the module ./missing.cjs",
+        "tla-ts can't print what Node prints for this uncaught exception",
       ],
       [
         "a function's require of a file that isn't there, which it runs",
         "main.cjs",
         'const load = () => require("./missing.cjs");\nload();\n',
         1,
-        "tla-ts can't load the module ./missing.cjs",
+        "tla-ts can't print what Node prints for this uncaught exception",
       ],
       [
-        "an extensionless import",
+        "a require of a file whose name's case differs from the file's",
+        "main.cjs",
+        'const two = require("./Dep");\nif (two !== 2) throw new Error("two");\n',
+        1,
+        "main.cjs:1:21 tla-ts can't load the module ./Dep",
+      ],
+      [
+        "an import of a file that isn't there, after one of a built-in module that Node lacks",
         "main.mjs",
-        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        'import "node:missing";\nimport "./missing.mjs";\n',
         1,
-        "tla-ts can't load the module ./other",
+        "tla-ts can't load the module node:missing",
       ],
       [
-        "an extensionless import under a bundler tsconfig",
-        "bundler/main.ts",
-        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        "an import of a file that isn't there, from a TypeScript file in node_modules",
+        "node_modules/local/main.ts",
+        'import "./missing.mjs";\nexport const one: number = 1;\n',
         1,
-        "tla-ts can't load the module ./other",
+        "tla-ts can't load the module ./missing.mjs",
       ],
       [
-        "an import of a .js file that only its TypeScript has",
+        "an import of a file whose name's case differs from the file's",
         "main.mjs",
-        'import { two } from "./two.js";\nif (two !== 2) throw new Error("two");\n',
+        'import { two } from "./Other.js";\nif (two !== 2) throw new Error("two");\n',
         1,
-        "tla-ts can't load the module ./two.js",
-      ],
-      [
-        "an import of a directory under a bundler tsconfig",
-        "bundler/main.ts",
-        'import { two } from "./dir";\nif (two !== 2) throw new Error("two");\n',
-        1,
-        "tla-ts can't load the module ./dir",
+        "tla-ts can't load the module ./Other.js",
       ],
       [
         "a package's exports by a condition that TypeScript doesn't take",
@@ -1273,6 +1382,156 @@ describe("the CLI with TypeScript files", () => {
       expect([0, 1]).not.toContain(result.status);
       expect(result.stdout + result.stderr).toContain(stop);
     });
+
+    // Node resolves and loads every module of the graph that the entry imports before it runs any,
+    // each module's imports in order and each new module's before the next, and fails at the first
+    // import whose resolution fails with an error that the files alone decide: the CLI exits with
+    // Node's code and stderr, and none of the program runs.
+    describe.each([
+      [
+        "a file that isn't there",
+        "main.mjs",
+        'import "./missing.mjs";\n',
+        'import "./absent.mjs";\n',
+      ],
+      [
+        "an extensionless name, where Node hints at the file",
+        "main.mjs",
+        'import { two } from "./other";\nconsole.log(two);\n',
+        'import { two } from "./dir/index";\nconsole.log(two);\n',
+      ],
+      [
+        "an extensionless name under a bundler tsconfig",
+        "bundler/main.ts",
+        'import { two } from "./other";\nconsole.log(two);\n',
+        'import { two } from "./another";\nconsole.log(two);\n',
+      ],
+      [
+        "a .js name of a file that only its TypeScript has",
+        "main.mjs",
+        'import { two } from "./two.js";\nconsole.log(two);\n',
+        'import { two } from "./three.js";\nconsole.log(two);\n',
+      ],
+      [
+        "a directory",
+        "bundler/main.ts",
+        'import { two } from "./dir";\nconsole.log(two);\n',
+        'import { two } from "../dir";\nconsole.log(two);\n',
+      ],
+      [
+        "a package's subpath that its exports don't name",
+        "main.mjs",
+        'import "conditions/missing";\n',
+        'import "sync/missing";\n',
+      ],
+      [
+        "a package's name that isn't valid",
+        "main.mjs",
+        'import "@conditions";\n',
+        'import "@sync";\n',
+      ],
+      [
+        "a file that a module the entry imports first imports",
+        "main.mjs",
+        'import "./first.mjs";\nimport "./missing.mjs";\nconsole.log("main");\n',
+        'import "./missing.mjs";\nimport "./first.mjs";\nconsole.log("main");\n',
+      ],
+    ])("fails as Node does at an import of %s", (_, file, source, other) => {
+      const getRun = (text: string) => {
+        const directory = write(file, text);
+        writeFileSync(
+          join(directory, "first.mjs"),
+          'console.log("first");\nimport "./gone.mjs";\n',
+        );
+        const name = basename(file);
+        return [runNode(directory, name), runCli(directory, [name])];
+      };
+
+      it("agrees with Node", () => {
+        const [node, cli] = getRun(source);
+        expect([node.status, node.stdout]).toEqual([1, ""]);
+        expect(getExit(cli)).toEqual(getExit(node));
+      });
+
+      it("rejects another result", () => {
+        const [node, cli] = getRun(other);
+        expect(getExit(cli)).toEqual(getExit(node));
+        expect(getExit(cli)).not.toEqual(getExit(getRun(source)[1]));
+      });
+    });
+
+    // An import() whose resolution fails so rejects with Node's error, of its class, with its code,
+    // its url and its message as its own properties, which a program that catches it reads as
+    // Node's.
+    describe.each([
+      ["a file that isn't there", "main.mjs", "./missing.mjs", "./absent"],
+      ["a directory", "main.mjs", "./dir", "./dir/"],
+      ["a package's name that isn't valid", "main.mjs", "@conditions", "conditions/missing"],
+      ["a file that isn't there, from a CommonJS module", "main.cjs", "./missing.mjs", "./dir"],
+    ])("rejects an import() of %s with Node's error", (_, file, specifier, other) => {
+      const getRun = (imported: string) => {
+        const directory = write(
+          file,
+          `import(${JSON.stringify(imported)}).catch((error) => {\n  throw new Error([error instanceof Error, error instanceof TypeError, error.constructor === Error, String(error), error.code, error.url, Object.keys(error), Object.getOwnPropertyNames(error)].join("|"));\n});\n`,
+        );
+        return [runNode(directory, file), runCli(directory, [file])];
+      };
+
+      it("agrees with Node", () => {
+        const [node, cli] = getRun(specifier);
+        expect(node.status).toBe(1);
+        expect(getExit(cli)).toEqual(getExit(node));
+      });
+
+      it("rejects another result", () => {
+        const [node, cli] = getRun(other);
+        expect(getExit(cli)).toEqual(getExit(node));
+        expect(getExit(cli)).not.toEqual(getExit(getRun(specifier)[1]));
+      });
+    });
+
+    // A require that Node finds no module for throws Node's Error, of the code MODULE_NOT_FOUND,
+    // whose message and requireStack name the request and each file that first required the one
+    // before, which a program that catches it reads as Node's, once the code before it ran.
+    describe.each([
+      ["the entry", "main.cjs", "", "./missing.cjs", "./absent"],
+      [
+        "a module that the entry requires",
+        "main.cjs",
+        'require("./lib.cjs");\n',
+        "./missing.cjs",
+        "./sub/missing.cjs",
+      ],
+      [
+        "a module that an ES module imports",
+        "main.mjs",
+        'import "./lib.cjs";\n',
+        "./missing.cjs",
+        "/missing.cjs",
+      ],
+    ])(
+      "throws Node's error where %s requires a file that isn't there",
+      (_, file, main, specifier, other) => {
+        const getRun = (required: string) => {
+          const caught = `globalThis.ran = (globalThis.ran ?? "") + "${main === "" ? "main" : "lib"}";\ntry {\n  require(${JSON.stringify(required)});\n} catch (error) {\n  throw new Error([globalThis.ran, error instanceof Error, error.constructor === Error, error.code, error.message, error.requireStack, Object.keys(error), Object.getOwnPropertyNames(error)].join("|"));\n}\n`;
+          const directory = write(file, main === "" ? caught : `globalThis.ran = "main";\n${main}`);
+          writeFileSync(join(directory, "lib.cjs"), caught);
+          return [runNode(directory, file), runCli(directory, [file])];
+        };
+
+        it("agrees with Node", () => {
+          const [node, cli] = getRun(specifier);
+          expect(node.status).toBe(1);
+          expect(getExit(cli)).toEqual(getExit(node));
+        });
+
+        it("rejects another result", () => {
+          const [node, cli] = getRun(other);
+          expect(getExit(cli)).toEqual(getExit(node));
+          expect(getExit(cli)).not.toEqual(getExit(getRun(specifier)[1]));
+        });
+      },
+    );
 
     // A require runs only where its function or its branch does, as Node loads nothing for it before.
     it.each([
@@ -2294,6 +2553,19 @@ describe("the CLI with TypeScript files", () => {
         heap,
         heap,
       ]);
+    }, 120_000);
+
+    // A file's check prints with its own runtime, not its group's base's, so the ASSUME of a call
+    // that throws prints what it throws, as a check of the file alone does, here with the count
+    // that thrower.ts sees second.
+    it("prints what a file's check prints", () => {
+      const directory = writeModules(copyFixtures("passing"));
+      writeFileSync(
+        join(directory, "thrower.ts"),
+        'import { bump } from "./counter.ts";\nconst seen = bump();\nexport const check = (n: 0 | 1) => {\n  if (n === 1) throw new Error(`seen ${seen}`);\n  return true;\n};\n',
+      );
+      const result = runCli(directory, ["-shared", "first.ts", "thrower.ts"]);
+      expect(result.stdout).toContain('"check throws: seen 2"');
     }, 120_000);
 
     it("checks each file alone without it, as Node runs it alone", () => {

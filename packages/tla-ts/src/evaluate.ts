@@ -2810,14 +2810,19 @@ const isGeneratedOperator = (closure: Closure, environment: Environment) =>
 export const getOperatorCode = (closure: Closure, environment: Environment): OperatorCode => {
   const known = environment.operatorCodes.get(closure.body);
   if (known !== undefined) return known;
+  // An operator's first call interprets it, as most run once, and the second generates it.
   const code: OperatorCode = {
     call: (context, ...bindings) => {
-      const generated = isGeneratedOperator(closure, environment)
-        ? generateOperator(closure, environment)
-        : undefined;
-      code.isInterpreted = generated === undefined;
-      code.call = generated ?? getInterpretedCall(closure, environment);
-      return code.call(context, ...bindings);
+      const interpreted = getInterpretedCall(closure, environment);
+      code.call = (laterContext, ...laterBindings) => {
+        const generated = isGeneratedOperator(closure, environment)
+          ? generateOperator(closure, environment)
+          : undefined;
+        code.isInterpreted = generated === undefined;
+        code.call = generated ?? interpreted;
+        return code.call(laterContext, ...laterBindings);
+      };
+      return interpreted(context, ...bindings);
     },
     isInterpreted: false,
   };

@@ -34,6 +34,7 @@ import {
   formatValue,
   getSequenceElements,
   isFunctionValue,
+  normalizeDeeply,
   toFiniteFunction,
   toFiniteSet,
   type Value,
@@ -160,14 +161,6 @@ const getPermutations = (elements: Value[]): Value[][] =>
           ...rest,
         ]),
       );
-
-const normalizeDeeply = (value: Value): void => {
-  if (typeof value !== "object") return;
-  if (value.kind === "Set" || value.kind === "MixedSet") {
-    toFiniteSet(value).elements.forEach(normalizeDeeply);
-  }
-  if (value.kind === "Function") value.range.forEach(normalizeDeeply);
-};
 
 const convertLikeTlcEval = (value: Value): Value => {
   if (typeof value !== "object") return value;

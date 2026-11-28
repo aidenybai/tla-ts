@@ -8,7 +8,7 @@ import type {
   SourceRange,
 } from "../../ast";
 import { TlaUnsupportedError } from "../../errors";
-import { tokenize } from "../../lexer";
+import { tokenize, type Token } from "../../lexer";
 import { INFIX_OPERATORS, parenthesizedRanges, parseModuleTokens } from "../../parser";
 import { formatString } from "../../printer";
 import { TokenLocation } from "../../source-location";
@@ -1355,39 +1355,16 @@ const mergeByLine = <Item>(
   return [...merged, ...right.slice(position)];
 };
 
-// A module of definitions as trees and parts as text, one after another, each from a line of its
-// own, as the parser reads the text they print as: the trees laid out as the parser places their
-// nodes, and the text parsed where it is, with the lines of the trees blank; the texts that its
-// tokens add to TLC's order of strings; and its text, which prints on demand.
-export const layOutModule = (name: string, parts: readonly (string | OperatorDefinition)[]) => {
-  const layout = new Layout(name, true);
-  // The text's lines, with each tree's blank, and where each tree's tokens start and end.
-  const lines: string[] = [];
-  const trees: { definition: OperatorDefinition; start: number; end: number; line: number }[] = [];
-  for (const part of parts) {
-    if (typeof part === "string") {
-      for (const partLine of part.split("\n")) lines.push(partLine);
-      continue;
-    }
-    layout.line = lines.length + 1;
-    layout.column = 1;
-    const start = layout.getCount();
-    writeDefinition(part, NO_GAP, layout);
-    trees.push({ definition: part, start, end: layout.getCount(), line: lines.length + 1 });
-    for (let blank = lines.length + 1; blank <= layout.line; blank++) lines.push("");
-  }
-  const text = lines.join("\n");
-  const tokens = tokenize(text);
-  const module = parseModuleTokens(text, tokens);
-  const recursive = new Set(
-    module.units.flatMap((unit) =>
-      unit.kind === "Recursive" ? unit.declarations.map((declaration) => declaration.name) : [],
-    ),
-  );
-  trees.forEach((tree) => {
-    tree.definition.isRecursive = recursive.has(tree.definition.name);
-  });
-  // The texts of the tokens in order: the trees' and the text's, merged by line.
+interface LaidOutTree {
+  definition: OperatorDefinition;
+  start: number;
+  end: number;
+  line: number;
+}
+
+// The texts of the tokens in order: the trees' and the text's, merged by line. A function of its
+// own, so that the closure context V8 gives getText doesn't hold the text's tokens.
+const getModuleTexts = (tokens: Token[], trees: readonly LaidOutTree[], layout: Layout) => {
   const parsed = new Set<string>();
   const strings = new Set<string>();
   let position = 0;
@@ -1412,6 +1389,42 @@ export const layOutModule = (name: string, parts: readonly (string | OperatorDef
     }
   }
   addTokens(tokens.length);
+  return { parsed: [...parsed], strings: [...strings] };
+};
+
+// A module of definitions as trees and parts as text, one after another, each from a line of its
+// own, as the parser reads the text they print as: the trees laid out as the parser places their
+// nodes, and the text parsed where it is, with the lines of the trees blank; the texts that its
+// tokens add to TLC's order of strings; and its text, which prints on demand.
+export const layOutModule = (name: string, parts: readonly (string | OperatorDefinition)[]) => {
+  const layout = new Layout(name, true);
+  // The text's lines, with each tree's blank, and where each tree's tokens start and end.
+  const lines: string[] = [];
+  const trees: LaidOutTree[] = [];
+  for (const part of parts) {
+    if (typeof part === "string") {
+      for (const partLine of part.split("\n")) lines.push(partLine);
+      continue;
+    }
+    layout.line = lines.length + 1;
+    layout.column = 1;
+    const start = layout.getCount();
+    writeDefinition(part, NO_GAP, layout);
+    trees.push({ definition: part, start, end: layout.getCount(), line: lines.length + 1 });
+    for (let blank = lines.length + 1; blank <= layout.line; blank++) lines.push("");
+  }
+  const text = lines.join("\n");
+  const tokens = tokenize(text);
+  const module = parseModuleTokens(text, tokens);
+  const recursive = new Set(
+    module.units.flatMap((unit) =>
+      unit.kind === "Recursive" ? unit.declarations.map((declaration) => declaration.name) : [],
+    ),
+  );
+  trees.forEach((tree) => {
+    tree.definition.isRecursive = recursive.has(tree.definition.name);
+  });
+  const texts = getModuleTexts(tokens, trees, layout);
   const definitions = trees.map((tree) => tree.definition);
   return {
     module: {
@@ -1427,7 +1440,7 @@ export const layOutModule = (name: string, parts: readonly (string | OperatorDef
         getUnitLine,
       ),
     },
-    texts: { parsed: [...parsed], strings: [...strings] },
+    texts,
     getText: () => {
       let tree = 0;
       return parts

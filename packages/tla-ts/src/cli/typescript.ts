@@ -16,7 +16,7 @@ import {
 } from "../exit-codes";
 import { getJsTlaRuntime } from "../compile";
 import { parseConfig } from "../config";
-import { TlaError, TlaSharedBaseError, TlaStrippingError } from "../errors";
+import { TlaError, TlaLinkError, TlaSharedBaseError, TlaStrippingError } from "../errors";
 import { KEY_SEPARATOR } from "../resolve";
 import type { CheckBase } from "../search";
 import type { TlcVersion } from "../tlc/version";
@@ -352,7 +352,7 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
   const { compileModelToJsTla } = await import("../typescript/spec/model");
   const { isScript } = await import("../typescript/context");
   const { getModuleFormat } = await import("../typescript/spec/resolve");
-  const { getJsxText } = await import("../typescript/program");
+  const { getJsxText, parseFile } = await import("../typescript/program");
   const { stripTypes } = await import("../typescript/spec/strip-types");
   const runtime = await getJsTlaRuntime();
   const source = readFileSync(path, "utf8");
@@ -360,9 +360,7 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
   // another TypeScript file's text with its types stripped, which keeps every position.
   const text = getJsxText(path, source);
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
-  const code = /\.[cm]?ts$/.test(path)
-    ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
-    : text;
+  const code = /\.[cm]?ts$/.test(path) ? stripTypes(sourceFile) : text;
   const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
   // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
   // names it by its URL, but a CommonJS file of JavaScript, as TypeScript writes JSX, by its path.
@@ -395,20 +393,17 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
       return [];
     }
     const fileText = isEntry ? text : getJsxText(file.path, readFileSync(file.path, "utf8"));
-    const fileCode = /\.[cm]?ts$/.test(file.path)
-      ? stripTypes(
-          ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
-        )
-      : fileText;
-    const fileLines = isEntry ? lines : fileCode.split(/\r\n|[\n\r\u2028\u2029]/);
+    const parsed = isEntry ? sourceFile : parseFile(file.path, fileText);
+    const fileLines = isEntry
+      ? lines
+      : (/\.[cm]?ts$/.test(file.path) ? stripTypes(parsed) : fileText).split(
+          /\r\n|[\n\r\u2028\u2029]/,
+        );
     const fileUrl = isEntry
       ? url
       : file.kind === "module" || /\.[cm]?ts$/.test(file.path)
         ? pathToFileURL(realpathSync(file.path)).href
         : realpathSync(file.path);
-    const parsed = isEntry
-      ? sourceFile
-      : ts.createSourceFile(file.path, fileText, ts.ScriptTarget.ESNext, true);
     const throws: ThrowStatement[] = [];
     const collect = (node: Node): void => {
       if (ts.isThrowStatement(node)) throws.push(node);
@@ -486,7 +481,6 @@ const compileJsTlaEntry = async (path: string, setBound?: number): Promise<Compi
 // text tla-ts can't tell, and the error stops there, as does one at syntax across lines.
 const compileRejection = async (path: string, error: TlaStrippingError) => {
   const ts = (await import("@typescript/typescript6")).default;
-  const { compileToJsTla } = await import("../typescript/spec/compile");
   const text = readFileSync(path, "utf8");
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
   const start = sourceFile.getLineAndCharacterOfPosition(error.start);
@@ -513,8 +507,15 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
   ) {
     throw error;
   }
+  return compileNodeExit(path, message);
+};
+
+// The spec of a program that fails as Node does, before it runs any of its code, with what Node
+// writes to stderr, but its stack's frames.
+const compileNodeExit = async (path: string, stderr: string) => {
+  const { compileToJsTla } = await import("../typescript/spec/compile");
   const spec = compileToJsTla("", path, await getJsTlaRuntime(), false, {
-    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(message)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
+    steps: `VARIABLE programDone\nInit == Assert(FALSE, ${getTlaString(stderr)}) /\\ programDone = TRUE\nNext == UNCHANGED programDone`,
     entries: [],
   });
   return {
@@ -531,10 +532,15 @@ const compileRejection = async (path: string, error: TlaStrippingError) => {
 };
 
 // A TypeScript or JavaScript file compiled by specializing JS.tla (see compileJsTlaEntry), or,
-// where Node's type stripping rejects it, a program that fails as Node does.
+// where Node's type stripping rejects it, or Node fails to link its graph of ES modules, a program
+// that fails as Node does.
 export const compileTypeScriptFile = (path: string, setBound?: number): Promise<CompiledInput> =>
   compileJsTlaEntry(path, setBound).catch((error: unknown) =>
-    error instanceof TlaStrippingError ? compileRejection(path, error) : Promise.reject(error),
+    error instanceof TlaStrippingError
+      ? compileRejection(path, error)
+      : error instanceof TlaLinkError && isNodeText(error.stderr)
+        ? compileNodeExit(path, error.stderr)
+        : Promise.reject(error),
   );
 
 // The definitions of a program shared by several files' models: what its entry's run leaves, which

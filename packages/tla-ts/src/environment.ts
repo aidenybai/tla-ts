@@ -368,18 +368,17 @@ const getProofInstances = (proof: Proof | undefined): Instance[] =>
       ])
     : [];
 
-const rejectLiterals = (expressions: Expression[]): void =>
-  expressions.forEach((expression) => {
+const rejectLiterals = (expressions: Expression[]): void => {
+  for (let index = 0; index < expressions.length; index++) {
+    const expression = expressions[index];
     if (expression.kind === "Decimal") throw createRealNumberError(expression);
     if (expression.kind === "Number" && !isTlcInteger(expression.value)) {
       throw createBigNumberError(expression);
     }
-    rejectLiterals(
-      expression.kind === "Let"
-        ? [...getChildren(expression), ...getSubstitutions(expression.instances ?? [])]
-        : getChildren(expression),
-    );
-  });
+    rejectLiterals(getChildren(expression));
+    if (expression.kind === "Let") rejectLiterals(getSubstitutions(expression.instances ?? []));
+  }
+};
 
 export const createEnvironment = (
   config: ModelConfig,
@@ -768,14 +767,15 @@ export const createEnvironment = (
     return top.linked;
   };
 
-  const linkSource = (name: string, importer: string, isHidden: boolean) => {
-    const top = linkTopLevel(loadModule(name, importer), isHidden);
+  // Replaces the definitions of a linked module that Java overrides with builtins of this check's
+  // print, runtime and files.
+  const overrideWithJava = (name: string, linked: LinkedModule) => {
     const evaluateReplaced = (
       operator: string,
       args: BuiltinArgument[],
       context: Context | undefined,
     ) => {
-      const definition = replacedDefinitions.get(top.linked.visible.get(operator)?.key ?? operator);
+      const definition = replacedDefinitions.get(linked.visible.get(operator)?.key ?? operator);
       const expressions = args.flatMap((arg) =>
         typeof arg === "object" && arg.kind === "Operator" && arg.expression
           ? [arg.expression]
@@ -810,7 +810,7 @@ export const createEnvironment = (
     getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced, () =>
       order.getDeclarationOrder("variable"),
     )?.forEach((operator) => {
-      const symbol = top.linked.visible.get(operator.name);
+      const symbol = linked.visible.get(operator.name);
       if (symbol?.kind !== "Definition") return;
       if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
       const definition = definitions.get(symbol.key);
@@ -818,6 +818,11 @@ export const createEnvironment = (
       builtins.set(symbol.key, operator);
       definitions.delete(symbol.key);
     });
+  };
+
+  const linkSource = (name: string, importer: string, isHidden: boolean) => {
+    const top = linkTopLevel(loadModule(name, importer), isHidden);
+    overrideWithJava(name, top.linked);
     return top;
   };
 
@@ -2138,6 +2143,16 @@ export const createEnvironment = (
       acceptedModules: new Set(acceptedModules),
     };
   };
+  // A check that starts from its group's base prints, reads its runtime and reads files with
+  // builtins of its own, as a check of its file alone does, rather than with the base's.
+  if (base !== undefined) {
+    standardExports.forEach((_symbols, name) =>
+      getStandardOperators(name, options.print, runtime, options.files)?.forEach((operator) =>
+        builtins.set(operator.name, operator),
+      ),
+    );
+    [...linkedModules, ...standardSources].forEach((entry) => overrideWithJava(entry[0], entry[1]));
+  }
   const linkedBase = options.ownModule === undefined ? undefined : linkBase(options.ownModule);
   const linkedRoot = linkTopLevel(root).linked;
   const traceFile = options.traceFile;

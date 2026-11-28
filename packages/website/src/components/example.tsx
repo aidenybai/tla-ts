@@ -2,13 +2,16 @@ import { ArrowsOutSimple, Minus } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
+import { compilations } from "virtual:compilations";
 import { examples } from "virtual:site-data";
+import type { Precompiled } from "@/lib/compilation";
 import { getHighlightColors } from "@/lib/highlight-colors";
 import { startJsTlaWorker } from "@/lib/js-tla-worker";
 import { getLineMarks } from "@/lib/line-marks";
 import { getOutputRows, getRunLines } from "@/lib/output-rows";
 import type { RunResult } from "@/lib/run-worker";
 import type { Search, SearchState } from "@/lib/search";
+import type { Source } from "@/lib/site-data";
 import { useRun } from "@/hooks/use-run";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { Maze } from "./maze";
@@ -24,6 +27,8 @@ type View = (typeof VIEWS)[number];
 
 interface ExampleState {
   example: (typeof examples)[number];
+  // The example's TLA+, once its compilation has loaded.
+  tla: Source | undefined;
   view: View;
   setView: (view: View) => void;
   isRunning: boolean;
@@ -53,23 +58,34 @@ const ExampleRoot = (props: RootProps) => {
   const [hasRun, setHasRun] = useState(false);
   const [isBugFound, setIsBugFound] = useState(false);
   const [isPreviewHidden, setIsPreviewHidden] = useState(false);
-  const isRunning = runner.isRunning;
+  // The example's TLA+ loads apart from the page, as the playground loads a file's.
+  const [compiled, setCompiled] = useState<Precompiled>();
+  // A run starts once the example's compilation has loaded.
+  const [isRunWaiting, setIsRunWaiting] = useState(false);
+  const isRunning = runner.isRunning || isRunWaiting;
   const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
   const path = useSearchPath(result?.search, hoveredStateId);
-  const request = {
-    source: example.tla.code,
-    config: example.config,
-    modules: example.modules,
-    isSearchShown: true,
-    typescript: { source: example.typescript.code, fileName: example.fileName },
-  };
+  useEffect(() => {
+    void compilations[example.fileName]?.().then(setCompiled);
+  }, [example]);
+  useEffect(() => {
+    if (!isRunWaiting || compiled === undefined) return;
+    setIsRunWaiting(false);
+    runner.run({
+      source: compiled.compilation.tla,
+      config: compiled.compilation.config,
+      modules: compiled.compilation.modules,
+      isSearchShown: true,
+      typescript: { source: example.typescript.code, fileName: example.fileName },
+    });
+  }, [isRunWaiting, compiled, example, runner]);
   // A run shows where it ended in the TLA+.
   const run = () => {
     setHasRun(true);
     setView("tla");
     setIsPreviewHidden(false);
-    runner.run(request);
+    setIsRunWaiting(true);
   };
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -84,6 +100,7 @@ const ExampleRoot = (props: RootProps) => {
     <exampleContext.PartsContext
       value={{
         example,
+        tla: compiled?.tla,
         view,
         setView,
         isRunning,
@@ -149,6 +166,7 @@ interface SourceProps {
 const ExampleSource = (props: SourceProps) => {
   const state = exampleContext.useParts();
   const example = state.example;
+  const tla = state.tla;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
@@ -162,7 +180,7 @@ const ExampleSource = (props: SourceProps) => {
   // Each declaration is marked on the model's line for it: a function on its action or check, and
   // any other on Init. The definitions it compiles to fold away with the rest of JS.tla's code.
   const lineMarks = useMemo(() => {
-    const code = example.tla.code;
+    const code = tla?.code ?? "";
     return getLineMarks(
       code.split("\n"),
       example.sourceMarks.flatMap((mark) => {
@@ -174,7 +192,7 @@ const ExampleSource = (props: SourceProps) => {
         return { name: mark.name, start, end: end === -1 ? code.length : end };
       }),
     );
-  }, [example]);
+  }, [example, tla]);
   const sourceLineMarks = useMemo(
     () => getLineMarks(example.typescript.code.split("\n"), example.sourceMarks),
     [example],
@@ -183,25 +201,26 @@ const ExampleSource = (props: SourceProps) => {
     () => getHighlightColors(example.sourceMarks.map((mark) => mark.name)),
     [example],
   );
-  const isCompiled = state.view === "tla";
+  // The TLA+ shows once it has loaded, and the TypeScript until then.
+  const isCompiled = state.view === "tla" && tla !== undefined;
   // A run's marks are on the TLA+, so the game and the TypeScript show none of them.
   const result = isCompiled ? state.result : undefined;
   const rows = useMemo(
     () =>
       getOutputRows({
-        lines: example.tla.lines,
+        lines: tla?.lines ?? [],
         lineMarks,
         source: example.typescript.code,
         sourceMarks: example.sourceMarks,
         openFolds,
         pinnedLines: getRunLines(result),
       }),
-    [example, lineMarks, openFolds, result],
+    [example, tla, lineMarks, openFolds, result],
   );
   return (
     <div className="w-full">
       <Code.Root
-        source={isCompiled ? example.tla : example.typescript}
+        source={isCompiled ? tla : example.typescript}
         rows={isCompiled ? rows : undefined}
         onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
         lineMarks={isCompiled ? lineMarks : sourceLineMarks}

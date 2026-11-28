@@ -32,7 +32,8 @@ export interface SetValue {
   writtenElements: Value[] | undefined;
   hash: number;
   fingerprint: number;
-  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_SELF_COMPARED and VALUE_DEEPLY_NORMALIZED bits.
+  // VALUE_NORMALIZED, VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED and
+  // VALUE_ENUMERATED_WITHIN bits.
   flags: number;
   costNode?: number;
 }
@@ -50,8 +51,8 @@ export interface FunctionValue {
   fingerprint: number;
   writtenKeys: Value[] | undefined;
   functionClass: "tuple" | "record" | undefined;
-  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL and
-  // VALUE_KEYS_ORDERLESS bits.
+  // VALUE_FINGERPRINTED, VALUE_SELF_COMPARED, VALUE_DEEPLY_NORMALIZED, VALUE_CANONICAL,
+  // VALUE_KEYS_ORDERLESS and VALUE_ENUMERATED_WITHIN bits.
   flags: number;
 }
 
@@ -235,6 +236,8 @@ const VALUE_CANONICAL = 16;
 // A function each key of whose domain isOrderless, which a key stays once it is.
 const VALUE_KEYS_ORDERLESS = 32;
 const VALUE_PAGE = 64;
+// A set or function that normalizeDeeply walked, every lazy set within which it enumerated.
+const VALUE_ENUMERATED_WITHIN = 128;
 
 export const markCanonical = (value: FunctionValue) => {
   value.flags |= VALUE_CANONICAL;
@@ -262,7 +265,7 @@ export const EDGE_STARTS = ENTRY_CLASS_BITS + PAGE_SIZE / 32;
 // js-tla-canonical.ts), and hashes holds the hash of each. A record's plan holds the hashes along
 // its locations in its source. An EXCEPT or Append that writes a record gives a page with a bit set
 // for its slot in writtenSlots, whose source, locations, plan, hash and edges no longer hold, and
-// whose hash is 0 until the record's is ready, as EXCEPT leaves a function's.
+// whose hash is 0 until getValueHash hashes the page.
 export class CanonicalPage implements FunctionValue {
   readonly kind = "Function";
   domain: Value[];
@@ -332,8 +335,9 @@ const getSlotHash = (page: CanonicalPage, slot: number) => {
 export const getPageHash = (page: CanonicalPage) => {
   let hash = FUNCTION_HASH_SEED;
   for (let slot = 0; slot < page.records.length; slot++) {
-    const slotHash = getSlotHash(page, slot);
-    if (slotHash === UNREADY_HASH) return UNREADY_HASH;
+    const record = page.records[slot];
+    const slotHash =
+      record !== undefined && isWrittenSlot(page, slot) ? getValueHash(record) : page.hashes[slot];
     if (slotHash === UNFINGERPRINTABLE_HASH) return UNFINGERPRINTABLE_HASH;
     hash = (hash + getEntryContribution(getNumberHash(slot + 1), slotHash)) | 0;
   }
@@ -344,7 +348,7 @@ const isPageHashReady = (page: CanonicalPage) =>
   page.hash !== UNREADY_HASH && page.hash !== UNFINGERPRINTABLE_HASH;
 
 // A page with a record written at a slot, which may be the one after its last.
-const writePageRecord = (page: CanonicalPage, slot: number, record: Value, hash: number) => {
+const writePageRecord = (page: CanonicalPage, slot: number, record: Value) => {
   const writtenSlots = page.writtenSlots?.slice() ?? new Int32Array(PAGE_SIZE / 32);
   writtenSlots[slot >> 5] |= 1 << (slot & 31);
   const records = page.records.slice();
@@ -361,16 +365,6 @@ const writePageRecord = (page: CanonicalPage, slot: number, record: Value, hash:
     writtenSlots,
   );
   written.flags = VALUE_PAGE;
-  const key = getNumberHash(slot + 1);
-  written.hash =
-    hash === UNREADY_HASH
-      ? UNREADY_HASH
-      : !isPageHashReady(page)
-        ? getPageHash(written)
-        : (page.hash -
-            (slot < page.records.length ? getEntryContribution(key, getSlotHash(page, slot)) : 0) +
-            getEntryContribution(key, hash)) |
-          0;
   return written;
 };
 
@@ -398,10 +392,7 @@ export const truncatePage = (page: CanonicalPage, count: number) => {
     isWritten ? writtenSlots : undefined,
   );
   truncated.flags = VALUE_PAGE;
-  if (!isPageHashReady(page)) {
-    truncated.hash = getPageHash(truncated);
-    return truncated;
-  }
+  if (!isPageHashReady(page)) return truncated;
   let hash = page.hash;
   for (let slot = count; slot < page.records.length; slot++) {
     hash = (hash - getEntryContribution(getNumberHash(slot + 1), getSlotHash(page, slot))) | 0;
@@ -411,12 +402,10 @@ export const truncatePage = (page: CanonicalPage, count: number) => {
 };
 
 // Append(page, record).
-export const appendPageRecord = (page: CanonicalPage, record: Value) => {
-  const hash = getReadyHash(record);
-  return page.records.length === PAGE_SIZE || hash === UNFINGERPRINTABLE_HASH
+export const appendPageRecord = (page: CanonicalPage, record: Value) =>
+  page.records.length === PAGE_SIZE
     ? createTuple(page.range.concat([record]))
-    : writePageRecord(page, page.records.length, record, hash);
-};
+    : writePageRecord(page, page.records.length, record);
 
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : (set.flags & VALUE_NORMALIZED) !== 0;
@@ -1660,6 +1649,20 @@ export const markNormalized = (value: Value): void => {
   }
 };
 
+export const normalizeDeeply = (value: Value): void => {
+  if (typeof value !== "object") return;
+  if (value.kind === "Set" || value.kind === "MixedSet") {
+    const set = toFiniteSet(value);
+    if ((set.flags & VALUE_ENUMERATED_WITHIN) !== 0) return;
+    set.elements.forEach(normalizeDeeply);
+    set.flags |= VALUE_ENUMERATED_WITHIN;
+  }
+  if (value.kind === "Function" && (value.flags & VALUE_ENUMERATED_WITHIN) === 0) {
+    value.range.forEach(normalizeDeeply);
+    value.flags |= VALUE_ENUMERATED_WITHIN;
+  }
+};
+
 export const normalizeShallowly = (value: Value): void => {
   if (typeof value !== "object" || isCachedSet(value)) return;
   if (value.kind === "Set") {
@@ -1710,7 +1713,9 @@ const isFailingLikeTlc = (left: Value, right: Value) =>
           (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))))));
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
+  typeof left !== "object" && typeof left === typeof right
+    ? left === right
+    : computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
 export const isReceiverEqual = (left: Value, right: Value) => {
   const sets = setTrace.sets;
@@ -5103,11 +5108,11 @@ export const updateFunction = (
       updateFunction(finite.range[position], path, depth + 1, getNewValue),
     );
   }
-  const next = updateFunction(getPageRecord(finite, position), path, depth + 1, getNewValue);
-  const hash = getReadyHash(next);
-  return hash === UNFINGERPRINTABLE_HASH
-    ? setFunctionValue(finite, position, next)
-    : writePageRecord(finite, position, next, hash);
+  return writePageRecord(
+    finite,
+    position,
+    updateFunction(getPageRecord(finite, position), path, depth + 1, getNewValue),
+  );
 };
 
 const UNREADY_HASH = 0;
@@ -5134,7 +5139,7 @@ const getReadyHash = (value: Value): number => {
     return hash;
   }
   if (value.kind !== "Function") return UNREADY_HASH;
-  if (value.hash !== 0) return value.hash;
+  if (value.hash !== 0 || (value.flags & VALUE_PAGE) !== 0) return value.hash;
   let hash = FUNCTION_HASH_SEED;
   for (let index = 0; index < value.domain.length; index++) {
     const keyHash = getReadyHash(value.domain[index]);
@@ -5245,6 +5250,7 @@ const UNFINGERPRINTABLE_HASH = 0x2f6b1c4d;
 export const isUnfingerprintableHash = (hash: number) => hash === UNFINGERPRINTABLE_HASH;
 
 const computeValueHash = (value: SetValue | FunctionValue) => {
+  if (value instanceof CanonicalPage) return getPageHash(value);
   if (value.kind === "Set") {
     const elements = value.elements;
     let hash = SET_HASH_SEED;

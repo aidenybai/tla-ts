@@ -69,12 +69,19 @@ const hasModuleSyntax = (sourceFile: ts.SourceFile) =>
         )),
   );
 
-// The assignments of a CommonJS file's top level, by what they assign to: exports, module.exports,
-// or a property of either, as exports.name = value and module.exports.name = value assign it.
+// An assignment of a CommonJS file's top level to exports or module.exports, the target, or to a
+// property of the target that name names, as exports.name = value assigns it.
+interface CommonJsAssignment {
+  name: ts.Identifier | undefined;
+  target: ts.Expression;
+  left: ts.Expression;
+  right: ts.Expression;
+}
+
 const getCommonJsAssignments = (sourceFile: ts.SourceFile) =>
   hasModuleSyntax(sourceFile)
     ? []
-    : sourceFile.statements.flatMap((statement) => {
+    : sourceFile.statements.flatMap((statement): CommonJsAssignment[] => {
         const expression = ts.isExpressionStatement(statement) ? statement.expression : undefined;
         if (
           expression === undefined ||
@@ -90,55 +97,147 @@ const getCommonJsAssignments = (sourceFile: ts.SourceFile) =>
             node.expression.text === "module" &&
             node.name.text === "exports");
         const left = expression.left;
-        const name = isExports(left)
-          ? undefined
-          : ts.isPropertyAccessExpression(left) && isExports(left.expression)
-            ? left.name.text
-            : null;
-        return name === null ? [] : [{ name, left, right: skipCasts(expression.right) }];
+        const right = skipCasts(expression.right);
+        if (isExports(left)) return [{ name: undefined, target: left, left, right }];
+        return ts.isPropertyAccessExpression(left) &&
+          ts.isIdentifier(left.name) &&
+          isExports(left.expression)
+          ? [{ name: left.name, target: left.expression, left, right }]
+          : [];
       });
+
+// The value that a CommonJS file's top level last gives each property of module.exports, as
+// exports.name = value, module.exports.name = value, or module.exports = { name: value } gives it,
+// or { name } as its shorthand, or { name() {} } as a method. An assignment to module.exports
+// replaces the object, and with it the properties that earlier assignments gave, and one to
+// exports or module.exports leaves exports naming an object that Node doesn't export.
+const getCommonJsProperties = (sourceFile: ts.SourceFile) =>
+  getCommonJsAssignments(sourceFile).reduce(
+    (exported, assignment) => {
+      const right = assignment.right;
+      const isBinding = ts.isIdentifier(assignment.target);
+      if (assignment.name !== undefined) {
+        return isBinding && exported.isDetached
+          ? exported
+          : {
+              ...exported,
+              properties: new Map([
+                ...exported.properties,
+                [
+                  assignment.name.text,
+                  { left: assignment.left, identifier: assignment.name, value: right },
+                ],
+              ]),
+            };
+      }
+      return {
+        isDetached: true,
+        properties: isBinding
+          ? exported.properties
+          : new Map(
+              ts.isObjectLiteralExpression(right)
+                ? right.properties.flatMap((property) =>
+                    property.name !== undefined && ts.isIdentifier(property.name)
+                      ? [
+                          [
+                            property.name.text,
+                            { left: assignment.left, identifier: property.name, value: property },
+                          ] as const,
+                        ]
+                      : [],
+                  )
+                : [],
+            ),
+      };
+    },
+    {
+      isDetached: false,
+      properties: new Map<
+        string,
+        {
+          left: ts.Expression;
+          identifier: ts.Identifier;
+          value: ts.Expression | ts.ObjectLiteralElementLike;
+        }
+      >(),
+    },
+  ).properties;
 
 // The local names that a CommonJS file's top level exports by name, by the names it exports them
 // as, in exports.name = local, module.exports.name = local, or module.exports = { name: local },
-// or { local } as its shorthand. A file of an ES module's import or export syntax exports none
-// this way.
+// or { local } as its shorthand.
 export const getCommonJsExports = (sourceFile: ts.SourceFile) =>
   new Map(
-    getCommonJsAssignments(sourceFile).flatMap((assignment): [string, string][] => {
-      const right = assignment.right;
-      if (assignment.name !== undefined) {
-        return ts.isIdentifier(right) ? [[assignment.name, right.text]] : [];
-      }
-      return ts.isObjectLiteralExpression(right)
-        ? right.properties.flatMap((property): [string, string][] =>
-            ts.isShorthandPropertyAssignment(property)
-              ? [[property.name.text, property.name.text]]
-              : ts.isPropertyAssignment(property) &&
-                  ts.isIdentifier(property.name) &&
-                  ts.isIdentifier(skipCasts(property.initializer))
-                ? [[property.name.text, skipCasts(property.initializer).getText()]]
-                : [],
-          )
-        : [];
+    [...getCommonJsProperties(sourceFile)].flatMap(([name, property]): [string, string][] => {
+      const value = property.value;
+      const local = ts.isShorthandPropertyAssignment(value)
+        ? value.name
+        : ts.isPropertyAssignment(value)
+          ? skipCasts(value.initializer)
+          : value;
+      return ts.isIdentifier(local) ? [[name, local.text]] : [];
     }),
   );
 
-// Where a CommonJS file's top level exports a function that no binding of the file names, which the
-// model's frame can't call: exports.name = () => {}, or module.exports = { name() {} }.
-export const findUnnamedCommonJsExport = (sourceFile: ts.SourceFile) =>
-  getCommonJsAssignments(sourceFile).find(
-    (assignment) =>
-      ts.isFunctionLike(assignment.right) ||
-      (assignment.name === undefined &&
-        ts.isObjectLiteralExpression(assignment.right) &&
-        assignment.right.properties.some(
+// The plain functions that a CommonJS file's top level exports without a binding that names them,
+// by the names it exports them as, which a model calls through module.exports: exports.name =
+// () => {}, or module.exports = { name() {} }. Each has the node that its tags are on.
+export const getCommonJsFunctions = (sourceFile: ts.SourceFile) =>
+  [...getCommonJsProperties(sourceFile)].flatMap((entry) => {
+    const value = entry[1].value;
+    const node = ts.isMethodDeclaration(value)
+      ? value
+      : getFunction(ts.isPropertyAssignment(value) ? skipCasts(value.initializer) : value);
+    const body = node?.body;
+    return node !== undefined &&
+      body !== undefined &&
+      node.asteriskToken === undefined &&
+      !(node.modifiers ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+      ? [
+          {
+            name: entry[0],
+            // How the program names the property: exports.name, or module.exports.name.
+            label: ts.isExpression(value)
+              ? entry[1].left.getText()
+              : `${entry[1].left.getText()}.${entry[0]}`,
+            identifier: entry[1].identifier,
+            tagged: ts.isExpression(value) ? entry[1].left.parent.parent : value,
+            node,
+            body,
+          },
+        ]
+      : [];
+  });
+
+// Where a CommonJS file's top level exports a function that the model's frame can't call: a
+// function that module.exports is, an accessor, an async function or a generator, or a function
+// under a name that isn't an identifier.
+export const findUnnamedCommonJsExport = (sourceFile: ts.SourceFile) => {
+  const called = new Set<ts.Node>(
+    getCommonJsFunctions(sourceFile).map((exported) => exported.node),
+  );
+  const isUncalled = (node: ts.Node): boolean =>
+    ts.isPropertyAssignment(node)
+      ? isUncalled(skipCasts(node.initializer))
+      : (ts.isFunctionLike(node) || ts.isAccessor(node)) && !called.has(node);
+  const whole = getCommonJsAssignments(sourceFile).findLast(
+    (assignment) => assignment.name === undefined,
+  );
+  return (
+    [...getCommonJsProperties(sourceFile).values()].find((property) => isUncalled(property.value))
+      ?.left ??
+    (whole !== undefined &&
+    (ts.isFunctionLike(whole.right) ||
+      (ts.isObjectLiteralExpression(whole.right) &&
+        whole.right.properties.some(
           (property) =>
-            ts.isMethodDeclaration(property) ||
-            ts.isAccessor(property) ||
-            (ts.isPropertyAssignment(property) &&
-              ts.isFunctionLike(skipCasts(property.initializer))),
-        )),
-  )?.left;
+            !(property.name !== undefined && ts.isIdentifier(property.name)) &&
+            isUncalled(property),
+        )))
+      ? whole.left
+      : undefined)
+  );
+};
 
 // A file that exports no function, which a spec exports as an action, runs as JavaScript does
 // rather than as a spec's model. A CommonJS file may export a function by name, which the model's
@@ -158,6 +257,7 @@ const isTypedCallable = (declaration: ts.VariableDeclaration) => {
 
 export const isScript = (sourceFile: ts.SourceFile) =>
   getCommonJsExports(sourceFile).size === 0 &&
+  getCommonJsFunctions(sourceFile).length === 0 &&
   findUnnamedCommonJsExport(sourceFile) === undefined &&
   sourceFile.statements.every(
     (statement) =>

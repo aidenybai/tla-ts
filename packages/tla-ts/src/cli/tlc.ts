@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { setFlagsFromString } from "node:v8";
 import type { CheckOptions, ModuleOperator, CheckStatus } from "../check";
 import { parseConfig } from "../config";
 import { checkDepthFirst } from "../dfid";
@@ -682,6 +683,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       ? path
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
+  // Most of a TypeScript check's code runs a few times, which V8 runs without feedback.
+  if (paths.some(isProgramPath)) setFlagsFromString("--no-lazy-feedback-allocation");
   const exitCodes: number[] = [];
   const userFile = parsed.userFile;
   // Several TypeScript or JavaScript files share a program of each project of theirs.

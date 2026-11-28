@@ -56,18 +56,21 @@ export interface JsTlaCompiled extends CompiledSpec {
 // files, parsed once in library by a host that compiles many models. A program runs on the host's
 // files, or on those that the options pass, with the file's own source at its path, as on a host
 // without a file system, such as a browser, which loads the file by its extension, its package's
-// type and its syntax, as Node loads a file.
+// type and its syntax, as Node loads a file, or on the system that a host gives, such as one that
+// records the files that the program reads.
 export const compileJsTla = (
   options: CompileOptions,
   runtime: JsTlaRuntime,
   library = options.libraries === undefined ? undefined : createLibrary(options.libraries),
+  system = options.files === undefined && ts.sys !== undefined
+    ? getHostSystem()
+    : createMemorySystem(options.files ?? new Map(), {
+        fileName: options.fileName ?? "spec.ts",
+        source: options.source,
+      }),
 ): JsTlaCompiled => {
   const fileName = options.fileName ?? "spec.ts";
   const sourceFile = ts.createSourceFile(fileName, options.source, ts.ScriptTarget.ESNext, true);
-  const system =
-    options.files === undefined && ts.sys !== undefined
-      ? getHostSystem()
-      : createMemorySystem(options.files ?? new Map(), { fileName, source: options.source });
   // A module whose exported functions the model calls none of runs as a script.
   const model = isScript(sourceFile)
     ? undefined

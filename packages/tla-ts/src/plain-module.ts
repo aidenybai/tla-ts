@@ -70,6 +70,10 @@ const NO_APPLIED = -1;
 
 const EMPTY_DATA: PlainData = { params: 0, all: 0, nonLeibniz: 0, applied: NO_APPLIED };
 
+const NO_ARGUMENTS: Expression[] = [];
+
+const NO_PARAMS: ReadonlySet<string> = new Set();
+
 // The parameters whose levels the walk tracks are at most this many, each a bit of a number.
 const MAX_PARAMS = 30;
 
@@ -111,9 +115,12 @@ export const checkPlainModule = (
   // The name of each bit.
   const names: string[] = [];
   const getBit = (name: string) => {
-    const bit = bits.get(name) ?? bits.size;
-    if (bit === bits.size) names[bit] = name;
-    bits.set(name, bit);
+    const found = bits.get(name);
+    const bit = found ?? bits.size;
+    if (found === undefined) {
+      names[bit] = name;
+      bits.set(name, bit);
+    }
     return bit < MAX_PARAMS ? bit : undefined;
   };
   const own = new Map<string, OperatorLevels>();
@@ -153,7 +160,8 @@ export const checkPlainModule = (
     }
   };
   // The bits of names, or undefined where they're too many.
-  const getBits = (items: Iterable<string>) => {
+  const getBits = (items: ReadonlySet<string>) => {
+    if (items.size === 0) return 0;
     let found = 0;
     for (const item of items) {
       const bit = getBit(item);
@@ -235,27 +243,22 @@ export const checkPlainModule = (
     const calleeParams = getCalleeParams(callee);
     const all = getBits(callee.allParams);
     const nonLeibniz = getBits(callee.nonLeibnizParams);
-    const calleeApplied =
-      callee.appliedParams === undefined
-        ? 0
-        : getBits(
-            [...callee.appliedParams].filter((param) =>
-              callee.formals.every((formal) => formal.name !== param),
-            ),
-          );
-    if (
-      calleeParams === undefined ||
-      all === undefined ||
-      nonLeibniz === undefined ||
-      calleeApplied === undefined
-    ) {
+    let calleeApplied = 0;
+    for (const param of callee.appliedParams ?? NO_PARAMS) {
+      if (callee.formals.some((formal) => formal.name === param)) continue;
+      const bit = getBit(param);
+      if (bit === undefined) return undefined;
+      calleeApplied |= 1 << bit;
+    }
+    if (calleeParams === undefined || all === undefined || nonLeibniz === undefined) {
       return undefined;
     }
     let params = calleeParams;
     const data = { params: 0, all, nonLeibniz, applied: NO_APPLIED };
     let applied = callee.appliedParams === undefined ? calleeParams : calleeApplied;
     let isApplied = callee.appliedParams !== undefined;
-    operands.forEach((operand, index) => {
+    for (let index = 0; index < operands.length; index++) {
+      const operand = operands[index];
       if (getWeight(callee, index) === 1) params |= operand.params;
       constrain(operand.params, getMaxLevel(callee, index));
       data.all |= operand.all;
@@ -265,17 +268,18 @@ export const checkPlainModule = (
         formal === undefined || callee.appliedParams === undefined
           ? getWeight(callee, index) === 1
           : callee.appliedParams.has(formal.name);
-      if (!isAppliedAt) return;
+      if (!isAppliedAt) continue;
       applied |= operand.applied === NO_APPLIED ? operand.params : operand.applied;
       if (operand.applied !== NO_APPLIED) isApplied = true;
-    });
-    ranges.forEach((range) => {
+    }
+    for (let index = 0; index < ranges.length; index++) {
+      const range = ranges[index];
       params |= range.params;
       data.all |= range.all;
       data.nonLeibniz |= range.nonLeibniz;
       applied |= range.applied === NO_APPLIED ? range.params : range.applied;
       if (range.applied !== NO_APPLIED) isApplied = true;
-    });
+    }
     data.params = params;
     data.applied = isApplied ? applied : NO_APPLIED;
     if (callee.argConstraints.size > 0 || callee.argParams.size > 0) {
@@ -286,8 +290,8 @@ export const checkPlainModule = (
   // The data of each expression, or undefined where one isn't plain.
   const walkEach = (expressions: Expression[], isInExcept: boolean) => {
     const operands: PlainData[] = [];
-    for (const expression of expressions) {
-      const operand = walk(expression, isInExcept);
+    for (let index = 0; index < expressions.length; index++) {
+      const operand = walk(expressions[index], isInExcept);
       if (operand === undefined) return undefined;
       operands.push(operand);
     }
@@ -332,12 +336,12 @@ export const checkPlainModule = (
       case "Apply": {
         const name = expression.kind === "Identifier" ? expression.name : expression.operator;
         if (expression.kind === "Apply" && isDeserializer(name)) isWide = true;
-        const args = expression.kind === "Identifier" ? [] : expression.args;
-        const local = locals.findLast((candidate) => candidate.name === name);
-        if (local) {
+        const args = expression.kind === "Identifier" ? NO_ARGUMENTS : expression.args;
+        for (let index = locals.length - 1; index >= 0; index--) {
+          if (locals[index].name !== name) continue;
           if (args.length > 0) return undefined;
           expression.resolution = LOCAL_RESOLUTION;
-          return local.data;
+          return locals[index].data;
         }
         const resolved = resolveGlobal(name, args.length);
         if (resolved === undefined) return undefined;
@@ -529,17 +533,22 @@ export const checkPlainModule = (
     if (body === undefined) return undefined;
     const formalBits = definition.params.map((param) => bits.get(param.name) ?? 0);
     const isFormal = (name: string) => definition.params.some((param) => param.name === name);
-    // The names of the bits of a set, but the formals'.
-    const getParamNames = (set: number) =>
-      [...bits].flatMap((entry) =>
-        (set & (1 << entry[1])) !== 0 && !formalBits.includes(entry[1]) ? [entry[0]] : [],
-      );
+    // The names of the bits of a set, in the order the walk met them, but the formals' where
+    // isFormalSkipped.
+    const getParamNames = (set: number, isFormalSkipped = true) => {
+      const found: string[] = [];
+      for (let rest = set; rest !== 0; rest &= rest - 1) {
+        const bit = 31 - Math.clz32(rest & -rest);
+        if (!isFormalSkipped || !formalBits.includes(bit)) found.push(names[bit]);
+      }
+      return found;
+    };
     const params = getParamNames(body.params);
-    const constraints = [...bits].flatMap((entry): [string, number][] =>
-      (constrained & (1 << entry[1])) !== 0 && !formalBits.includes(entry[1])
-        ? [[entry[0], maxima[entry[1]]]]
-        : [],
-    );
+    const constraints: [string, number][] = [];
+    for (let rest = constrained; rest !== 0; rest &= rest - 1) {
+      const bit = 31 - Math.clz32(rest & -rest);
+      if (!formalBits.includes(bit)) constraints.push([names[bit], maxima[bit]]);
+    }
     const definitionLevels: OperatorLevels = {
       level: 0,
       isCorrect: true,
@@ -554,13 +563,7 @@ export const checkPlainModule = (
       allParams: new Set(getParamNames(body.all)),
       nonLeibnizParams: new Set(getParamNames(body.nonLeibniz)),
       appliedParams:
-        body.applied === NO_APPLIED
-          ? undefined
-          : new Set(
-              [...bits].flatMap((entry) =>
-                (body.applied & (1 << entry[1])) !== 0 ? [entry[0]] : [],
-              ),
-            ),
+        body.applied === NO_APPLIED ? undefined : new Set(getParamNames(body.applied, false)),
       name: definition.name,
       formals: definition.params,
       maxLevels: formalBits.map((bit) => maxima[bit]),

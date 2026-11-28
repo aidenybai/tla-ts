@@ -100,7 +100,9 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         : await compile.compile(options);
       setNodeGlobals(nodeGlobals);
       process.getBuiltinModule = getBuiltinModule;
-      const result = await parallel.check({ ...spec, onPrint: () => {} });
+      // The website checks a spec again, as it is, where its search passes the states it graphs.
+      const checkSpec = () => parallel.check({ ...spec, onPrint: () => {} });
+      const result = request.isCheckedTwice ? await checkSpec().then(checkSpec) : await checkSpec();
       parentPort.postMessage({
         id: request.id,
         outcome: {
@@ -148,6 +150,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
     isLibraryPassed = true,
     // The files that the compile runs the program on, by absolute path, in place of the host's.
     files?: Record<string, string>,
+    isCheckedTwice = false,
   ) =>
     new Promise<Outcome>((resolve) => {
       worker.postMessage({
@@ -157,6 +160,7 @@ const createApi = (stackSizeMb: number, isBrowser = false) => {
         isRecorded,
         isLibraryPassed,
         files: files && Object.entries(files),
+        isCheckedTwice,
       });
       pending.push(resolve);
     });
@@ -457,15 +461,14 @@ describe("run a program on the files that a host passes, as Node runs it on them
   const getHostFiles = (files: Record<string, string>) =>
     Object.fromEntries(Object.entries(files).map(([name, text]) => [`/${name}`, text]));
 
-  describe("check a React component's model on React's files", () => {
-    const REACT = getPackageFiles(
-      "react",
-      join(import.meta.dirname, "../../../website/node_modules/react"),
-    );
-    // The view leaves out React's count of the elements that its development build makes, which
-    // grows with each render.
-    const getSource = (shown: string) =>
-      `type Query = "t" | "tl";\nlet query: Query | "" = "";\nlet results: Query | "" = "";\nconst sent = new Set<Query>();\nexport const SearchBox = () => (\n  <label>\n    Search <input value={query} onChange={(event) => type(event.target.value as Query)} />\n    <output>{results}</output>\n  </label>\n);\nexport const type = (text: Query) => {\n  query = text;\n  sent.add(text);\n};\nexport const respond = (text: Query) => {\n  if (!sent.has(text)) return;\n  sent.delete(text);\n  ${shown}\n};\nexport const showsLatest = () => sent.size > 0 || results === query;\n/** @view */\nexport const shown = () => [query, results, [...sent]];\n`;
+  describe("check the website's search box on React's files", () => {
+    const WEBSITE = join(import.meta.dirname, "../../../website");
+    const REACT = {
+      ...getPackageFiles("react", join(WEBSITE, "node_modules/react")),
+      ...getPackageFiles("react-dom", join(WEBSITE, "node_modules/react-dom")),
+    };
+    const SOURCE = readFileSync(join(WEBSITE, "src/examples/search-box.tsx"), "utf8");
+    const RACE = ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'];
     // The invariant after each action that Node runs in turn, on the JavaScript that TypeScript
     // writes for the file's JSX, in the environment that a page gives, which loads React's
     // production build.
@@ -486,9 +489,8 @@ describe("run a program on the files that a host passes, as Node runs it on them
       );
 
     it("agrees with Node", async () => {
-      const source = getSource("results = text;");
       const outcome = await getBrowserOutcome(
-        source,
+        SOURCE,
         "search-box.tsx",
         true,
         true,
@@ -497,24 +499,21 @@ describe("run a program on the files that a host passes, as Node runs it on them
       expect(outcome).toMatchObject({
         status: "invariant-violation",
         name: "showsLatest",
-        actions: ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'],
+        actions: RACE,
       });
-      expect(replay(source, outcome.actions ?? [])).toEqual([true, true, true, true, false]);
-    }, 120_000);
+      expect(outcome.trace?.at(-1)).toMatchObject({ query: '"tl"', results: '"t"' });
+      expect(replay(SOURCE, outcome.actions ?? [])).toEqual([true, true, true, true, false]);
+    }, 300_000);
 
+    // A box that shows only the response to its latest query.
     it("rejects another result", async () => {
-      const source = getSource("if (text === query) results = text;");
+      const source = SOURCE.replace("  results = text;", "  if (text === query) results = text;");
+      expect(source).not.toBe(SOURCE);
       expect(
         await getBrowserOutcome(source, "search-box.tsx", true, true, getHostFiles(REACT)),
       ).toMatchObject({ status: "success" });
-      expect(replay(source, ['type("t")', 'type("tl")', 'respond("tl")', 'respond("t")'])).toEqual([
-        true,
-        true,
-        true,
-        true,
-        true,
-      ]);
-    }, 120_000);
+      expect(replay(source, RACE)).toEqual([true, true, true, true, true]);
+    }, 300_000);
   });
 
   // A package's exports name a file for each set of conditions, of which Node 26 matches node,
@@ -597,18 +596,45 @@ describe("run a program on the files that a host passes, as Node runs it on them
         getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
       ).toContain("index");
     });
+  });
 
-    it("stops at a subpath that only a pattern matches", async () => {
-      const source = getSource("patterned/dist/part.js", "part");
+  // Node matches a subpath against the patterns of a package's exports, the most specific first, as
+  // Effect's exports give each of its modules by "./*" and leave out its internal ones by
+  // "./internal/*": null, and a # specifier against the imports of the file's own package.
+  describe("load the file that a pattern of a package's exports or imports matches", () => {
+    const PACKAGE = {
+      "package.json": JSON.stringify({ name: "app", imports: { "#parts/*": "./parts/*.mjs" } }),
+      "parts/one.mjs": 'export const kind = "own";\n',
+      "node_modules/patterned/package.json": JSON.stringify({
+        name: "patterned",
+        exports: {
+          "./*": "./src/*.js",
+          "./internal/*": null,
+          "./internal/open/*": "./src/internal/*.js",
+        },
+      }),
+      "node_modules/patterned/src/part.js": 'export const kind = "part";\n',
+      "node_modules/patterned/src/internal/hidden.js": 'export const kind = "hidden";\n',
+    };
+    const getSource = (expected: string) =>
+      `import { kind as part } from "patterned/part";\nimport { kind as own } from "#parts/one";\nimport { kind as open } from "patterned/internal/open/hidden";\nconst hidden = await import("patterned/internal/hidden").then(() => "loaded", () => "rejected");\nconst seen = [part, own, open, hidden].join(" ");\nif (seen !== "${expected}") throw new Error(seen);\n`;
+
+    it("agrees with Node", async () => {
+      const source = getSource("part own hidden rejected");
       expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).status).toBe(0);
       expect(
-        (await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))).error,
-      ).toEqual({
-        name: "TlaTypeScriptError",
-        isTlaError: true,
-        message:
-          "main.mjs:1:22 tla-ts can't resolve patterned/dist/part.js without Node, as /node_modules/patterned/package.json exports patterns, which Node matches the subpath against",
-      });
+        await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("part own hidden loaded");
+      expect(runNode({ ...PACKAGE, "main.mjs": source }, "main.mjs", {}).stderr).toContain(
+        "Error: part own hidden rejected",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.mjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("part own hidden rejected");
     });
   });
 
@@ -649,6 +675,50 @@ describe("run a program on the files that a host passes, as Node runs it on them
       expect(
         getFailure(await getBrowserOutcome(source, "env.mjs", true, true, getHostFiles(PACKAGE))),
       ).toContain("production,,production");
+    });
+  });
+
+  // Node loads only the build that a package's index requires for the program's NODE_ENV, as
+  // React's index does, so a program runs where the other build requires a file that isn't there.
+  describe("load only the build that a package's index requires for NODE_ENV", () => {
+    const PACKAGE = {
+      "node_modules/build/package.json": JSON.stringify({ name: "build", exports: "./index.js" }),
+      "node_modules/build/index.js":
+        'if (process.env.NODE_ENV === "production") {\n  module.exports = require("./production.js");\n} else {\n  module.exports = require("./development.js");\n}\n',
+      "node_modules/build/production.js": 'module.exports = "production";\n',
+      "node_modules/build/development.js":
+        'require("./checks.js");\nmodule.exports = "development";\n',
+    };
+    const getSource = (expected: string) =>
+      `const build = require("build");\nif (build !== ${JSON.stringify(expected)}) throw new Error(build);\n`;
+    const ENVIRONMENT = { NODE_ENV: "production" };
+
+    it("agrees with Node", async () => {
+      const source = getSource("production");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE)),
+      ).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("development");
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).stderr).toContain(
+        "Error: production",
+      );
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("production");
+    });
+
+    // A file that declares process reads its own, so the program's code reads process.env as it
+    // runs, and loads both builds.
+    it("stops where a file declares process", async () => {
+      const source = `const process = {};\n${getSource("production")}`;
+      expect(runNode({ ...PACKAGE, "main.cjs": source }, "main.cjs", ENVIRONMENT).status).toBe(0);
+      expect(
+        getFailure(await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(PACKAGE))),
+      ).toContain("tla-ts can't load the module ./checks.js");
     });
   });
 
@@ -713,6 +783,42 @@ describe("run a program on the files that a host passes, as Node runs it on them
         await getBrowserOutcome(SOURCE, "counter.ts", true, true, getHostFiles(getFiles(2))),
       ).toMatchObject({ status: "success" });
       expect(replay(2, 3)).toEqual([true, true, true, true]);
+    });
+
+    // A second check of a model's spec, as the website runs where a search passes the states that
+    // it graphs, reads the operators that the first check resolved, such as HeapKept, which a
+    // check's call passes a LAMBDA, as the first check read them.
+    describe("check a model's spec a second time as the first", () => {
+      it("agrees with Node", async () => {
+        const outcome = await getBrowserOutcome(
+          SOURCE,
+          "counter.ts",
+          true,
+          true,
+          getHostFiles(getFiles(3)),
+          true,
+        );
+        expect(outcome).toMatchObject({
+          status: "invariant-violation",
+          name: "bounded",
+          trace: [{ count: "0" }, { count: "1" }, { count: "2" }, { count: "3" }],
+        });
+        expect(replay(3, (outcome.actions ?? []).length)).toEqual([true, true, true, false]);
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          await getBrowserOutcome(
+            SOURCE,
+            "counter.ts",
+            true,
+            true,
+            getHostFiles(getFiles(2)),
+            true,
+          ),
+        ).toMatchObject({ status: "success" });
+        expect(replay(2, 3)).toEqual([true, true, true, true]);
+      });
     });
   });
 
