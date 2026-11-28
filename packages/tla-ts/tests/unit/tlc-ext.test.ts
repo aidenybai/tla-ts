@@ -33,6 +33,43 @@ describe("TLCExt matches TLC", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 5, 5]);
   });
 
+  it("reads Trace in an invariant 20,001 states deep without overflowing the stack, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x < 20000 /\\ x' = x + 1\nInv == x = 20000 => Len(Trace) = x + 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
+      "success",
+      20001,
+      20001,
+      20001,
+    ]);
+  });
+
+  it("rebuilds and ends Trace through the expanded state for a successor that liveness checking meets again, as TLCExt#getTrace does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == PrintT("init") /\\ x = 0\nNext == x\' = 1 - x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nXs == [i \\in 1..Len(Trace) |-> Trace[i].x]\nLive == <>(x = 0 => PrintT(<<"live", x, Xs>>))\n====',
+      config: "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual([
+      "success",
+      [
+        '"init"',
+        '<<"live", 0, <<0>>>>',
+        '<<"live", 0, <<0>>>>',
+        '"init"',
+        '"init"',
+        '"init"',
+        '"init"',
+        '<<"live", 0, <<0, 1, 0>>>>',
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the next-state relation",

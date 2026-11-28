@@ -1195,8 +1195,13 @@ const searchStates = (
     findUncoveredInitialState,
     findSuccessorAction,
   });
-  const getPath = (index: number): Value[][] =>
-    index === -1 ? [] : [...getPath(parents[index]), states[index]];
+  const getPath = (index: number) => {
+    const path: Value[][] = [];
+    for (let position = index; position !== -1; position = parents[position]) {
+      path.push(states[position]);
+    }
+    return path.reverse();
+  };
   // TLC adds a successor's fingerprint to its set before it checks the invariants of the successor.
   runtime.isSeen = (state) => {
     const fingerprintState = getFingerprintState(state);
@@ -1218,11 +1223,22 @@ const searchStates = (
   // TLCExt#getTrace rebuilds through the expanded state only for a successor Worker has written, before its invariants.
   const getTracedParent = (state: Value[], index: number) => {
     if (index !== -1) return parents[index];
-    if (state !== current.candidate || current.index === -1) return -1;
+    if (current.index === -1) return -1;
     const isWritten =
+      state === current.candidate &&
       unstoredFingerprint !== undefined &&
       findStateIndex(seenStates, getStateHash(unstoredFingerprint), unstoredFingerprint) === -1;
     return isWritten ? current.index : parents[current.index];
+  };
+  // Worker hands the liveness checker an unwritten copy of a seen successor, so TLCExt#getTrace extends the expanded state's trace with it.
+  const findWrittenIndex = (state: Value[]) => {
+    const source = current.livenessSource;
+    if (source !== -1 && state === states[source]) return source;
+    if (current.index !== -1 && state === states[current.index]) return current.index;
+    for (let position = states.length - newStateCount; position < states.length; position++) {
+      if (states[position] === state) return position;
+    }
+    return -1;
   };
   runtime.getBehavior = (state) => {
     if (rebuiltInitLevel !== -1) return [state];
@@ -1231,7 +1247,7 @@ const searchStates = (
         ? -1
         : current.isExpanding && state === current.rebuilt?.state
           ? current.index
-          : states.indexOf(state);
+          : findWrittenIndex(state);
     if (isTraceRebuilt) traces.rebuildPath(getTracedParent(state, index));
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
