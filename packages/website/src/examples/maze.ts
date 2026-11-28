@@ -15,5 +15,4 @@ export const move = (direction: Direction) => {
   y += moveY;
 };
 
-// The rule TLA-ts checks after every move: nobody stands on the heart.
 export const heartIsSafe = () => MAP[y][x] !== "o";
