@@ -34,7 +34,7 @@ export const cross = (first: Vec3, second: Vec3) =>
     first.x * second.y - first.y * second.x,
   );
 
-export const unit = (vector: Vec3) => scaled(vector, 1 / Math.hypot(vector.x, vector.y, vector.z));
+const unit = (vector: Vec3) => scaled(vector, 1 / Math.hypot(vector.x, vector.y, vector.z));
 
 export const blend = (from: number, to: number, share: number) => from + (to - from) * share;
 

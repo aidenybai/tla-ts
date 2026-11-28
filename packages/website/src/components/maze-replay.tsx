@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Search, SearchState } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { createMazeScene, MAZE_HEART, MAZE_MAP, type MazeView } from "./maze-scene";
+import { MazeBoard } from "./maze-board";
+import { MAZE_HEART } from "./maze-scene";
 import { SearchTree } from "./search-tree";
 
 // How long the robot spends on each move of the search it plays back.
@@ -52,41 +53,24 @@ export const MazeReplay = (props: MazeReplayProps) => {
     states.at(triedCount - 1);
   const parent = states.find((state) => state.id === tried?.parentId);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const viewRef = useRef<MazeView>(undefined);
-  useEffect(() => {
-    const square = getSquare(tried);
-    const from = parent && getSquare(parent);
-    viewRef.current = {
-      player: square,
-      cameFrom: from,
-      yaw: from ? Math.atan2(square.x - from.x, square.y - from.y) : 0,
-      trail: [],
-      reached: states
-        .slice(0, triedCount)
-        .map((state) => ({ ...getSquare(state), isFailing: state.isFailing })),
-      route: isDone ? props.search.states.map(getSquare) : undefined,
-      isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
-      isStill: isReduced,
-    };
-  });
-  useEffect(() => {
-    if (!canvasRef.current) return;
-    const scene = createMazeScene(canvasRef.current, MAZE_MAP);
-    if (!scene) return;
-    let frame = requestAnimationFrame(function paint(now) {
-      if (viewRef.current) scene.draw(viewRef.current, now);
-      frame = requestAnimationFrame(paint);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, []);
+  const square = getSquare(tried);
+  const cameFrom = parent && getSquare(parent);
   return (
     <div className="flex flex-col gap-2">
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label="The maze, with the robot making each move TLA-ts tried."
-        className="block aspect-[20/19] w-full rounded-lg"
+      <MazeBoard
+        label="The maze, with the robot making each move TLA-ts tried."
+        view={{
+          player: square,
+          cameFrom,
+          yaw: cameFrom ? Math.atan2(square.x - cameFrom.x, square.y - cameFrom.y) : 0,
+          trail: [],
+          reached: states
+            .slice(0, triedCount)
+            .map((state) => ({ ...getSquare(state), isFailing: state.isFailing })),
+          route: isDone ? props.search.states.map(getSquare) : undefined,
+          isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
+          isStill: isReduced,
+        }}
       />
       <SearchTree
         states={states}

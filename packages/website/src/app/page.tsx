@@ -52,7 +52,9 @@ const Page = () => (
         </ol>
         <p className="text-pretty">Here&rsquo;s a TypeScript maze game example:</p>
         <Example.Root>
-          <Example.Source />
+          <Example.Source>
+            <Example.Preview />
+          </Example.Source>
           <Example.Hint />
         </Example.Root>
       </Section.Root>

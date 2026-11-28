@@ -136,16 +136,15 @@ const ExampleHint = () => {
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
 
-const ExampleSource = () => {
+interface SourceProps {
+  children?: ReactNode;
+}
+
+const ExampleSource = (props: SourceProps) => {
   const state = exampleContext.useParts();
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
-  // The search the reader has put away, to play the board again.
-  const [closed, setClosed] = useState<Search>();
-  const [isPreviewHidden, setIsPreviewHidden] = useState(false);
-  const search = state.result?.search;
-  const replayed = search === closed ? undefined : search;
   const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
   // A run's verdict is on a line that may be below the fold of the code.
   useEffect(() => {
@@ -207,43 +206,7 @@ const ExampleSource = () => {
         path={isCompiled ? state.path : undefined}
         onHoverState={state.hoverState}
       >
-        {/* The preview sits over the code's corner, or above the code where the card is a phone's
-            width. The reader plays the game there, and a run plays the check out on the same
-            board. Put away, it folds down to its bar and keeps its place in the game. The fold
-            has the small overshoot of the Crucible app's screenshots. */}
-        <div
-          className={cn(
-            "z-10 overflow-hidden rounded-xl bg-card shadow-raised transition-[width] duration-[450ms] ease-[cubic-bezier(0.3,1.15,0.5,1)] max-sm:mb-4 max-sm:w-full motion-reduce:transition-none sm:absolute sm:top-3 sm:right-3",
-            isPreviewHidden ? "sm:w-26" : "sm:w-52",
-          )}
-        >
-          <Button
-            aria-expanded={!isPreviewHidden}
-            onClick={() => setIsPreviewHidden(!isPreviewHidden)}
-            // The bar takes the panel's own corners, so its hover fills the panel edge to edge.
-            className="h-8 w-full justify-between gap-3 rounded-none border-transparent bg-transparent px-2.5 text-xs active:scale-100"
-          >
-            Preview
-            {isPreviewHidden ? <ArrowsOutSimple /> : <Minus />}
-          </Button>
-          <div
-            inert={isPreviewHidden}
-            className={cn(
-              "grid transition-[grid-template-rows,opacity] duration-[450ms,300ms] ease-[cubic-bezier(0.3,1.15,0.5,1),ease-out] motion-reduce:transition-none",
-              isPreviewHidden ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
-            )}
-          >
-            <div className="min-h-0 overflow-hidden">
-              <div className="p-2 pt-0 sm:w-52">
-                {replayed ? (
-                  <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
-                ) : (
-                  <Maze onBugFound={state.findBug} />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        {props.children}
         <div
           ref={scrollRef}
           className="-mx-4 -mt-4 -mb-2 h-[31rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto [scrollbar-width:none] mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
@@ -282,8 +245,52 @@ const ExampleSource = () => {
   );
 };
 
+// The game the reader plays, over the code's corner, which a run takes over to play the check out.
+const ExamplePreview = () => {
+  const state = exampleContext.useParts();
+  const [closed, setClosed] = useState<Search>();
+  const [isHidden, setIsHidden] = useState(false);
+  const search = state.result?.search;
+  const replayed = search === closed ? undefined : search;
+  return (
+    <div
+      className={cn(
+        "z-10 overflow-hidden rounded-xl bg-card shadow-raised transition-[width] duration-[450ms] ease-[cubic-bezier(0.3,1.15,0.5,1)] max-sm:mb-4 max-sm:w-full motion-reduce:transition-none sm:absolute sm:top-3 sm:right-3",
+        isHidden ? "sm:w-26" : "sm:w-52",
+      )}
+    >
+      <Button
+        aria-expanded={!isHidden}
+        onClick={() => setIsHidden(!isHidden)}
+        className="h-8 w-full justify-between gap-3 rounded-none border-transparent bg-transparent px-2.5 text-xs active:scale-100"
+      >
+        Preview
+        {isHidden ? <ArrowsOutSimple /> : <Minus />}
+      </Button>
+      <div
+        inert={isHidden}
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-[450ms,300ms] ease-[cubic-bezier(0.3,1.15,0.5,1),ease-out] motion-reduce:transition-none",
+          isHidden ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="p-2 pt-0 sm:w-52">
+            {replayed ? (
+              <MazeReplay search={replayed} onClose={() => setClosed(replayed)} />
+            ) : (
+              <Maze onBugFound={state.findBug} />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const Example = {
   Root: ExampleRoot,
   Hint: ExampleHint,
   Source: ExampleSource,
+  Preview: ExamplePreview,
 };

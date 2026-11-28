@@ -5,24 +5,20 @@ import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { createMazeScene, MAZE_HEART, MAZE_MAP, type MazeView, type Square } from "./maze-scene";
+import { MazeBoard } from "./maze-board";
+import { MAZE_HEART, MAZE_MAP, type Square } from "./maze-scene";
 
 const START = { x: 0, y: 6 };
 
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑" },
-  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→" },
-  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓" },
   { name: "left", move: [-1, 0], key: "ArrowLeft", glyph: "←" },
+  { name: "down", move: [0, 1], key: "ArrowDown", glyph: "↓" },
+  { name: "right", move: [1, 0], key: "ArrowRight", glyph: "→" },
 ] as const;
 
 type Direction = (typeof DIRECTIONS)[number];
 
-const SKELETON_WALLS = MAZE_MAP.flatMap((row, y) =>
-  [...row].flatMap((kind, x) => (kind === "#" ? [{ x, y }] : [])),
-);
-
-// The move of the code: one square, unless a wall or the board's edge is there.
 const go = (from: Square, direction: Direction): Square => {
   const next = { x: from.x + direction.move[0], y: from.y + direction.move[1] };
   const square = MAZE_MAP[next.y]?.[next.x];
@@ -32,65 +28,28 @@ const go = (from: Square, direction: Direction): Square => {
 const isSame = (first: Square, second: Square) => first.x === second.x && first.y === second.y;
 
 interface MazeProps {
-  // Called when the reader reaches the heart.
   onBugFound: () => void;
 }
 
-// Each square of the board is one state of the example's code, so the reader walks the states
-// TLA-ts checks. An arrow key calls `move`.
 export const Maze = (props: MazeProps) => {
-  // The squares the reader has stood on, in order, which the board draws as their way.
   const [trail, setTrail] = useState<Square[]>([START]);
-  // Whether the reader has pressed a move, which puts the keys shown over the board away.
   const [hasPlayed, setHasPlayed] = useState(false);
   const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const player = trail[trail.length - 1];
+  const cameFrom = trail.at(-2);
   const hasBug = isSame(player, MAZE_HEART);
-  const boardRef = useRef<HTMLDivElement>(null);
-  const isInView = useInView(boardRef, { amount: 0.5 });
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Whether the scene has drawn its first frame over the board's outline.
-  const [isDrawn, setIsDrawn] = useState(false);
-  const sceneRef = useRef<ReturnType<typeof createMazeScene>>(undefined);
-  const viewRef = useRef<MazeView>(undefined);
-  // The scene draws itself every frame from the game as it last rendered, while it is in sight.
-  useEffect(() => {
-    const left = trail.at(-2);
-    viewRef.current = {
-      player,
-      cameFrom: undefined,
-      yaw: left ? Math.atan2(player.x - left.x, player.y - left.y) : 0,
-      trail,
-      reached: [],
-      route: undefined,
-      isHeartTaken: hasBug,
-      isStill: isReduced,
-    };
-  });
-  useEffect(() => {
-    if (!isInView || !canvasRef.current) return;
-    sceneRef.current ??= createMazeScene(canvasRef.current, MAZE_MAP);
-    const scene = sceneRef.current;
-    if (!scene) return;
-    let frame = requestAnimationFrame(function paint(now) {
-      if (viewRef.current) scene.draw(viewRef.current, now);
-      setIsDrawn(true);
-      frame = requestAnimationFrame(paint);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isInView]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(rootRef, { amount: 0.5 });
 
   const call = (direction: Direction) => {
     setHasPlayed(true);
-    // A move after the heart is reached starts a new game.
     const from = hasBug ? START : player;
     const next = go(from, direction);
     setTrail(hasBug ? [START, next] : isSame(next, from) ? trail : [...trail, next]);
     if (isSame(next, MAZE_HEART)) props.onBugFound();
   };
-  // The keys work while the board is on screen, from wherever the focus is, and scroll the
-  // page again once it is not.
+  // The arrow keys scroll the page again once the board is off screen.
   useEffect(() => {
     if (!isInView) return;
     const handleKey = (event: KeyboardEvent) => {
@@ -105,61 +64,28 @@ export const Maze = (props: MazeProps) => {
     return () => removeEventListener("keydown", handleKey);
   });
   return (
-    <div className="flex flex-col gap-2">
-      <div
-        ref={boardRef}
-        className={cn(
-          "relative w-full touch-manipulation overflow-hidden rounded-lg select-none",
-          hasBug && "motion-safe:animate-shake",
-        )}
+    <div ref={rootRef} className="flex flex-col gap-2">
+      <MazeBoard
+        label="A maze with a robot in one corner and a heart in the middle, behind walls. The arrow keys move the robot."
+        view={{
+          player,
+          cameFrom: undefined,
+          yaw: cameFrom ? Math.atan2(player.x - cameFrom.x, player.y - cameFrom.y) : 0,
+          trail,
+          reached: [],
+          route: undefined,
+          isHeartTaken: hasBug,
+          isStill: isReduced,
+        }}
+        onPick={(square) => {
+          const direction = DIRECTIONS.find(
+            (found) =>
+              square.x === player.x + found.move[0] && square.y === player.y + found.move[1],
+          );
+          if (direction) call(direction);
+        }}
+        className={cn(hasBug && "motion-safe:animate-shake")}
       >
-        <canvas
-          ref={canvasRef}
-          role="img"
-          aria-label="A maze with a robot in one corner and a heart in the middle, behind walls. The arrow keys move the robot."
-          // A click on a square next to the robot moves there.
-          onClick={(event) => {
-            const box = event.currentTarget.getBoundingClientRect();
-            const square = sceneRef.current?.pick(
-              (event.clientX - box.left) / box.width,
-              (event.clientY - box.top) / box.height,
-            );
-            const direction = DIRECTIONS.find(
-              (found) =>
-                square?.x === player.x + found.move[0] && square.y === player.y + found.move[1],
-            );
-            if (direction) call(direction);
-          }}
-          className="relative block aspect-[20/19] w-full cursor-pointer"
-        />
-        {/* The board's outline, in the page as it arrives, until the scene draws over it. */}
-        {!isDrawn && (
-          <svg
-            aria-hidden
-            viewBox="0 0 716 680"
-            className="pointer-events-none absolute inset-0 size-full"
-          >
-            <rect
-              x={8}
-              y={13}
-              width={700}
-              height={634}
-              strokeWidth={2}
-              className="fill-none stroke-border"
-            />
-            {SKELETON_WALLS.map((wall) => (
-              <rect
-                key={`${wall.x} ${wall.y}`}
-                x={8 + wall.x * 100}
-                y={13 + wall.y * 90.5 - 28}
-                width={100}
-                height={90.5}
-                className="fill-muted"
-              />
-            ))}
-            <circle cx={58} cy={581} r={28} className="fill-muted" />
-          </svg>
-        )}
         {!isTouch && (
           <div
             aria-hidden
@@ -169,16 +95,13 @@ export const Maze = (props: MazeProps) => {
             )}
           >
             <div className="grid grid-cols-3 gap-1">
-              {[DIRECTIONS[0], DIRECTIONS[3], DIRECTIONS[2], DIRECTIONS[1]].map((direction) => (
-                <span
+              {DIRECTIONS.map((direction) => (
+                <KeyCap
                   key={direction.name}
-                  className={cn(
-                    direction.name === "up" && "col-start-2",
-                    direction.name === "left" && "col-start-1",
-                  )}
+                  className={cn(direction.name === "up" && "col-start-2")}
                 >
-                  <KeyCap>{direction.glyph}</KeyCap>
-                </span>
+                  {direction.glyph}
+                </KeyCap>
               ))}
             </div>
           </div>
@@ -189,11 +112,10 @@ export const Maze = (props: MazeProps) => {
             Bug found
           </p>
         )}
-      </div>
-      {/* A finger has no arrow keys, so a touch screen gets four buttons for them. */}
+      </MazeBoard>
       {isTouch && (
         <div className="flex justify-center gap-2">
-          {[DIRECTIONS[3], DIRECTIONS[0], DIRECTIONS[2], DIRECTIONS[1]].map((direction) => (
+          {[DIRECTIONS[1], DIRECTIONS[0], DIRECTIONS[2], DIRECTIONS[3]].map((direction) => (
             <Button
               key={direction.name}
               aria-label={`Move ${direction.name}`}
