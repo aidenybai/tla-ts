@@ -3,7 +3,7 @@ import { TlaStrippingError, TlaTypeScriptError } from "../../errors";
 import { createModulesParser, getNodeParses, rejectEarlyErrors } from "../early-errors";
 import { isDeadCode } from "../common-js";
 import { getJsxText, getRunSourceFile, parseFile } from "../program";
-import { createModuleResolver, getModuleFormat } from "./resolve";
+import { createModuleResolver, getModuleFormat, hasModuleSyntax } from "./resolve";
 import { getHostSystem, type ProgramSystem } from "../system";
 import type { ModuleTexts, PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
@@ -863,6 +863,17 @@ const loadFiles = (
     const kind = file.kind;
     const written = file.written;
     const sourceFile = file.sourceFile;
+    // Node prints a warning that names its process id where it fails to load a file of an ES
+    // module's syntax as CommonJS, which the file's extension or package names.
+    if (
+      kind === "commonjs" &&
+      hasEarlyError(sourceFile, nodeParse) &&
+      hasModuleSyntax(path, text)
+    ) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't print the warning, with Node's process id, that Node prints where it fails to load the ES module ${path} as CommonJS`,
+      );
+    }
     if (path === entry) rejectEarlyErrors(sourceFile, nodeParse);
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile, nodeParse);
     // The candidates of the file's directory, each requested as an import() of "./" and its name

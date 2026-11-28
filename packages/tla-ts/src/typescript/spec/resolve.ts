@@ -385,7 +385,7 @@ const getPackageType = (path: string, system: ProgramSystem): string | undefined
 // Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
 // names no type (see containsModuleSyntax), in the code that runs once a TypeScript file's types
 // are stripped.
-const hasModuleSyntax = (path: string, text: string) =>
+export const hasModuleSyntax = (path: string, text: string) =>
   containsModuleSyntax(
     path,
     /\.[cm]?ts$/.test(path)

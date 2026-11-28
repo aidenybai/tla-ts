@@ -1687,19 +1687,52 @@ describe("the CLI with TypeScript files", () => {
 
   // Node compiles a CommonJS file's code as a function's body, where no wrapper's text comes
   // before its first line, which V8 names alone where it rejects it.
-  it("places an import on the first line of a CommonJS file where Node places it", () => {
+  it("places a syntax error on the first line of a CommonJS file where Node places it", () => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "package.json"), '{ "type": "commonjs" }\n');
     writeFileSync(join(directory, "dep.cjs"), "exports.v = 1;\n");
-    writeFileSync(join(directory, "first.js"), 'import { v } from "./dep.cjs";\nconsole.log(v);\n');
+    writeFileSync(join(directory, "first.js"), 'super.v = require("./dep.cjs").v;\n');
     expect(runNode(directory, "first.js").stderr).toContain(
-      `${join(realpathSync(directory), "first.js")}:1\nimport { v } from "./dep.cjs";\n^^^^^^\n\nSyntaxError: Cannot use import statement outside a module`,
+      `${join(realpathSync(directory), "first.js")}:1\nsuper.v = require("./dep.cjs").v;\n^^^^^\n\nSyntaxError: 'super' keyword unexpected here`,
     );
     expect(getExit(runCli(directory, ["first.js"]))).toEqual([
       255,
-      "TlaTypeScriptError: first.js:1:1 SyntaxError: Cannot use import statement outside a module\n",
+      "TlaTypeScriptError: first.js:1:1 SyntaxError: 'super' keyword unexpected here\n",
     ]);
   });
+
+  // Where a file that its extension or its package makes CommonJS has an ES module's syntax, Node
+  // warns that it failed to load an ES module, by its process id, before it throws, or where the
+  // program catches the error.
+  it.each([
+    ["main.js", { "package.json": '{ "type": "commonjs" }\n', "main.js": 'import "./dep.cjs";\n' }],
+    ["main.cjs", { "main.cjs": "export const v = 1;\n" }],
+    ["main.cts", { "main.cts": "const n: number = 1;\nexport { n };\n" }],
+    ["main.mjs", { "main.mjs": 'import "./dep.cjs";\n', "dep.cjs": "await 1;\n" }],
+    [
+      "main.cjs",
+      {
+        "main.cjs": 'try {\n  require("./dep.js");\n} catch {}\n',
+        "package.json": '{ "type": "commonjs" }\n',
+        "dep.js": "const module = 1;\n",
+      },
+    ],
+  ])(
+    "stops where Node warns that it failed to load %s's ES module syntax as CommonJS",
+    (entry, files) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dep.cjs"), "exports.v = 1;\n");
+      Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+      expect(runNode(directory, entry).stderr).toMatch(
+        /^\(node:\d+\) Warning: Failed to load the ES module: /,
+      );
+      const result = runCli(directory, [entry]);
+      expect(result.status).toBe(255);
+      expect(result.stderr).toMatch(
+        /^TlaTypeScriptError: tla-ts can't print the warning, with Node's process id, that Node prints where it fails to load the ES module \S+ as CommonJS\n$/,
+      );
+    },
+  );
 
   // Node runs a file whose package names no type as an ES module where it fails to compile as
   // CommonJS only for syntax that CommonJS rejects, as a declaration of a name that Node's wrapper
@@ -1723,13 +1756,13 @@ describe("the CLI with TypeScript files", () => {
   it("names an entry of TypeScript by its own name where its code has a syntax error", () => {
     const directory = copyFixtures("passing");
     const getCode = (statement: string) => `const total: number = 1;\n${statement} = total;\n`;
-    writeFileSync(join(directory, "a.cts"), getCode("export const value"));
+    writeFileSync(join(directory, "a.cts"), getCode("super.value"));
     expect(runNode(directory, "a.cts").stderr).toContain(
       `${join(realpathSync(directory), "a.cts")}:2\n`,
     );
     expect(getExit(runCli(directory, ["a.cts"]))).toEqual([
       255,
-      "TlaTypeScriptError: a.cts:2:1 SyntaxError: Unexpected token 'export'\n",
+      "TlaTypeScriptError: a.cts:2:1 SyntaxError: 'super' keyword unexpected here\n",
     ]);
     writeFileSync(join(directory, "a.cts"), getCode("exports.value"));
     expect(runNode(directory, "a.cts").status).toBe(0);
