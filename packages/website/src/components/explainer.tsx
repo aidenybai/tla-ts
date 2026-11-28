@@ -115,10 +115,10 @@ export const Explainer = () => {
             style={{ zoom: 2.9 }}
             className={cn(
               "overflow-hidden transition-[width,margin,opacity] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
-              beat >= TREE_BEAT ? "ml-5 w-[300px]" : "ml-0 w-0 opacity-0",
+              beat >= TREE_BEAT ? "ml-2 w-[312px]" : "ml-0 w-0 opacity-0",
             )}
           >
-            <div className="w-[280px]">
+            <div className="ml-4 w-[280px]">
               <SearchTree
                 states={states}
                 triedCount={triedCount}
