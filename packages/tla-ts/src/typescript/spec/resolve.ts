@@ -29,6 +29,26 @@ const RESOLUTION_ERRORS = new Set([
   "ERR_UNSUPPORTED_RESOLVE_REQUEST",
 ]);
 
+// The codes of the errors of Node's ESM resolution that the files alone decide, which tla-ts gives
+// as Node does.
+const DETERMINED_ERRORS = new Set([
+  "ERR_MODULE_NOT_FOUND",
+  "ERR_UNSUPPORTED_DIR_IMPORT",
+  "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  "ERR_INVALID_MODULE_SPECIFIER",
+]);
+
+// An error that Node's ESM resolution throws for a specifier: its class, Error or TypeError, its
+// code, its message, its url where it has one, and what Node writes to stderr where the link of
+// its entry fails with it, but its stack's frames, or undefined where tla-ts can't tell that.
+export interface ResolutionFailure {
+  name: string;
+  code: string;
+  message: string;
+  url: string | undefined;
+  stderr: string | undefined;
+}
+
 // Node's module, where Node runs this process, whose resolution the code that runs takes.
 const getNodeModule = () =>
   globalThis.process?.versions?.bun === undefined
@@ -81,10 +101,145 @@ const resolveImport = (
   return resolved.url;
 };
 
+// A name as a file system that ignores case and Unicode's normalization may read it.
+const getFolded = (name: string) => name.normalize("NFC").toUpperCase().toLowerCase();
+
+// Whether a file system that ignores case could find a path that this one doesn't: the nearest
+// directory on the way to it that exists holds an entry by the next segment's name in another case.
+const isCaseDependent = (path: string): boolean => {
+  const fs = process.getBuiltinModule("node:fs");
+  const nodePath = process.getBuiltinModule("node:path");
+  const parent = nodePath.dirname(path);
+  if (parent === path || fs.existsSync(path)) return false;
+  if (!fs.existsSync(parent)) return isCaseDependent(parent);
+  const name = getFolded(nodePath.basename(path));
+  return (
+    fs.statSync(parent).isDirectory() &&
+    fs.readdirSync(parent).some((entry) => getFolded(entry) === name)
+  );
+};
+
+// Whether Node's resolution of a specifier from the file containingFile, which failed, reads a path
+// that a file system that ignores case might find: the URL that it names, and, for a package's
+// name, the package.json of each directory that holds the file, where its own package may be, and
+// the package's directory in each node_modules that Node looks in.
+const isCaseDependentFailure = (specifier: string, containingFile: string, url: unknown) => {
+  const nodePath = process.getBuiltinModule("node:path");
+  const name = /^(?:@[^/]*\/)?[^/]*/.exec(specifier)?.[0] ?? "";
+  const segments = nodePath.dirname(containingFile).split("/").slice(1);
+  const directories = [
+    ...segments.map(
+      (_segment, index) => `/${segments.slice(0, segments.length - index).join("/")}`,
+    ),
+    "/",
+  ];
+  const isPackage = !/^(?:\.\.?(?:\/|$)|\/|[A-Za-z][A-Za-z\d+.-]*:)/.test(specifier);
+  return [
+    ...(typeof url === "string" && url.startsWith("file:")
+      ? [process.getBuiltinModule("node:url").fileURLToPath(url)]
+      : []),
+    ...(isPackage
+      ? directories.flatMap((directory) => [
+          nodePath.join(directory, "package.json"),
+          nodePath.join(directory, "node_modules", name),
+        ])
+      : []),
+  ].some(isCaseDependent);
+};
+
+// The code of one of Node's own modules, by its id, which Node's process.binding gives, or
+// undefined.
+const getNodeCode = (id: string) => {
+  const binding: unknown = Reflect.get(process, "binding");
+  const natives: unknown = typeof binding === "function" ? binding.call(process, "natives") : {};
+  const code: unknown =
+    typeof natives === "object" && natives !== null ? Reflect.get(natives, id) : undefined;
+  return typeof code === "string" ? code : undefined;
+};
+
+// Where Node says that code of its own module is, as it writes an uncaught exception: the module
+// and the line, then the line, with a caret under the column (GetErrorSource of
+// src/node_errors.cc), or undefined where Node's code has no such line.
+const getNodeLocation = (id: string, number: number, column: number) => {
+  const line = getNodeCode(id)?.split("\n")[number - 1];
+  return line === undefined || column > line.length + 1
+    ? undefined
+    : `node:${id}:${number}\n${line}\n${line.slice(0, column - 1).replace(/[^\t]/g, " ")}^`;
+};
+
+// Where Node says that an error that the load of its entry rejects with was thrown, which it
+// triggers as an uncaught exception from a promise (asyncRunEntryPointWithESMLoader of
+// lib/internal/modules/run_main.js): where V8 says the error was made, by the first frame of its
+// stack, but for an error whose stack the loader writes again to add a hint
+// (decorateErrorWithCommonJSHints), of which V8 then keeps no frames, the loader's call that
+// triggers it. It's undefined where either is elsewhere than in Node's code.
+const getEntrySource = (error: Error) => {
+  if (/\nDid you mean to import [^\n]*\?$/.test(error.message)) {
+    const id = "internal/modules/run_main";
+    const code = getNodeCode(id) ?? "";
+    const calls = [...code.matchAll(/^( *)triggerUncaughtException\(/gm)];
+    return calls.length === 1
+      ? getNodeLocation(
+          id,
+          code.slice(0, calls[0].index).split("\n").length,
+          calls[0][1].length + 1,
+        )
+      : undefined;
+  }
+  const frame = /(?:^|\()node:(internal\/[^:()]+):(\d+):(\d+)\)?$/.exec(
+    /\n {4}at ([^\n]*)/.exec(error.stack ?? "")?.[1] ?? "",
+  );
+  return frame === null ? undefined : getNodeLocation(frame[1], Number(frame[2]), Number(frame[3]));
+};
+
+// Whether an error of Node's ESM resolution is an instance of the class that makeNodeErrorWithCode
+// (lib/internal/errors.js) makes for its code, of Error or TypeError, as the host's code for
+// import() makes one: its own keys are its stack, its code, its url, if any, and its message, and
+// its prototype's are the class's.
+const isNodeErrorShape = (error: Error) => {
+  const prototype: unknown = Object.getPrototypeOf(error);
+  const base: unknown = typeof prototype === "object" ? Object.getPrototypeOf(prototype) : null;
+  return (
+    ["stack,code,message", "stack,code,url,message"].includes(
+      Reflect.ownKeys(error).map(String).join(),
+    ) &&
+    typeof prototype === "object" &&
+    prototype !== null &&
+    Reflect.ownKeys(prototype).map(String).join() === "constructor,toString,Symbol(kIsNodeError)" &&
+    ((base === Error.prototype && error.name === "Error") ||
+      (base === TypeError.prototype && error.name === "TypeError"))
+  );
+};
+
+// An error of Node's ESM resolution as a ResolutionFailure: what Node writes of it where nothing
+// catches it is where it was made, and its inspection as a fatal exception's (afterInspector of
+// lib/internal/errors.js), but the lines of its stack's frames, which tla-ts doesn't write.
+const getFailure = (error: Error, code: string): ResolutionFailure => {
+  const util = process.getBuiltinModule("node:util");
+  const source = getEntrySource(error);
+  const inspected = util.inspect(error, {
+    colors: false,
+    customInspect: false,
+    depth: Math.max(util.inspect.defaultOptions.depth ?? 2, 5),
+  });
+  const url: unknown = Reflect.get(error, "url");
+  return {
+    name: error.name,
+    code,
+    message: error.message,
+    url: typeof url === "string" ? url : undefined,
+    stderr:
+      source === undefined
+        ? undefined
+        : `${source}\n\n${`${inspected}\n`.replace(/(?:\n {4}at [^\n]*?)+( \{)?(?=\n)/g, "$1").slice(0, -1)}`,
+  };
+};
+
 // The file that Node loads for a specifier of the file containingFile, by require's resolution
 // (Module._resolveFilename) or the ESM loader's, or undefined where Node finds no file, as for a
 // built-in module, and whether Node's resolution rejects the specifier as one it finds no file
-// for. An error of the resolution but Node's own for a missing file propagates.
+// for, with the error of an import's resolution that the files alone decide. An error of the
+// resolution but Node's own for a missing file propagates.
 const resolveWithNode = (
   module: NonNullable<ReturnType<typeof getNodeModule>>,
   specifier: string,
@@ -98,23 +253,35 @@ const resolveWithNode = (
       return {
         file: process.getBuiltinModule("node:path").isAbsolute(found) ? found : undefined,
         isMissing: false,
+        failure: undefined,
       };
     }
     const found = resolveImport(module, specifier, containingFile);
     return {
       file: found?.startsWith("file:") === true ? url.fileURLToPath(found) : undefined,
       isMissing: false,
+      failure: undefined,
     };
   } catch (error) {
     if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      RESOLUTION_ERRORS.has(String(error.code))
+      !(error instanceof Error) ||
+      !("code" in error) ||
+      !RESOLUTION_ERRORS.has(String(error.code))
     ) {
-      return { file: undefined, isMissing: true };
+      throw error;
     }
-    throw error;
+    const code = String(error.code);
+    return {
+      file: undefined,
+      isMissing: true,
+      failure:
+        !isRequire &&
+        DETERMINED_ERRORS.has(code) &&
+        isNodeErrorShape(error) &&
+        !isCaseDependentFailure(specifier, containingFile, Reflect.get(error, "url"))
+          ? getFailure(error, code)
+          : undefined,
+    };
   }
 };
 
@@ -325,7 +492,8 @@ const resolvePackage = (
 // module's. Where Node isn't at hand, as in a browser or under Bun, a relative specifier loads
 // TypeScript's file where Node would load it too, and else none, and is missing only where Node's
 // resolution rejects it, and a package's loads the file its exports name in the files of a host
-// that Node doesn't see.
+// that Node doesn't see. Where Node is at hand, an import that it finds no file for has the error
+// that Node's resolution throws, where the files alone decide it.
 export const createModuleResolver = (entry: string, system: ProgramSystem) => {
   const options: ts.CompilerOptions = {
     ...(getProjectCompilerOptions(entry, system) ?? NODE_OPTIONS),
@@ -352,12 +520,15 @@ export const createModuleResolver = (entry: string, system: ProgramSystem) => {
       undefined,
       isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
     ).resolvedModule?.resolvedFileName;
+    const withNode =
+      module === undefined
+        ? undefined
+        : resolveWithNode(module, specifier, containingFile, isRequire);
     const node =
-      module !== undefined
-        ? resolveWithNode(module, specifier, containingFile, isRequire)
-        : !system.isHost && !/^(?:\.\.?(?:\/|$)|\/)/.test(specifier)
-          ? resolvePackage(system, literal, containingFile, isRequire)
-          : undefined;
+      withNode ??
+      (!system.isHost && !/^(?:\.\.?(?:\/|$)|\/)/.test(specifier)
+        ? resolvePackage(system, literal, containingFile, isRequire)
+        : undefined);
     const file =
       node !== undefined
         ? node.file
@@ -365,20 +536,44 @@ export const createModuleResolver = (entry: string, system: ProgramSystem) => {
             isNodeFile(specifier, containingFile, typeScriptFile, isRequire)
           ? typeScriptFile
           : undefined;
-    return { file, typeScriptFile, isMissing: node?.isMissing === true };
+    return {
+      file,
+      typeScriptFile,
+      isMissing: node?.isMissing === true,
+      failure: withNode?.failure,
+    };
   };
+};
+
+// The package.json nearest a file, or undefined where none holds the file.
+const getPackageManifest = (path: string, system: ProgramSystem): string | undefined => {
+  const directory = path.slice(0, Math.max(path.lastIndexOf("/"), 1));
+  const manifest = `${directory === "/" ? "" : directory}/package.json`;
+  if (system.fileExists(manifest)) return manifest;
+  return directory === "/" ? undefined : getPackageManifest(directory, system);
 };
 
 // The type of the package.json nearest a file, which Node reads its format by, or undefined where
 // that package.json names none, or none holds the file.
-const getPackageType = (path: string, system: ProgramSystem): string | undefined => {
-  const directory = path.slice(0, Math.max(path.lastIndexOf("/"), 1));
-  const manifest = `${directory === "/" ? "" : directory}/package.json`;
-  if (system.fileExists(manifest)) {
-    const type: unknown = JSON.parse(system.readFile(manifest) ?? "{}").type;
-    return typeof type === "string" ? type : undefined;
-  }
-  return directory === "/" ? undefined : getPackageType(directory, system);
+const getPackageType = (path: string, system: ProgramSystem) => {
+  const manifest = getPackageManifest(path, system);
+  const type: unknown =
+    manifest === undefined ? undefined : JSON.parse(system.readFile(manifest) ?? "{}").type;
+  return typeof type === "string" ? type : undefined;
+};
+
+// Whether Node warns, as it loads an ES module, that it detected the module's format by its syntax
+// (warnTypelessPackageJsonFile of lib/internal/modules/esm/get_format.js), with its process's id: a
+// file outside node_modules that neither its extension nor its package's type makes an ES module,
+// whose nearest package.json names no type.
+export const isTypelessModule = (path: string, system = getHostSystem()) => {
+  const absolute = system.resolvePath(path);
+  return (
+    !/\.m[jt]s$/.test(absolute) &&
+    !absolute.includes("/node_modules/") &&
+    getPackageManifest(absolute, system) !== undefined &&
+    getPackageType(absolute, system) === undefined
+  );
 };
 
 // Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package

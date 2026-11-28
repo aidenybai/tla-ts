@@ -3,6 +3,7 @@ import { type Expression, getChildren, type OperatorDefinition } from "../../ast
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import { getLocals, type Locals } from "./locals";
+import type { ResolutionFailure } from "./resolve";
 import {
   afterBlankLine,
   apply,
@@ -105,6 +106,9 @@ export interface ProgramFile {
   kind: "script" | "module" | "commonjs" | "json" | "host";
   json?: string;
   targets: ReadonlyMap<string, number>;
+  // The error that Node's resolution throws for each specifier of an import that it finds no file
+  // for, where the files alone decide it.
+  failures?: ReadonlyMap<string, ResolutionFailure>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
   // The file of an ES module's facade, which a require of it gives the namespace of.
@@ -5086,7 +5090,6 @@ export const specialize = (
           .map((target) => parenthesized(apply(":>", [getUnits(target[0]), num(target[1])])))
           .reduce((left, right) => apply("@@", [left, right]));
   const getNames = (file: ProgramFile) => setOf((file.names ?? []).map(getUnits));
-
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
   // as JS.tla's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
   // file of each request, and the module's body, which RunBody runs; and the declarations that

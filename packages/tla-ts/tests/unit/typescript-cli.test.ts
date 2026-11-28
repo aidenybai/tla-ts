@@ -1220,13 +1220,13 @@ describe("the CLI with TypeScript files", () => {
   });
 
   // The project's barrel re-exports from "./limits/maximum", which Node doesn't find without its
-  // extension, so the compile stops rather than load the file that TypeScript resolves it to.
-  it("stops at a module that re-exports from a file that Node doesn't find", () => {
+  // extension, so the CLI fails as Node does rather than load the file that TypeScript resolves it
+  // to.
+  it("fails as Node does at a module that re-exports from a file that Node doesn't find", () => {
     const directory = copyFixtures("project");
-    expect(runNode(directory, "barrel.ts").stderr).toContain("ERR_MODULE_NOT_FOUND");
-    const result = runCli(directory, ["barrel.ts"]);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("tla-ts can't load the module ./limits/maximum");
+    const node = runNode(directory, "barrel.ts");
+    expect(node.stderr).toContain("ERR_MODULE_NOT_FOUND");
+    expect(getExit(runCli(directory, ["barrel.ts"]))).toEqual(getExit(node));
   });
 
   // Each import and require loads the file that Node resolves it to: require's resolution, or
@@ -1333,32 +1333,25 @@ describe("the CLI with TypeScript files", () => {
         "tla-ts can't load the module ./missing.cjs",
       ],
       [
-        "an extensionless import",
+        "an import of a file that isn't there, after one of a built-in module that Node lacks",
         "main.mjs",
-        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        'import "node:missing";\nimport "./missing.mjs";\n',
         1,
-        "tla-ts can't load the module ./other",
+        "tla-ts can't load the module node:missing",
       ],
       [
-        "an extensionless import under a bundler tsconfig",
-        "bundler/main.ts",
-        'import { two } from "./other";\nif (two !== 2) throw new Error("two");\n',
+        "an import of a file that isn't there, from a TypeScript file in node_modules",
+        "node_modules/local/main.ts",
+        'import "./missing.mjs";\nexport const one: number = 1;\n',
         1,
-        "tla-ts can't load the module ./other",
+        "tla-ts can't load the module ./missing.mjs",
       ],
       [
-        "an import of a .js file that only its TypeScript has",
+        "an import of a file whose name's case differs from the file's",
         "main.mjs",
-        'import { two } from "./two.js";\nif (two !== 2) throw new Error("two");\n',
+        'import { two } from "./Other.js";\nif (two !== 2) throw new Error("two");\n',
         1,
-        "tla-ts can't load the module ./two.js",
-      ],
-      [
-        "an import of a directory under a bundler tsconfig",
-        "bundler/main.ts",
-        'import { two } from "./dir";\nif (two !== 2) throw new Error("two");\n',
-        1,
-        "tla-ts can't load the module ./dir",
+        "tla-ts can't load the module ./Other.js",
       ],
       [
         "a package's exports by a condition that TypeScript doesn't take",
@@ -1376,21 +1369,81 @@ describe("the CLI with TypeScript files", () => {
       expect(result.stdout + result.stderr).toContain(stop);
     });
 
-    // A require runs only where its function or its branch does, as Node loads nothing for it before.
-    it.each([
-      ["a function, which never runs,", 'const load = () => require("./missing.cjs");\n'],
+    // Node resolves and loads every module of the graph that the entry imports before it runs any,
+    // each module's imports in order and each new module's before the next, and fails at the first
+    // import whose resolution fails with an error that the files alone decide: the CLI exits with
+    // Node's code and stderr, and none of the program runs.
+    describe.each([
       [
-        "a branch, which it doesn't take,",
-        'const mode = typeof window === "object" ? require("./missing.cjs") : "node";\n',
+        "a file that isn't there",
+        "main.mjs",
+        'import "./missing.mjs";\n',
+        'import "./absent.mjs";\n',
       ],
       [
-        "a try, which catches nothing,",
-        'try {\n  if (typeof window === "object") require("./missing.cjs");\n} catch {}\n',
+        "an extensionless name, where Node hints at the file",
+        "main.mjs",
+        'import { two } from "./other";\nconsole.log(two);\n',
+        'import { two } from "./dir/index";\nconsole.log(two);\n',
       ],
-    ])("runs a module where %s requires a file that isn't there", (_, source) => {
-      const directory = write("main.cjs", source);
-      expect(runNode(directory, "main.cjs").status).toBe(0);
-      expect(getExit(runCli(directory, ["main.cjs"]))).toEqual([0, ""]);
+      [
+        "an extensionless name under a bundler tsconfig",
+        "bundler/main.ts",
+        'import { two } from "./other";\nconsole.log(two);\n',
+        'import { two } from "./another";\nconsole.log(two);\n',
+      ],
+      [
+        "a .js name of a file that only its TypeScript has",
+        "main.mjs",
+        'import { two } from "./two.js";\nconsole.log(two);\n',
+        'import { two } from "./three.js";\nconsole.log(two);\n',
+      ],
+      [
+        "a directory",
+        "bundler/main.ts",
+        'import { two } from "./dir";\nconsole.log(two);\n',
+        'import { two } from "../dir";\nconsole.log(two);\n',
+      ],
+      [
+        "a package's subpath that its exports don't name",
+        "main.mjs",
+        'import "conditions/missing";\n',
+        'import "sync/missing";\n',
+      ],
+      [
+        "a package's name that isn't valid",
+        "main.mjs",
+        'import "@conditions";\n',
+        'import "@sync";\n',
+      ],
+      [
+        "a file that a module the entry imports first imports",
+        "main.mjs",
+        'import "./first.mjs";\nimport "./missing.mjs";\nconsole.log("main");\n',
+        'import "./missing.mjs";\nimport "./first.mjs";\nconsole.log("main");\n',
+      ],
+    ])("fails as Node does at an import of %s", (_, file, source, other) => {
+      const getRun = (text: string) => {
+        const directory = write(file, text);
+        writeFileSync(
+          join(directory, "first.mjs"),
+          'console.log("first");\nimport "./gone.mjs";\n',
+        );
+        const name = basename(file);
+        return [runNode(directory, name), runCli(directory, [name])];
+      };
+
+      it("agrees with Node", () => {
+        const [node, cli] = getRun(source);
+        expect([node.status, node.stdout]).toEqual([1, ""]);
+        expect(getExit(cli)).toEqual(getExit(node));
+      });
+
+      it("rejects another result", () => {
+        const [node, cli] = getRun(other);
+        expect(getExit(cli)).toEqual(getExit(node));
+        expect(getExit(cli)).not.toEqual(getExit(getRun(source)[1]));
+      });
     });
   });
 
