@@ -87,14 +87,17 @@ export const Maze = (props: MazeProps) => {
         className={cn(hasBug && "motion-safe:animate-shake")}
       >
         {!isTouch && (
-          <div
-            aria-hidden
+          <button
+            type="button"
+            aria-label="Start"
+            disabled={hasPlayed}
+            onClick={() => setHasPlayed(true)}
             className={cn(
-              "pointer-events-none absolute inset-0 flex items-center justify-center bg-card/40 backdrop-blur-[3px] transition-opacity duration-200 ease-out motion-reduce:transition-none",
-              hasPlayed && "opacity-0",
+              "absolute inset-0 flex cursor-pointer items-center justify-center bg-card/40 backdrop-blur-[3px] transition-opacity duration-200 ease-out motion-reduce:transition-none",
+              hasPlayed && "pointer-events-none opacity-0",
             )}
           >
-            <div className="grid grid-cols-3 gap-1">
+            <span className="grid grid-cols-3 gap-1">
               {DIRECTIONS.map((direction) => (
                 <KeyCap
                   key={direction.name}
@@ -106,8 +109,8 @@ export const Maze = (props: MazeProps) => {
                   {direction.glyph}
                 </KeyCap>
               ))}
-            </div>
-          </div>
+            </span>
+          </button>
         )}
         {hasBug && (
           <p className="absolute top-1.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-xs whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
