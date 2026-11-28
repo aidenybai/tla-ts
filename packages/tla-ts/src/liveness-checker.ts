@@ -1204,9 +1204,11 @@ export const createLiveGraph = <State>(
         return undefined;
       }
       const members = new Set<number>();
+      const memberList: number[] = [];
       const membersByState = new Map<number, number[]>();
       for (let member = top; ; member = components.pop() ?? root) {
         members.add(member);
+        memberList.push(member);
         const siblings = membersByState.get(behavior.nodeStates[member]);
         if (siblings) siblings.push(member);
         else membersByState.set(behavior.nodeStates[member], [member]);
@@ -1214,18 +1216,27 @@ export const createLiveGraph = <State>(
         if (member === root) break;
       }
       const isStateSatisfied = model.infinitelyOftenStates.every((position) =>
-        [...members].some((node) => getStateResult(behavior, node, position)),
+        memberList.some((node) => getStateResult(behavior, node, position)),
       );
-      const isActionSatisfied = model.infinitelyOftenActions.every((position) =>
-        [...members].some((node) =>
-          getNodeSuccessors(behavior, node).some(
-            (next, edge) =>
-              members.has(next) && isAllowed(node, edge) && getAction(node, edge, position),
-          ),
-        ),
-      );
+      const isActionSatisfied = model.infinitelyOftenActions.every((position) => {
+        for (let index = 0; index < memberList.length; index++) {
+          const node = memberList[index];
+          const start = behavior.edgeStarts[node];
+          const count = behavior.edgeCounts[node];
+          for (let edge = 0; edge < count; edge++) {
+            if (
+              members.has(behavior.edgeTargets.data[start + edge]) &&
+              isAllowed(node, edge) &&
+              getAction(node, edge, position)
+            ) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
       const isPromiseSatisfied = solution.promises.every((promise) =>
-        [...members].some((node) => isFulfilled(node, promise)),
+        memberList.some((node) => isFulfilled(node, promise)),
       );
       if (!isStateSatisfied || !isActionSatisfied || !isPromiseSatisfied) return undefined;
       return getLasso(root, members, membersByState);
