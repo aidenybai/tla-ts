@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { examples } from "virtual:site-data";
@@ -105,7 +105,7 @@ const ExampleHint = () => {
       aria-hidden
       className={cn(
         "pointer-events-none absolute top-full right-4 flex -rotate-3 items-start gap-1 font-hand text-2xl text-muted-foreground transition-opacity duration-200 ease-out",
-        (state.hasRun || state.view === "preview") && "opacity-0",
+        state.hasRun && "opacity-0",
       )}
     >
       <span className="mt-3">Click me!</span>
@@ -126,12 +126,21 @@ const ExampleHint = () => {
 };
 
 const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
-const PREVIEW_LINES = 28;
 
 const ExampleSource = () => {
   const state = exampleContext.useParts();
   const example = state.example;
   const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(new Set());
+  const [isBugFound, setIsBugFound] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const failingLine = state.result?.notes.find((note) => note.tone === "danger")?.line;
+  // A run's verdict is on a line that may be below the fold of the code.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const line = scroller?.querySelector<HTMLElement>(`[data-line="${failingLine}"]`);
+    if (!scroller || !line || state.view !== "tla") return;
+    scroller.scrollTo({ top: line.offsetTop - scroller.clientHeight / 2 });
+  }, [failingLine, state.view]);
   // Each declaration is marked on the model's line for it: a function on its action or check, and
   // any other on Init. The definitions it compiles to fold away with the rest of JS.tla's code.
   const lineMarks = useMemo(() => {
@@ -175,7 +184,6 @@ const ExampleSource = () => {
     <Code.Root
       source={isCompiled ? example.tla : example.typescript}
       rows={isCompiled ? rows : undefined}
-      limit={PREVIEW_LINES}
       onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
       lineMarks={isCompiled ? lineMarks : sourceLineMarks}
       colors={colors}
@@ -185,31 +193,42 @@ const ExampleSource = () => {
       path={isCompiled ? state.path : undefined}
       onHoverState={state.hoverState}
     >
-      {/* The game stays where it is while the code shows, so a look at the code loses no game. */}
-      <div className={cn("w-full", state.view !== "preview" && "hidden")}>
-        <SnakeGame search={state.result?.search} isRunning={state.isRunning} onRun={state.run} />
+      {/* The game keeps its place under the code, so the card is one height in every view and a
+          look at the code loses no game. The code scrolls in the game's space. */}
+      <div className="relative w-full">
+        <div className={cn(state.view !== "preview" && "invisible")}>
+          <SnakeGame
+            search={state.result?.search}
+            isPaused={state.view !== "preview"}
+            onBiteChange={setIsBugFound}
+          />
+        </div>
+        {state.view !== "preview" && (
+          <div
+            ref={scrollRef}
+            className="absolute -inset-x-4 -top-4 -bottom-2 overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
+          >
+            <Code.Content />
+          </div>
+        )}
       </div>
       {state.view !== "preview" && (
-        <>
-          <Code.Content />
-          <Code.More />
-          <Code.Actions>
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                render={
-                  <a
-                    href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
-                    aria-label="View in playground"
-                    className={cn(buttonVariants({ size: "icon" }))}
-                  />
-                }
-              >
-                <ArrowUpRight />
-              </Tooltip.Trigger>
-              <Tooltip.Content>View in playground</Tooltip.Content>
-            </Tooltip.Root>
-          </Code.Actions>
-        </>
+        <Code.Actions>
+          <Tooltip.Root>
+            <Tooltip.Trigger
+              render={
+                <a
+                  href={`/playground#${new URLSearchParams({ file: state.example.fileName, code: state.example.typescript.code })}`}
+                  aria-label="View in playground"
+                  className={cn(buttonVariants({ size: "icon" }))}
+                />
+              }
+            >
+              <ArrowUpRight />
+            </Tooltip.Trigger>
+            <Tooltip.Content>View in playground</Tooltip.Content>
+          </Tooltip.Root>
+        </Code.Actions>
       )}
       <Code.Footer>
         <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
@@ -234,13 +253,12 @@ const ExampleSource = () => {
           </ToggleGroup.Root>
           {state.result && <Verdict result={state.result} />}
         </output>
-        {state.view !== "preview" && (
-          <Code.Run
-            isRunning={state.isRunning}
-            isDone={state.result !== undefined}
-            onRun={state.run}
-          />
-        )}
+        <Code.Run
+          isRunning={state.isRunning}
+          isDone={state.result !== undefined}
+          isSuggested={isBugFound && state.result === undefined}
+          onRun={state.run}
+        />
       </Code.Footer>
     </Code.Root>
   );

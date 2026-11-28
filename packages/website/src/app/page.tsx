@@ -48,11 +48,6 @@ const Page = () => (
           <Example.Source />
           <Example.Hint />
         </Example.Root>
-        <p className="mt-6 text-pretty">
-          A test only checks the moves you thought to try. TLA-ts tries all of them against one
-          rule, <InlineCode>neverBitesItself</InlineCode>, written in the same TypeScript as the
-          game.
-        </p>
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>

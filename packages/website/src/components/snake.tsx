@@ -140,8 +140,9 @@ interface Replay {
 interface SnakeGameProps {
   // The search of the last run, whose states the board plays back in the order it tried them.
   search: Search | undefined;
-  isRunning: boolean;
-  onRun: () => void;
+  // Whether the board is out of sight behind another view, where it neither moves nor steers.
+  isPaused: boolean;
+  onBiteChange: (isBitten: boolean) => void;
 }
 
 export const SnakeGame = (props: SnakeGameProps) => {
@@ -179,7 +180,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   const hasBitten = isReplayShown ? isBitten(shown.body) : isOver;
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
-  const isGliding = isMoving && isInView && !isOver && !isReplayShown;
+  const isGliding = isMoving && isInView && !isOver && !isReplayShown && !props.isPaused;
 
   const snakeId = useId();
   const backId = useId();
@@ -229,7 +230,10 @@ export const SnakeGame = (props: SnakeGameProps) => {
       // A frame that came late starts the next step now, so the snake does not leap to catch up.
       glide.nextStartAt = elapsed > STEP_MS * 2 ? now : glide.startedAt + STEP_MS;
       setApple(glide.to.apple);
-      if (isBitten(glide.to.body)) return setIsOver(true);
+      if (isBitten(glide.to.body)) {
+        props.onBiteChange(true);
+        return setIsOver(true);
+      }
       setSnake(step);
       setStepCount((count) => count + 1);
     });
@@ -251,6 +255,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
     setReplay(replay && { ...replay, index: -1 });
     setSnake(turn(isFresh ? START : snake, next));
     if (isFresh) {
+      props.onBiteChange(false);
       setApple(START.apple);
       setStepCount(0);
       setIsOver(false);
@@ -260,7 +265,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
   // The arrow keys steer the snake while the board is on screen, from wherever the focus is,
   // and scroll the page again once it is not.
   useEffect(() => {
-    if (!isInView) return;
+    if (!isInView || props.isPaused) return;
     const handleKey = (event: KeyboardEvent) => {
       const found = DIRECTIONS.find((item) => item.key === event.key);
       if (!found || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -391,7 +396,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
         {hasBitten && !isReplayShown && (
           <p className="flex items-center gap-1.5 rounded-md bg-destructive/15 px-2 py-0.5 text-sm text-destructive motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5 shrink-0" />
-            Bug found · It turned twice at once
+            Bug found · Two turns at once
           </p>
         )}
         <p aria-live="polite" className="text-pretty text-foreground tabular-nums">
@@ -403,7 +408,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
               moves: <span className="font-mono text-xs">{steps.join(", ")}</span>.
             </>
           ) : hasBitten ? (
-            "Would your tests have tried that? See how TLA-ts gets there."
+            "Would your tests have tried that? Press run to see TLA-ts get there."
           ) : !isMoving ? (
             isTouch ? (
               "Tap the board to start the snake."
@@ -446,19 +451,6 @@ export const SnakeGame = (props: SnakeGameProps) => {
           />
         )}
         <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 text-sm">
-          <Button
-            variant="success"
-            disabled={props.isRunning || isReplaying}
-            onClick={props.onRun}
-            className={cn(
-              hasBitten &&
-                !isReplayShown &&
-                !props.isRunning &&
-                "motion-safe:animate-pulse-ring motion-reduce:ring-3 motion-reduce:ring-success/40",
-            )}
-          >
-            {props.isRunning ? "Trying every move" : "Let TLA-ts try"}
-          </Button>
           {(isMoving || isReplayShown) && !isReplaying && (
             <Button
               variant="link"
@@ -469,6 +461,7 @@ export const SnakeGame = (props: SnakeGameProps) => {
                 setStepCount(0);
                 setIsMoving(false);
                 setIsOver(false);
+                props.onBiteChange(false);
                 setReplay(replay && { ...replay, index: -1 });
               }}
             >
