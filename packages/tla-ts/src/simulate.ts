@@ -195,13 +195,11 @@ const createScheduler = (
   nextActions: SpecAction[],
   random: JavaRandom,
   getFingerprint: (state: Value[]) => bigint,
-  getReward: (state: Value[] | undefined, next: Value[], fallback: number) => number,
+  getReward: (node: TraceNode) => number,
 ) => {
   const qualities = nextActions.map(() => new Map<bigint | SpecAction, number>());
   const getQualityKey = (node: TraceNode) =>
     scheduler === "rlaction" ? node.action : getFingerprint(node.state);
-  const getRewardOf = (node: TraceNode) =>
-    getReward(node.predecessor?.state, node.state, RL_REWARD);
   return {
     getNextActionIndex: (node: TraceNode) => {
       if (scheduler === "random") {
@@ -227,7 +225,7 @@ const createScheduler = (
     markDisabled: (index: number, node: TraceNode) => {
       if (scheduler === "random") return;
       // TLC's rlaction scheduler stores the reward, then overwrites it as the rl scheduler does.
-      if (scheduler === "rlaction") getRewardOf(node);
+      if (scheduler === "rlaction") getReward(node);
       qualities[index].set(getQualityKey(node), -Number.MAX_VALUE);
     },
     learnTrace: (last: TraceNode) => {
@@ -242,7 +240,7 @@ const createScheduler = (
         quality.set(
           predecessorKey,
           (1 - RL_ALPHA) * (quality.get(predecessorKey) ?? 0) +
-            RL_ALPHA * (getRewardOf(node) + RL_GAMMA * maxQuality),
+            RL_ALPHA * (getReward(node) + RL_GAMMA * maxQuality),
         );
       }
     },
@@ -282,7 +280,18 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const report = prepared.getCoverage();
     if (report) output({ kind: "coverage", coverage: report });
   };
-  const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
+  let evaluatedNode: TraceNode | undefined;
+  let walkedNodes = new Map<(Value | undefined)[], TraceNode>();
+  const getNode = (state: (Value | undefined)[]) =>
+    state === evaluatedNode?.state
+      ? evaluatedNode
+      : state === evaluatedNode?.predecessor?.state
+        ? evaluatedNode.predecessor
+        : walkedNodes.get(state);
+  const walkTrace = (trace: TraceNode[]) => {
+    walkedNodes = new Map(trace.map((node) => [node.state, node]));
+    return trace;
+  };
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
@@ -298,7 +307,10 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         nextActions,
         workerRandom,
         runtime.getFingerprint,
-        search.getReward,
+        (node) => {
+          evaluatedNode = node;
+          return search.getReward(node.predecessor?.state, node.state, RL_REWARD);
+        },
       ),
       traceCount: 0,
       traceId: 0,
@@ -367,9 +379,9 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
-  runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
+  runtime.getLevel = (state) => getNode(state)?.level ?? 0;
   runtime.getSimulationValue = (key, state) => {
-    const node = state && nodes.get(state);
+    const node = state && getNode(state);
     switch (key) {
       case "diameter":
         return isOnWorker ? worker.traceCount + 1 : 0;
@@ -438,8 +450,11 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   };
   runtime.isStarted = true;
   runtime.getBehavior = (state) => {
-    const node = nodes.get(state);
-    return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
+    const node = getNode(state);
+    if (!node) return [state];
+    const trace = getTrace(node, search.getTlcOrder());
+    if (walkedNodes.get(state) !== node) walkTrace(trace);
+    return trace.map((step) => step.state);
   };
   const reportPostcondition = () =>
     reportPostconditionViolation(search, options.onPrint ?? console.log, reportMessage);
@@ -459,7 +474,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const initAction = initActions[initActions.length - 1];
   const toNode = (state: Value[], action: SpecAction, predecessor: TraceNode | undefined) => {
     const node: TraceNode = { state, action, predecessor, level: (predecessor?.level ?? 0) + 1 };
-    nodes.set(state, node);
+    evaluatedNode = node;
     return node;
   };
   const toRecord = (state: (Value | undefined)[]) =>
@@ -608,6 +623,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   }
   // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after TLC's own checks of the initial states.
   for (const node of generatedNodes) {
+    evaluatedNode = node;
     try {
       const predicate = search.findFailedInitialPredicate(node.state);
       if (predicate) {
@@ -719,6 +735,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     evaluatedAction = action;
+    evaluatedNode = current;
     const visit = (successor: Successor) => {
       const node = toNode(successor.state, action, current);
       node.deferred = runtime.deferred;
@@ -811,7 +828,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   let hasLivenessViolation = false;
   const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (!livenessChecks) return undefined;
-    const trace = getTrace(last, search.getTlcOrder());
+    const trace = walkTrace(getTrace(last, search.getTlcOrder()));
     const found = livenessChecks.findTraceViolation(
       trace.map((node) => node.state),
       trace.map((node) => runtime.getFingerprint(node.state)),
@@ -872,6 +889,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
         break;
       }
       currentNode = successors[Math.floor(workerRandom.nextDouble() * successors.length)];
+      evaluatedNode = currentNode;
       currentNode.deferred?.(currentNode.state);
       if (actionFlow) {
         const nextActionId = initActions.length + actionIndex;
@@ -1025,7 +1043,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       return undefined;
     }
     reportMessage(error.code, error.message, error.toolMessage);
-    const trace = getTrace(error.node, search.getTlcOrder());
+    const trace = walkTrace(getTrace(error.node, search.getTlcOrder()));
     // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW, function or value such as Nat fails to fingerprint crashes TLC without -difftrace too.
     const shown =
       options.isDiffTrace && traceDepth !== INFINITE_DEPTH
@@ -1130,7 +1148,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const errorStatus = decisive ? getMessageExitStatus(decisive.code) : EXIT_STATUS.success;
   if (last) {
     runtime.counterExample =
-      last.counterExample ?? getCounterExample(getTrace(last.node, search.getTlcOrder()));
+      last.counterExample ??
+      getCounterExample(walkTrace(getTrace(last.node, search.getTlcOrder())));
   }
   const postcondition = reportPostcondition();
   const postconditionStatus = postcondition
