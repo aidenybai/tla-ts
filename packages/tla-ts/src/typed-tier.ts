@@ -6599,14 +6599,14 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     return compiled.decode(reader);
   };
   // The states on the path to a state, given the number of states expanded.
-  const getPathIndexes = (index: number, expanded: number, isKnown = (_index: number) => false) => {
+  const getPathIndexes = (index: number, expanded: number) => {
     // A state's 1 bit comes after the one of the state it was found from, so one pass back over the
     // bits of the states expanded finds the whole path.
     const indexes = [index];
     let bit = finds.size;
     let zeros = expanded;
     let ones = finds.size - expanded;
-    for (let last = index; last >= initialStates.distinct && !isKnown(last); last = zeros) {
+    for (let last = index; last >= initialStates.distinct; last = zeros) {
       const found = last - initialStates.distinct;
       for (;;) {
         bit--;
@@ -6820,10 +6820,23 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   // With symmetry, a state stands for its class, so the cycle the tier finds may differ from the
   // interpreter's.
   if (isImaged) deopt();
+  const parents = new Int32Array(statistics.distinct);
+  let expanded = 0;
+  let child = initialStates.distinct;
+  for (let bit = 0; bit < finds.size; bit++) {
+    if (((finds.data[bit >> 5] >>> (bit & 31)) & 1) === 0) expanded++;
+    else parents[child++] = expanded;
+  }
   const found = new Map<number, { index: number; parent: number; state: Plain[] }>();
   [...lasso.prefix, ...lasso.cycle].forEach((target) => {
     if (found.has(target)) return;
-    const indexes = getPathIndexes(target, statistics.distinct, (index) => found.has(index));
+    const indexes = [target];
+    let last = target;
+    while (last >= initialStates.distinct && !found.has(last)) {
+      last = parents[last];
+      indexes.push(last);
+    }
+    indexes.reverse();
     const known = found.get(indexes[0]);
     getPath(indexes, known?.state).forEach((state, position) => {
       if (position === 0 && known) return;
