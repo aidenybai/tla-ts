@@ -12,17 +12,28 @@ import { SearchTree } from "./search-tree";
 const STAGE = { width: 1920, height: 1080 };
 const BEAT_MS = 100;
 const LOOP_BEATS = 100;
-// The moves of the search the robot makes in a beat, which leaves the last third of the loop on
-// the bug it found.
-const MOVES_PER_BEAT = 0.6;
-const START = { x: 0, y: 6 };
+// A game played by hand, which walks up to the walls and does not find the way in.
+const PLAYED = [
+  { x: 0, y: 6 },
+  { x: 1, y: 6 },
+  { x: 2, y: 6 },
+  { x: 3, y: 6 },
+  { x: 3, y: 5 },
+  { x: 4, y: 5 },
+  { x: 5, y: 5 },
+  { x: 5, y: 4 },
+  { x: 5, y: 3 },
+];
+const BEATS_PER_PLAYED_MOVE = 3;
+// The beat the check starts on, after the game and a pause on its last square.
+const CHECK_BEAT = 34;
 
 const subscribeToResize = (onChange: () => void) => {
   addEventListener("resize", onChange);
   return () => removeEventListener("resize", onChange);
 };
 
-// Ten seconds of TLA-ts checking the maze, on a 1920 by 1080 stage that fits the window, to record.
+// Ten seconds of the maze played by hand and then checked by TLA-ts, on a 1920 by 1080 stage that fits the window, to record.
 export const Explainer = () => {
   const example = examples[0];
   const runner = useRun(true);
@@ -74,26 +85,30 @@ export const Explainer = () => {
   }, [search]);
 
   const states = useMemo(() => (search ? getTriedStates(search) : []), [search]);
-  const triedCount = Math.min(states.length, Math.floor(beat * MOVES_PER_BEAT) + 1);
+  const isChecking = beat >= CHECK_BEAT;
+  const triedCount = isChecking ? Math.min(states.length, beat - CHECK_BEAT + 1) : 0;
+  const played = PLAYED.slice(0, Math.floor(beat / BEATS_PER_PLAYED_MOVE) + 1);
   const isFound = states.length > 0 && triedCount === states.length;
   const tried = states.at(triedCount - 1);
-  const square = triedCount > 0 ? getStateSquare(tried) : START;
+  const square = isChecking ? getStateSquare(tried) : played[played.length - 1];
   const parent = states.find((state) => state.id === tried?.parentId);
-  const cameFrom = triedCount > 0 && parent ? getStateSquare(parent) : undefined;
+  const cameFrom = isChecking ? parent && getStateSquare(parent) : undefined;
+  const facedFrom = cameFrom ?? played.at(-2);
   return (
     <main className="fixed inset-0 flex cursor-none items-center justify-center overflow-hidden bg-black">
       <div
         style={{ width: STAGE.width, height: STAGE.height, zoom: scale }}
+        data-beat={search ? beat : undefined}
         className="relative shrink-0"
       >
-        <div className="absolute inset-0 flex items-center justify-center gap-28">
+        <div className="absolute inset-0 flex items-center justify-center">
           <MazeBoard
             label="The maze, with the robot making each move TLA-ts tries."
             view={{
               player: square,
               cameFrom,
-              yaw: cameFrom ? Math.atan2(square.x - cameFrom.x, square.y - cameFrom.y) : 0,
-              trail: [],
+              yaw: facedFrom ? Math.atan2(square.x - facedFrom.x, square.y - facedFrom.y) : 0,
+              trail: isChecking ? [] : played,
               reached: states
                 .slice(0, triedCount)
                 .map((state) => ({ ...getStateSquare(state), isFailing: state.isFailing })),
@@ -103,13 +118,21 @@ export const Explainer = () => {
             }}
             className={cn("w-[780px] shrink-0", isFound && "motion-safe:animate-shake")}
           />
-          <div style={{ zoom: 2.9 }} className="w-[280px]">
-            <SearchTree
-              states={states}
-              triedCount={triedCount}
-              activeId={triedCount > 0 ? tried?.id : undefined}
-              onHover={() => {}}
-            />
+          <div
+            style={{ zoom: 2.9 }}
+            className={cn(
+              "overflow-hidden transition-[width,margin,opacity] duration-700 ease-[cubic-bezier(0.3,1,0.4,1)]",
+              isChecking ? "ml-10 w-[280px]" : "ml-0 w-0 opacity-0",
+            )}
+          >
+            <div className="w-[280px]">
+              <SearchTree
+                states={states}
+                triedCount={triedCount}
+                activeId={triedCount > 0 ? tried?.id : undefined}
+                onHover={() => {}}
+              />
+            </div>
           </div>
         </div>
       </div>
