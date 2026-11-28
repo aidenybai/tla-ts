@@ -98,7 +98,10 @@ export const Maze = (props: MazeProps) => {
               {DIRECTIONS.map((direction) => (
                 <KeyCap
                   key={direction.name}
-                  className={cn(direction.name === "up" && "col-start-2")}
+                  className={cn(
+                    direction.name === "up" && "col-start-2",
+                    direction.name === "left" && "col-start-1",
+                  )}
                 >
                   {direction.glyph}
                 </KeyCap>
