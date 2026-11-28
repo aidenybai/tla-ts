@@ -19,6 +19,13 @@ const FLOOD_MS = 70;
 // The calls after which a reader who has not found the way in is told where to look.
 const HINT_CALLS = 10;
 const SHOWN_CALLS = 6;
+// How far a wall stands up from the ground, as the board is seen from a little in front.
+const LIFT = 3.4;
+// A pale sandbox: white boxes with crisp blue edges on a ground ruled in the same blue.
+const LINE_CLASS_NAME = "stroke-[oklch(62%_0.19_255)] dark:stroke-[oklch(72%_0.15_255)]";
+const GROUND_CLASS_NAME =
+  "fill-[oklch(98.5%_0.004_250)] stroke-[oklch(62%_0.19_255)]/15 dark:fill-[oklch(19%_0.012_255)] dark:stroke-[oklch(72%_0.15_255)]/20";
+const FLOOD_CLASS_NAME = "fill-[oklch(62%_0.19_255)]/20 dark:fill-[oklch(72%_0.15_255)]/25";
 
 const DIRECTIONS = [
   { name: "up", move: [0, -1], key: "ArrowUp", glyph: "↑", angle: 0 },
@@ -170,7 +177,7 @@ export const Maze = (props: MazeProps) => {
       <div
         ref={boardRef}
         className={cn(
-          "relative mb-1 w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-lg shadow-[0_4px_0_oklch(80%_0.08_140)] select-none dark:shadow-[0_4px_0_oklch(22%_0.04_140)]",
+          "relative mb-1 w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-lg ring-1 ring-[oklch(62%_0.19_255)]/25 select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
@@ -182,7 +189,7 @@ export const Maze = (props: MazeProps) => {
         >
           {SQUARES.map((square) => {
             const order = reached.findIndex((found) => isSame(found, square));
-            const isBeside = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
+            const distance = Math.abs(square.x - player.x) + Math.abs(square.y - player.y);
             return (
               <g key={getKey(square)}>
                 <rect
@@ -190,6 +197,7 @@ export const Maze = (props: MazeProps) => {
                   y={square.y * CELL}
                   width={CELL}
                   height={CELL}
+                  strokeWidth={0.3}
                   // A click on a square in line with the player moves there, or dashes there.
                   onClick={() => {
                     const direction = DIRECTIONS.find(
@@ -197,92 +205,126 @@ export const Maze = (props: MazeProps) => {
                         Math.sign(square.x - player.x) === found.move[0] &&
                         Math.sign(square.y - player.y) === found.move[1],
                     );
-                    if (direction && (isBeside === 1 || isBeside === 2)) call(direction, isBeside);
+                    if (direction && (distance === 1 || distance === 2)) call(direction, distance);
                   }}
-                  className={cn(
-                    "cursor-pointer",
-                    (square.x + square.y) % 2 === 0
-                      ? "fill-[oklch(93%_0.05_140)] dark:fill-[oklch(31%_0.04_140)]"
-                      : "fill-[oklch(90%_0.06_140)] dark:fill-[oklch(28%_0.04_140)]",
-                  )}
+                  className={cn("cursor-pointer", GROUND_CLASS_NAME)}
                 />
                 {order >= 0 && (
                   <rect
-                    x={square.x * CELL + 0.6}
-                    y={square.y * CELL + 0.6}
-                    width={CELL - 1.2}
-                    height={CELL - 1.2}
-                    rx={1.6}
+                    x={square.x * CELL + 0.9}
+                    y={square.y * CELL + 0.9}
+                    width={CELL - 1.8}
+                    height={CELL - 1.8}
+                    rx={1.4}
                     style={{ animationDelay: `${order * FLOOD_MS}ms` }}
                     className={cn(
                       "pointer-events-none origin-center [transform-box:fill-box] motion-safe:animate-chip-in",
-                      reached[order].isFailing ? "fill-destructive/55" : "fill-success/45",
+                      reached[order].isFailing ? "fill-destructive/45" : FLOOD_CLASS_NAME,
                     )}
                   />
-                )}
-                {square.kind === "#" && (
-                  <>
-                    <rect
-                      x={square.x * CELL}
-                      y={square.y * CELL + 1.4}
-                      width={CELL}
-                      height={CELL}
-                      className="pointer-events-none fill-[oklch(38%_0.02_260)] dark:fill-[oklch(20%_0.02_260)]"
-                    />
-                    <rect
-                      x={square.x * CELL}
-                      y={square.y * CELL - 1}
-                      width={CELL}
-                      height={CELL}
-                      className="pointer-events-none fill-[oklch(55%_0.02_260)] dark:fill-[oklch(42%_0.02_260)]"
-                    />
-                  </>
                 )}
               </g>
             );
           })}
+          {/* The walls are boxes seen from a little in front, drawn row by row so that a nearer
+              one stands over the one behind it. */}
+          {SQUARES.map((square) =>
+            square.kind === "#" ? (
+              <g
+                key={getKey(square)}
+                strokeWidth={0.45}
+                strokeLinejoin="round"
+                className="pointer-events-none"
+              >
+                <rect
+                  x={square.x * CELL + 0.8}
+                  y={square.y * CELL + CELL - 0.4}
+                  width={CELL}
+                  height={1.8}
+                  className="fill-black/10 stroke-none"
+                />
+                <rect
+                  x={square.x * CELL}
+                  y={square.y * CELL + CELL - LIFT}
+                  width={CELL}
+                  height={LIFT}
+                  className={cn(
+                    "fill-[oklch(93%_0.012_250)] dark:fill-[oklch(22%_0.015_255)]",
+                    LINE_CLASS_NAME,
+                  )}
+                />
+                <rect
+                  x={square.x * CELL}
+                  y={square.y * CELL - LIFT}
+                  width={CELL}
+                  height={CELL}
+                  className={cn("fill-white dark:fill-[oklch(28%_0.015_255)]", LINE_CLASS_NAME)}
+                />
+              </g>
+            ) : null,
+          )}
+          {/* The gold shows whole, over the wall in front of it. */}
+          <g
+            transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2 - 0.4})`}
+            strokeWidth={0.35}
+            className="pointer-events-none stroke-[oklch(48%_0.1_75)]"
+          >
+            <ellipse cy={2.6} rx={3.3} ry={1.2} className="fill-black/15 stroke-none" />
+            <ellipse cy={1.4} rx={2.8} ry={1.35} className="fill-[oklch(74%_0.15_82)]" />
+            <ellipse cy={0.3} rx={2.8} ry={1.35} className="fill-[oklch(80%_0.16_88)]" />
+            <ellipse cy={-0.8} rx={2.8} ry={1.35} className="fill-[oklch(88%_0.16_94)]" />
+            <ellipse cx={-0.8} cy={-1.05} rx={1} ry={0.35} className="fill-white/70 stroke-none" />
+          </g>
           {path && flood?.isDone && (
             <polyline
               points={path
                 .map((square) => `${square.x * CELL + CELL / 2},${square.y * CELL + CELL / 2}`)
                 .join(" ")}
               fill="none"
-              strokeWidth={1.6}
+              strokeWidth={1.4}
               strokeLinecap="round"
               strokeLinejoin="round"
+              strokeDasharray="0.1 2.6"
               className="pointer-events-none stroke-destructive motion-safe:animate-chip-in"
             />
           )}
           <g
-            transform={`translate(${GOLD.x * CELL + CELL / 2} ${GOLD.y * CELL + CELL / 2})`}
-            className="pointer-events-none"
-          >
-            <ellipse cy={3.2} rx={3.4} ry={1.1} className="fill-[oklch(35%_0.08_140)]/25" />
-            <ellipse cy={1.6} rx={3} ry={1.5} className="fill-[oklch(62%_0.14_80)]" />
-            <ellipse cy={0.6} rx={3} ry={1.5} className="fill-[oklch(82%_0.16_90)]" />
-            <ellipse cy={-0.6} rx={3} ry={1.5} className="fill-[oklch(62%_0.14_80)]" />
-            <ellipse cy={-1.6} rx={3} ry={1.5} className="fill-[oklch(86%_0.16_92)]" />
-            <ellipse cx={-0.8} cy={-1.9} rx={1.1} ry={0.4} className="fill-white/60" />
-          </g>
-          <g
             style={{
               translate: `${player.x * CELL + CELL / 2}px ${player.y * CELL + CELL / 2}px`,
             }}
-            className="pointer-events-none transition-[translate] duration-150 ease-out motion-reduce:transition-none"
+            strokeWidth={0.45}
+            className="pointer-events-none stroke-[oklch(36%_0.08_50)] transition-[translate] duration-150 ease-out motion-reduce:transition-none"
           >
-            <circle cy={1.3} r={3.6} className="fill-[oklch(35%_0.08_140)]/25" />
-            <circle
-              r={3.6}
+            <ellipse cy={3.3} rx={3.2} ry={1.2} className="fill-black/15 stroke-none" />
+            <rect
+              x={-3.3}
+              y={-3.6}
+              width={6.6}
+              height={6.6}
+              rx={2.4}
               className={
-                hasBug && search === undefined ? "fill-destructive" : "fill-[oklch(58%_0.17_295)]"
+                hasBug && search === undefined ? "fill-destructive" : "fill-[oklch(74%_0.17_58)]"
               }
             />
-            <circle cx={-0.6} cy={-1.3} r={2} className="fill-white/15" />
-            <g transform={`rotate(${facing.angle})`}>
-              <circle cx={-1.7} cy={-1.4} r={1.35} className="fill-white" />
-              <circle cx={1.7} cy={-1.4} r={1.35} className="fill-white" />
-              <circle cx={-1.7} cy={-1.9} r={0.7} className="fill-[oklch(25%_0.05_295)]" />
-              <circle cx={1.7} cy={-1.9} r={0.7} className="fill-[oklch(25%_0.05_295)]" />
+            <rect
+              x={-2.5}
+              y={-3}
+              width={3.4}
+              height={1.3}
+              rx={0.65}
+              className="fill-white/35 stroke-none"
+            />
+            <g transform={`rotate(${facing.angle})`} className="stroke-none">
+              <rect
+                x={-2.3}
+                y={-2.2}
+                width={4.6}
+                height={2.2}
+                rx={1.1}
+                className="fill-[oklch(24%_0.03_255)]"
+              />
+              <circle cx={-1.05} cy={-1.1} r={0.55} className="fill-white" />
+              <circle cx={1.05} cy={-1.1} r={0.55} className="fill-white" />
             </g>
           </g>
         </svg>
