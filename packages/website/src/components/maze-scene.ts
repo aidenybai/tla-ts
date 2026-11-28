@@ -212,26 +212,22 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
   let step = { from: vec(0, 0, 0), to: vec(0, 0, 0), startedAt: 0, isFirst: true };
   let aspect = 1;
 
-  // `part` draws the board without the robot, or the robot alone on nothing, for a caller that
-  // lays one over the other itself.
-  const draw = (view: MazeView, now: number, part: "all" | "board" | "player" = "all") => {
+  const draw = (view: MazeView, now: number) => {
     const colours = isDark() ? DARK : LIGHT;
     const seconds = view.isStill ? 0 : now / 1000;
     aspect = renderer.begin(EYE, TARGET, REACH);
     const drawBox = (centre: Vec3, half: Vec3, tone: number[], kind: number) =>
       renderer.draw(meshes.cube, place(centre, 0, half), { tone, kind });
-    if (part !== "player") {
-      // The void's floor, a wire grid far below the board.
-      drawBox(vec(0.5, -5, 0.5), vec(120, 0.01, 120), colours.floor, KIND.floor);
-      drawBox(vec(0.5, -0.25, 0.5), vec(3.5, 0.25, 3.5), colours.track, KIND.track);
-      for (const wall of walls)
-        drawBox(
-          add(getGround(wall), vec(0, WALL_HEIGHT / 2, 0)),
-          vec(0.5, WALL_HEIGHT / 2, 0.5),
-          colours.block,
-          KIND.box,
-        );
-    }
+    // The void's floor, a wire grid far below the board.
+    drawBox(vec(0.5, -5, 0.5), vec(120, 0.01, 120), colours.floor, KIND.floor);
+    drawBox(vec(0.5, -0.25, 0.5), vec(3.5, 0.25, 3.5), colours.track, KIND.track);
+    for (const wall of walls)
+      drawBox(
+        add(getGround(wall), vec(0, WALL_HEIGHT / 2, 0)),
+        vec(0.5, WALL_HEIGHT / 2, 0.5),
+        colours.block,
+        KIND.box,
+      );
 
     const target = getGround(view.player);
     if (step.isFirst || view.isStill)
@@ -252,7 +248,7 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
     );
     const hasArrived = progress >= 1;
 
-    if (part !== "player" && !(view.isHeartTaken && hasArrived))
+    if (!(view.isHeartTaken && hasArrived))
       renderer.draw(
         meshes.heart,
         place(
@@ -267,61 +263,56 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
       view.yaw,
       vec(BOT.size, BOT.size, BOT.size),
     );
-    if (part !== "board") {
-      renderer.drawWire(meshes.botHead, bot, {
+    renderer.drawWire(meshes.botHead, bot, {
+      tone: colours.wireFill,
+      kind: KIND.visor,
+      cheer: view.isHeartTaken && hasArrived ? 1 : 0,
+      visor: BOT_VISOR,
+    });
+    renderer.drawWire(meshes.botCap, within(bot, place(vec(0, 0.92, -0.04))), {
+      tone: colours.wireFill,
+    });
+    for (const side of [-1, 1])
+      renderer.drawWire(meshes.botEar, within(bot, place(vec(side * 1.03, -0.06, -0.04))), {
         tone: colours.wireFill,
-        kind: KIND.visor,
-        cheer: view.isHeartTaken && hasArrived ? 1 : 0,
-        visor: BOT_VISOR,
       });
-      renderer.drawWire(meshes.botCap, within(bot, place(vec(0, 0.92, -0.04))), {
-        tone: colours.wireFill,
-      });
-      for (const side of [-1, 1])
-        renderer.drawWire(meshes.botEar, within(bot, place(vec(side * 1.03, -0.06, -0.04))), {
-          tone: colours.wireFill,
-        });
-    }
 
     renderer.drawBlended(() => {
-      if (part !== "player") {
-        // A square the search stood on is a shade darker, with no edge of its own.
-        for (const square of view.reached)
+      // A square the search stood on is a shade darker, with no edge of its own.
+      for (const square of view.reached)
+        renderer.draw(
+          meshes.cube,
+          place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.5, 0.004, 0.5)),
+          {
+            tone: square.isFailing ? RED : colours.trail,
+            alpha: square.isFailing ? 0.22 : 0.09,
+            isFlat: true,
+          },
+        );
+      // A way across the board is one thin line: the reader's in blue, the search's in red.
+      const drawWay = (way: Square[], tone: number[], alpha: number) =>
+        way.slice(1).forEach((square, index) => {
+          const from = getGround(way[index]);
+          const to = getGround(square);
           renderer.draw(
             meshes.cube,
-            place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.5, 0.004, 0.5)),
-            {
-              tone: square.isFailing ? RED : colours.trail,
-              alpha: square.isFailing ? 0.22 : 0.09,
-              isFlat: true,
-            },
+            place(
+              vec((from.x + to.x) / 2, 0.016, (from.z + to.z) / 2),
+              0,
+              vec(Math.abs(to.x - from.x) / 2 + 0.03, 0.004, Math.abs(to.z - from.z) / 2 + 0.03),
+            ),
+            { tone, alpha, isFlat: true },
           );
-        // A way across the board is one thin line: the reader's in blue, the search's in red.
-        const drawWay = (way: Square[], tone: number[], alpha: number) =>
-          way.slice(1).forEach((square, index) => {
-            const from = getGround(way[index]);
-            const to = getGround(square);
-            renderer.draw(
-              meshes.cube,
-              place(
-                vec((from.x + to.x) / 2, 0.016, (from.z + to.z) / 2),
-                0,
-                vec(Math.abs(to.x - from.x) / 2 + 0.03, 0.004, Math.abs(to.z - from.z) / 2 + 0.03),
-              ),
-              { tone, alpha, isFlat: true },
-            );
-          });
-        drawWay(view.trail, colours.way, 1);
-        if (view.route) drawWay(view.route, view.isHeartTaken ? RED : colours.way, 1);
-      }
+        });
+      drawWay(view.trail, colours.way, 1);
+      if (view.route) drawWay(view.route, view.isHeartTaken ? RED : colours.way, 1);
       const isOverWall = isWall({ x: Math.round(at.x + 2.5), y: Math.round(at.z + 2.5) });
-      if (part !== "board")
-        renderer.draw(
-          meshes.disc,
-          place(add(at, vec(0, isOverWall ? WALL_HEIGHT + 0.01 : 0.016, 0)), 0, vec(0.36, 1, 0.36)),
-          { tone: [0, 0, 0], kind: KIND.shadow, alpha: 1 - 0.4 * clamp(hop, 0, 1) },
-        );
-      if (part !== "player" && !(view.isHeartTaken && hasArrived))
+      renderer.draw(
+        meshes.disc,
+        place(add(at, vec(0, isOverWall ? WALL_HEIGHT + 0.01 : 0.016, 0)), 0, vec(0.36, 1, 0.36)),
+        { tone: [0, 0, 0], kind: KIND.shadow, alpha: 1 - 0.4 * clamp(hop, 0, 1) },
+      );
+      if (!(view.isHeartTaken && hasArrived))
         renderer.draw(
           meshes.disc,
           place(add(getGround(heart), vec(0, 0.016, 0)), 0, vec(0.32, 1, 0.32)),
@@ -344,12 +335,5 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
     return { x: Math.floor(hit.x + 3), y: Math.floor(hit.z + 3) };
   };
 
-  // How far apart two squares next to each other are drawn, as parts of the canvas's width and
-  // height.
-  const getStride = () => ({
-    across: 1 / (2 * REACH * aspect),
-    down: -getCameraAxes(EYE, TARGET).up.z / (2 * REACH),
-  });
-
-  return { draw, pick, getStride };
+  return { draw, pick };
 };
