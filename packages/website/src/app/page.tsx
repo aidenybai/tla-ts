@@ -48,6 +48,10 @@ const Page = () => (
           TypeScript maze game example:
         </p>
         <Example.Root>
+          <Example.Game />
+          <p className="mt-10 text-pretty">
+            This is the game&rsquo;s code. Run it, and TLA-ts checks every state it can reach.
+          </p>
           <Example.Source />
           <Example.Hint />
         </Example.Root>

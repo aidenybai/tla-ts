@@ -26,6 +26,10 @@ const DIRECTIONS = [
 
 type Direction = (typeof DIRECTIONS)[number];
 
+const SKELETON_WALLS = MAP.flatMap((row, y) =>
+  [...row].flatMap((kind, x) => (kind === "#" ? [{ x, y }] : [])),
+);
+
 // The move of the code: one square, unless a wall or the board's edge is there.
 const go = (from: Square, direction: Direction): Square => {
   const next = {
@@ -43,10 +47,9 @@ const GOALS = ["Move around", "Reach the heart", "Let TLA-ts find the way"];
 interface MazeProps {
   // The search of the last run, whose squares the board fills in the order it reached them.
   search: Search | undefined;
-  // Whether the board is out of sight behind another view, where no key moves the player.
-  isPaused: boolean;
   isRunning: boolean;
-  onBugChange: (isFound: boolean) => void;
+  // Called when the reader reaches the heart.
+  onBugFound: () => void;
   // Shows the game's own code, as the reader wrote it or as TLA-ts checks it.
   onShowCode: (view: "typescript" | "tla") => void;
 }
@@ -124,6 +127,8 @@ export const Maze = (props: MazeProps) => {
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Whether the scene has drawn its first frame over the board's outline.
+  const [isDrawn, setIsDrawn] = useState(false);
   const sceneRef = useRef<ReturnType<typeof createMazeScene>>(undefined);
   const viewRef = useRef<MazeView>(undefined);
   const shown = tried ?? player;
@@ -143,23 +148,23 @@ export const Maze = (props: MazeProps) => {
     };
   });
   useEffect(() => {
-    if (!isInView || props.isPaused || !canvasRef.current) return;
+    if (!isInView || !canvasRef.current) return;
     sceneRef.current ??= createMazeScene(canvasRef.current, MAP);
     const scene = sceneRef.current;
     if (!scene) return;
     let frame = requestAnimationFrame(function paint(now) {
       if (viewRef.current) scene.draw(viewRef.current, now);
+      setIsDrawn(true);
       frame = requestAnimationFrame(paint);
     });
     return () => cancelAnimationFrame(frame);
-  }, [isInView, props.isPaused]);
+  }, [isInView]);
 
   const restart = () => {
     setPlayer(START);
     setTrail([START]);
     setCalls([]);
     setIsFloodHidden(true);
-    props.onBugChange(false);
   };
   const call = (direction: Direction) => {
     if (isFlooding) return;
@@ -171,12 +176,12 @@ export const Maze = (props: MazeProps) => {
     setIsFloodHidden(true);
     const made = `move("${direction.name}")`;
     setCalls(from === player ? [...calls, made] : [made]);
-    props.onBugChange(isSame(next, HEART));
+    if (isSame(next, HEART)) props.onBugFound();
   };
   // The keys work while the board is on screen, from wherever the focus is, and scroll the
   // page again once it is not.
   useEffect(() => {
-    if (!isInView || props.isPaused) return;
+    if (!isInView) return;
     const handleKey = (event: KeyboardEvent) => {
       const found = DIRECTIONS.find((item) => item.key === event.key);
       if (!found || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -233,8 +238,36 @@ export const Maze = (props: MazeProps) => {
             );
             if (direction) call(direction);
           }}
-          className="block aspect-[8/7] w-full cursor-pointer"
+          className="relative block aspect-[8/7] w-full cursor-pointer"
         />
+        {/* The board's outline, in the page as it arrives, until the scene draws over it. */}
+        {!isDrawn && (
+          <svg
+            aria-hidden
+            viewBox="0 0 811 710"
+            className="pointer-events-none absolute inset-0 size-full"
+          >
+            <rect
+              x={55}
+              y={28}
+              width={700}
+              height={634}
+              strokeWidth={2}
+              className="fill-none stroke-border"
+            />
+            {SKELETON_WALLS.map((wall) => (
+              <rect
+                key={`${wall.x} ${wall.y}`}
+                x={55 + wall.x * 100}
+                y={28 + wall.y * 90.5 - 28}
+                width={100}
+                height={90.5}
+                className="fill-muted"
+              />
+            ))}
+            <circle cx={105} cy={596} r={28} className="fill-muted" />
+          </svg>
+        )}
         {hasBug && search === undefined && (
           <p className="absolute top-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-destructive px-3 py-1 text-sm whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
             <Bug weight="fill" className="size-3.5" />
@@ -334,7 +367,7 @@ export const Maze = (props: MazeProps) => {
                 "Hint: walk all the way round the walls."
               )
             ) : (
-              "The wall was missing a piece. Press run, and TLA-ts finds that without being told."
+              "The wall was missing a piece. TLA-ts is finding that out for itself."
             )}
           </p>
         </div>

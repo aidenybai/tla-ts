@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { examples } from "virtual:site-data";
@@ -18,7 +18,7 @@ import { ToggleGroup } from "@/components/ui/toggle-group";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Verdict } from "./verdict";
 
-const VIEWS = ["preview", "typescript", "tla"] as const;
+const VIEWS = ["typescript", "tla"] as const;
 
 type View = (typeof VIEWS)[number];
 
@@ -27,9 +27,11 @@ interface ExampleState {
   view: View;
   setView: (view: View) => void;
   isRunning: boolean;
-  // Whether the reader has found the game's bug and not yet run TLA-ts on it.
-  isBugFound: boolean;
-  setIsBugFound: (isBugFound: boolean) => void;
+  // Whether TLA-ts has run, by the reader's hand or by the game's.
+  hasRun: boolean;
+  showCode: (view: View) => void;
+  sourceRef: RefObject<HTMLDivElement | null>;
+  check: () => void;
   result: RunResult | undefined;
   path: SearchState[];
   hoverState: (stateId: string | undefined) => void;
@@ -45,8 +47,9 @@ interface RootProps {
 const ExampleRoot = (props: RootProps) => {
   const runner = useRun();
   const example = examples[0];
-  const [view, setView] = useState<View>("preview");
-  const [isBugFound, setIsBugFound] = useState(false);
+  const [view, setView] = useState<View>("typescript");
+  const [hasRun, setHasRun] = useState(false);
+  const sourceRef = useRef<HTMLDivElement>(null);
   const isRunning = runner.isRunning;
   const result = isRunning ? undefined : runner.result;
   const [hoveredStateId, setHoveredStateId] = useState<string>();
@@ -58,10 +61,15 @@ const ExampleRoot = (props: RootProps) => {
     isSearchShown: true,
     typescript: { source: example.typescript.code, fileName: example.fileName },
   };
-  const run = () => {
-    // A run from the TypeScript shows where it ended in the TLA+. One from the game stays on it.
-    if (view === "typescript") setView("tla");
+  // The game checks its own code once the reader has found the bug in it.
+  const check = () => {
+    setHasRun(true);
     runner.run(request);
+  };
+  // A run from the code shows where it ended in the TLA+.
+  const run = () => {
+    setView("tla");
+    check();
   };
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -79,8 +87,13 @@ const ExampleRoot = (props: RootProps) => {
         view,
         setView,
         isRunning,
-        isBugFound,
-        setIsBugFound,
+        hasRun,
+        showCode: (next) => {
+          setView(next);
+          sourceRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        },
+        check,
+        sourceRef,
         result,
         path,
         hoverState: setHoveredStateId,
@@ -109,8 +122,7 @@ const ExampleHint = () => {
       aria-hidden
       className={cn(
         "pointer-events-none absolute top-full right-4 flex -rotate-3 items-start gap-1 font-hand text-2xl text-muted-foreground transition-opacity duration-200 ease-out",
-        // The hint waits for the reader to find the bug, and goes once they run.
-        !(state.isBugFound && state.result === undefined && !state.isRunning) && "opacity-0",
+        state.hasRun && "opacity-0",
       )}
     >
       <span className="mt-3">Click me!</span>
@@ -185,40 +197,25 @@ const ExampleSource = () => {
     [example, lineMarks, openFolds, result],
   );
   return (
-    <Code.Root
-      source={isCompiled ? example.tla : example.typescript}
-      rows={isCompiled ? rows : undefined}
-      onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
-      lineMarks={isCompiled ? lineMarks : sourceLineMarks}
-      colors={colors}
-      activeLine={result?.activeLine}
-      notes={result?.notes}
-      search={result?.search}
-      path={isCompiled ? state.path : undefined}
-      onHoverState={state.hoverState}
-    >
-      {/* The game keeps its place under the code, so the card is one height in every view and a
-          look at the code loses no game. The code scrolls in the game's space. */}
-      <div className="relative w-full">
-        <div className={cn(state.view !== "preview" && "invisible")}>
-          <Maze
-            search={state.result?.search}
-            isPaused={state.view !== "preview"}
-            isRunning={state.isRunning}
-            onBugChange={state.setIsBugFound}
-            onShowCode={state.setView}
-          />
+    <div ref={state.sourceRef} className="w-full">
+      <Code.Root
+        source={isCompiled ? example.tla : example.typescript}
+        rows={isCompiled ? rows : undefined}
+        onToggleFold={(name) => setOpenFolds((open) => open.symmetricDifference(new Set([name])))}
+        lineMarks={isCompiled ? lineMarks : sourceLineMarks}
+        colors={colors}
+        activeLine={result?.activeLine}
+        notes={result?.notes}
+        search={result?.search}
+        path={isCompiled ? state.path : undefined}
+        onHoverState={state.hoverState}
+      >
+        <div
+          ref={scrollRef}
+          className="-mx-4 -mt-4 -mb-2 h-[26rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
+        >
+          <Code.Content />
         </div>
-        {state.view !== "preview" && (
-          <div
-            ref={scrollRef}
-            className="absolute -inset-x-4 -top-4 -bottom-2 overflow-x-hidden overflow-y-auto mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
-          >
-            <Code.Content />
-          </div>
-        )}
-      </div>
-      {state.view !== "preview" && (
         <Code.Actions>
           <Tooltip.Root>
             <Tooltip.Trigger
@@ -235,43 +232,54 @@ const ExampleSource = () => {
             <Tooltip.Content>View in playground</Tooltip.Content>
           </Tooltip.Root>
         </Code.Actions>
-      )}
-      <Code.Footer>
-        <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
-          <ToggleGroup.Root
-            label="View"
-            value={state.view}
-            isDisabled={state.isRunning}
-            onValueChange={(value) =>
-              state.setView(VIEWS.find((view) => view === value) ?? "preview")
-            }
-            className="mr-1 -ml-1.5 rounded-lg"
-          >
-            <ToggleGroup.Item value="preview" className={VIEW_ITEM_CLASS_NAME}>
-              Preview
-            </ToggleGroup.Item>
-            <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
-              TypeScript
-            </ToggleGroup.Item>
-            <ToggleGroup.Item value="tla" className={VIEW_ITEM_CLASS_NAME}>
-              TLA+
-            </ToggleGroup.Item>
-          </ToggleGroup.Root>
-          {state.result && <Verdict result={state.result} />}
-        </output>
-        <Code.Run
-          isRunning={state.isRunning}
-          isDone={state.result !== undefined}
-          isSuggested={state.isBugFound && state.result === undefined}
-          onRun={state.run}
-        />
-      </Code.Footer>
-    </Code.Root>
+        <Code.Footer>
+          <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
+            <ToggleGroup.Root
+              label="View"
+              value={state.view}
+              isDisabled={state.isRunning}
+              onValueChange={(value) =>
+                state.setView(VIEWS.find((view) => view === value) ?? "typescript")
+              }
+              className="mr-1 -ml-1.5 rounded-lg"
+            >
+              <ToggleGroup.Item value="typescript" className={VIEW_ITEM_CLASS_NAME}>
+                TypeScript
+              </ToggleGroup.Item>
+              <ToggleGroup.Item value="tla" className={VIEW_ITEM_CLASS_NAME}>
+                TLA+
+              </ToggleGroup.Item>
+            </ToggleGroup.Root>
+            {state.result && <Verdict result={state.result} />}
+          </output>
+          <Code.Run
+            isRunning={state.isRunning}
+            isDone={state.result !== undefined}
+            onRun={state.run}
+          />
+        </Code.Footer>
+      </Code.Root>
+    </div>
+  );
+};
+
+const ExampleGame = () => {
+  const state = exampleContext.useParts();
+  return (
+    <div className="w-full rounded-[18px] bg-card p-4 shadow-raised">
+      <Maze
+        search={state.result?.search}
+        isRunning={state.isRunning}
+        onBugFound={state.check}
+        onShowCode={state.showCode}
+      />
+    </div>
   );
 };
 
 export const Example = {
   Root: ExampleRoot,
+  Game: ExampleGame,
   Hint: ExampleHint,
   Source: ExampleSource,
 };
