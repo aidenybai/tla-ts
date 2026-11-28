@@ -1,4 +1,3 @@
-import { Bug } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { compilations } from "virtual:compilations";
 import { examples } from "virtual:site-data";
@@ -16,10 +15,14 @@ import { SearchTree } from "./search-tree";
 
 const STAGE = { width: 1920, height: 1080 };
 const BEAT_MS = 100;
-// The beats the loop's scenes start on: the TypeScript, its TLA+, the check, and the bug.
-const TLA_BEAT = 24;
-const CHECK_BEAT = 44;
+// The beats the loop's scenes start on: the TypeScript, its TLA+, and the check.
+const TLA_BEAT = 16;
+const CHECK_BEAT = 34;
+const COMMAND_BEAT = 84;
 const LOOP_BEATS = 100;
+const SCENE_CLASS_NAME =
+  "absolute inset-x-20 top-[220px] bottom-16 transition-[opacity,scale,filter] duration-300 ease-out";
+const HIDDEN_SCENE_CLASS_NAME = "pointer-events-none scale-95 opacity-0 blur-sm";
 const NO_FOLDS: ReadonlySet<string> = new Set();
 const START = { x: 0, y: 6 };
 
@@ -58,7 +61,12 @@ export const Explainer = () => {
   // The loop starts once there is a search to play.
   useEffect(() => {
     if (search === undefined) return;
-    const beats = setInterval(() => setBeat((current) => (current + 1) % LOOP_BEATS), BEAT_MS);
+    const startedAt = performance.now();
+    // The beat comes from the clock, so a slow frame does not stretch the ten seconds.
+    const beats = setInterval(
+      () => setBeat(Math.floor((performance.now() - startedAt) / BEAT_MS) % LOOP_BEATS),
+      BEAT_MS / 4,
+    );
     return () => clearInterval(beats);
   }, [search]);
 
@@ -87,22 +95,43 @@ export const Explainer = () => {
   const square = triedCount > 0 ? getStateSquare(tried) : START;
   const parent = states.find((state) => state.id === tried?.parentId);
   const cameFrom = triedCount > 0 && parent ? getStateSquare(parent) : undefined;
-  const caption = isFound
-    ? "And finds the bug you missed."
-    : beat >= CHECK_BEAT
-      ? "Then it tries every move."
+  const isChecking = beat >= CHECK_BEAT;
+  const headline = isFound
+    ? ["Bug found", ` in ${(search?.states.length ?? 1) - 1} moves.`]
+    : isChecking
+      ? ["Then it tries ", "every move."]
       : beat >= TLA_BEAT
-        ? "TLA-ts turns it into TLA+."
-        : "You write TypeScript.";
+        ? ["TLA-ts turns it into ", "TLA+."]
+        : ["You write ", "TypeScript."];
   return (
     <main className="fixed inset-0 flex cursor-none items-center justify-center overflow-hidden bg-background">
       <div
         style={{ width: STAGE.width, height: STAGE.height, zoom: scale }}
         className="relative shrink-0"
       >
-        <p className="absolute top-14 left-20 font-pixel text-5xl text-foreground">TLA-ts</p>
-        <div className="absolute top-40 left-20 w-[1040px]">
-          <div style={{ zoom: 1.8 }} className="h-[400px] overflow-hidden rounded-[18px]">
+        {beat >= COMMAND_BEAT ? (
+          <p className="absolute top-14 right-20 rounded-2xl bg-foreground px-8 py-4 font-mono text-4xl text-background motion-safe:animate-drop-in">
+            npx tla-ts maze.ts
+          </p>
+        ) : (
+          <p className="absolute top-[72px] right-20 font-pixel text-4xl text-muted-foreground">
+            TLA-ts
+          </p>
+        )}
+        <h1
+          key={headline.join("")}
+          className="absolute top-14 left-20 text-[88px]/[1.1] font-medium tracking-tight motion-safe:animate-drop-in"
+        >
+          <span className={isFound ? "text-destructive" : "text-muted-foreground"}>
+            {headline[0]}
+          </span>
+          <span className="text-foreground">{headline[1]}</span>
+        </h1>
+        <div className={cn(SCENE_CLASS_NAME, isChecking && HIDDEN_SCENE_CLASS_NAME)}>
+          <div
+            style={{ zoom: 2.1 }}
+            className="h-full overflow-hidden rounded-[18px] mask-[linear-gradient(to_bottom,black_calc(100%-40px),transparent)]"
+          >
             <Code.Root
               source={isTlaShown ? tla : example.typescript}
               rows={isTlaShown ? rows : undefined}
@@ -112,7 +141,9 @@ export const Explainer = () => {
             </Code.Root>
           </div>
         </div>
-        <div className="absolute top-40 right-24 flex w-[520px] flex-col gap-5">
+        <div
+          className={cn(SCENE_CLASS_NAME, "flex gap-20", !isChecking && HIDDEN_SCENE_CLASS_NAME)}
+        >
           <MazeBoard
             label="The maze, with the robot making each move TLA-ts tries."
             view={{
@@ -127,30 +158,25 @@ export const Explainer = () => {
               isHeartTaken: square.x === MAZE_HEART.x && square.y === MAZE_HEART.y,
               isStill: false,
             }}
-            className={cn(isFound && "motion-safe:animate-shake")}
-          >
-            {isFound && (
-              <p className="absolute top-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-destructive px-5 py-1.5 text-2xl whitespace-nowrap text-white shadow-raised motion-safe:animate-drop-in">
-                <Bug weight="fill" className="size-6" />
-                Bug found
-              </p>
-            )}
-          </MazeBoard>
-          <div style={{ zoom: 1.7 }} className="mx-auto w-[280px]">
-            <SearchTree
-              states={states}
-              triedCount={triedCount}
-              activeId={triedCount > 0 ? tried?.id : undefined}
-              onHover={() => {}}
-            />
+            className={cn("w-[820px] shrink-0", isFound && "motion-safe:animate-shake")}
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-6">
+            <p className="flex items-baseline gap-5 font-pixel text-foreground tabular-nums">
+              <span className={cn("text-[200px]/[1]", isFound && "text-destructive")}>
+                {triedCount}
+              </span>
+              <span className="text-5xl text-muted-foreground">/ {states.length} states</span>
+            </p>
+            <div style={{ zoom: 3 }} className="w-[280px]">
+              <SearchTree
+                states={states}
+                triedCount={triedCount}
+                activeId={triedCount > 0 ? tried?.id : undefined}
+                onHover={() => {}}
+              />
+            </div>
           </div>
         </div>
-        <p
-          key={caption}
-          className="absolute right-0 bottom-16 left-0 text-center text-6xl font-medium tracking-tight text-foreground motion-safe:animate-chip-in"
-        >
-          {caption}
-        </p>
       </div>
     </main>
   );
