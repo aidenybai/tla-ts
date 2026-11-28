@@ -107,18 +107,18 @@ export const Explainer = () => {
             }}
             className={cn(
               "shrink-0 transition-[width] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
-              beat >= TREE_BEAT ? "w-[860px]" : "w-[1560px]",
+              beat >= TREE_BEAT ? "w-[780px]" : "w-[1560px]",
               isFound && "motion-safe:animate-shake",
             )}
           />
           <div
-            style={{ zoom: 2.9 }}
+            style={{ zoom: 3.25 }}
             className={cn(
-              "overflow-hidden transition-[width,margin,opacity] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
-              beat >= TREE_BEAT ? "ml-2 w-[312px]" : "ml-0 w-0 opacity-0",
+              "overflow-hidden py-2 transition-[width,opacity] duration-[1200ms] ease-[cubic-bezier(0.3,1,0.4,1)]",
+              beat >= TREE_BEAT ? "w-[322px]" : "w-0 opacity-0",
             )}
           >
-            <div className="ml-4 w-[280px]">
+            <div className="ml-7 w-[280px]">
               <SearchTree
                 states={states}
                 triedCount={triedCount}
