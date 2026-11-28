@@ -43,9 +43,9 @@ export interface MazeView {
 
 // The camera looks down from in front with no perspective, so the board stays a straight grid.
 const EYE = vec(0.5, 12, 6.4);
-const TARGET = vec(0.5, 0, 0.75);
+const TARGET = vec(0.5, 0, 0.62);
 // Half the height of what the camera shows.
-const REACH = 3.55;
+const REACH = 3.4;
 const WALL_HEIGHT = 0.7;
 const BOT = { size: 0.4, lift: 0.5 };
 const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];

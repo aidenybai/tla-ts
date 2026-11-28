@@ -213,11 +213,11 @@ export const Maze = (props: MazeProps) => {
     </KeyCap>
   ));
   return (
-    <div className="flex w-full flex-wrap gap-x-7 gap-y-6 pt-1 pb-4">
+    <div className="flex w-full flex-wrap items-center gap-x-7 gap-y-6">
       <div
         ref={boardRef}
         className={cn(
-          "relative w-full max-w-[352px] shrink-0 touch-manipulation self-start overflow-hidden rounded-xl select-none",
+          "relative w-full max-w-[336px] shrink-0 touch-manipulation overflow-hidden rounded-xl select-none",
           hasBug && search === undefined && "motion-safe:animate-shake",
         )}
       >
@@ -238,18 +238,18 @@ export const Maze = (props: MazeProps) => {
             );
             if (direction) call(direction);
           }}
-          className="relative block aspect-[8/7] w-full cursor-pointer"
+          className="relative block aspect-[20/19] w-full cursor-pointer"
         />
         {/* The board's outline, in the page as it arrives, until the scene draws over it. */}
         {!isDrawn && (
           <svg
             aria-hidden
-            viewBox="0 0 811 710"
+            viewBox="0 0 716 680"
             className="pointer-events-none absolute inset-0 size-full"
           >
             <rect
-              x={55}
-              y={28}
+              x={8}
+              y={13}
               width={700}
               height={634}
               strokeWidth={2}
@@ -258,14 +258,14 @@ export const Maze = (props: MazeProps) => {
             {SKELETON_WALLS.map((wall) => (
               <rect
                 key={`${wall.x} ${wall.y}`}
-                x={55 + wall.x * 100}
-                y={28 + wall.y * 90.5 - 28}
+                x={8 + wall.x * 100}
+                y={13 + wall.y * 90.5 - 28}
                 width={100}
                 height={90.5}
                 className="fill-muted"
               />
             ))}
-            <circle cx={105} cy={596} r={28} className="fill-muted" />
+            <circle cx={58} cy={581} r={28} className="fill-muted" />
           </svg>
         )}
         {hasBug && search === undefined && (
@@ -277,7 +277,7 @@ export const Maze = (props: MazeProps) => {
       </div>
       {/* The column keeps the board's height, with its link at the foot, so that a longer line
           moves nothing. */}
-      <div className="flex min-h-28 min-w-52 flex-1 flex-col gap-3 self-stretch sm:min-h-44">
+      <div className="flex min-w-52 flex-1 flex-col gap-3 self-stretch py-1">
         <ol className="flex flex-col gap-2.5">
           {GOALS.map((goal, index) => {
             const isCurrent = index === stage && search === undefined;

@@ -266,7 +266,7 @@ const ExampleSource = () => {
 const ExampleGame = () => {
   const state = exampleContext.useParts();
   return (
-    <div className="w-full rounded-[18px] bg-card p-4 shadow-raised">
+    <div className="w-full rounded-[18px] bg-card p-5 shadow-raised">
       <Maze
         search={state.result?.search}
         isRunning={state.isRunning}
