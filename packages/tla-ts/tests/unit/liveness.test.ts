@@ -847,6 +847,41 @@ describe("liveness matches TLC", () => {
       "Implied-temporal checking is a tautology.\nThe temporal formula Live at line 7, col 1 to line 7, col 19 of module M equals\nthe fairness constraints of the behavior specification Spec at line 8, col 1 to line 8, col 34 of module M.\nTherefore, checking whether Spec => Live using TLC will never result in a violation of Live.",
     ]);
   });
+
+  it.each([
+    [
+      "holds",
+      "[]<>(x <= K)",
+      [
+        "Model checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:\n  calculated (optimistic):  val = 2.8E-18",
+        "17 states generated, 4 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 2.",
+        "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).",
+      ],
+    ],
+    [
+      "fails",
+      "[]<>(x > K)",
+      [
+        "Temporal property Prop was violated.\n",
+        "The following behavior constitutes a counter-example:\n",
+        "1: <Initial predicate>\nx = 0\n",
+        "2: Stuttering",
+        "The stuttering counterexample above may be caused by the absence of a fairness constraint in the behavior specification Spec defined at line 5, col 1 to line 5, col 34 of module Fa. To rule out such counterexamples, conjoin a suitable fairness constraint to Spec (compare Chapter 8, page 87ff of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).",
+        "17 states generated, 4 distinct states found, 0 states left on queue.",
+        "The depth of the complete state graph search is 2.",
+      ],
+    ],
+  ])(
+    "searches a complete graph whose property %s, as TLC does",
+    async (_title, property, printed) => {
+      const result = await check({
+        source: `---- MODULE Fa ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nSpec == x = 0 /\\ [][x' \\in 0..K]_x\nProp == ${property}\n====`,
+        config: "SPECIFICATION Spec\nCONSTANT K = 3\nPROPERTY Prop",
+      });
+      expect(getPrintedResult(result)).toEqual(printed);
+    },
+  );
 });
 
 describe("_PERIODIC matches TLC", () => {

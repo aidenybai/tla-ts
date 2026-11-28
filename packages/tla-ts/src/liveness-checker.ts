@@ -1164,8 +1164,29 @@ export const createLiveGraph = <State>(
       behavior.edgeActions.data[(behavior.edgeStarts[node] + edge) * actionCount + position] === 1;
     const isAllowed = (node: number, edge: number) =>
       model.eventuallyAlways.every((position) => getAction(node, edge, position));
-    const links = new Float64Array(behavior.nodeStates.length).fill(UNVISITED);
-    const queue = behavior.initial.filter((node) => isWritten(behavior, node));
+    const nodeCount = behavior.nodeStates.length;
+    const links = new Float64Array(nodeCount).fill(UNVISITED);
+    const isQueued = new Uint8Array(nodeCount);
+    const queue = new Int32Array(nodeCount);
+    let queueSize = 0;
+    const enqueue = (node: number) => {
+      if (isQueued[node] === 1) return;
+      isQueued[node] = 1;
+      queue[queueSize++] = node;
+    };
+    for (const node of behavior.initial) {
+      if (isWritten(behavior, node)) enqueue(node);
+    }
+    let stack = new Float64Array(1024);
+    let top = 0;
+    const push = (value: number) => {
+      if (top === stack.length) {
+        const grown = new Float64Array(top * 2);
+        grown.set(stack);
+        stack = grown;
+      }
+      stack[top++] = value;
+    };
     const components: number[] = [];
 
     const isStuttering = (node: number) => {
@@ -1340,39 +1361,48 @@ export const createLiveGraph = <State>(
       }
     };
 
-    for (let position = 0; position < queue.length; position++) {
-      const stack = [queue[position], UNVISITED, 0];
+    for (let position = 0; position < queueSize; position++) {
+      top = 0;
+      push(queue[position]);
+      push(UNVISITED);
+      push(0);
       let nextLink = 0;
-      while (stack.length >= 3) {
-        const lowLink = stack.pop() ?? 0;
-        const location = stack.pop();
-        const node = stack.pop() ?? 0;
+      while (top >= 3) {
+        const lowLink = stack[--top];
+        const location = stack[--top];
+        const node = stack[--top];
         if (location === SCC_MARKER) {
           if (links[node] === lowLink) {
             const lasso = checkComponent(node);
             if (lasso) return lasso;
           }
-          stack.push(Math.min(stack.pop() ?? lowLink, lowLink));
+          push(Math.min(stack[--top], lowLink));
           continue;
         }
         if (links[node] !== UNVISITED) {
-          stack.push(Math.min(lowLink, links[node]));
+          push(Math.min(lowLink, links[node]));
           continue;
         }
         links[node] = nextLink;
-        stack.push(lowLink, node, SCC_MARKER);
+        push(lowLink);
+        push(node);
+        push(SCC_MARKER);
         components.push(node);
         let nextLowLink = nextLink++;
         getNodeSuccessors(behavior, node).forEach((next, edge) => {
           if (!isWritten(behavior, next)) return;
           if (!isAllowed(node, edge)) {
-            if (links[next] === UNVISITED) queue.push(next);
+            if (links[next] === UNVISITED) enqueue(next);
             return;
           }
-          if (links[next] === UNVISITED) stack.push(next, UNVISITED);
-          else nextLowLink = Math.min(nextLowLink, links[next]);
+          if (links[next] !== UNVISITED) {
+            nextLowLink = Math.min(nextLowLink, links[next]);
+            return;
+          }
+          push(next);
+          push(UNVISITED);
         });
-        stack.push(nextLowLink);
+        push(nextLowLink);
       }
     }
     return undefined;
