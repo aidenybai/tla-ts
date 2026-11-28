@@ -740,6 +740,24 @@ describe("run a program on the files that a host passes, as Node runs it on them
     });
   });
 
+  // TypeScript resolves a target of a package's imports that is itself a specifier of imports by
+  // the imports again, without end where #* maps every one to another, which Node resolves as a
+  // package's name and doesn't find.
+  it("stops at a specifier of imports whose package's imports hold a target of imports", async () => {
+    const files = { "package.json": JSON.stringify({ name: "app", imports: { "#*": "#x" } }) };
+    const source = 'require("#y");\n';
+    expect(runNode({ ...files, "main.cjs": source }, "main.cjs", {}).stderr).toContain(
+      "Error: Cannot find module '#y'",
+    );
+    expect(
+      (await getBrowserOutcome(source, "main.cjs", true, true, getHostFiles(files))).error,
+    ).toEqual({
+      name: "TlaTypeScriptError",
+      isTlaError: true,
+      message: "main.cjs:1:1 tla-ts can't resolve #y without Node",
+    });
+  });
+
   // TypeScript's program reads the types of the files that a model imports among those that the
   // host passes, as a package's that Node loads.
   describe("check a model whose file imports a package that the host passes", () => {

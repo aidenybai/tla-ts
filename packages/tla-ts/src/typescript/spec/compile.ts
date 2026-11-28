@@ -6,6 +6,8 @@ import { getJsxText, getRunSourceFile, parseFile } from "../program";
 import {
   createModuleResolver,
   getModuleFormat,
+  getTypelessManifest,
+  hasModuleSyntax,
   isTypelessModule,
   type ResolutionFailure,
 } from "./resolve";
@@ -569,8 +571,8 @@ const isOnlyImportCalled = (sourceFile: ts.SourceFile, specifier: string) => {
 // module before the failure may fail to load, as a file with an early error, a JSON file that the
 // attributes don't type as one, a TypeScript file in node_modules, a file of JSX, a module's source
 // or deferred import, or a file that tla-ts doesn't load, does, or where Node warns, with its
-// process's id, that it detects a module's format. Only Node's resolution fails so, so a walk with
-// failures runs where Node is at hand.
+// process's id, as it loads a module (a file's warning), as where it detects a module's format.
+// Only Node's resolution fails so, so a walk with failures runs where Node is at hand.
 const getLinkFailure = (files: readonly ProgramFile[], system: ProgramSystem) => {
   if (files.every((file) => (file.failures?.size ?? 0) === 0)) return "linked";
   const visited = new Set<number>();
@@ -578,6 +580,7 @@ const getLinkFailure = (files: readonly ProgramFile[], system: ProgramSystem) =>
     const file = files[number - 1];
     visited.add(number);
     if (/\/node_modules\/.*\.[cm]?ts$|\.[jt]sx$/.test(file.path)) return "unknown";
+    if (file.warning !== undefined) return "unknown";
     if (file.kind !== "module") return "linked";
     if (system.fileExists(file.path) && isTypelessModule(file.path, system)) return "unknown";
     const statements = file.sourceFile.statements.filter(
@@ -912,6 +915,27 @@ const loadFiles = (
     );
     return { path, text, kind, written, sourceFile };
   };
+  // The stop at each file where Node prints a warning that names its process id as it loads the
+  // file, which the entry's load stops at, and another file's where Node loads it (see warning).
+  const warnings = new Map<string, TlaTypeScriptError>();
+  const warn = (path: string, warning: TlaTypeScriptError) => {
+    if (path === entry) throw warning;
+    if (!warnings.has(path)) warnings.set(path, warning);
+  };
+  // Node's loader of ES modules, which loads the entry and each file that an import requests, but
+  // not one that a require does, warns where it reads a file of a package.json without a type as
+  // an ES module (see getTypelessManifest).
+  const warnTypelessImport = (path: string, text: string, node?: ts.Node) => {
+    const manifest = getTypelessManifest(path, text, system);
+    if (manifest === undefined) return;
+    warn(
+      path,
+      new TlaTypeScriptError(
+        `tla-ts can't print the warning, with Node's process id, that Node prints where it reads ${path} as an ES module by its syntax, as ${manifest} names no type`,
+        node,
+      ),
+    );
+  };
   // A prepared file's requests, which number the files it loads, and the file itself.
   const load = (
     file: ReturnType<typeof prepare>,
@@ -933,7 +957,24 @@ const loadFiles = (
     const kind = file.kind;
     const written = file.written;
     const sourceFile = file.sourceFile;
-    if (path === entry) rejectEarlyErrors(sourceFile, nodeParse);
+    // Node warns where it fails to load a file of an ES module's syntax as CommonJS, which the
+    // file's extension or package names.
+    if (
+      kind === "commonjs" &&
+      hasEarlyError(sourceFile, nodeParse) &&
+      hasModuleSyntax(path, text)
+    ) {
+      warn(
+        path,
+        new TlaTypeScriptError(
+          `tla-ts can't print the warning, with Node's process id, that Node prints where it fails to load the ES module ${path} as CommonJS`,
+        ),
+      );
+    }
+    if (path === entry) {
+      warnTypelessImport(path, text);
+      rejectEarlyErrors(sourceFile, nodeParse);
+    }
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile, nodeParse);
     // The candidates of the file's directory, each requested as an import() of "./" and its name
     // would request it, which Node's resolution finds as it finds the file of a literal's.
@@ -1017,6 +1058,27 @@ const loadFiles = (
           }
           if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
           const target = getRealPath(found);
+          const isRequire =
+            literal !== undefined &&
+            ts.isCallExpression(literal.parent) &&
+            !isImportCall(literal.parent);
+          const targetText = target.endsWith(".json")
+            ? undefined
+            : getJsxText(target, readFile(target), system);
+          // A require of a file that Node warns it fails to load as CommonJS (see warn) has no
+          // target, so that the require stops where it runs.
+          if (
+            isRequire &&
+            targetText !== undefined &&
+            getKind(target, targetText) === "commonjs" &&
+            hasModuleSyntax(target, targetText)
+          ) {
+            return [];
+          }
+          // A require's facade of an ES module imports it as the require loads it.
+          if (!isRequire && targetText !== undefined && !facades.has(path)) {
+            warnTypelessImport(target, targetText, parsed);
+          }
           if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
           const facade = `${target}.facade.mjs`;
           if (
@@ -1084,6 +1146,7 @@ const loadFiles = (
   const withFacades = files.map((file) => ({
     ...file,
     facade: numbers.get(`${file.path}.facade.mjs`),
+    warning: warnings.get(file.path),
   }));
   // A program that calls import() runs Node's code for it.
   const isImporting = files.some((file) => {
@@ -1229,6 +1292,10 @@ export const compileToJsTla = (
         failure.stderr,
       );
     }
+    // Node loads a file that it warns at where it links the program, or where the program's code
+    // requires or imports it as it runs, which may not run.
+    const warning = loaded.find((file) => file.warning !== undefined)?.warning;
+    if (warning !== undefined) throw warning;
     return {
       files: loaded,
       program: specialize(

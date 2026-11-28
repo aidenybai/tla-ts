@@ -172,10 +172,10 @@ export const getNodeParses = (
 };
 
 // V8's parse of a file's JavaScript where no Node is at hand, as tla-ts's port of V8's parser
-// gives it, which a stack too small for the file's nesting stops.
-const getPortedParse = (sourceFile: ts.SourceFile) => {
+// gives it, as a module's or a script's, which a stack too small for the file's nesting stops.
+const getPortedParse = (sourceFile: ts.SourceFile, isModule = !isScriptFile(sourceFile)) => {
   try {
-    return { error: getV8SyntaxError(sourceFile.text, !isScriptFile(sourceFile)) };
+    return { error: getV8SyntaxError(sourceFile.text, isModule) };
   } catch (error) {
     if (!isStackOverflow(error)) throw error;
     throw new TlaTypeScriptError(
@@ -200,4 +200,64 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile, parse = getNodePars
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
+};
+
+// The parameters of the function that Node's loader compiles a CommonJS file's code as the body of
+// (CompileFunctionForCJSLoader of src/node_contextify.cc).
+const COMMON_JS_PARAMETERS = ["exports", "require", "module", "__filename", "__dirname"];
+
+// What V8's SyntaxError says, with its name before, where ShouldRetryAsESM (src/node_contextify.cc)
+// reads code that fails to compile as CommonJS as an ES module's: syntax that only an ES module
+// has, and syntax that fails only in CommonJS, as a declaration of a parameter of the wrapper or an
+// await at the top level, where the code compiles as an ES module.
+const MODULE_SYNTAX_ERRORS = [
+  "Cannot use import statement outside a module",
+  "Unexpected token 'export'",
+  "Cannot use 'import.meta' outside a module",
+];
+const COMMON_JS_ONLY_ERRORS = [
+  ...COMMON_JS_PARAMETERS.map((name) => `Identifier '${name}' has already been declared`),
+  "await is only valid in async functions and the top level bodies of modules",
+  "missing ) after argument list",
+  "SyntaxError: Unexpected",
+];
+
+// The message of V8's SyntaxError where it compiles a file's code as CommonJS, as the body of
+// Node's wrapper, or undefined where it compiles: by Node's V8 where Node runs tla-ts, and else by
+// the port, of the code in the wrapper's text, which reads a hashbang where code starts.
+const getCommonJsError = (fileName: string, code: string) => {
+  const host = globalThis.process;
+  const vm = host?.versions?.bun === undefined ? host?.getBuiltinModule?.("node:vm") : undefined;
+  if (vm === undefined) {
+    const wrapped = `(function (${COMMON_JS_PARAMETERS.join(", ")}) { ${code.replace(/^#!.*/, "")}\n});`;
+    const sourceFile = ts.createSourceFile(fileName, wrapped, ts.ScriptTarget.ESNext);
+    return getPortedParse(sourceFile, false).error?.message;
+  }
+  try {
+    vm.compileFunction(code, COMMON_JS_PARAMETERS, { filename: fileName });
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return error.message;
+  }
+};
+
+// Whether Node 26 runs a file's code as an ES module where neither its extension nor its package
+// names its format, as containsModuleSyntax detects it: where V8 fails to compile it as CommonJS
+// with an error that ShouldRetryAsESM reads, and parses it as a module where the error is one
+// that only CommonJS has.
+export const containsModuleSyntax = (fileName: string, code: string) => {
+  const message = getCommonJsError(fileName, code);
+  if (message === undefined) return false;
+  const text = `SyntaxError: ${message}`;
+  if (MODULE_SYNTAX_ERRORS.some((error) => text.includes(error))) return true;
+  if (!COMMON_JS_ONLY_ERRORS.some((error) => text.includes(error))) return false;
+  const module = ts.createSourceFile(
+    fileName,
+    code,
+    { languageVersion: ts.ScriptTarget.ESNext, impliedNodeFormat: ts.ModuleKind.ESNext },
+    true,
+    ts.ScriptKind.JS,
+  );
+  return (getNodeParse(module) ?? getPortedParse(module)).error === undefined;
 };

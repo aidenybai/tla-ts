@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { containsModuleSyntax } from "../early-errors";
 import { isNodeModule } from "../common-js";
 import { getProjectCompilerOptions } from "../program";
 import { getHostSystem, type ProgramSystem } from "../system";
@@ -733,15 +734,24 @@ export const createModuleResolver = (entry: string, system: ProgramSystem) => {
   return (literal: ts.StringLiteralLike, isRequire: boolean) => {
     const specifier = literal.text;
     const containingFile = literal.getSourceFile().fileName;
-    const typeScriptFile = ts.resolveModuleName(
-      specifier,
-      containingFile,
-      options,
-      system,
-      cache,
-      undefined,
-      isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
-    ).resolvedModule?.resolvedFileName;
+    // A specifier of imports, where the imports of the file's package hold a target of imports,
+    // has no file of TypeScript's, which might resolve it without end (see hasImportsTarget).
+    const manifest = specifier.startsWith("#")
+      ? getPackageManifest(system.resolvePath(containingFile), system)
+      : undefined;
+    const typeScriptFile =
+      manifest !== undefined &&
+      hasImportsTarget(Reflect.get(Object(parseJson(system.readFile(manifest) ?? "")), "imports"))
+        ? undefined
+        : ts.resolveModuleName(
+            specifier,
+            containingFile,
+            options,
+            system,
+            cache,
+            undefined,
+            isRequire ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext,
+          ).resolvedModule?.resolvedFileName;
     const withNode =
       module === undefined
         ? undefined
@@ -775,15 +785,6 @@ const getPackageManifest = (path: string, system: ProgramSystem): string | undef
   return directory === "/" ? undefined : getPackageManifest(directory, system);
 };
 
-// The type of the package.json nearest a file, which Node reads its format by, or undefined where
-// that package.json names none, or none holds the file.
-const getPackageType = (path: string, system: ProgramSystem) => {
-  const manifest = getPackageManifest(path, system);
-  const type: unknown =
-    manifest === undefined ? undefined : JSON.parse(system.readFile(manifest) ?? "{}").type;
-  return typeof type === "string" ? type : undefined;
-};
-
 // Whether Node warns, as it loads an ES module, that it detected the module's format by its syntax
 // (warnTypelessPackageJsonFile of lib/internal/modules/esm/get_format.js), with its process's id: a
 // file outside node_modules that neither its extension nor its package's type makes an ES module,
@@ -798,23 +799,33 @@ export const isTypelessModule = (path: string, system = getHostSystem()) => {
   );
 };
 
-// Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
-// names no type: an import or an export, import.meta, or an await at its top level, in the code
-// that runs once a TypeScript file's types are stripped.
-const hasModuleSyntax = (path: string, text: string) => {
-  const isTypeScript = /\.[cm]?ts$/.test(path);
-  const code = isTypeScript
-    ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
-    : text;
-  const file = ts.createSourceFile(path, code, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const isTopLevelAwait = (node: ts.Node): boolean =>
-    !ts.isFunctionLike(node) &&
-    !ts.isClassLike(node) &&
-    (ts.isAwaitExpression(node) ||
-      (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
-      (ts.forEachChild(node, isTopLevelAwait) ?? false));
-  return ts.isExternalModule(file) || isTopLevelAwait(file);
+// The type of the package.json nearest a file, which Node reads its format by, or undefined where
+// that package.json names none, or none holds the file. Node reads no type but commonjs and module.
+const getPackageType = (path: string, system: ProgramSystem) => {
+  const manifest = getPackageManifest(path, system);
+  const type: unknown =
+    manifest === undefined ? undefined : JSON.parse(system.readFile(manifest) ?? "{}").type;
+  return type === "commonjs" || type === "module" ? type : undefined;
 };
+
+// Whether a package's imports hold a target that is itself a specifier of imports, which
+// TypeScript resolves by the imports again, endlessly where the targets cycle, and Node resolves
+// as a package's name (resolvePackageTargetString).
+const hasImportsTarget = (value: unknown): boolean =>
+  typeof value === "string"
+    ? value.startsWith("#")
+    : typeof value === "object" && value !== null && Object.values(value).some(hasImportsTarget);
+
+// Whether a file's code has an ES module's syntax, as Node 26 detects it in a file whose package
+// names no type (see containsModuleSyntax), in the code that runs once a TypeScript file's types
+// are stripped.
+export const hasModuleSyntax = (path: string, text: string) =>
+  containsModuleSyntax(
+    path,
+    /\.[cm]?ts$/.test(path)
+      ? stripTypes(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS))
+      : text,
+  );
 
 // The format that Node loads a file in, as TypeScript tells it by the file's extension and its
 // package's type (getImpliedNodeFormatForFile under nodenext), and, where no type says, as Node
@@ -834,4 +845,16 @@ export const getModuleFormat = (
       : hasModuleSyntax(absolute, text)
         ? "module"
         : "commonjs";
+};
+
+// The package.json that Node 26 warns names no type, by its process id, where its loader of ES
+// modules reads a file as an ES module by its syntax (see isTypelessModule): the nearest one to a
+// .js or a .ts file that has an ES module's syntax, or undefined where Node doesn't warn.
+export const getTypelessManifest = (path: string, text: string, system: ProgramSystem) => {
+  const absolute = system.resolvePath(path);
+  return /\.[jt]s$/.test(absolute) &&
+    isTypelessModule(absolute, system) &&
+    hasModuleSyntax(absolute, text)
+    ? getPackageManifest(absolute, system)
+    : undefined;
 };

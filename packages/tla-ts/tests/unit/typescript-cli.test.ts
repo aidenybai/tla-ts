@@ -1844,18 +1844,145 @@ describe("the CLI with TypeScript files", () => {
 
   // Node compiles a CommonJS file's code as a function's body, where no wrapper's text comes
   // before its first line, which V8 names alone where it rejects it.
-  it("places an import on the first line of a CommonJS file where Node places it", () => {
+  it("places a syntax error on the first line of a CommonJS file where Node places it", () => {
     const directory = copyFixtures("passing");
     writeFileSync(join(directory, "package.json"), '{ "type": "commonjs" }\n');
     writeFileSync(join(directory, "dep.cjs"), "exports.v = 1;\n");
-    writeFileSync(join(directory, "first.js"), 'import { v } from "./dep.cjs";\nconsole.log(v);\n');
+    writeFileSync(join(directory, "first.js"), 'super.v = require("./dep.cjs").v;\n');
     expect(runNode(directory, "first.js").stderr).toContain(
-      `${join(realpathSync(directory), "first.js")}:1\nimport { v } from "./dep.cjs";\n^^^^^^\n\nSyntaxError: Cannot use import statement outside a module`,
+      `${join(realpathSync(directory), "first.js")}:1\nsuper.v = require("./dep.cjs").v;\n^^^^^\n\nSyntaxError: 'super' keyword unexpected here`,
     );
     expect(getExit(runCli(directory, ["first.js"]))).toEqual([
       255,
-      "TlaTypeScriptError: first.js:1:1 SyntaxError: Cannot use import statement outside a module\n",
+      "TlaTypeScriptError: first.js:1:1 SyntaxError: 'super' keyword unexpected here\n",
     ]);
+  });
+
+  // Where a file that its extension or its package makes CommonJS has an ES module's syntax, Node
+  // warns that it failed to load an ES module, by its process id, before it throws, or where the
+  // program catches the error.
+  it.each([
+    ["main.js", { "package.json": '{ "type": "commonjs" }\n', "main.js": 'import "./dep.cjs";\n' }],
+    ["main.cjs", { "main.cjs": "export const v = 1;\n" }],
+    ["main.cts", { "main.cts": "const n: number = 1;\nexport { n };\n" }],
+    ["main.mjs", { "main.mjs": 'import "./dep.cjs";\n', "dep.cjs": "await 1;\n" }],
+  ])(
+    "stops where Node warns that it failed to load %s's ES module syntax as CommonJS",
+    (entry, files) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "dep.cjs"), "exports.v = 1;\n");
+      Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+      expect(runNode(directory, entry).stderr).toMatch(
+        /^\(node:\d+\) Warning: Failed to load the ES module: /,
+      );
+      const result = runCli(directory, [entry]);
+      expect(result.status).toBe(255);
+      expect(result.stderr).toMatch(
+        /^TlaTypeScriptError: tla-ts can't print the warning, with Node's process id, that Node prints where it fails to load the ES module \S+ as CommonJS\n$/,
+      );
+    },
+  );
+
+  // A require loads its file where it runs, so Node warns that it failed to load the file's ES
+  // module syntax as CommonJS only where the require runs, as where the program catches the
+  // error, and not where the program throws before it.
+  describe("loads a CommonJS file of ES module syntax where its require runs", () => {
+    const getDirectory = (main: string) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "package.json"), '{ "type": "commonjs" }\n');
+      writeFileSync(join(directory, "dep.js"), "const module = 1;\n");
+      writeFileSync(join(directory, "main.js"), main);
+      return directory;
+    };
+
+    it("stops where the require runs", () => {
+      const directory = getDirectory('try {\n  require("./dep.js");\n} catch {}\n');
+      expect(runNode(directory, "main.js").stderr).toMatch(
+        /^\(node:\d+\) Warning: Failed to load the ES module: /,
+      );
+      const result = runCli(directory, ["main.js"]);
+      expect(result.stdout).toContain("tla-ts can't load the module ./dep.js");
+    });
+
+    it("fails as Node does where the program throws before the require", () => {
+      const directory = getDirectory('throw new RangeError("first");\nrequire("./dep.js");\n');
+      const node = runNode(directory, "main.js");
+      expect(node.stderr).toContain("RangeError: first");
+      expect(getExit(runCli(directory, ["main.js"]))).toEqual(getExit(node));
+    });
+  });
+
+  // Node runs a file whose package names no type as an ES module where it fails to compile as
+  // CommonJS only for syntax that CommonJS rejects, as a declaration of a name that Node's wrapper
+  // binds.
+  it.each(["const require = 1;", "let module = 1;", "class exports {}"])(
+    "runs a file of no type as an ES module where %s fails to compile as CommonJS",
+    (declaration) => {
+      const directory = copyFixtures("passing");
+      writeFileSync(
+        join(directory, "detected.js"),
+        `${declaration}\nif (typeof __filename !== "undefined") throw new Error("CommonJS");\n`,
+      );
+      const node = runNode(directory, "detected.js");
+      expect(node.status).toBe(0);
+      expect(getExit(runCli(directory, ["detected.js"]))).toEqual(getExit(node));
+    },
+  );
+
+  // Node's loader of ES modules warns, by its process id, where it reads a file as an ES module by
+  // its syntax because its package.json names no type, for the entry and for a file that an import
+  // loads, but not for one that a require loads.
+  it.each([
+    ["main.js", { "package.json": "{}\n", "main.js": "export {};\n" }],
+    ["main.js", { "package.json": '{ "type": "other" }\n', "main.js": 'import "./dep.mjs";\n' }],
+    ["main.ts", { "package.json": "{}\n", "main.ts": "const n: number = 1;\nexport { n };\n" }],
+    ["main.mjs", { "package.json": "{}\n", "main.mjs": 'import "./dep.js";\n' }],
+    ["main.cjs", { "package.json": "{}\n", "main.cjs": 'import("./dep.js");\n' }],
+  ])("stops where Node warns that %s's package.json names no type", (entry, files) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "dep.mjs"), "export const v = 1;\n");
+    writeFileSync(join(directory, "dep.js"), "export const v = 1;\n");
+    Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+    expect(runNode(directory, entry).stderr).toMatch(
+      /^\(node:\d+\) \[MODULE_TYPELESS_PACKAGE_JSON\] Warning: /,
+    );
+    const result = runCli(directory, [entry]);
+    expect(result.status).toBe(255);
+    expect(result.stderr).toMatch(
+      /tla-ts can't print the warning, with Node's process id, that Node prints where it reads \S+ as an ES module by its syntax, as \S+package\.json names no type\n$/,
+    );
+  });
+
+  // Node loads a program's ES modules in the order that it links them, and loads none after an
+  // import that it finds no file for, so it doesn't warn at a later one.
+  it.each([
+    ["dep.js", { "package.json": "{}\n", "dep.js": "export const v = 1;\n" }],
+    [
+      "lib/dep.js",
+      { "lib/package.json": '{ "type": "commonjs" }\n', "lib/dep.js": "export const v = 1;\n" },
+    ],
+  ])("fails as Node does where it fails to link the program before it loads %s", (dep, files) => {
+    const directory = copyFixtures("passing");
+    mkdirSync(join(directory, "lib"), { recursive: true });
+    Object.entries(files).forEach(([name, text]) => writeFileSync(join(directory, name), text));
+    writeFileSync(join(directory, "main.mjs"), `import "./missing.mjs";\nimport "./${dep}";\n`);
+    const node = runNode(directory, "main.mjs");
+    expect(node.stderr).toContain("Error [ERR_MODULE_NOT_FOUND]: Cannot find module");
+    expect(node.stderr).not.toContain("Warning");
+    expect(getExit(runCli(directory, ["main.mjs"]))).toEqual(getExit(node));
+  });
+
+  it("runs a file that a require loads as an ES module of a package.json without a type", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "package.json"), "{}\n");
+    writeFileSync(join(directory, "dep.js"), "export const v = 1;\n");
+    writeFileSync(
+      join(directory, "main.cjs"),
+      'if (require("./dep.js").v !== 1) throw new Error("v");\n',
+    );
+    const node = runNode(directory, "main.cjs");
+    expect(node.stderr).toBe("");
+    expect(getExit(runCli(directory, ["main.cjs"]))).toEqual(getExit(node));
   });
 
   // tla-ts parses a TypeScript file's code as JavaScript, and names the file by its own name where
@@ -1863,13 +1990,13 @@ describe("the CLI with TypeScript files", () => {
   it("names an entry of TypeScript by its own name where its code has a syntax error", () => {
     const directory = copyFixtures("passing");
     const getCode = (statement: string) => `const total: number = 1;\n${statement} = total;\n`;
-    writeFileSync(join(directory, "a.cts"), getCode("export const value"));
+    writeFileSync(join(directory, "a.cts"), getCode("super.value"));
     expect(runNode(directory, "a.cts").stderr).toContain(
       `${join(realpathSync(directory), "a.cts")}:2\n`,
     );
     expect(getExit(runCli(directory, ["a.cts"]))).toEqual([
       255,
-      "TlaTypeScriptError: a.cts:2:1 SyntaxError: Unexpected token 'export'\n",
+      "TlaTypeScriptError: a.cts:2:1 SyntaxError: 'super' keyword unexpected here\n",
     ]);
     writeFileSync(join(directory, "a.cts"), getCode("exports.value"));
     expect(runNode(directory, "a.cts").status).toBe(0);

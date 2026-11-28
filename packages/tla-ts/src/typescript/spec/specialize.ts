@@ -118,6 +118,8 @@ export interface ProgramFile {
   facade?: number;
   // Whether the file has an early error, for which Node throws a SyntaxError where it loads it.
   isRejected?: boolean;
+  // A stop where Node prints a warning that names its process id as it loads the file.
+  warning?: Error;
   // The names of the files of its directory, where an import() of a computed string may name one
   // of its candidates (JsTlaSteps), and else none.
   names?: readonly string[];
