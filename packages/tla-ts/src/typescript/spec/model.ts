@@ -101,12 +101,22 @@ CheckKept(s, t) ==
   /\ [t EXCEPT !.objs = s.objs, !.envs = s.envs, !.envsHeld = s.envsHeld, !.written = s.written, !.out = s.out] = s
   /\ HeapKept(s.envs, t.envs, s.writeMark.environments, LAMBDA e, after : e = after)
   /\ HeapKept(s.objs, t.objs, s.writeMark.objects, LAMBDA o, after : WeakKept(o, after, s.writeMark.objects))
-\* A call of name that a check makes, which stops where it changes what existed as the check
-\* started and CheckKept can't show that nothing reads the change, as only a step may change the
-\* state: the frame reads a function as a check where it sees no change.
-CheckCall(s, name, args) ==
+\* Whether a check's call r, from s, changed what existed as it started, where CheckKept can't
+\* show that nothing reads the change.
+IsChanged(s, r) == r.s.written /\ ~CheckKept(s, r.s)
+ChangedStop(name) ==
+  Assert(FALSE, "tla-ts can't check " \o UnitsToString(name) \o " as a function that changes nothing: its call changes the program's state")
+\* A call of name that an assumption checks: what it throws, as data rather than a failure, <<>>
+\* where it returns and the call's result where it throws, whose text ThrownText gives, and
+\* whether it returns and changes what existed.
+AssumedOf(s, name, args) ==
   LET r == ModelCall(s, name, args) IN
-  IF r.s.written /\ ~CheckKept(s, r.s) THEN Assert(FALSE, "tla-ts can't check " \o UnitsToString(name) \o " as a function that changes nothing: its call changes the program's state") ELSE r
+  [thrown |-> IF r.c.type = "throw" THEN <<r>> ELSE <<>>, changed |-> r.c.type # "throw" /\ IsChanged(s, r)]
+\* A call of name that a check makes, which stops where it changes what existed as the check
+\* started, as only a step may change the state: the frame reads a function as a check where it
+\* sees no change.
+CheckCall(s, name, args) ==
+  LET r == ModelCall(s, name, args) IN IF IsChanged(s, r) THEN ChangedStop(name) ELSE r
 \* Whether a call of name returns true.
 HoldsOf(s, name, args) == Val(Completed(CheckCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
@@ -117,10 +127,6 @@ UnsettledText(name) ==
 \* which stops where it returns false, as there it fails as an invariant and holds as a check.
 SettledOf(s, name, args) ==
   IF Val(Completed(CheckCall(s, name, args))) = False THEN Assert(FALSE, UnsettledText(name)) ELSE TRUE
-\* What a call of name throws, as data rather than a failure of the check: <<>> where it returns,
-\* and the call's result where it throws, whose text ThrownText gives.
-ThrownOf(s, name, args) ==
-  LET r == CheckCall(s, name, args) IN IF r.c.type = "throw" THEN <<r>> ELSE <<>>
 \* What a check shows of a value: TLA+'s values of today's compiler's model, where a number is an
 \* integer, a string a string, an array a sequence, a Set a set, a Map a function, and another
 \* object a record of its enumerable own data properties.
@@ -292,7 +298,46 @@ const getLoweredSteps = (names: string[]) => {
 // state it ends in.
 const STEP_OF = String.raw`StepOf(s, name, converted) ==
   LET r == Completed(ModelCall(converted.s, name, converted.args)) IN
-  IF r.s.written THEN {StepEnd(r.s)} ELSE {}`;
+  IF r.s.written THEN {StepEnd(r.s)} ELSE {}
+\* The state that a check's call r, from s, leaves as a step, which a driver that calls the check
+\* reaches whatever it returns: none where the call changes nothing that a later call may read.
+ChangedOf(s, r) == IF IsChanged(s, r) THEN {StepEnd(r.s)} ELSE {}
+\* A call of name that a check makes as a step, which stops where it throws, as the check does.
+CheckStepOf(s, name, args) == ChangedOf(s, Completed(ModelCall(s, name, args)))
+\* A call as a step of a check whose return type may be a boolean, which stops where it returns
+\* false, as SettledOf does.
+SettledStepOf(s, name, args) ==
+  LET r == Completed(ModelCall(s, name, args)) IN
+  IF Val(r) = False THEN Assert(FALSE, UnsettledText(name)) ELSE ChangedOf(s, r)`;
+
+// How a check calls its function: whether the call returns true, or returns, or returns other than
+// false, each of which stops where the call changes the state, or the states that the call leaves
+// as a step, or, for an assumption, what it throws and the states it leaves.
+type CheckKind =
+  | "HoldsOf"
+  | "ReturnsOf"
+  | "SettledOf"
+  | "CheckStepOf"
+  | "SettledStepOf"
+  | "AssumedOf";
+
+// What a check of the kind gives of the native call n of the function name from the lowered state
+// a[1], where the call doesn't bail. A lowered state holds only the module's bindings, so a call
+// changes it where it leaves them other than they were.
+const getNativeOutcome = (kind: CheckKind, name: string) => {
+  const changed = String.raw`IF n.w /\ n.m # a[1] THEN {n.m} ELSE {}`;
+  const settled = (rest: string) =>
+    `IF n.v = False THEN Assert(FALSE, UnsettledText(${name})) ELSE ${rest}`;
+  const outcomes: Record<CheckKind, string> = {
+    HoldsOf: "n.v = True",
+    ReturnsOf: "TRUE",
+    SettledOf: settled("TRUE"),
+    CheckStepOf: changed,
+    SettledStepOf: settled(changed),
+    AssumedOf: String.raw`[thrown |-> <<>>, changed |-> n.w /\ n.m # a[1]]`,
+  };
+  return outcomes[kind];
+};
 
 // The names that the model's steps bind in a LET, as a parameter, or as a bound after an export's
 // definition, which no export may take as its definition's name, as TLA+ allows no LET to define
@@ -1333,8 +1378,9 @@ export const planModel = (
       ? [{ name: conjunct.args[0].name, domain: conjunct.args[1] }]
       : [],
   );
-  // A model without state variables or actions has one state, the one its module's top level
-  // leaves, which no step compares with another, so it keeps it as it is.
+  // A model without state variables or actions checks its functions in the state its module's top
+  // level leaves, which no step compares with another, so it keeps it as it is, and has states only
+  // where a call of one changes what existed.
   const isStateless = module.variables.length === 0 && actions.length === 0;
   const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(text);
   // The bindings that the state lowers out of JS.tla's heap, where the module lets it (see
@@ -1453,12 +1499,9 @@ export const planModel = (
     actionParameters.set(name, names);
     return converters;
   };
-  // A check of a function's result at a state: whether it holds, or only that it returns.
-  const defineCheck = (
-    name: string,
-    kind: "HoldsOf" | "ReturnsOf" | "SettledOf" | "ThrownOf",
-    bounds: Bound[],
-  ) => {
+  // A check of a function's result at a state: whether it holds, or only that it returns, or the
+  // states that its call leaves as a step.
+  const defineCheck = (name: string, kind: CheckKind, bounds: Bound[]) => {
     addCheckedFunction(name, bounds);
     const operator = define(
       "Check",
@@ -1472,7 +1515,7 @@ export const planModel = (
         : define(
             "NativeCheck",
             (operatorName) =>
-              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : kind === "ThrownOf" ? "<<>>" : kind === "SettledOf" ? `IF n.v = False THEN Assert(FALSE, UnsettledText(${getBinding(name)})) ELSE TRUE` : "TRUE"}`,
+              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${getNativeOutcome(kind, getBinding(name))}`,
           );
     return (state: string, values: string[]) =>
       `ApplyTo(${checked}, <<${[state, ...values].join(", ")}>>)`;
@@ -1507,22 +1550,96 @@ export const planModel = (
         expression.body.operator === "=" &&
         expression.definitions.some((definition) => /^result(_\d+)?$/.test(definition.name));
   // The state the module's top level leaves, lowered where the module lets it, in which a model
-  // without state checks its functions, and any model its assumptions.
+  // without state checks its functions as it starts, and any model its assumptions.
   const started = lowered === undefined ? "ModelStartState" : "ModelInitial";
-  const current = isStateless ? started : variable;
   const defined = new Set<string>();
+  // The definition that the ASSUME of each check names, where the check's own name names another:
+  // a model without state checks its functions again in each state that a call of one leaves, in
+  // an invariant or a step of the check's name.
+  const assumedNames = new Map<string, string>();
+  const defineAssumed = (name: string, body: string) => {
+    if (!isStateless) {
+      steps.push(`${name} == ${body}`);
+      return;
+    }
+    assumedNames.set(
+      name,
+      define("Assumed", (operatorName) => `${operatorName} == ${body}`),
+    );
+  };
+  // The invariants of a model without state that check its assumptions in each state after it starts.
+  const laterInvariants: string[] = [];
+  // The disjuncts of Next that the checks that only call a function add: Node's driver calls a
+  // check whatever state it changes, and a call that changes what existed is a step, whatever it
+  // returns.
+  const checkSteps: Expression[] = [];
+  const defineCheckStep = (
+    name: string,
+    kind: "CheckStepOf" | "SettledStepOf",
+    bounds: Bound[],
+  ) => {
+    const names = boundNames(bounds);
+    const step = defineCheck(name, kind, bounds);
+    steps.push(
+      `${name}${names.length === 0 ? "" : `(${names.join(", ")})`} == ${variable}' \\in ${step(variable, names)}`,
+    );
+    const location = module.location;
+    const applied: Expression =
+      names.length === 0
+        ? { kind: "Identifier", name, location }
+        : {
+            kind: "Apply",
+            operator: name,
+            args: names.map((bound) => ({ kind: "Identifier", name: bound, location })),
+            location,
+          };
+    checkSteps.push(
+      bounds.length === 0
+        ? applied
+        : {
+            kind: "Exists",
+            bounds: bounds.map((bound) => ({ ...bound, set: rewriteGuards(bound.set) })),
+            body: applied,
+            location,
+          },
+    );
+  };
+  // The invariants that only call a function, which are steps instead, as a call that throws stops
+  // a step as it stops an invariant. An @assume holds in the initial states alone, and a
+  // constraint, a postcondition or an end state checks more than that the call returns.
+  const checkStepNames = new Set(
+    config.invariants.filter((name) => {
+      const definition = definitions.get(name);
+      return (
+        rewrittenNext !== undefined &&
+        definition?.kind === "Operator" &&
+        isCallCheck(definition.body) &&
+        exported.get(name)?.tags.has("assume") !== true &&
+        ![...config.constraints, ...config.postconditions, ...terminating].includes(name)
+      );
+    }),
+  );
   const defineInvariant = (name: string) => {
     if (defined.has(name)) return;
     defined.add(name);
     const definition = definitions.get(name);
     const body = definition?.kind === "Operator" ? definition.body : undefined;
     const bounds = getBounds(name, body);
-    const check = defineCheck(
-      name,
-      isCallCheck(body) ? (today.unsettled.has(name) ? "SettledOf" : "ReturnsOf") : "HoldsOf",
-      bounds,
-    );
-    const holds = quantify(bounds, check(current, boundNames(bounds)));
+    const names = boundNames(bounds);
+    const isSettled = today.unsettled.has(name);
+    const kind = isCallCheck(body) ? (isSettled ? "SettledOf" : "ReturnsOf") : "HoldsOf";
+    if (checkStepNames.has(name)) {
+      if (isStateless) {
+        defineAssumed(name, quantify(bounds, defineCheck(name, kind, bounds)(started, names)));
+      }
+      defineCheckStep(name, isSettled ? "SettledStepOf" : "CheckStepOf", bounds);
+      return;
+    }
+    const check = defineCheck(name, kind, bounds);
+    if (isStateless && config.invariants.includes(name)) {
+      defineAssumed(name, quantify(bounds, check(started, names)));
+    }
+    const holds = quantify(bounds, check(variable, names));
     // An @assume that reads state holds in the initial states, as today's invariant checks it.
     steps.push(
       `${name} == ${exported.get(name)?.tags.has("assume") === true ? `TLCGet("level") > 1 \\/ ${holds}` : holds}`,
@@ -1536,6 +1653,9 @@ export const planModel = (
   // the first export's, as TLC stops at the first ASSUME that fails: each export's outcome is
   // reported, rather than the first that throws stopping the rest.
   const thrown: string[] = [];
+  // Whether the calls that a model without state's ASSUMEs check change what existed, after which
+  // its checks run as steps and invariants, from the state its module's top level leaves.
+  const changes: string[] = [];
   const argumentDomains = new Map<string, string>();
   const getArgumentDomain = (set: Expression) => {
     const key = getDomainKey(set);
@@ -1566,12 +1686,13 @@ export const planModel = (
     convertedTables.set(key, table);
     return table;
   };
-  const defineThrown = (name: string, bounds: Bound[]) => {
-    const defineOutcome = (domain: string, call: string) =>
+  // The table of each list of arguments' AssumedOf, in the state the module's top level leaves, a
+  // constant, which TLC evaluates once for the ASSUMEs and Init.
+  const defineCalls = (name: string, bounds: Bound[]) => {
+    const defineTable = (domain: string, call: string) =>
       define(
-        "Thrown",
-        (operatorName) =>
-          `${operatorName} ==\n  LET f == [v \\in ${domain} |-> ${call}]\n      t == {v \\in DOMAIN f : f[v] # <<>>}\n  IN IF t = {} THEN <<>> ELSE <<ThrownText(f[CHOOSE v \\in t : TRUE][1])>>`,
+        "Calls",
+        (operatorName) => `${operatorName} == TLCEval([v \\in ${domain} |-> ${call}])`,
       );
     if (
       bounds.length > 0 &&
@@ -1587,24 +1708,18 @@ export const planModel = (
       const check = define(
         "Check",
         (operatorName) =>
-          `${operatorName}(a) ==\n  LET ${converted.join("\n      ")}\n  IN ThrownOf(e${bounds.length}.s, ${getBinding(name)}, <<${bounds.map((_bound, index) => `e${index + 1}.v`).join(", ")}>>)`,
+          `${operatorName}(a) ==\n  LET ${converted.join("\n      ")}\n  IN AssumedOf(e${bounds.length}.s, ${getBinding(name)}, <<${bounds.map((_bound, index) => `e${index + 1}.v`).join(", ")}>>)`,
       );
       const values =
         bounds.length === 1
           ? [`${table}[v]`]
           : bounds.map((_bound, index) => (index === 0 ? `${table}[v[1]]` : `v[${index + 1}]`));
-      return defineOutcome(domains.join(" \\X "), `ApplyTo(${check}, <<${values.join(", ")}>>)`);
+      return defineTable(domains.join(" \\X "), `ApplyTo(${check}, <<${values.join(", ")}>>)`);
     }
-    const check = defineCheck(name, "ThrownOf", bounds);
-    if (bounds.length === 0) {
-      return define(
-        "Thrown",
-        (operatorName) =>
-          `${operatorName} ==\n  LET o == ${check(started, [])}\n  IN IF o = <<>> THEN <<>> ELSE <<ThrownText(o[1])>>`,
-      );
-    }
+    const check = defineCheck(name, "AssumedOf", bounds);
+    if (bounds.length === 0) return defineTable("{<<>>}", check(started, []));
     const sets = bounds.map((bound) => `(${printExpression(rewriteGuards(bound.set))})`);
-    return defineOutcome(
+    return defineTable(
       sets.join(" \\X "),
       check(started, sets.length === 1 ? ["v"] : sets.map((_, index) => `v[${index + 1}]`)),
     );
@@ -1615,6 +1730,7 @@ export const planModel = (
       const definition = definitions.get(name);
       const body = definition?.kind === "Operator" ? definition.body : undefined;
       const bounds = getBounds(name, body);
+      const names = boundNames(bounds);
       defined.add(name);
       if (!isCallCheck(body) || bounds.some((bound) => bound.pattern.kind !== "Name")) {
         const check = defineCheck(
@@ -1622,13 +1738,33 @@ export const planModel = (
           isCallCheck(body) ? (today.unsettled.has(name) ? "SettledOf" : "ReturnsOf") : "HoldsOf",
           bounds,
         );
-        steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
+        defineAssumed(name, quantify(bounds, check(started, names)));
+        if (isStateless) {
+          steps.push(`${name} == ${quantify(bounds, check(variable, names))}`);
+          laterInvariants.push(name);
+        }
         return;
       }
-      const outcome = defineThrown(name, bounds);
+      const calls = defineCalls(name, bounds);
+      const outcome = define(
+        "Thrown",
+        (operatorName) =>
+          `${operatorName} ==\n  LET t == {v \\in DOMAIN ${calls} : ${calls}[v].thrown # <<>>}\n  IN IF t = {} THEN <<>> ELSE <<ThrownText(${calls}[CHOOSE v \\in t : TRUE].thrown[1])>>`,
+      );
       thrown.push(outcome);
-      steps.push(
-        `${name} == IF ${outcome} = <<>> THEN TRUE ELSE PrintT(${JSON.stringify(`${bindings.get(name) ?? name} throws: `)} \\o ${outcome}[1])`,
+      const changed = `(\\E v \\in DOMAIN ${calls} : ${calls}[v].changed)`;
+      const printed = `IF ${outcome} = <<>> THEN TRUE ELSE PrintT(${JSON.stringify(`${bindings.get(name) ?? name} throws: `)} \\o ${outcome}[1])`;
+      // A model with state checks its assumptions as it starts alone, so a call that changes what
+      // existed stops as a check's does.
+      if (isStateless) {
+        changes.push(changed);
+        defineCheckStep(name, "CheckStepOf", bounds);
+      }
+      defineAssumed(
+        name,
+        isStateless
+          ? printed
+          : `IF ${changed} THEN ChangedStop(${getBinding(name)}) ELSE ${printed}`,
       );
     }
   });
@@ -1776,7 +1912,11 @@ export const planModel = (
   ];
   steps.push(
     ...(isStateless
-      ? ["Init == TRUE", "ModuleRuns == ModelStartState.objs.size > 0", "ASSUME ModuleRuns"]
+      ? [
+          `Init == ${variable} \\in ${changes.length === 0 ? "{}" : `IF ${changes.join(" \\/ ")} THEN {${started}} ELSE {}`}`,
+          "ModuleRuns == ModelStartState.objs.size > 0",
+          "ASSUME ModuleRuns",
+        ]
       : lowered === undefined
         ? initialSteps
         : [...loweredInitialSteps, ...initialSteps.slice(2)]),
@@ -1784,7 +1924,20 @@ export const planModel = (
   if (rewrittenNext !== undefined) {
     // A @terminating function's state, where Next stutters, which isn't a deadlock.
     terminating.forEach(defineInvariant);
-    steps.push(printText({ ...(next as OperatorDefinition), body: rewrittenNext }));
+    steps.push(
+      printText({
+        ...(next as OperatorDefinition),
+        body:
+          checkSteps.length === 0
+            ? rewrittenNext
+            : {
+                kind: "Or",
+                operands: [rewrittenNext, ...checkSteps],
+                isBulleted: true,
+                location: module.location,
+              },
+      }),
+    );
   }
   const spec = definitions.get("Spec");
   if (spec?.kind === "Operator") {
@@ -1879,7 +2032,8 @@ export const planModel = (
   const getModelSteps = (file: number, start: string) =>
     [
       "CONSTANTS TsNull, TsUndefined",
-      ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
+      `VARIABLE ${variable}`,
+      `vars == <<${variable}>>`,
       "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
       settle,
       // The scope that a step reads the module's bindings in: the script's, the module's own, or the
@@ -1908,14 +2062,18 @@ export const planModel = (
       "ModelStartState == ApplyTo(StartState, InitialState)",
       STEP_OF,
       ...steps,
-      ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
+      `ModelAlias == ApplyTo(${alias}, ${variable})`,
     ].join("\n");
   const assumptions = [
     ...module.assumptions.flatMap((assumption) =>
-      assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
+      assumption.expression.kind === "Identifier"
+        ? [`ASSUME ${assumedNames.get(assumption.expression.name) ?? assumption.expression.name}`]
+        : [],
     ),
     ...(returned === undefined ? [] : [`ASSUME ${returned}`]),
-    ...(isStateless ? config.invariants.map((name) => `ASSUME ${name}`) : []),
+    ...(isStateless
+      ? config.invariants.map((name) => `ASSUME ${assumedNames.get(name) ?? name}`)
+      : []),
   ];
   const assumed = `${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`;
   // The model's spec of the compiled program: its steps in the program's own module, or, in a
@@ -1929,7 +2087,9 @@ export const planModel = (
       // A model without state checks its boolean exports once, as ASSUMEs, which TLC recommends
       // for constant-level invariants: an invariant that TLC evaluates as it starts and that
       // throws is left unevaluated, where a spec without state has no initial state to check it in.
-      ...(isStateless ? [] : config.invariants.map((name) => `INVARIANT ${name}`)),
+      ...[...config.invariants, ...laterInvariants]
+        .filter((name) => !checkStepNames.has(name))
+        .map((name) => `INVARIANT ${name}`),
       ...config.properties.map((name) => `PROPERTY ${name}`),
       ...config.constraints.map((name) => `CONSTRAINT ${name}`),
       ...(today.endlessCount === undefined ? [] : ["CONSTRAINT EndlessCount"]),
@@ -1947,7 +2107,7 @@ export const planModel = (
       // and TLC checks none, as it checks none where a spec has no variables. A model with actions
       // keeps the check, even where none is ever enabled, as a deadlock there is a finding.
       ...(config.checkDeadlock && actions.length > 0 ? [] : ["CHECK_DEADLOCK FALSE"]),
-      ...(isStateless ? [] : ["ALIAS ModelAlias"]),
+      "ALIAS ModelAlias",
       "",
     ];
     // A program shared with other files has its model in a module of its own; a program of its
