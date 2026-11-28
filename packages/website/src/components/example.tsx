@@ -215,7 +215,7 @@ const ExampleSource = (props: SourceProps) => {
         {props.children}
         <div
           ref={scrollRef}
-          className="-mx-4 -mt-4 -mb-2 h-[31rem] w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto [scrollbar-width:none] mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
+          className="-mx-4 -mt-4 -mb-2 h-80 w-[calc(100%+2rem)] overflow-x-hidden overflow-y-auto sm:h-[27.5rem] [scrollbar-width:none] mask-[linear-gradient(to_bottom,black_calc(100%-24px),transparent)] px-4 pt-4 pb-6"
         >
           <Code.Content />
         </div>
