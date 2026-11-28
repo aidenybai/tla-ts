@@ -2,16 +2,18 @@ import { Bug, Check } from "@phosphor-icons/react";
 import { useInView } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
-import type { Search } from "@/lib/search";
+import type { Search, SearchState } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { KeyCap } from "@/components/ui/key-cap";
 import { useMediaQuery } from "@/hooks/use-media-query";
-import { createMazeScene, FLOOD_MS, type MazeView, type Square } from "./maze-scene";
+import { createMazeScene, type MazeView, type Square } from "./maze-scene";
 
 // The board of the example's code, and its two moves, with the mistake in `dash`.
 const MAP = [".......", ".......", "..###..", "..#o#..", "..###..", ".......", "......."];
 const START = { x: 0, y: 6 };
 const HEART = { x: 3, y: 3 };
+// How long the robot spends on each move of the search it plays back.
+const TRY_MS = 230;
 // The calls after which a reader who has not found the way in is told where to look.
 const HINT_CALLS = 10;
 const SHOWN_CALLS = 6;
@@ -63,10 +65,13 @@ export const Maze = (props: MazeProps) => {
   // The search on the board, and whether its flood has reached its last square.
   const [flood, setFlood] = useState<{ search: Search; isDone: boolean }>();
   const [isFloodHidden, setIsFloodHidden] = useState(false);
+  // The state of the search the robot is trying, while it plays the search back.
+  const [attempt, setAttempt] = useState(0);
   const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
   const isReduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   if (props.search && flood?.search !== props.search) {
     setFlood({ search: props.search, isDone: isReduced });
+    setAttempt(0);
     setIsFloodHidden(false);
     // The player goes back to the start, where the search begins, and off the gold.
     setPlayer(START);
@@ -77,44 +82,63 @@ export const Maze = (props: MazeProps) => {
   // The squares the search reached, in the order it reached them, with the heart last.
   const reached = useMemo(() => {
     const states = search?.checkedStates ?? [];
+    const getSquare = (state: SearchState | undefined) => {
+      const values = new Map(state?.variables.map((variable) => [variable.name, variable.value]));
+      return { x: Number(values.get("x")), y: Number(values.get("y")) };
+    };
     return [
       ...states.filter((state) => !state.isFailing),
       ...states.filter((state) => state.isFailing),
-    ].map((state) => {
-      const values = new Map(state.variables.map((variable) => [variable.name, variable.value]));
-      return { x: Number(values.get("x")), y: Number(values.get("y")), isFailing: state.isFailing };
-    });
+    ].map((state) => ({
+      ...getSquare(state),
+      isFailing: state.isFailing,
+      // The square the move that reached this one was made from.
+      from:
+        state.parentId === undefined
+          ? undefined
+          : getSquare(states.find((found) => found.id === state.parentId)),
+    }));
   }, [search]);
   const isFlooding = search !== undefined && flood?.isDone === false;
-  const floodMs = reached.length * FLOOD_MS;
+  const floodMs = reached.length * TRY_MS;
+  // The robot makes each move the search made, one after another, from where that move began.
   useEffect(() => {
     if (!isFlooding) return;
+    const moves = setInterval(() => setAttempt((current) => current + 1), TRY_MS);
     const timer = setTimeout(
       () => setFlood((current) => current && { ...current, isDone: true }),
       floodMs + 300,
     );
-    return () => clearTimeout(timer);
+    return () => {
+      clearInterval(moves);
+      clearTimeout(timer);
+    };
   }, [isFlooding, floodMs]);
   const hasBug = isSame(player, HEART);
+  const triedCount = isFlooding ? Math.min(attempt + 1, reached.length) : reached.length;
+  const tried = reached.at(triedCount - 1);
   const boardRef = useRef<HTMLDivElement>(null);
   const isInView = useInView(boardRef, { amount: 0.5 });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<ReturnType<typeof createMazeScene>>(undefined);
   const viewRef = useRef<MazeView>(undefined);
-  const floodAtRef = useRef(0);
   // The scene draws itself every frame from the game as it last rendered, while it is in sight.
   useEffect(() => {
-    if (flood?.search) floodAtRef.current = performance.now();
-  }, [flood?.search]);
-  useEffect(() => {
     viewRef.current = {
-      player,
-      yaw: facing.yaw,
+      player: tried ?? player,
+      cameFrom: tried?.from,
+      yaw:
+        (tried?.from &&
+          DIRECTIONS.find(
+            (found) =>
+              found.move[0] === Math.sign(tried.x - (tried.from?.x ?? 0)) &&
+              found.move[1] === Math.sign(tried.y - (tried.from?.y ?? 0)),
+          )?.yaw) ??
+        facing.yaw,
       trail: search === undefined ? trail : [],
-      reached,
-      floodAt: floodAtRef.current,
+      reached: reached.slice(0, triedCount),
       route: flood?.isDone ? path : undefined,
-      isHeartTaken: hasBug,
+      isHeartTaken: isSame(tried ?? player, HEART),
       isStill: isReduced,
     };
   });
@@ -302,7 +326,7 @@ export const Maze = (props: MazeProps) => {
                   , tried {reached.length} squares, and reached the heart:
                 </>
               ) : (
-                "TLA-ts is trying every square the code can reach."
+                `TLA-ts is trying move ${triedCount} of ${reached.length}.`
               )
             ) : stage === 0 ? (
               isTouch ? (

@@ -31,9 +31,10 @@ export interface MazeView {
   yaw: number;
   // The squares the reader has stood on, in order.
   trail: Square[];
-  // The squares a search reached, in order, and when it began to show them.
+  // Where the move that brought the player here began, where it was not the last square.
+  cameFrom: Square | undefined;
+  // The squares a search has reached so far, in order.
   reached: (Square & { isFailing: boolean })[];
-  floodAt: number;
   // The way the search found to the heart, once all of it has shown.
   route: Square[] | undefined;
   isHeartTaken: boolean;
@@ -48,7 +49,6 @@ const WALL_HEIGHT = 0.7;
 const BOT = { size: 0.4, lift: 0.5 };
 const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
 const MOVE_MS = 190;
-export const FLOOD_MS = 70;
 const BLUE = [0.0103, 0.513, 0.9595];
 const RED = [0.92, 0.12, 0.2];
 
@@ -211,7 +211,12 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
     if (step.isFirst || view.isStill)
       step = { from: target, to: target, startedAt: 0, isFirst: false };
     if (target.x !== step.to.x || target.z !== step.to.z)
-      step = { from: step.to, to: target, startedAt: now, isFirst: false };
+      step = {
+        from: view.cameFrom ? getGround(view.cameFrom) : step.to,
+        to: target,
+        startedAt: now,
+        isFirst: false,
+      };
     const progress = smooth(0, 1, clamp((now - step.startedAt) / MOVE_MS, 0, 1));
     const distance = Math.hypot(step.to.x - step.from.x, step.to.z - step.from.z);
     // A step is a small hop, and a dash a leap high enough to clear a wall.
@@ -271,23 +276,17 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
       });
 
     renderer.drawBlended(() => {
-      view.reached.forEach((square, order) => {
-        const shown = view.isStill ? 1 : clamp((now - view.floodAt - order * FLOOD_MS) / 160, 0, 1);
-        if (shown === 0) return;
+      for (const square of view.reached) {
         renderer.draw(
           meshes.cube,
-          place(
-            add(getGround(square), vec(0, 0.012, 0)),
-            0,
-            vec(0.44 * shown, 0.004, 0.44 * shown),
-          ),
+          place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.44, 0.004, 0.44)),
           {
             tone: square.isFailing ? RED : BLUE,
             alpha: square.isFailing ? 0.55 : 0.22,
             isFlat: true,
           },
         );
-      });
+      }
       for (const square of view.trail.slice(0, -1))
         renderer.draw(
           meshes.disc,
