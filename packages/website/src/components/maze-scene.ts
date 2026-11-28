@@ -1,4 +1,4 @@
-// The maze as the sandbox draws it: a white board over a wire grid, outlined walls, a pink
+// The maze as the sandbox draws it: a pale board over a wire grid, outlined walls, a pink
 // heart, and the player as a wireframe robot. The robot and the heart are the Crucible app's.
 
 import {
@@ -49,25 +49,28 @@ const WALL_HEIGHT = 0.7;
 const BOT = { size: 0.4, lift: 0.5 };
 const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
 const MOVE_MS = 190;
-const BLUE = [0.0103, 0.513, 0.9595];
 const RED = [0.92, 0.12, 0.2];
 
-// Blues to go with the blue lines, barely off white, and slate blues in the dark.
+// The page's own warm whites and inks, with green for a square that was checked.
 const LIGHT = {
-  track: rgb("#FAFCFF"),
-  block: rgb("#F5F9FF"),
+  track: rgb("#FDFDFC"),
+  block: rgb("#F6F5F3"),
   floor: rgb("#FFFFFF"),
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#C2224F"),
-  wireFill: rgb("#F5F9FF"),
+  wireFill: rgb("#FDFDFC"),
+  checked: rgb("#22863A"),
+  trail: rgb("#63635E"),
 };
 const DARK = {
-  track: rgb("#1B2029"),
-  block: rgb("#1F2631"),
-  floor: rgb("#18181A"),
+  track: rgb("#222221"),
+  block: rgb("#2A2A28"),
+  floor: rgb("#191918"),
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#FF2D62"),
-  wireFill: rgb("#16202E"),
+  wireFill: rgb("#191918"),
+  checked: rgb("#85E89D"),
+  trail: rgb("#B5B3AD"),
 };
 
 // A box from -1 to 1 on each axis, each face flat, so the shader can find its edges.
@@ -281,7 +284,7 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
           meshes.cube,
           place(add(getGround(square), vec(0, 0.012, 0)), 0, vec(0.44, 0.004, 0.44)),
           {
-            tone: square.isFailing ? RED : BLUE,
+            tone: square.isFailing ? RED : colours.checked,
             alpha: square.isFailing ? 0.55 : 0.22,
             isFlat: true,
           },
@@ -291,7 +294,7 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
         renderer.draw(
           meshes.disc,
           place(add(getGround(square), vec(0, 0.014, 0)), 0, vec(0.12, 1, 0.12)),
-          { tone: BLUE, alpha: 0.55, isFlat: true },
+          { tone: colours.trail, alpha: 0.55, isFlat: true },
         );
       const isOverWall = isWall({ x: Math.round(at.x + 2.5), y: Math.round(at.z + 2.5) });
       renderer.draw(
