@@ -1,5 +1,5 @@
 // A small WebGL2 renderer with one shader for a light sandbox look: a pale void, white boxes
-// with crisp outlines in the page's own ink, grids, fog and blob shadows. From the Crucible app's tutorial game.
+// with crisp blue outlines, grids, fog and blob shadows. From the Crucible app's tutorial game.
 
 import { cross, type Frame, type Shape, type Vec3 } from "./sandbox-figure";
 
@@ -19,8 +19,8 @@ export const isDark = () => document.documentElement.classList.contains("dark");
 
 // The void things fade into, and every line's colour, in the light and in the dark.
 const THEMES = {
-  light: { void: [1, 1, 1], line: [0.33, 0.33, 0.31] },
-  dark: { void: [0.098, 0.098, 0.094], line: [0.71, 0.7, 0.68] },
+  light: { void: [1, 1, 1], line: [0.0103, 0.513, 0.9595] },
+  dark: { void: [0.098, 0.098, 0.094], line: [0.3, 0.631, 1.0] },
 };
 
 const VERTEX = `#version 300 es

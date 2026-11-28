@@ -64,7 +64,7 @@ const BOT_VISOR = [0.05, 0.62, 0.36, 0.22];
 const MOVE_MS = 190;
 const RED = [0.92, 0.12, 0.2];
 
-// The page's own warm whites and inks.
+// The page's own warm whites, under the sandbox's blue lines.
 const LIGHT = {
   track: rgb("#FDFDFC"),
   block: rgb("#F6F5F3"),
@@ -72,8 +72,8 @@ const LIGHT = {
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#C2224F"),
   wireFill: rgb("#FDFDFC"),
-  trail: rgb("#63635E"),
-  way: rgb("#BCBBB5"),
+  trail: rgb("#0383F5"),
+  way: rgb("#0383F5"),
 };
 const DARK = {
   track: rgb("#222221"),
@@ -82,8 +82,8 @@ const DARK = {
   heart: rgb("#FF5A7E"),
   heartShadow: rgb("#FF2D62"),
   wireFill: rgb("#191918"),
-  trail: rgb("#B5B3AD"),
-  way: rgb("#62605B"),
+  trail: rgb("#4DA1FF"),
+  way: rgb("#4DA1FF"),
 };
 
 // A box from -1 to 1 on each axis, each face flat, so the shader can find its edges.
@@ -283,7 +283,7 @@ export const createMazeScene = (canvas: HTMLCanvasElement, map: string[]) => {
             isFlat: true,
           },
         );
-      // A way across the board is one thin line: the reader's in ink, the search's in red.
+      // A way across the board is one thin line: the reader's in blue, the search's in red.
       const drawWay = (way: Square[], tone: number[], alpha: number) =>
         way.slice(1).forEach((square, index) => {
           const from = getGround(way[index]);
