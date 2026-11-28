@@ -93,7 +93,7 @@ const ExampleRoot = (props: RootProps) => {
         onPointerEnter={(event) => event.pointerType === "mouse" && startJsTlaWorker()}
         onFocus={startJsTlaWorker}
         // The card is wider than the column it sits in, for a board large enough to play on.
-        className="relative flex flex-col gap-3 sm:-mx-10"
+        className="relative flex flex-col gap-3 sm:-mx-3"
       >
         {props.children}
       </div>
